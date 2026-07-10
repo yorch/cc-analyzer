@@ -71,6 +71,17 @@ describe("App (smoke render)", () => {
     unmount();
   });
 
+  test("pressing ? toggles the help overlay", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write("?");
+    await wait();
+    expect(lastFrame() ?? "").toContain("Keybindings");
+    stdin.write(" "); // any key closes
+    await wait();
+    expect(lastFrame() ?? "").not.toContain("Keybindings");
+    unmount();
+  });
+
   test("shows an empty-index message when nothing is indexed", () => {
     const emptyDb = openDb(":memory:");
     const { lastFrame, unmount } = render(<App db={emptyDb} pricing={pricing} />);

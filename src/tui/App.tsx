@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import type { PricingTable } from "../core/pricing.ts";
 import {
@@ -10,6 +10,7 @@ import {
   listIndexedProjects,
   listIndexedSessions,
 } from "../core/queries.ts";
+import { HelpOverlay } from "./components/ui.tsx";
 import { DashboardScreen } from "./screens/DashboardScreen.tsx";
 import { ProjectsScreen } from "./screens/ProjectsScreen.tsx";
 import { SearchScreen } from "./screens/SearchScreen.tsx";
@@ -32,9 +33,17 @@ export function App({ db, pricing }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
   const allSessions = useMemo(() => listAllSessions(db), [db]);
   const [stack, setStack] = useState<Nav[]>([{ screen: "dashboard" }]);
+  const [help, setHelp] = useState(false);
 
   const push = (nav: Nav) => setStack((s) => [...s, nav]);
   const back = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+
+  useInput(
+    (input) => {
+      if (input === "?") setHelp(true);
+    },
+    { isActive: !help },
+  );
 
   const openProjectSessions = (project: IndexedProject) =>
     push({ screen: "sessions", project, sessions: listIndexedSessions(db, project.projectId) });
@@ -52,6 +61,14 @@ export function App({ db, pricing }: Props) {
   }
 
   const nav = stack[stack.length - 1] as Nav;
+
+  if (help) {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <HelpOverlay isActive onClose={() => setHelp(false)} />
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" padding={1}>

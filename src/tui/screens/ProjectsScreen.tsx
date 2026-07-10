@@ -8,6 +8,7 @@ import {
 } from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { Footer, ScreenHeader } from "../components/ui.tsx";
 import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
@@ -30,13 +31,12 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
   const rows = sort.sorted(projects);
   return (
     <Box flexDirection="column">
-      <Text bold color="cyan">
-        Projects ({projects.length}) · {formatUSD(projects.reduce((s, p) => s + p.cost, 0))} ·{" "}
-        {formatCount(projects.reduce((s, p) => s + p.sessions, 0))} sessions
-      </Text>
-      <Box marginBottom={1}>
-        <Text dimColor>cost · tokens · sessions · last active · path</Text>
-      </Box>
+      <ScreenHeader
+        title={`Projects (${projects.length}) · ${formatUSD(
+          projects.reduce((s, p) => s + p.cost, 0),
+        )} · ${formatCount(projects.reduce((s, p) => s + p.sessions, 0))} sessions`}
+        subtitle="cost · tokens · sessions · last active · path"
+      />
       <FilterableList
         items={rows}
         isActive={isActive}
@@ -60,9 +60,7 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
           </Text>
         )}
       />
-      <Box marginTop={1}>
-        <Text dimColor>type filter · ↑/↓ move · enter open · ctrl-c quit</Text>
-      </Box>
+      <Footer hints="type filter · tab sort · ↑/↓ move · enter open" />
     </Box>
   );
 }

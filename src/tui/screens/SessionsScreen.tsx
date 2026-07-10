@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { Footer, ScreenHeader } from "../components/ui.tsx";
 import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
@@ -24,12 +25,10 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
   const rows = sort.sorted(sessions);
   return (
     <Box flexDirection="column">
-      <Text bold color="cyan">
-        {truncate(project.projectPath ?? project.projectId, 70)}
-      </Text>
-      <Box marginBottom={1}>
-        <Text dimColor>{sessions.length} sessions · cost · tokens · modified · title</Text>
-      </Box>
+      <ScreenHeader
+        title={truncate(project.projectPath ?? project.projectId, 70)}
+        subtitle={`${sessions.length} sessions · cost · tokens · modified · title`}
+      />
       <FilterableList
         items={rows}
         isActive={isActive}
@@ -53,9 +52,7 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
           </Text>
         )}
       />
-      <Box marginTop={1}>
-        <Text dimColor>type filter · ↑/↓ move · enter open · esc back · ctrl-c quit</Text>
-      </Box>
+      <Footer hints="type filter · tab sort · ↑/↓ move · enter open · esc back" />
     </Box>
   );
 }

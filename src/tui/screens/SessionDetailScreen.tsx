@@ -18,6 +18,8 @@ import {
   type TranscriptItem,
   type TranscriptKind,
 } from "../../core/transcript.ts";
+import { Footer, Loading } from "../components/ui.tsx";
+import { usePageSize } from "../usePageSize.ts";
 
 interface Props {
   session: IndexedSession;
@@ -28,7 +30,6 @@ interface Props {
 
 type Tab = "summary" | "turns" | "transcript";
 const TABS: Tab[] = ["summary", "turns", "transcript"];
-const PAGE_SIZE = 16;
 
 interface Loaded {
   analysis: SessionAnalysis;
@@ -71,7 +72,7 @@ export function SessionDetailScreen({ session, pricing, isActive, onBack }: Prop
     { isActive },
   );
 
-  if (!data) return <Text dimColor>Loading session…</Text>;
+  if (!data) return <Loading label="Loading session" />;
   const { analysis } = data;
 
   return (
@@ -96,9 +97,7 @@ export function SessionDetailScreen({ session, pricing, isActive, onBack }: Prop
         {tab === "turns" && <TurnsView a={analysis} isActive={isActive} />}
         {tab === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor>1/2/3 or tab switch · ↑/↓ move · enter expand · esc back · ctrl-c quit</Text>
-      </Box>
+      <Footer hints="1/2/3 or tab · ↑/↓ move · enter expand · g/G jump · esc back" />
     </Box>
   );
 }
@@ -276,6 +275,7 @@ function TurnsView({ a, isActive }: { a: SessionAnalysis; isActive: boolean }) {
   const [openSteps, setOpenSteps] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState(0);
   const [offset, setOffset] = useState(0);
+  const pageSize = usePageSize(7);
 
   const { rows, actionable } = useMemo(
     () => buildRows(a, openTurns, openSteps),
@@ -302,7 +302,7 @@ function TurnsView({ a, isActive }: { a: SessionAnalysis; isActive: boolean }) {
       }
       if (input === "G") {
         setSel(actionable.length - 1);
-        setOffset(Math.max(0, rows.length - PAGE_SIZE));
+        setOffset(Math.max(0, rows.length - pageSize));
         return;
       }
       const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
@@ -311,12 +311,12 @@ function TurnsView({ a, isActive }: { a: SessionAnalysis; isActive: boolean }) {
       setSel(nextSel);
       const rowIdx = actionable[nextSel] ?? 0;
       if (rowIdx < offset) setOffset(rowIdx);
-      else if (rowIdx >= offset + PAGE_SIZE) setOffset(rowIdx - PAGE_SIZE + 1);
+      else if (rowIdx >= offset + pageSize) setOffset(rowIdx - pageSize + 1);
     },
     { isActive },
   );
 
-  const visible = rows.slice(offset, offset + PAGE_SIZE);
+  const visible = rows.slice(offset, offset + pageSize);
   return (
     <Box flexDirection="column">
       {visible.map((row, i) => {
@@ -324,9 +324,9 @@ function TurnsView({ a, isActive }: { a: SessionAnalysis; isActive: boolean }) {
         const selected = rowIndex === selectedRow;
         return <RowView key={rowIndex} row={row} selected={selected} />;
       })}
-      {rows.length > PAGE_SIZE && (
+      {rows.length > pageSize && (
         <Text dimColor>
-          {offset + 1}–{Math.min(offset + PAGE_SIZE, rows.length)} / {rows.length}
+          {offset + 1}–{Math.min(offset + pageSize, rows.length)} / {rows.length}
         </Text>
       )}
     </Box>
@@ -395,6 +395,7 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
+  const pageSize = usePageSize(7);
 
   useInput(
     (input, key) => {
@@ -410,7 +411,7 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
       }
       if (input === "G") {
         setCursor(items.length - 1);
-        setOffset(Math.max(0, items.length - PAGE_SIZE));
+        setOffset(Math.max(0, items.length - pageSize));
         return;
       }
       const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
@@ -418,12 +419,12 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
       const next = Math.max(0, Math.min(activeCursor + dir, items.length - 1));
       setCursor(next);
       if (next < offset) setOffset(next);
-      else if (next >= offset + PAGE_SIZE) setOffset(next - PAGE_SIZE + 1);
+      else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
     },
     { isActive },
   );
 
-  const visible = items.slice(offset, offset + PAGE_SIZE);
+  const visible = items.slice(offset, offset + pageSize);
   return (
     <Box flexDirection="column">
       {visible.map((item, i) => {
@@ -454,9 +455,9 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
           </Box>
         );
       })}
-      {items.length > PAGE_SIZE && (
+      {items.length > pageSize && (
         <Text dimColor>
-          {offset + 1}–{Math.min(offset + PAGE_SIZE, items.length)} / {items.length}
+          {offset + 1}–{Math.min(offset + pageSize, items.length)} / {items.length}
         </Text>
       )}
     </Box>

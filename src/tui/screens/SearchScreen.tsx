@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
 import type { SessionWithProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { Footer, ScreenHeader } from "../components/ui.tsx";
 import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
@@ -23,14 +24,10 @@ export function SearchScreen({ sessions, onOpen, onBack, isActive }: Props) {
   const rows = sort.sorted(sessions);
   return (
     <Box flexDirection="column">
-      <Text bold color="cyan">
-        Search all sessions ({sessions.length})
-      </Text>
-      <Box marginBottom={1}>
-        <Text dimColor>
-          type to search title / id / project · cost · tokens · modified · project
-        </Text>
-      </Box>
+      <ScreenHeader
+        title={`Search all sessions (${sessions.length})`}
+        subtitle="type to search title / id / project · cost · tokens · modified · project"
+      />
       <FilterableList
         items={rows}
         isActive={isActive}
@@ -54,11 +51,7 @@ export function SearchScreen({ sessions, onOpen, onBack, isActive }: Props) {
           </Text>
         )}
       />
-      <Box marginTop={1}>
-        <Text dimColor>
-          type filter · tab sort · ↑/↓ move · enter open · esc back · ctrl-c quit
-        </Text>
-      </Box>
+      <Footer hints="type filter · tab sort · ↑/↓ move · enter open · esc back" />
     </Box>
   );
 }

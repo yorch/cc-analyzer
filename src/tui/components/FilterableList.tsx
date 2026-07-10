@@ -1,5 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useState } from "react";
+import { usePageSize } from "../usePageSize.ts";
+import { Empty } from "./ui.tsx";
 
 export interface FilterableListProps<T> {
   items: T[];
@@ -31,7 +33,7 @@ export function FilterableList<T>({
   renderItem,
   onSelect,
   onBack,
-  pageSize = 15,
+  pageSize,
   isActive = true,
   sortLabel,
   onCycleSort,
@@ -40,6 +42,8 @@ export function FilterableList<T>({
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
+  const autoSize = usePageSize(8);
+  const size = pageSize ?? autoSize;
 
   const q = query.toLowerCase();
   const filtered = q ? items.filter((i) => filterText(i).toLowerCase().includes(q)) : items;
@@ -71,7 +75,7 @@ export function FilterableList<T>({
         );
         setCursor(next);
         if (next < offset) setOffset(next);
-        else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
+        else if (next >= offset + size) setOffset(next - size + 1);
         return;
       }
       if (key.tab) {
@@ -84,7 +88,7 @@ export function FilterableList<T>({
         reset();
         return;
       }
-      if (input && !key.ctrl && !key.meta && !key.tab) {
+      if (input && input !== "?" && !key.ctrl && !key.meta && !key.tab) {
         setQuery((cur) => cur + input);
         reset();
       }
@@ -92,7 +96,7 @@ export function FilterableList<T>({
     { isActive },
   );
 
-  const visible = filtered.slice(offset, offset + pageSize);
+  const visible = filtered.slice(offset, offset + size);
   return (
     <Box flexDirection="column">
       <Box>
@@ -110,7 +114,7 @@ export function FilterableList<T>({
       </Box>
       <Box flexDirection="column" marginTop={1}>
         {visible.length === 0 ? (
-          <Text dimColor>(no matches)</Text>
+          <Empty label="(no matches)" />
         ) : (
           visible.map((item, i) => {
             const realIndex = offset + i;
