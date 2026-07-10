@@ -1,11 +1,12 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatDuration, formatUSD, truncate } from "../../cli/format.ts";
 import type { SessionAnalysis } from "../../core/analyze.ts";
 import { analyzeSession } from "../../core/analyze.ts";
 import { parseSessionFile } from "../../core/parser.ts";
 import type { PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
+import type { StepKind, TurnStep } from "../../core/steps.ts";
 import {
   buildTranscript,
   type TranscriptItem,
@@ -53,8 +54,9 @@ export function SessionDetailScreen({ session, pricing, isActive, onBack }: Prop
     };
   }, [session.path, pricing]);
 
+  const turnRows = useMemo(() => (data ? buildTurnRows(data.analysis) : []), [data]);
   const rows =
-    tab === "transcript" ? (data?.transcript.length ?? 0) : (data?.analysis.turns.length ?? 0);
+    tab === "transcript" ? (data?.transcript.length ?? 0) : tab === "turns" ? turnRows.length : 0;
   const pageSize = 16;
 
   const goTab = (t: Tab) => {
@@ -103,7 +105,7 @@ export function SessionDetailScreen({ session, pricing, isActive, onBack }: Prop
       </Box>
       <Box marginTop={1} flexDirection="column">
         {tab === "summary" && <SummaryView a={analysis} />}
-        {tab === "turns" && <TurnsView a={analysis} offset={offset} pageSize={pageSize} />}
+        {tab === "turns" && <TurnsView rows={turnRows} offset={offset} pageSize={pageSize} />}
         {tab === "transcript" && (
           <TranscriptView items={data.transcript} offset={offset} pageSize={pageSize} />
         )}
@@ -150,28 +152,109 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
   );
 }
 
+type TurnRow =
+  | { type: "turn"; index: number; cost: number; calls: number; prompt: string }
+  | { type: "call"; model: string; cost: number }
+  | { type: "step"; step: TurnStep };
+
+/** Flatten turns → api-call dividers → step rows for a scrollable timeline. */
+function buildTurnRows(a: SessionAnalysis): TurnRow[] {
+  const rows: TurnRow[] = [];
+  for (const t of a.turns) {
+    rows.push({
+      type: "turn",
+      index: t.index,
+      cost: t.cost.total,
+      calls: t.apiCalls.length,
+      prompt: t.prompt,
+    });
+    for (const call of t.apiCalls) {
+      if (call.steps.length === 0) continue;
+      rows.push({ type: "call", model: call.model ?? "?", cost: call.cost.total });
+      for (const step of call.steps) rows.push({ type: "step", step });
+    }
+  }
+  return rows;
+}
+
+const STEP_ICON: Record<StepKind, string> = {
+  note: "»",
+  thinking: "◦",
+  run: "$",
+  read: "▤",
+  edit: "✎",
+  search: "⌕",
+  skill: "◆",
+  subagent: "⌥",
+  web: "◍",
+  task: "☑",
+  ask: "?",
+  tool: "·",
+};
+const STEP_COLOR: Record<StepKind, string> = {
+  note: "white",
+  thinking: "gray",
+  run: "yellow",
+  read: "gray",
+  edit: "cyan",
+  search: "yellow",
+  skill: "magenta",
+  subagent: "cyan",
+  web: "blue",
+  task: "gray",
+  ask: "yellow",
+  tool: "gray",
+};
+
 function TurnsView({
-  a,
+  rows,
   offset,
   pageSize,
 }: {
-  a: SessionAnalysis;
+  rows: TurnRow[];
   offset: number;
   pageSize: number;
 }) {
-  const visible = a.turns.slice(offset, offset + pageSize);
+  const visible = rows.slice(offset, offset + pageSize);
   return (
     <Box flexDirection="column">
-      {visible.map((t) => (
-        <Text key={t.index}>
-          <Text dimColor>{String(t.index + 1).padStart(3)} </Text>
-          {formatUSD(t.cost.total).padStart(9)} {String(t.apiCalls.length).padStart(3)}c{"  "}
-          {truncate(t.prompt || "(no text)", 58)}
-        </Text>
-      ))}
-      {a.turns.length > pageSize && (
+      {visible.map((row, i) => {
+        const key = offset + i;
+        if (row.type === "turn") {
+          return (
+            <Text key={key} bold>
+              <Text color="cyan">
+                #{row.index + 1} {formatUSD(row.cost).padStart(9)} {row.calls}c{" "}
+              </Text>
+              {truncate(row.prompt || "(no text)", 52)}
+            </Text>
+          );
+        }
+        if (row.type === "call") {
+          return (
+            <Text key={key} dimColor>
+              {"  "}
+              {row.model} · {formatUSD(row.cost)}
+            </Text>
+          );
+        }
+        const { step } = row;
+        const mark = step.status === "error" ? " ✗" : step.status === "ok" ? " ✓" : "";
+        return (
+          <Text key={key}>
+            {"   "}
+            <Text color={STEP_COLOR[step.kind]}>
+              {STEP_ICON[step.kind]} {step.label}
+            </Text>
+            {step.summary ? <Text> {truncate(step.summary, 46)}</Text> : null}
+            <Text color={step.status === "error" ? "red" : "green"}>{mark}</Text>
+            {step.resultHint ? <Text dimColor> {truncate(step.resultHint, 24)}</Text> : null}
+          </Text>
+        );
+      })}
+      {rows.length > pageSize && (
         <Text dimColor>
-          {offset + 1}–{Math.min(offset + pageSize, a.turns.length)} / {a.turns.length}
+          {offset + 1}–{Math.min(offset + pageSize, rows.length)} / {rows.length}
         </Text>
       )}
     </Box>

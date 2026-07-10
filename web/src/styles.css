@@ -592,6 +592,133 @@ p.muted {
   font-variant-numeric: tabular-nums;
 }
 
+/* step timeline (turns tab) */
+.calldivider {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 6px 4px 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.callblock:first-child .calldivider {
+  border-top: none;
+  margin-top: 0;
+}
+.step {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  margin: 1px 0;
+}
+.steprow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 4px;
+}
+.steprow:hover {
+  background: var(--panel-2);
+}
+.stepicon {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+}
+.steplabel {
+  flex: none;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.stepsummary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.stephint {
+  flex: none;
+  color: var(--faint);
+  font-size: 11px;
+}
+.ok {
+  color: var(--teal);
+}
+.step.k-run {
+  border-left-color: var(--signal);
+}
+.step.k-run .stepicon,
+.step.k-run .steplabel {
+  color: var(--signal);
+}
+.step.k-edit,
+.step.k-subagent {
+  border-left-color: var(--teal);
+}
+.step.k-edit .stepicon,
+.step.k-edit .steplabel,
+.step.k-subagent .stepicon,
+.step.k-subagent .steplabel {
+  color: var(--teal);
+}
+.step.k-search,
+.step.k-skill,
+.step.k-web,
+.step.k-ask {
+  border-left-color: var(--signal-2);
+}
+.step.k-note {
+  border-left-color: var(--border-strong);
+}
+.step.k-note .steplabel {
+  color: var(--muted);
+}
+.step.k-thinking {
+  border-left-color: var(--faint);
+}
+.step.k-thinking .steplabel,
+.step.k-thinking .stepsummary {
+  color: var(--faint);
+  font-style: italic;
+}
+.stepdetail {
+  margin: 2px 0 8px 22px;
+}
+.stepdetaillabel {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-top: 6px;
+}
+.stepdetail pre {
+  margin: 3px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  max-height: 300px;
+  overflow: auto;
+}
+
 .loadmore {
   display: flex;
   gap: 8px;

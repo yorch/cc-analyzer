@@ -68,11 +68,24 @@ describe("analyzeSession", () => {
     expect(a.versions).toEqual(["1.3.0"]);
   });
 
-  test("marks a failed tool_result on the matching tool call", async () => {
+  test("builds a per-call step timeline with narration, thinking and operations", async () => {
     const a = await analyzeFixture();
-    const bash = a.turns[1]?.apiCalls[0]?.toolCalls[0];
-    expect(bash?.name).toBe("Bash");
-    expect(bash?.isError).toBe(true);
+    // Turn 0, call 0 (a1): thinking → text → Write tool_use
+    const steps0 = a.turns[0]?.apiCalls[0]?.steps ?? [];
+    expect(steps0.map((s) => s.kind)).toEqual(["thinking", "note", "edit"]);
+    const write = steps0[2];
+    expect(write?.label).toBe("Write");
+    expect(write?.summary).toBe("/Users/dev/proj/hello.ts");
+    expect(write?.status).toBe("ok");
+  });
+
+  test("marks a failed tool_result on the matching operation step", async () => {
+    const a = await analyzeFixture();
+    const bash = a.turns[1]?.apiCalls[0]?.steps.find((s) => s.tool === "Bash");
+    expect(bash?.label).toBe("Bash");
+    expect(bash?.summary).toBe("Run tests");
+    expect(bash?.status).toBe("error");
+    expect(bash?.resultHint).toBe("1 test failed");
   });
 
   test("carries prompt permission mode", async () => {

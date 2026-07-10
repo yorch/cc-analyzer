@@ -17,13 +17,14 @@ import {
   zeroCost,
   zeroTokens,
 } from "./pricing.ts";
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  input: unknown;
-  isError: boolean;
-}
+import {
+  capDetail,
+  makeResultHint,
+  resultToText,
+  summarizeToolUse,
+  type TurnStep,
+  truncate,
+} from "./steps.ts";
 
 export interface ApiCall {
   uuid?: string;
@@ -32,7 +33,8 @@ export interface ApiCall {
   isSidechain: boolean;
   tokens: TokenCounts;
   cost: CostBreakdown;
-  toolCalls: ToolCall[];
+  /** Ordered timeline of this inference: narration, thinking, tool operations. */
+  steps: TurnStep[];
 }
 
 export interface Turn {
@@ -141,17 +143,26 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
-/** Build a map of tool_use_id -> is_error from every tool_result in the session. */
-function collectToolErrors(events: SessionEvent[]): Map<string, boolean> {
-  const map = new Map<string, boolean>();
+interface ToolResult {
+  isError: boolean;
+  text: string;
+}
+
+/** Map each tool_use_id to its result (error flag + text) from tool_result blocks. */
+function collectToolResults(events: SessionEvent[]): Map<string, ToolResult> {
+  const map = new Map<string, ToolResult>();
   for (const e of events) {
     if (!isUser(e)) continue;
     const content = e.message.content;
     if (typeof content === "string") continue;
     for (const block of content) {
-      const b = block as ContentBlock & { tool_use_id?: string; is_error?: boolean };
+      const b = block as ContentBlock & {
+        tool_use_id?: string;
+        is_error?: boolean;
+        content?: unknown;
+      };
       if (b.type === "tool_result" && b.tool_use_id) {
-        map.set(b.tool_use_id, b.is_error === true);
+        map.set(b.tool_use_id, { isError: b.is_error === true, text: resultToText(b.content) });
       }
     }
   }
@@ -168,7 +179,7 @@ function stringField(input: unknown, key: string): string | undefined {
 
 /** Analyze a session's events into per-turn and aggregate metrics. */
 export function analyzeSession(events: SessionEvent[], pricing: PricingTable): SessionAnalysis {
-  const toolErrors = collectToolErrors(events);
+  const toolResults = collectToolResults(events);
 
   const turns: Turn[] = [];
   const gitBranches = new Set<string>();
@@ -185,6 +196,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   let endTime: string | undefined;
   let webSearches = 0;
   let webFetches = 0;
+  let toolCallCount = 0;
   let current: Turn | undefined;
 
   const touchTime = (ts?: string) => {
@@ -243,21 +255,43 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       // A family-heuristic match (non-exact) is still an estimate.
       if (resolved && !resolved.exact) cost.estimated = true;
 
-      const toolCalls: ToolCall[] = [];
+      const steps: TurnStep[] = [];
       for (const block of event.message.content) {
-        if ((block as ContentBlock).type !== "tool_use") continue;
+        const b = block as ContentBlock & { text?: string; thinking?: string };
+        if (b.type === "text") {
+          const text = b.text ?? "";
+          if (text.trim() === "") continue;
+          const capped = capDetail(text);
+          steps.push({
+            kind: "note",
+            label: "Assistant",
+            summary: truncate(text, 200),
+            detail: { result: capped.text, truncated: capped.truncated },
+          });
+          continue;
+        }
+        if (b.type === "thinking") {
+          const think = b.thinking ?? "";
+          const capped = capDetail(think);
+          steps.push({
+            kind: "thinking",
+            label: "thinking",
+            summary: think.trim() === "" ? "(hidden)" : truncate(think, 160),
+            detail: { result: capped.text, truncated: capped.truncated },
+          });
+          continue;
+        }
+        if (b.type !== "tool_use") continue;
+
         const tu = block as ToolUseBlock;
+        toolCallCount += 1;
         tools[tu.name] = (tools[tu.name] ?? 0) + 1;
-        toolCalls.push({
-          id: tu.id,
-          name: tu.name,
-          input: tu.input,
-          isError: toolErrors.get(tu.id) === true,
-        });
+        if (current) current.toolCounts[tu.name] = (current.toolCounts[tu.name] ?? 0) + 1;
+
         if (tu.name === "Skill") {
           const s = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
           if (s) skills.add(s);
-        } else if (tu.name === "Task") {
+        } else if (tu.name === "Task" || tu.name === "Agent") {
           const t = stringField(tu.input, "subagent_type");
           if (t) subagents.add(t);
         }
@@ -265,6 +299,25 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
           const fp = stringField(tu.input, "file_path");
           if (fp) filesTouched.add(fp);
         }
+
+        const result = toolResults.get(tu.id);
+        const { kind, label, summary } = summarizeToolUse(tu.name, tu.input);
+        const inputCapped = capDetail(JSON.stringify(tu.input ?? null, null, 2));
+        const resultCapped = result ? capDetail(result.text) : undefined;
+        steps.push({
+          kind,
+          tool: tu.name,
+          label,
+          summary,
+          toolUseId: tu.id,
+          status: result ? (result.isError ? "error" : "ok") : undefined,
+          resultHint: result ? makeResultHint(result.isError, result.text) : undefined,
+          detail: {
+            input: inputCapped.text,
+            result: resultCapped?.text,
+            truncated: inputCapped.truncated || resultCapped?.truncated === true,
+          },
+        });
       }
 
       const apiCall: ApiCall = {
@@ -274,7 +327,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         isSidechain: event.isSidechain === true,
         tokens,
         cost,
-        toolCalls,
+        steps,
       };
 
       if (model) {
@@ -293,8 +346,6 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         current.tokens = addTokens(current.tokens, tokens);
         current.cost = addCost(current.cost, cost);
         if (model && !current.models.includes(model)) current.models.push(model);
-        for (const tc of toolCalls)
-          current.toolCounts[tc.name] = (current.toolCounts[tc.name] ?? 0) + 1;
       }
       continue;
     }
@@ -305,7 +356,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   const totals: SessionTotals = {
     turns: turns.length,
     apiCalls: 0,
-    toolCalls: 0,
+    toolCalls: toolCallCount,
     tokens: zeroTokens(),
     cost: zeroCost(),
     webSearches,
@@ -315,7 +366,6 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     totals.apiCalls += turn.apiCalls.length;
     totals.tokens = addTokens(totals.tokens, turn.tokens);
     totals.cost = addCost(totals.cost, turn.cost);
-    for (const call of turn.apiCalls) totals.toolCalls += call.toolCalls.length;
   }
 
   return {
