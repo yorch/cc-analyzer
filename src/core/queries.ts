@@ -64,3 +64,11 @@ export function isIndexEmpty(db: Database): boolean {
   const row = db.query("SELECT COUNT(*) AS n FROM sessions").get() as { n: number };
   return row.n === 0;
 }
+
+/** Look up a session's file path from the index by session id. */
+export function sessionPathById(db: Database, id: string): string | undefined {
+  const row = db
+    .query("SELECT path FROM sessions WHERE session_id = ? OR path LIKE ? LIMIT 1")
+    .get(id, `%/${id}.jsonl`) as { path: string } | undefined;
+  return row?.path;
+}

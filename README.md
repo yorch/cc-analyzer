@@ -4,9 +4,9 @@ A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-co
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
 
-> Status: **Phase 3 (core + index + analytics + interactive TUI)**.
-> The web app is planned. See [`docs/superpowers/specs`](docs/superpowers/specs)
-> for the full design.
+> Status: **Complete** — analysis core, SQLite index, portfolio analytics,
+> interactive TUI, and a local web app, all in one binary. See
+> [`docs/superpowers/specs`](docs/superpowers/specs) for the full design.
 
 ## Why
 
@@ -45,6 +45,7 @@ cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer stats [--json]           # portfolio-wide analytics (needs an index)
+cc-analyzer serve [--port=4317]      # launch the local web app (needs an index)
 cc-analyzer pricing update           # refresh the pricing cache
 ```
 
@@ -94,8 +95,26 @@ browse **projects → sessions → session detail**, where the detail view has
 terminal (TTY); piped/non-interactive use falls back to a hint about the
 scriptable commands above.
 
+### Web app
+
+`cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
+with a portfolio dashboard, project drill-down, and a per-session view including
+a color-coded transcript reader. The SPA is built by Vite into a single
+self-contained HTML file (`bun run build:web`) and baked into the binary, so the
+release build serves the whole UI with no external assets.
+
+## Building the release binary
+
+```bash
+bun run build   # vite build → embed SPA → bun compile → dist/cc-analyzer
+```
+
+This produces a single ~63 MB executable containing the CLI, TUI, API, and web
+UI. `bun run build:web` builds and embeds only the SPA (used by the full build).
+
 ## Roadmap
 
 - ~~SQLite index + portfolio analytics~~ ✓
 - ~~Interactive TUI (Ink)~~ ✓
-- Phase 4: embedded local web app (Hono + React SPA).
+- ~~Local web app (Hono + React SPA)~~ ✓
+- Ideas: live-follow of active sessions; diff/compare two sessions; export reports.

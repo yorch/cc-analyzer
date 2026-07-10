@@ -25,6 +25,7 @@ Usage:
                                        Analyze a single session
   cc-analyzer index [--rebuild]        Build/refresh the session index
   cc-analyzer stats [--json]           Portfolio-wide analytics (needs an index)
+  cc-analyzer serve [--port=4317]      Launch the local web app (needs an index)
   cc-analyzer pricing update           Refresh the pricing cache
   cc-analyzer help                     Show this help
 
@@ -164,6 +165,13 @@ async function main(): Promise<number> {
       return cmdIndex(rest.includes("--rebuild"));
     case "stats":
       return cmdStats(json);
+    case "serve": {
+      const portArg = rest.find((a) => a.startsWith("--port="));
+      const port = portArg ? Number(portArg.slice("--port=".length)) : undefined;
+      const { runServe } = await import("../web/server.ts");
+      await runServe({ port });
+      return 0;
+    }
     case "pricing":
       if (positional[0] === "update") return cmdPricingUpdate();
       console.error("usage: cc-analyzer pricing update");
