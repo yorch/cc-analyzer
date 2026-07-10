@@ -22,19 +22,57 @@ separately, which is where most of the real spend hides.
 The tool is **read-only**: it never writes to `~/.claude`. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.
 
-## Install / run
+## Install
+
+### Download a prebuilt binary (recommended)
+
+Every [release](https://github.com/yorch/cc-analyzer/releases/latest) ships a
+self-contained binary for each platform — no Bun, Node, or other runtime
+required.
+
+**macOS / Linux** — pick the asset for your platform from the table below:
+
+```bash
+curl -fL -o cc-analyzer \
+  https://github.com/yorch/cc-analyzer/releases/latest/download/cc-analyzer-darwin-arm64
+chmod +x cc-analyzer
+sudo mv cc-analyzer /usr/local/bin/     # or anywhere on your PATH
+cc-analyzer --help
+```
+
+On macOS the binary is unsigned, so Gatekeeper quarantines the download. Clear it once:
+
+```bash
+xattr -d com.apple.quarantine /usr/local/bin/cc-analyzer
+```
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -fL -o cc-analyzer.exe `
+  https://github.com/yorch/cc-analyzer/releases/latest/download/cc-analyzer-windows-x64.exe
+.\cc-analyzer.exe --help
+```
+
+| Platform               | Asset                          |
+| ---------------------- | ------------------------------ |
+| macOS (Apple silicon)  | `cc-analyzer-darwin-arm64`     |
+| macOS (Intel)          | `cc-analyzer-darwin-x64`       |
+| Linux (x64)            | `cc-analyzer-linux-x64`        |
+| Linux (arm64)          | `cc-analyzer-linux-arm64`      |
+| Windows (x64)          | `cc-analyzer-windows-x64.exe`  |
+
+`…/releases/latest/download/…` always resolves to the newest release; pin a
+version by swapping `latest/download` for `download/v0.1.0`.
+
+### From source
 
 Requires [Bun](https://bun.sh) ≥ 1.3.
 
 ```bash
 bun install
 bun run src/cli/index.ts <command>   # or: bun start <command>
-```
-
-Build a single binary:
-
-```bash
-bun run build          # -> dist/cc-analyzer
+bun run build                        # compile a single binary -> dist/cc-analyzer
 ```
 
 ## Usage
