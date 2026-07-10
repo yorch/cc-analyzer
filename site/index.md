@@ -34,33 +34,47 @@ features:
     details: Never writes to ~/.claude. Its own state (pricing cache, index) lives under ~/.config/cc-analyzer. Your session data stays on your machine.
 ---
 
+## Install
+
+Download a self-contained binary from the
+[latest release](https://github.com/yorch/cc-analyzer/releases/latest) — no Bun
+or other runtime required. On macOS / Linux:
+
+```bash
+# swap in your platform's asset (…-darwin-arm64, …-darwin-x64,
+# …-linux-x64, …-linux-arm64, …-windows-x64.exe)
+curl -fL -o cc-analyzer \
+  https://github.com/yorch/cc-analyzer/releases/latest/download/cc-analyzer-darwin-arm64
+chmod +x cc-analyzer
+sudo mv cc-analyzer /usr/local/bin/     # or anywhere on your PATH
+cc-analyzer --help
+```
+
+On macOS the binary is unsigned, so clear the Gatekeeper quarantine once:
+`xattr -d com.apple.quarantine /usr/local/bin/cc-analyzer`.
+
 ## Quick start
 
-Requires [Bun](https://bun.sh) ≥ 1.3.
+With the binary on your PATH:
 
 ```bash
-# install dependencies
-bun install
-
 # build the portfolio index from ~/.claude, then see totals
-bun start index
-bun start stats
+cc-analyzer index
+cc-analyzer stats
 
 # analyze a single session (human-readable or --json)
-bun start analyze <session-id>
+cc-analyzer analyze <session-id>
 
 # launch the interactive TUI (no arguments)
-bun start
+cc-analyzer
 
 # or the local web app
-bun start serve
+cc-analyzer serve
 ```
 
-Build a single self-contained binary:
-
-```bash
-bun run build   # -> dist/cc-analyzer
-```
+Prefer to run from source? Requires [Bun](https://bun.sh) ≥ 1.3 — `bun install`,
+then `bun start <command>` (e.g. `bun start index`). Build your own binary with
+`bun run build` (→ `dist/cc-analyzer`).
 
 ## The web dashboard
 
