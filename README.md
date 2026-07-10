@@ -32,13 +32,13 @@ The tool is **read-only**: it never writes to `~/.claude`. Its own state
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.sh | sh
+curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.ps1 | iex
+irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
 ```
 
 The script detects your OS and architecture, downloads the matching binary from
@@ -46,7 +46,7 @@ the latest [release](https://github.com/yorch/cc-analyzer/releases/latest), and
 installs it to `~/.local/bin` (macOS/Linux) or `%LOCALAPPDATA%\cc-analyzer\bin`
 (Windows). Override the target with `CC_ANALYZER_INSTALL_DIR`, or pin a version
 with `CC_ANALYZER_VERSION=v0.2.0`. Prefer to inspect first? The scripts are
-[`install.sh`](install.sh) and [`install.ps1`](install.ps1) in this repo.
+[`install.sh`](site/public/install.sh) and [`install.ps1`](site/public/install.ps1).
 
 ### Download a prebuilt binary (manual)
 
