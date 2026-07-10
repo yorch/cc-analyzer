@@ -1,5 +1,7 @@
 # cc-analyzer
 
+[![CI](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml)
+
 A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-code)
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
@@ -115,6 +117,18 @@ bun run build   # vite build → embed SPA → bun compile → dist/cc-analyzer
 
 This produces a single ~63 MB executable containing the CLI, TUI, API, and web
 UI. `bun run build:web` builds and embeds only the SPA (used by the full build).
+
+### Releases (CI)
+
+Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
+(`.github/workflows/ci.yml`). Pushing a `v*` tag triggers
+`.github/workflows/release.yml`, which cross-compiles binaries for
+Linux (x64/arm64), macOS (x64/arm64), and Windows (x64) and attaches them to a
+GitHub release:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 ## Roadmap
 
