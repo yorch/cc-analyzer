@@ -7,12 +7,15 @@ import { useAsync } from "../useAsync.ts";
 export function Dashboard() {
   const { data, error, loading } = useAsync(() => api.stats(), []);
   const [projectQuery, setProjectQuery] = useState("");
-  if (loading) return <div className="loading">Loading portfolio…</div>;
+  if (loading) return <div className="loading">Loading portfolio</div>;
   if (error) return <div className="loading err">Error: {error}</div>;
   if (!data) return null;
 
   const { summary, byMonth, byProject, byModel, top } = data;
   const maxMonth = Math.max(1, ...byMonth.map((m) => m.cost));
+  const pct = (summary.estimatedShare * 100).toFixed(0);
+  const range =
+    summary.firstDay && summary.lastDay ? `${summary.firstDay} → ${summary.lastDay}` : "—";
   const pq = projectQuery.toLowerCase();
   const projectRows = pq
     ? byProject.filter((p) => (p.projectPath ?? p.projectId).toLowerCase().includes(pq))
@@ -20,29 +23,38 @@ export function Dashboard() {
 
   return (
     <>
-      <div className="cards">
-        <Card
-          label="Total cost"
-          value={usd(summary.cost)}
-          sub={`${(summary.estimatedShare * 100).toFixed(0)}% estimated`}
-        />
-        <Card
-          label="Sessions"
-          value={count(summary.sessions)}
-          sub={`${summary.projects} projects`}
-        />
-        <Card
-          label="Output tokens"
-          value={count(summary.outputTokens)}
-          sub={`${count(summary.inputTokens)} input`}
-        />
-        <Card
-          label="Cache read"
-          value={count(summary.cacheReadTokens)}
-          sub={`${count(summary.cacheWriteTokens)} written`}
-        />
-        <Card label="Range" value={summary.firstDay ?? "-"} sub={`→ ${summary.lastDay ?? "-"}`} />
-      </div>
+      <section className="hero">
+        <div className="hero-main">
+          <div className="hero-label">Total spend</div>
+          <div className="hero-figure">{usd(summary.cost)}</div>
+          <div className="hero-sub">
+            <span className="est">{pct}% estimated</span> · {range} · {count(summary.sessions)}{" "}
+            sessions
+          </div>
+        </div>
+        <dl className="hero-stats">
+          <div>
+            <dt>Projects</dt>
+            <dd>{summary.projects}</dd>
+          </div>
+          <div>
+            <dt>Sessions</dt>
+            <dd>{count(summary.sessions)}</dd>
+          </div>
+          <div>
+            <dt>Output tokens</dt>
+            <dd>
+              {count(summary.outputTokens)} <small>{count(summary.inputTokens)} in</small>
+            </dd>
+          </div>
+          <div>
+            <dt>Cache read</dt>
+            <dd>
+              {count(summary.cacheReadTokens)} <small>{count(summary.cacheWriteTokens)} wr</small>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
       <section>
         <h2>Spend by month</h2>
@@ -53,7 +65,7 @@ export function Dashboard() {
                 <th>Month</th>
                 <th className="num">Cost</th>
                 <th className="num">Sessions</th>
-                <th style={{ width: "40%" }} />
+                <th style={{ width: "42%" }} />
               </tr>
             </thead>
             <tbody>
@@ -79,7 +91,7 @@ export function Dashboard() {
         <input
           className="search"
           type="search"
-          placeholder="Filter projects by path…"
+          placeholder="Filter projects by path"
           value={projectQuery}
           onChange={(e) => setProjectQuery(e.target.value)}
         />
@@ -146,7 +158,7 @@ export function Dashboard() {
               {top.map((t) => (
                 <tr key={`${t.sessionId}-${t.startTime}`}>
                   <td className="num">{usd(t.cost)}</td>
-                  <td className="muted">{t.startTime?.slice(0, 10) ?? "-"}</td>
+                  <td className="muted">{t.startTime?.slice(0, 10) ?? "—"}</td>
                   <td>
                     {t.sessionId ? (
                       <a href={link.session(t.sessionId)}>{t.title ?? t.sessionId}</a>
@@ -161,15 +173,5 @@ export function Dashboard() {
         </div>
       </section>
     </>
-  );
-}
-
-function Card({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="card">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {sub && <div className="sub">{sub}</div>}
-    </div>
   );
 }

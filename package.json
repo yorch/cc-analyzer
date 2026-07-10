@@ -19,6 +19,8 @@
     "build": "bun run build:web && bun build --compile --outfile dist/cc-analyzer src/cli/index.ts"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.2.9",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
     "hono": "^4.12.28",
     "ink": "^7.1.0",
     "react": "^19.2.7",
