@@ -1,0 +1,9 @@
+node_modules/
+.vitepress/dist/
+.vitepress/cache/
+
+# Generated from ../wiki by scripts/sync-wiki.ts
+docs/
+
+# Synthetic dataset + captured state used only for screenshots
+.tmp/

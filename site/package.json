@@ -1,0 +1,17 @@
+{
+  "name": "cc-analyzer-site",
+  "private": true,
+  "type": "module",
+  "description": "VitePress landing page + docs site for cc-analyzer",
+  "scripts": {
+    "sync": "bun run scripts/sync-wiki.ts",
+    "docs:dev": "bun run sync && vitepress dev",
+    "docs:build": "bun run sync && vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "mermaid": "^11.16.0",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  }
+}
