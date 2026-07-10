@@ -1,10 +1,13 @@
 # cc-analyzer
 
 [![CI](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-cc--analyzer-3451b2)](https://yorch.github.io/cc-analyzer/)
 
 A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-code)
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
+
+**Docs & landing page:** <https://yorch.github.io/cc-analyzer/>
 
 > Status: **Complete** — analysis core, SQLite index, portfolio analytics,
 > interactive TUI, and a local web app, all in one binary. See
