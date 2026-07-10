@@ -243,3 +243,66 @@ th.num {
   color: var(--muted);
   padding: 40px 0;
 }
+
+.search {
+  width: 100%;
+  max-width: 420px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+.search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.turnhead {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.turnprompt {
+  color: var(--muted);
+  margin-top: 4px;
+}
+.turncalls {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.call {
+  padding: 3px 0;
+  font-variant-numeric: tabular-nums;
+}
+.tag.err {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.loadmore {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.loadmore button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.loadmore button:hover {
+  border-color: var(--accent);
+}

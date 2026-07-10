@@ -16,6 +16,7 @@ interface Props {
   session: IndexedSession;
   pricing: PricingTable;
   isActive: boolean;
+  onBack: () => void;
 }
 
 type Tab = "summary" | "turns" | "transcript";
@@ -34,7 +35,7 @@ const KIND_COLOR: Record<TranscriptKind, string> = {
   tool_result: "blue",
 };
 
-export function SessionDetailScreen({ session, pricing, isActive }: Props) {
+export function SessionDetailScreen({ session, pricing, isActive, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
   const [offset, setOffset] = useState(0);
@@ -63,6 +64,7 @@ export function SessionDetailScreen({ session, pricing, isActive }: Props) {
 
   useInput(
     (input, key) => {
+      if (key.escape) return onBack();
       if (input === "1" || input === "s") return goTab("summary");
       if (input === "2" || input === "t") return goTab("turns");
       if (input === "3" || input === "r") return goTab("transcript");
@@ -107,7 +109,7 @@ export function SessionDetailScreen({ session, pricing, isActive }: Props) {
         )}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>1/2/3 or tab switch · ↑/↓ scroll · esc back · q quit</Text>
+        <Text dimColor>1/2/3 or tab switch · ↑/↓ scroll · esc back · ctrl-c quit</Text>
       </Box>
     </Box>
   );

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api } from "../api.ts";
 import { count, usd } from "../format.ts";
 import { link } from "../router.ts";
@@ -5,12 +6,17 @@ import { useAsync } from "../useAsync.ts";
 
 export function Dashboard() {
   const { data, error, loading } = useAsync(() => api.stats(), []);
+  const [projectQuery, setProjectQuery] = useState("");
   if (loading) return <div className="loading">Loading portfolio…</div>;
   if (error) return <div className="loading err">Error: {error}</div>;
   if (!data) return null;
 
   const { summary, byMonth, byProject, byModel, top } = data;
   const maxMonth = Math.max(1, ...byMonth.map((m) => m.cost));
+  const pq = projectQuery.toLowerCase();
+  const projectRows = pq
+    ? byProject.filter((p) => (p.projectPath ?? p.projectId).toLowerCase().includes(pq))
+    : byProject.slice(0, 15);
 
   return (
     <>
@@ -70,6 +76,13 @@ export function Dashboard() {
 
       <section>
         <h2>Top projects</h2>
+        <input
+          className="search"
+          type="search"
+          placeholder="Filter projects by path…"
+          value={projectQuery}
+          onChange={(e) => setProjectQuery(e.target.value)}
+        />
         <div className="tablewrap">
           <table>
             <thead>
@@ -80,7 +93,7 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {byProject.slice(0, 15).map((p) => (
+              {projectRows.map((p) => (
                 <tr key={p.projectId}>
                   <td className="num">{usd(p.cost)}</td>
                   <td className="num">{p.sessions}</td>

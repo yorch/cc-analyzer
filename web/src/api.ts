@@ -74,11 +74,21 @@ export interface CostBreakdown {
   total: number;
   estimated: boolean;
 }
+export interface ToolCall {
+  id: string;
+  name: string;
+  isError: boolean;
+}
+export interface ApiCall {
+  model?: string;
+  cost: CostBreakdown;
+  toolCalls: ToolCall[];
+}
 export interface Turn {
   index: number;
   prompt: string;
   cost: CostBreakdown;
-  apiCalls: { model?: string }[];
+  apiCalls: ApiCall[];
   toolCounts: Record<string, number>;
 }
 export interface SessionAnalysis {

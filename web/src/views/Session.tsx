@@ -109,44 +109,77 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 
 function Turns({ a }: { a: SessionAnalysis }) {
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const toggle = (i: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
   return (
-    <div className="tablewrap">
-      <table>
-        <thead>
-          <tr>
-            <th className="num">#</th>
-            <th className="num">Cost</th>
-            <th className="num">Calls</th>
-            <th>Tools</th>
-            <th>Prompt</th>
-          </tr>
-        </thead>
-        <tbody>
-          {a.turns.map((t) => (
-            <tr key={t.index}>
-              <td className="num">{t.index + 1}</td>
-              <td className="num">{usd(t.cost.total)}</td>
-              <td className="num">{t.apiCalls.length}</td>
-              <td className="muted">
+    <div>
+      {a.turns.map((t) => {
+        const expanded = open.has(t.index);
+        return (
+          <div className="item" key={t.index}>
+            <button
+              type="button"
+              className="turnhead"
+              onClick={() => toggle(t.index)}
+              aria-expanded={expanded}
+            >
+              <span className="muted">{expanded ? "▾" : "▸"}</span>{" "}
+              <span className="num">#{t.index + 1}</span> · {usd(t.cost.total)} ·{" "}
+              {t.apiCalls.length} calls ·{" "}
+              <span className="muted">
                 {Object.entries(t.toolCounts)
                   .map(([n, c]) => `${n}:${c}`)
-                  .join(" ")}
-              </td>
-              <td>{t.prompt.slice(0, 100) || <span className="muted">(no text)</span>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  .join(" ") || "no tools"}
+              </span>
+              <div className="turnprompt">{t.prompt.slice(0, 140) || "(no text)"}</div>
+            </button>
+            {expanded && (
+              <div className="turncalls">
+                {t.apiCalls.map((call, ci) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: API calls within a turn have no stable id; order is fixed
+                  <div key={`${t.index}.${ci}`} className="call">
+                    <span className="muted">{call.model ?? "?"}</span> · {usd(call.cost.total)}
+                    {call.toolCalls.length > 0 && (
+                      <span>
+                        {"  "}
+                        {call.toolCalls.map((tc) => (
+                          <span className={`tag ${tc.isError ? "err" : ""}`} key={tc.id}>
+                            {tc.name}
+                            {tc.isError ? " ✗" : ""}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
+const TRANSCRIPT_WINDOW = 200;
+
 function Transcript({ loading, items }: { loading: boolean; items: TranscriptItem[] }) {
+  const [visible, setVisible] = useState(TRANSCRIPT_WINDOW);
   if (loading) return <div className="loading">Loading transcript…</div>;
+  const shown = items.slice(0, visible);
   return (
     <section>
-      <p className="muted">{count(items.length)} items</p>
-      {items.map((item) => (
+      <p className="muted">
+        {count(items.length)} items{items.length > visible ? ` · showing ${visible}` : ""}
+      </p>
+      {shown.map((item) => (
         <div className={`item k-${item.kind}`} key={item.index}>
           <div className="head">
             {item.label}
@@ -155,6 +188,16 @@ function Transcript({ loading, items }: { loading: boolean; items: TranscriptIte
           <pre>{item.body || "(empty)"}</pre>
         </div>
       ))}
+      {items.length > visible && (
+        <div className="loadmore">
+          <button type="button" onClick={() => setVisible((v) => v + TRANSCRIPT_WINDOW)}>
+            Show more
+          </button>
+          <button type="button" onClick={() => setVisible(items.length)}>
+            Show all ({count(items.length)})
+          </button>
+        </div>
+      )}
     </section>
   );
 }

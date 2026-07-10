@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text } from "ink";
 import { useMemo, useState } from "react";
 import type { PricingTable } from "../core/pricing.ts";
 import {
@@ -28,21 +28,16 @@ type Nav =
     };
 
 export function App({ db, pricing }: Props) {
-  const { exit } = useApp();
   const projects = useMemo(() => listIndexedProjects(db), [db]);
   const [nav, setNav] = useState<Nav>({ screen: "projects" });
 
-  useInput((input, key) => {
-    if (input === "q") exit();
-    else if (key.escape || key.backspace || input === "h") {
-      setNav((n) => {
-        if (n.screen === "detail")
-          return { screen: "sessions", project: n.project, sessions: n.sessions };
-        if (n.screen === "sessions") return { screen: "projects" };
-        return n;
-      });
-    }
-  });
+  const back = () =>
+    setNav((n) => {
+      if (n.screen === "detail")
+        return { screen: "sessions", project: n.project, sessions: n.sessions };
+      if (n.screen === "sessions") return { screen: "projects" };
+      return n;
+    });
 
   if (projects.length === 0) {
     return (
@@ -51,7 +46,7 @@ export function App({ db, pricing }: Props) {
         <Text>
           Run <Text color="cyan">cc-analyzer index</Text> first, then relaunch.
         </Text>
-        <Text dimColor>Press q to quit.</Text>
+        <Text dimColor>Press ctrl-c to quit.</Text>
       </Box>
     );
   }
@@ -62,6 +57,7 @@ export function App({ db, pricing }: Props) {
         <ProjectsScreen
           projects={projects}
           isActive
+          onBack={() => {}}
           onOpen={(project) =>
             setNav({
               screen: "sessions",
@@ -76,13 +72,14 @@ export function App({ db, pricing }: Props) {
           project={nav.project}
           sessions={nav.sessions}
           isActive
+          onBack={back}
           onOpen={(session) =>
             setNav({ screen: "detail", project: nav.project, sessions: nav.sessions, session })
           }
         />
       )}
       {nav.screen === "detail" && (
-        <SessionDetailScreen session={nav.session} pricing={pricing} isActive />
+        <SessionDetailScreen session={nav.session} pricing={pricing} isActive onBack={back} />
       )}
     </Box>
   );

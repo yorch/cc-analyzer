@@ -39,7 +39,7 @@ const sessions: IndexedSession[] = [
 describe("TUI screens (smoke render)", () => {
   test("ProjectsScreen lists projects with cost and path", () => {
     const { lastFrame, unmount } = render(
-      <ProjectsScreen projects={projects} onOpen={() => {}} isActive={false} />,
+      <ProjectsScreen projects={projects} onOpen={() => {}} onBack={() => {}} isActive={false} />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Projects (2)");
@@ -54,6 +54,7 @@ describe("TUI screens (smoke render)", () => {
         project={projects[0] as IndexedProject}
         sessions={sessions}
         onOpen={() => {}}
+        onBack={() => {}}
         isActive={false}
       />,
     );

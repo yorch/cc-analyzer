@@ -90,18 +90,22 @@ month/project/model, and the most expensive sessions.
 Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink):
 browse **projects → sessions → session detail**, where the detail view has
 **Summary**, **Turns**, and **Transcript** tabs. It reads from the index, so run
-`cc-analyzer index` first. Keys: `↑/↓` or `j/k` move, `enter` open, `esc` back,
-`1/2/3` or `tab` switch detail tabs, `q` quit. It requires an interactive
-terminal (TTY); piped/non-interactive use falls back to a hint about the
-scriptable commands above.
+`cc-analyzer index` first. The project and session lists have an inline
+substring **filter** — just start typing. Keys: `↑/↓` move, `enter` open, type
+to filter, `esc` clears the filter (or goes back when empty), `1/2/3` or `tab`
+switch detail tabs, `ctrl-c` quit. It requires an interactive terminal (TTY);
+piped/non-interactive use falls back to a hint about the scriptable commands.
 
 ### Web app
 
 `cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
-with a portfolio dashboard, project drill-down, and a per-session view including
-a color-coded transcript reader. The SPA is built by Vite into a single
-self-contained HTML file (`bun run build:web`) and baked into the binary, so the
-release build serves the whole UI with no external assets.
+with a portfolio dashboard, project drill-down, and a per-session view. Projects
+and sessions can be **filtered** by name; the **Turns** tab expands each turn
+into its API calls and tool calls; and the color-coded **transcript** reader is
+windowed ("show more") so very large sessions stay responsive. The SPA is built
+by Vite into a single self-contained HTML file (`bun run build:web`) and baked
+into the binary, so the release build serves the whole UI with no external
+assets.
 
 ## Building the release binary
 

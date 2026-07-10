@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api } from "../api.ts";
 import { relTime, usd } from "../format.ts";
 import { link } from "../router.ts";
@@ -8,12 +9,17 @@ export function Project({ id }: { id: string }) {
     () => Promise.all([api.projects(), api.sessions(id)]),
     [id],
   );
+  const [query, setQuery] = useState("");
   if (loading) return <div className="loading">Loading project…</div>;
   if (error) return <div className="loading err">Error: {error}</div>;
   if (!data) return null;
 
-  const [projects, sessions] = data;
+  const [projects, allSessions] = data;
   const project = projects.find((p) => p.projectId === id);
+  const q = query.toLowerCase();
+  const sessions = q
+    ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
+    : allSessions;
 
   return (
     <>
@@ -23,9 +29,18 @@ export function Project({ id }: { id: string }) {
       <header className="top">
         <h1>{project?.projectPath ?? id}</h1>
         <span className="muted">
-          {sessions.length} sessions · {usd(project?.cost ?? 0)}
+          {sessions.length}
+          {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
         </span>
       </header>
+
+      <input
+        className="search"
+        type="search"
+        placeholder="Filter sessions by title…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
 
       <div className="tablewrap">
         <table>
