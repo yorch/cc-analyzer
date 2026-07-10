@@ -7,7 +7,7 @@ import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
-import { App } from "../../src/tui/App.tsx";
+import { DashboardScreen } from "../../src/tui/screens/DashboardScreen.tsx";
 
 const flat: ModelPricing = {
   inputCostPerToken: 0.00001,
@@ -18,7 +18,7 @@ const flat: ModelPricing = {
 };
 const pricing: PricingTable = { "claude-opus-4-7": flat, "claude-sonnet-4-5": flat };
 
-const tmpDir = join("/tmp", `cc-analyzer-app-${process.pid}-${Date.now()}`);
+const tmpDir = join("/tmp", `cc-analyzer-dash-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 let prevClaudeDir: string | undefined;
 let db: Database;
@@ -40,33 +40,66 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+const noop = () => {};
 const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-describe("App (smoke render)", () => {
-  test("opens on the dashboard home from a populated index", () => {
-    const { lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+describe("DashboardScreen", () => {
+  test("renders the portfolio hero and panel switcher", () => {
+    const { lastFrame, unmount } = render(
+      <DashboardScreen
+        db={db}
+        isActive
+        onOpenProject={noop}
+        onOpenSession={noop}
+        onOpenProjects={noop}
+        onBack={noop}
+      />,
+    );
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("total"); // portfolio hero
-    expect(frame).toContain("months"); // panel switcher
+    expect(frame).toContain("total"); // hero
+    expect(frame).toContain("months");
     expect(frame).toContain("projects");
+    expect(frame).toContain("sessions");
     unmount();
   });
 
-  test("pressing p opens the full projects list", async () => {
-    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+  test("p invokes onOpenProjects", async () => {
+    let opened = false;
+    const { stdin, unmount } = render(
+      <DashboardScreen
+        db={db}
+        isActive
+        onOpenProject={noop}
+        onOpenSession={noop}
+        onOpenProjects={() => {
+          opened = true;
+        }}
+        onBack={noop}
+      />,
+    );
     stdin.write("p");
     await wait();
-    const frame = lastFrame() ?? "";
-    expect(frame).toContain("Projects (1)");
-    expect(frame).toContain("/Users/dev/proj");
+    expect(opened).toBe(true);
     unmount();
   });
 
-  test("shows an empty-index message when nothing is indexed", () => {
-    const emptyDb = openDb(":memory:");
-    const { lastFrame, unmount } = render(<App db={emptyDb} pricing={pricing} />);
-    expect(lastFrame() ?? "").toContain("index is empty");
+  test("selecting a project row drills in via onOpenProject", async () => {
+    const opened: string[] = [];
+    const { stdin, unmount } = render(
+      <DashboardScreen
+        db={db}
+        isActive
+        onOpenProject={(id) => opened.push(id)}
+        onOpenSession={noop}
+        onOpenProjects={noop}
+        onBack={noop}
+      />,
+    );
+    stdin.write("2"); // switch to the (selectable) projects panel
+    await wait();
+    stdin.write("\r"); // enter on the first project row
+    await wait();
+    expect(opened).toEqual(["proj-a"]);
     unmount();
-    emptyDb.close();
   });
 });

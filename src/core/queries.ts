@@ -72,6 +72,30 @@ export function listIndexedSessions(db: Database, projectId: string): IndexedSes
   return rows.map((r) => ({ ...r, costEstimated: r.costEstimated === 1 }));
 }
 
+/** A single indexed session by its session id (for direct drill-in from the dashboard). */
+export function indexedSessionById(db: Database, id: string): IndexedSession | undefined {
+  const row = db
+    .query(
+      `SELECT session_id AS sessionId,
+        path,
+        title,
+        cost_total AS cost,
+        cost_estimated AS costEstimated,
+        (${IO_TOKENS}) AS ioTokens,
+        (${CACHE_TOKENS}) AS cacheTokens,
+        start_time AS startTime,
+        turns,
+        api_calls AS apiCalls,
+        tool_calls AS toolCalls,
+        mtime_ms AS mtimeMs
+      FROM sessions
+      WHERE session_id = ?
+      LIMIT 1`,
+    )
+    .get(id) as (Omit<IndexedSession, "costEstimated"> & { costEstimated: number }) | undefined;
+  return row ? { ...row, costEstimated: row.costEstimated === 1 } : undefined;
+}
+
 export function isIndexEmpty(db: Database): boolean {
   const row = db.query("SELECT COUNT(*) AS n FROM sessions").get() as { n: number };
   return row.n === 0;

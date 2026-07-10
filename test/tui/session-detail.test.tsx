@@ -33,7 +33,7 @@ const session: IndexedSession = {
 const wait = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 describe("SessionDetailScreen (smoke)", () => {
-  test("turns tab renders the step timeline with tool operations", async () => {
+  test("turns tab collapses turns by default and shows token annotations", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
     );
@@ -41,10 +41,50 @@ describe("SessionDetailScreen (smoke)", () => {
     stdin.write("2"); // switch to the Turns tab
     await wait();
     const frame = lastFrame() ?? "";
+    expect(frame).toContain("#1"); // a turn headline row
+    expect(frame).toContain("cache"); // token annotation on collapsed turn rows
+    expect(frame).not.toContain("Bash"); // steps hidden while turns are collapsed
+    unmount();
+  });
+
+  test("expanding turns reveals their step operations", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+    );
+    await wait();
+    stdin.write("2"); // Turns tab
+    await wait();
+    stdin.write("G"); // jump cursor to the last turn (has the Bash step)
+    await wait();
+    stdin.write("\r"); // expand it
+    await wait();
+    stdin.write("g"); // back to the first turn (has Assistant narration + Write)
+    await wait();
+    stdin.write("\r"); // expand it
+    await wait();
+    const frame = lastFrame() ?? "";
     expect(frame).toContain("Write"); // an edit operation step
     expect(frame).toContain("Bash"); // a run operation step
     expect(frame).toContain("Assistant"); // narration step
-    expect(frame).toContain("cache"); // token annotation on turn/call rows
+    unmount();
+  });
+
+  test("expanding a step reveals its detail", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+    );
+    await wait();
+    stdin.write("2"); // Turns tab
+    await wait();
+    stdin.write("\r"); // expand the first turn
+    await wait();
+    stdin.write("j"); // move cursor down onto a step row
+    await wait();
+    stdin.write("\r"); // expand that step's detail
+    await wait();
+    const frame = lastFrame() ?? "";
+    // The detail block renders an "input:" or "full text:"/"result:" label.
+    expect(frame).toMatch(/input:|result:|full text:/);
     unmount();
   });
 });
