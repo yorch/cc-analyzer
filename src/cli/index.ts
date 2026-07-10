@@ -1,10 +1,19 @@
 #!/usr/bin/env bun
 import { analyzeSession } from "../core/analyze.ts";
+import { openDb } from "../core/db.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
+import { reindex } from "../core/indexer.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
+import {
+  portfolioSummary,
+  spendByModel,
+  spendByMonth,
+  spendByProject,
+  topSessions,
+} from "../core/stats.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
-import { renderSessionSummary } from "./render.ts";
+import { renderSessionSummary, renderStats } from "./render.ts";
 
 const HELP = `cc-analyzer — analyze Claude Code sessions in ~/.claude
 
@@ -13,6 +22,8 @@ Usage:
   cc-analyzer sessions <projectId>     List sessions in a project
   cc-analyzer analyze <id|path> [--json]
                                        Analyze a single session
+  cc-analyzer index [--rebuild]        Build/refresh the session index
+  cc-analyzer stats [--json]           Portfolio-wide analytics (needs an index)
   cc-analyzer pricing update           Refresh the pricing cache
   cc-analyzer help                     Show this help
 
@@ -86,6 +97,49 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
   return 0;
 }
 
+async function cmdIndex(rebuild: boolean): Promise<number> {
+  const db = openDb();
+  const start = Date.now();
+  let lastLogged = 0;
+  const result = await reindex(db, {
+    rebuild,
+    onProgress: (done, total) => {
+      if (done === total || done - lastLogged >= 200) {
+        lastLogged = done;
+        process.stderr.write(`\rindexing ${done}/${total}...`);
+      }
+    },
+  });
+  db.close();
+  if (result.total > result.skipped) process.stderr.write("\n");
+  const secs = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(
+    `Indexed ${result.indexed}, skipped ${result.skipped}, deleted ${result.deleted} ` +
+      `(${result.total} sessions) in ${secs}s.`,
+  );
+  return 0;
+}
+
+async function cmdStats(json: boolean): Promise<number> {
+  const db = openDb();
+  const summary = portfolioSummary(db);
+  if (summary.sessions === 0) {
+    db.close();
+    console.error("Index is empty. Run `cc-analyzer index` first.");
+    return 1;
+  }
+  const view = {
+    summary,
+    byMonth: spendByMonth(db),
+    byProject: spendByProject(db),
+    byModel: spendByModel(db),
+    top: topSessions(db),
+  };
+  db.close();
+  console.log(json ? JSON.stringify(view, null, 2) : renderStats(view));
+  return 0;
+}
+
 async function cmdPricingUpdate(): Promise<number> {
   const loaded = await loadPricing({ force: true });
   const count = Object.keys(loaded.table).length;
@@ -105,6 +159,10 @@ async function main(): Promise<number> {
       return cmdSessions(positional[0]);
     case "analyze":
       return cmdAnalyze(positional[0], json);
+    case "index":
+      return cmdIndex(rest.includes("--rebuild"));
+    case "stats":
+      return cmdStats(json);
     case "pricing":
       if (positional[0] === "update") return cmdPricingUpdate();
       console.error("usage: cc-analyzer pricing update");

@@ -4,8 +4,9 @@ A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-co
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
 
-> Status: **Phase 1 (analysis core + scriptable CLI)**. TUI and web app are planned.
-> See [`docs/superpowers/specs`](docs/superpowers/specs) for the full design.
+> Status: **Phase 2 (analysis core + SQLite index + portfolio analytics)**.
+> TUI and web app are planned. See [`docs/superpowers/specs`](docs/superpowers/specs)
+> for the full design.
 
 ## Why
 
@@ -41,6 +42,8 @@ cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
+cc-analyzer index [--rebuild]        # build/refresh the portfolio index
+cc-analyzer stats [--json]           # portfolio-wide analytics (needs an index)
 cc-analyzer pricing update           # refresh the pricing cache
 ```
 
@@ -71,8 +74,17 @@ bun run check       # Biome lint + format (autofix)
 bun run typecheck   # tsc --noEmit
 ```
 
+### Portfolio analytics
+
+`cc-analyzer index` scans every session under `~/.claude/projects`, computes its
+metrics, and stores them in a local SQLite cache at
+`~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
+files (by size + mtime) are re-parsed — and the cache is disposable (delete and
+rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
+month/project/model, and the most expensive sessions.
+
 ## Roadmap
 
-- Phase 2: SQLite index + portfolio analytics (`stats`, cross-project rollups).
+- ~~SQLite index + portfolio analytics~~ ✓
 - Phase 3: interactive TUI (Ink).
 - Phase 4: embedded local web app (Hono + React SPA).

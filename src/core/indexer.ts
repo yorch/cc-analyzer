@@ -1,0 +1,234 @@
+import type { Database } from "bun:sqlite";
+import type { SessionAnalysis } from "./analyze.ts";
+import { analyzeSession } from "./analyze.ts";
+import { listAllSessions, type SessionInfo } from "./discover.ts";
+import { parseSessionFile } from "./parser.ts";
+import type { PricingTable } from "./pricing.ts";
+import { loadPricing } from "./pricing-source.ts";
+
+export interface SessionRow {
+  path: string;
+  project_id: string;
+  project_path: string | null;
+  session_id: string | null;
+  title: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  day: string | null;
+  month: string | null;
+  duration_ms: number | null;
+  turns: number;
+  api_calls: number;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_write_5m: number;
+  cache_write_1h: number;
+  cache_read: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_write: number;
+  cost_cache_read: number;
+  cost_total: number;
+  cost_estimated: number;
+  web_searches: number;
+  web_fetches: number;
+  models_json: string;
+  tools_json: string;
+  skills_json: string;
+  subagents_json: string;
+  size_bytes: number;
+  mtime_ms: number;
+  indexed_at: number;
+}
+
+/** Flatten a session analysis + file metadata into a database row. */
+export function toSessionRow(
+  analysis: SessionAnalysis,
+  info: SessionInfo,
+  now: number,
+): SessionRow {
+  const t = analysis.totals.tokens;
+  const c = analysis.totals.cost;
+  return {
+    path: info.path,
+    project_id: info.projectId,
+    project_path: analysis.projectPath ?? null,
+    session_id: analysis.sessionId ?? info.id,
+    title: analysis.title ?? null,
+    start_time: analysis.startTime ?? null,
+    end_time: analysis.endTime ?? null,
+    day: analysis.startTime ? analysis.startTime.slice(0, 10) : null,
+    month: analysis.startTime ? analysis.startTime.slice(0, 7) : null,
+    duration_ms: analysis.durationMs ?? null,
+    turns: analysis.totals.turns,
+    api_calls: analysis.totals.apiCalls,
+    tool_calls: analysis.totals.toolCalls,
+    input_tokens: t.inputTokens,
+    output_tokens: t.outputTokens,
+    cache_write_5m: t.cacheWrite5mTokens,
+    cache_write_1h: t.cacheWrite1hTokens,
+    cache_read: t.cacheReadTokens,
+    cost_input: c.input,
+    cost_output: c.output,
+    cost_cache_write: c.cacheWrite,
+    cost_cache_read: c.cacheRead,
+    cost_total: c.total,
+    cost_estimated: c.estimated ? 1 : 0,
+    web_searches: analysis.totals.webSearches,
+    web_fetches: analysis.totals.webFetches,
+    models_json: JSON.stringify(analysis.models),
+    tools_json: JSON.stringify(analysis.tools),
+    skills_json: JSON.stringify(analysis.skills),
+    subagents_json: JSON.stringify(analysis.subagents),
+    size_bytes: info.sizeBytes,
+    mtime_ms: info.mtimeMs,
+    indexed_at: now,
+  };
+}
+
+const COLUMNS: (keyof SessionRow)[] = [
+  "path",
+  "project_id",
+  "project_path",
+  "session_id",
+  "title",
+  "start_time",
+  "end_time",
+  "day",
+  "month",
+  "duration_ms",
+  "turns",
+  "api_calls",
+  "tool_calls",
+  "input_tokens",
+  "output_tokens",
+  "cache_write_5m",
+  "cache_write_1h",
+  "cache_read",
+  "cost_input",
+  "cost_output",
+  "cost_cache_write",
+  "cost_cache_read",
+  "cost_total",
+  "cost_estimated",
+  "web_searches",
+  "web_fetches",
+  "models_json",
+  "tools_json",
+  "skills_json",
+  "subagents_json",
+  "size_bytes",
+  "mtime_ms",
+  "indexed_at",
+];
+
+function upsertStatement(db: Database) {
+  const cols = COLUMNS.join(", ");
+  const placeholders = COLUMNS.map(() => "?").join(", ");
+  return db.query(`INSERT OR REPLACE INTO sessions (${cols}) VALUES (${placeholders})`);
+}
+
+function rowValues(row: SessionRow): (string | number | null)[] {
+  return COLUMNS.map((c) => row[c]);
+}
+
+/** Run an async mapper over items with a bounded concurrency. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) break;
+      results[i] = await fn(items[i] as T);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export interface ReindexResult {
+  total: number;
+  indexed: number;
+  skipped: number;
+  deleted: number;
+}
+
+export interface ReindexOptions {
+  /** Ignore existing state and re-parse everything. */
+  rebuild?: boolean;
+  concurrency?: number;
+  pricing?: PricingTable;
+  /** Progress callback: (done, toDo). */
+  onProgress?: (done: number, total: number) => void;
+}
+
+/**
+ * Incrementally (re)build the session index. Files whose size and mtime are
+ * unchanged since the last index are skipped; deleted files are pruned.
+ */
+export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<ReindexResult> {
+  const concurrency = opts.concurrency ?? 16;
+  const pricing = opts.pricing ?? (await loadPricing()).table;
+  const now = Date.now();
+
+  const files = await listAllSessions();
+  const currentPaths = new Set(files.map((f) => f.path));
+
+  const existing = new Map<string, { mtime_ms: number; size_bytes: number }>();
+  if (!opts.rebuild) {
+    const rows = db.query("SELECT path, mtime_ms, size_bytes FROM sessions").all() as {
+      path: string;
+      mtime_ms: number;
+      size_bytes: number;
+    }[];
+    for (const r of rows) existing.set(r.path, { mtime_ms: r.mtime_ms, size_bytes: r.size_bytes });
+  }
+
+  const toIngest = files.filter((f) => {
+    const prev = existing.get(f.path);
+    return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
+  });
+
+  let done = 0;
+  const rows = await mapPool(toIngest, concurrency, async (info) => {
+    try {
+      const { events } = await parseSessionFile(info.path);
+      const analysis = analyzeSession(events, pricing);
+      return toSessionRow(analysis, info, now);
+    } catch {
+      return null;
+    } finally {
+      done++;
+      opts.onProgress?.(done, toIngest.length);
+    }
+  });
+
+  const upsert = upsertStatement(db);
+  const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
+
+  let deleted = 0;
+  const writeAll = db.transaction(() => {
+    for (const row of rows) {
+      if (row) upsert.run(...rowValues(row));
+    }
+    if (!opts.rebuild) {
+      for (const path of existing.keys()) {
+        if (!currentPaths.has(path)) {
+          deleteStmt.run(path);
+          deleted++;
+        }
+      }
+    }
+  });
+  writeAll();
+
+  const indexed = rows.filter((r) => r !== null).length;
+  return {
+    total: files.length,
+    indexed,
+    skipped: files.length - toIngest.length,
+    deleted,
+  };
+}

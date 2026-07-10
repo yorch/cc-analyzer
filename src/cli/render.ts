@@ -1,5 +1,12 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import type { TokenCounts } from "../core/pricing.ts";
+import type {
+  ModelRow,
+  MonthRow,
+  PortfolioSummary,
+  ProjectRow,
+  SessionRankRow,
+} from "../core/stats.ts";
 import { formatCount, formatDuration, formatUSD, table, truncate } from "./format.ts";
 
 function totalTokens(t: TokenCounts): number {
@@ -80,6 +87,95 @@ export function renderSessionSummary(a: SessionAnalysis): string {
       ]),
     ),
   );
+
+  return lines.join("\n");
+}
+
+export interface PortfolioView {
+  summary: PortfolioSummary;
+  byMonth: MonthRow[];
+  byProject: ProjectRow[];
+  byModel: ModelRow[];
+  top: SessionRankRow[];
+}
+
+/** Render portfolio-wide analytics as a text report. */
+export function renderStats(v: PortfolioView): string {
+  const lines: string[] = [];
+  const s = v.summary;
+  const range = s.firstDay && s.lastDay ? `${s.firstDay} → ${s.lastDay}` : "-";
+  const estPct = s.estimatedShare > 0 ? ` (${(s.estimatedShare * 100).toFixed(0)}% estimated)` : "";
+
+  lines.push("\nPortfolio");
+  lines.push(
+    table(
+      ["metric", "value"],
+      [
+        ["total cost", `${formatUSD(s.cost)}${estPct}`],
+        ["sessions", String(s.sessions)],
+        ["projects", String(s.projects)],
+        ["date range", range],
+        ["tokens (in/out)", `${formatCount(s.inputTokens)} / ${formatCount(s.outputTokens)}`],
+        [
+          "cache tokens (w/r)",
+          `${formatCount(s.cacheWriteTokens)} / ${formatCount(s.cacheReadTokens)}`,
+        ],
+      ],
+    ),
+  );
+
+  if (v.byMonth.length) {
+    lines.push("\nSpend by month");
+    lines.push(
+      table(
+        ["month", "cost", "sessions", "tokens"],
+        v.byMonth.map((m) => [
+          m.month,
+          formatUSD(m.cost),
+          String(m.sessions),
+          formatCount(m.tokens),
+        ]),
+      ),
+    );
+  }
+
+  if (v.byProject.length) {
+    lines.push("\nTop projects by cost");
+    lines.push(
+      table(
+        ["cost", "sessions", "project"],
+        v.byProject.map((p) => [
+          formatUSD(p.cost),
+          String(p.sessions),
+          truncate(p.projectPath ?? p.projectId, 60),
+        ]),
+      ),
+    );
+  }
+
+  if (v.byModel.length) {
+    lines.push("\nSpend by model");
+    lines.push(
+      table(
+        ["model", "calls", "cost"],
+        v.byModel.map((m) => [m.model, formatCount(m.calls), formatUSD(m.cost)]),
+      ),
+    );
+  }
+
+  if (v.top.length) {
+    lines.push("\nMost expensive sessions");
+    lines.push(
+      table(
+        ["cost", "date", "title"],
+        v.top.map((t) => [
+          formatUSD(t.cost),
+          t.startTime?.slice(0, 10) ?? "-",
+          truncate(t.title ?? t.sessionId ?? "?", 55),
+        ]),
+      ),
+    );
+  }
 
   return lines.join("\n");
 }
