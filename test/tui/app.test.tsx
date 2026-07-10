@@ -62,6 +62,15 @@ describe("App (smoke render)", () => {
     unmount();
   });
 
+  test("pressing / opens global session search", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write("/");
+    await wait();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Search all sessions");
+    unmount();
+  });
+
   test("shows an empty-index message when nothing is indexed", () => {
     const emptyDb = openDb(":memory:");
     const { lastFrame, unmount } = render(<App db={emptyDb} pricing={pricing} />);

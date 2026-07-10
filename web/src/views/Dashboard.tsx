@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { api, type ModelRow, type MonthRow, type ProjectRow, type SessionRankRow } from "../api.ts";
+import { useEffect, useState } from "react";
+import {
+  api,
+  type ModelRow,
+  type MonthRow,
+  type ProjectRow,
+  type SessionRankRow,
+  type SessionWithProject,
+} from "../api.ts";
 import { count, tokens, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { SortTh } from "../SortTh.tsx";
@@ -95,6 +102,8 @@ export function Dashboard() {
           </div>
         </dl>
       </section>
+
+      <GlobalSearch />
 
       <section>
         <h2>Spend by month</h2>
@@ -221,5 +230,74 @@ export function Dashboard() {
         </div>
       </section>
     </>
+  );
+}
+
+function GlobalSearch() {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<SessionWithProject[]>([]);
+  const query = q.trim();
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .searchSessions(query)
+      .then((r) => {
+        if (!cancelled) setResults(r);
+      })
+      .catch(() => {
+        if (!cancelled) setResults([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
+
+  return (
+    <section>
+      <h2>Search sessions</h2>
+      <input
+        className="search"
+        type="search"
+        placeholder="Search all sessions by title, id, or project…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {results.length > 0 && (
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th className="num">Cost</th>
+                <th className="num">Tokens</th>
+                <th>Project</th>
+                <th>Title</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((s) => (
+                <tr key={s.path}>
+                  <td className="num">{usd(s.cost)}</td>
+                  <td className="num">{tokens(s.ioTokens, s.cacheTokens)}</td>
+                  <td className="muted">{s.projectPath ?? "—"}</td>
+                  <td>
+                    {s.sessionId ? (
+                      <a href={link.session(s.sessionId)}>{s.title ?? s.sessionId}</a>
+                    ) : (
+                      (s.title ?? "(untitled)")
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {query.length >= 2 && results.length === 0 && <p className="muted">No matches.</p>}
+    </section>
   );
 }

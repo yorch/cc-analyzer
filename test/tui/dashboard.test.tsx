@@ -52,6 +52,7 @@ describe("DashboardScreen", () => {
         onOpenProject={noop}
         onOpenSession={noop}
         onOpenProjects={noop}
+        onOpenSearch={noop}
         onBack={noop}
       />,
     );
@@ -74,6 +75,7 @@ describe("DashboardScreen", () => {
         onOpenProjects={() => {
           opened = true;
         }}
+        onOpenSearch={noop}
         onBack={noop}
       />,
     );
@@ -92,6 +94,7 @@ describe("DashboardScreen", () => {
         onOpenProject={(id) => opened.push(id)}
         onOpenSession={noop}
         onOpenProjects={noop}
+        onOpenSearch={noop}
         onBack={noop}
       />,
     );

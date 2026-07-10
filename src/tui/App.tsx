@@ -6,11 +6,13 @@ import {
   type IndexedProject,
   type IndexedSession,
   indexedSessionById,
+  listAllSessions,
   listIndexedProjects,
   listIndexedSessions,
 } from "../core/queries.ts";
 import { DashboardScreen } from "./screens/DashboardScreen.tsx";
 import { ProjectsScreen } from "./screens/ProjectsScreen.tsx";
+import { SearchScreen } from "./screens/SearchScreen.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
 import { SessionsScreen } from "./screens/SessionsScreen.tsx";
 
@@ -22,11 +24,13 @@ interface Props {
 type Nav =
   | { screen: "dashboard" }
   | { screen: "projects" }
+  | { screen: "search" }
   | { screen: "sessions"; project: IndexedProject; sessions: IndexedSession[] }
   | { screen: "detail"; session: IndexedSession };
 
 export function App({ db, pricing }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
+  const allSessions = useMemo(() => listAllSessions(db), [db]);
   const [stack, setStack] = useState<Nav[]>([{ screen: "dashboard" }]);
 
   const push = (nav: Nav) => setStack((s) => [...s, nav]);
@@ -57,6 +61,7 @@ export function App({ db, pricing }: Props) {
           isActive
           onBack={() => {}}
           onOpenProjects={() => push({ screen: "projects" })}
+          onOpenSearch={() => push({ screen: "search" })}
           onOpenProject={(projectId) => {
             const project = projects.find((p) => p.projectId === projectId);
             if (project) openProjectSessions(project);
@@ -69,6 +74,14 @@ export function App({ db, pricing }: Props) {
       )}
       {nav.screen === "projects" && (
         <ProjectsScreen projects={projects} isActive onBack={back} onOpen={openProjectSessions} />
+      )}
+      {nav.screen === "search" && (
+        <SearchScreen
+          sessions={allSessions}
+          isActive
+          onBack={back}
+          onOpen={(session) => push({ screen: "detail", session })}
+        />
       )}
       {nav.screen === "sessions" && (
         <SessionsScreen

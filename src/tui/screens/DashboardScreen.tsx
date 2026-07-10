@@ -23,6 +23,8 @@ interface Props {
   onOpenSession: (sessionId: string) => void;
   /** Open the full filterable projects list. */
   onOpenProjects: () => void;
+  /** Open the global session search. */
+  onOpenSearch: () => void;
   onBack: () => void;
 }
 
@@ -51,6 +53,7 @@ export function DashboardScreen({
   onOpenProject,
   onOpenSession,
   onOpenProjects,
+  onOpenSearch,
   onBack,
 }: Props) {
   const stats = useMemo<Stats>(
@@ -80,6 +83,7 @@ export function DashboardScreen({
     (input, key) => {
       if (key.escape) return onBack();
       if (input === "p") return onOpenProjects();
+      if (input === "/") return onOpenSearch();
       if (key.tab) {
         goPanel(PANELS[(PANELS.indexOf(panel) + 1) % PANELS.length] as Panel);
         return;
@@ -140,7 +144,7 @@ export function DashboardScreen({
             {SELECTABLE[p] ? "*" : " "}
           </Text>
         ))}
-        <Text dimColor> ↑↓ · enter · p=all · tab</Text>
+        <Text dimColor> ↑↓ · enter · p=all · / search · tab</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
