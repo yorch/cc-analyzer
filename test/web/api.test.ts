@@ -80,4 +80,18 @@ describe("web API", () => {
     const res = await api.request("/api/sessions/nope");
     expect(res.status).toBe(404);
   });
+
+  test("GET /api/sessions/search matches across projects and tags the project", async () => {
+    const res = await api.request("/api/sessions/search?q=proj");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { projectPath: string }[];
+    expect(body.length).toBeGreaterThan(0);
+    expect(body[0]?.projectPath).toBe("/Users/dev/proj");
+  });
+
+  test("empty search query returns an empty list", async () => {
+    const res = await api.request("/api/sessions/search?q=");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
 });

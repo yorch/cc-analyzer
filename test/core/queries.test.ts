@@ -6,7 +6,13 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
-import { isIndexEmpty, listIndexedProjects, listIndexedSessions } from "../../src/core/queries.ts";
+import {
+  isIndexEmpty,
+  listAllSessions,
+  listIndexedProjects,
+  listIndexedSessions,
+  searchSessions,
+} from "../../src/core/queries.ts";
 
 const flat: ModelPricing = {
   inputCostPerToken: 0.00001,
@@ -64,5 +70,23 @@ describe("queries", () => {
     expect(typeof sessions[0]?.costEstimated).toBe("boolean");
     expect(sessions[0]?.ioTokens).toBe(123);
     expect(sessions[0]?.cacheTokens).toBe(10000);
+  });
+
+  test("listAllSessions returns every session with its project path", () => {
+    const all = listAllSessions(db);
+    expect(all).toHaveLength(2);
+    expect(all[0]?.projectPath).toBe("/Users/dev/proj");
+    expect(typeof all[0]?.costEstimated).toBe("boolean");
+  });
+
+  test("searchSessions matches on project path and returns project-tagged rows", () => {
+    const hits = searchSessions(db, "dev/proj");
+    expect(hits).toHaveLength(2);
+    expect(hits[0]?.projectPath).toBe("/Users/dev/proj");
+    expect(searchSessions(db, "no-such-session-xyz")).toHaveLength(0);
+  });
+
+  test("searchSessions honors the limit", () => {
+    expect(searchSessions(db, "dev/proj", 1)).toHaveLength(1);
   });
 });

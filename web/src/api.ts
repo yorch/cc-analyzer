@@ -68,6 +68,10 @@ export interface IndexedSession extends TokenSplit {
   mtimeMs: number;
 }
 
+export interface SessionWithProject extends IndexedSession {
+  projectPath: string | null;
+}
+
 export interface CostBreakdown {
   input: number;
   output: number;
@@ -169,4 +173,6 @@ export const api = {
   session: (id: string) => get<SessionAnalysis>(`/api/sessions/${encodeURIComponent(id)}`),
   transcript: (id: string) =>
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
+  searchSessions: (q: string) =>
+    get<SessionWithProject[]>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
 };

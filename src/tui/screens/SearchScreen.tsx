@@ -1,33 +1,32 @@
 import { Box, Text } from "ink";
 import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
-import type { IndexedProject, IndexedSession } from "../../core/queries.ts";
+import type { SessionWithProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { Footer, ScreenHeader } from "../components/ui.tsx";
 import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
-  project: IndexedProject;
-  sessions: IndexedSession[];
-  onOpen: (session: IndexedSession) => void;
+  sessions: SessionWithProject[];
+  onOpen: (session: SessionWithProject) => void;
   onBack: () => void;
   isActive: boolean;
 }
 
-const SORT_FIELDS: SortField<IndexedSession>[] = [
+const SORT_FIELDS: SortField<SessionWithProject>[] = [
   { key: "recent", label: "recent", value: (s) => s.mtimeMs },
   { key: "cost", label: "cost", value: (s) => s.cost },
   { key: "tokens", label: "tokens", value: (s) => s.ioTokens + s.cacheTokens },
   { key: "title", label: "title", value: (s) => s.title ?? s.sessionId ?? "" },
 ];
 
-export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: Props) {
+export function SearchScreen({ sessions, onOpen, onBack, isActive }: Props) {
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(sessions);
   return (
     <Box flexDirection="column">
       <ScreenHeader
-        title={truncate(project.projectPath ?? project.projectId, 70)}
-        subtitle={`${sessions.length} sessions · cost · tokens · modified · title`}
+        title={`Search all sessions (${sessions.length})`}
+        subtitle="type to search title / id / project · cost · tokens · modified · project"
       />
       <FilterableList
         items={rows}
@@ -37,7 +36,7 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
         sortLabel={sort.label}
         onCycleSort={sort.cycle}
         onReverseSort={sort.reverse}
-        filterText={(s) => `${s.title ?? ""} ${s.sessionId ?? ""}`}
+        filterText={(s) => `${s.title ?? ""} ${s.sessionId ?? ""} ${s.projectPath ?? ""}`}
         renderItem={(s, selected) => (
           <Text
             color={selected ? "black" : undefined}
@@ -46,9 +45,9 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
             {formatUSD(s.cost).padStart(9)}
             {s.costEstimated ? "~" : " "}
             {formatTokens(s.ioTokens, s.cacheTokens).padStart(18)}{" "}
-            {formatRelativeTime(s.mtimeMs).padEnd(10)}
-            {"  "}
-            {truncate(s.title ?? s.sessionId ?? "(untitled)", 42)}
+            {formatRelativeTime(s.mtimeMs).padEnd(10)}{" "}
+            {truncate(s.title ?? s.sessionId ?? "(untitled)", 34)}
+            <Text dimColor={!selected}> {truncate(s.projectPath ?? "", 30)}</Text>
           </Text>
         )}
       />

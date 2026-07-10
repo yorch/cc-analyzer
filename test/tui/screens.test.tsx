@@ -54,6 +54,21 @@ describe("TUI screens (smoke render)", () => {
     unmount();
   });
 
+  test("ProjectsScreen sort: Tab cycles field, shift-Tab flips direction", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <ProjectsScreen projects={projects} onOpen={() => {}} onBack={() => {}} isActive={true} />,
+    );
+    const wait = () => new Promise((r) => setTimeout(r, 20));
+    expect(lastFrame() ?? "").toContain("sort: recent ↓"); // default
+    stdin.write("\t"); // Tab → next field
+    await wait();
+    expect(lastFrame() ?? "").toContain("sort: cost ↓");
+    stdin.write("[Z"); // shift-Tab → flip direction
+    await wait();
+    expect(lastFrame() ?? "").toContain("sort: cost ↑");
+    unmount();
+  });
+
   test("SessionsScreen lists sessions with title", () => {
     const { lastFrame, unmount } = render(
       <SessionsScreen

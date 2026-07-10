@@ -8,6 +8,8 @@ import {
 } from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { Footer, ScreenHeader } from "../components/ui.tsx";
+import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
   projects: IndexedProject[];
@@ -16,21 +18,33 @@ interface Props {
   isActive: boolean;
 }
 
+const SORT_FIELDS: SortField<IndexedProject>[] = [
+  { key: "recent", label: "recent", value: (p) => p.lastActivityMs },
+  { key: "cost", label: "cost", value: (p) => p.cost },
+  { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
+  { key: "sessions", label: "sessions", value: (p) => p.sessions },
+  { key: "name", label: "name", value: (p) => p.projectPath ?? p.projectId },
+];
+
 export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
+  const sort = useSort(SORT_FIELDS);
+  const rows = sort.sorted(projects);
   return (
     <Box flexDirection="column">
-      <Text bold color="cyan">
-        Projects ({projects.length}) · {formatUSD(projects.reduce((s, p) => s + p.cost, 0))} ·{" "}
-        {formatCount(projects.reduce((s, p) => s + p.sessions, 0))} sessions
-      </Text>
-      <Box marginBottom={1}>
-        <Text dimColor>cost · tokens · sessions · last active · path</Text>
-      </Box>
+      <ScreenHeader
+        title={`Projects (${projects.length}) · ${formatUSD(
+          projects.reduce((s, p) => s + p.cost, 0),
+        )} · ${formatCount(projects.reduce((s, p) => s + p.sessions, 0))} sessions`}
+        subtitle="cost · tokens · sessions · last active · path"
+      />
       <FilterableList
-        items={projects}
+        items={rows}
         isActive={isActive}
         onSelect={onOpen}
         onBack={onBack}
+        sortLabel={sort.label}
+        onCycleSort={sort.cycle}
+        onReverseSort={sort.reverse}
         filterText={(p) => p.projectPath ?? p.projectId}
         renderItem={(p, selected) => (
           <Text
@@ -46,9 +60,7 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
           </Text>
         )}
       />
-      <Box marginTop={1}>
-        <Text dimColor>type filter · ↑/↓ move · enter open · ctrl-c quit</Text>
-      </Box>
+      <Footer hints="type filter · tab sort · ↑/↓ move · enter open" />
     </Box>
   );
 }

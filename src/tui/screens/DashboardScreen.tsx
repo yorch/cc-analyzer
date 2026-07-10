@@ -13,6 +13,8 @@ import {
   spendByProject,
   topSessions,
 } from "../../core/stats.ts";
+import { Footer } from "../components/ui.tsx";
+import { usePageSize } from "../usePageSize.ts";
 
 interface Props {
   db: Database;
@@ -23,6 +25,8 @@ interface Props {
   onOpenSession: (sessionId: string) => void;
   /** Open the full filterable projects list. */
   onOpenProjects: () => void;
+  /** Open the global session search. */
+  onOpenSearch: () => void;
   onBack: () => void;
 }
 
@@ -35,7 +39,6 @@ const SELECTABLE: Record<Panel, boolean> = {
   models: false,
   sessions: true,
 };
-const PAGE_SIZE = 12;
 
 interface Stats {
   summary: ReturnType<typeof portfolioSummary>;
@@ -51,6 +54,7 @@ export function DashboardScreen({
   onOpenProject,
   onOpenSession,
   onOpenProjects,
+  onOpenSearch,
   onBack,
 }: Props) {
   const stats = useMemo<Stats>(
@@ -67,6 +71,7 @@ export function DashboardScreen({
   const [panel, setPanel] = useState<Panel>("months");
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
+  const pageSize = usePageSize(9);
 
   const rowCount = stats[panel].length;
 
@@ -80,6 +85,7 @@ export function DashboardScreen({
     (input, key) => {
       if (key.escape) return onBack();
       if (input === "p") return onOpenProjects();
+      if (input === "/") return onOpenSearch();
       if (key.tab) {
         goPanel(PANELS[(PANELS.indexOf(panel) + 1) % PANELS.length] as Panel);
         return;
@@ -104,9 +110,9 @@ export function DashboardScreen({
         const next = Math.max(0, Math.min(cursor + step, rowCount - 1));
         setCursor(next);
         if (next < offset) setOffset(next);
-        else if (next >= offset + PAGE_SIZE) setOffset(next - PAGE_SIZE + 1);
+        else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
       } else {
-        setOffset((o) => Math.max(0, Math.min(o + step, Math.max(0, rowCount - PAGE_SIZE))));
+        setOffset((o) => Math.max(0, Math.min(o + step, Math.max(0, rowCount - pageSize))));
       }
     },
     { isActive },
@@ -140,34 +146,59 @@ export function DashboardScreen({
             {SELECTABLE[p] ? "*" : " "}
           </Text>
         ))}
-        <Text dimColor> ↑↓ · enter · p=all · tab</Text>
+        <Text dimColor> ↑↓ · enter · p=all · / search · tab</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
-        {panel === "months" && <MonthsPanel rows={stats.months} offset={offset} />}
+        {panel === "months" && (
+          <MonthsPanel rows={stats.months} offset={offset} pageSize={pageSize} />
+        )}
         {panel === "projects" && (
-          <ProjectsPanel rows={stats.projects} cursor={cursor} offset={offset} active={isActive} />
+          <ProjectsPanel
+            rows={stats.projects}
+            cursor={cursor}
+            offset={offset}
+            pageSize={pageSize}
+            active={isActive}
+          />
         )}
-        {panel === "models" && <ModelsPanel rows={stats.models} offset={offset} />}
+        {panel === "models" && (
+          <ModelsPanel rows={stats.models} offset={offset} pageSize={pageSize} />
+        )}
         {panel === "sessions" && (
-          <SessionsPanel rows={stats.sessions} cursor={cursor} offset={offset} active={isActive} />
+          <SessionsPanel
+            rows={stats.sessions}
+            cursor={cursor}
+            offset={offset}
+            pageSize={pageSize}
+            active={isActive}
+          />
         )}
-        {rowCount > PAGE_SIZE && (
+        {rowCount > pageSize && (
           <Text dimColor>
-            {Math.min(offset + 1, rowCount)}–{Math.min(offset + PAGE_SIZE, rowCount)} / {rowCount}
+            {Math.min(offset + 1, rowCount)}–{Math.min(offset + pageSize, rowCount)} / {rowCount}
           </Text>
         )}
         {rowCount === 0 && <Text dimColor>(no data)</Text>}
       </Box>
+      <Footer hints="↑/↓ · enter · p=all projects · / search · tab panels" />
     </Box>
   );
 }
 
-function MonthsPanel({ rows, offset }: { rows: MonthRow[]; offset: number }) {
+function MonthsPanel({
+  rows,
+  offset,
+  pageSize,
+}: {
+  rows: MonthRow[];
+  offset: number;
+  pageSize: number;
+}) {
   const max = Math.max(1, ...rows.map((m) => m.cost));
   return (
     <Box flexDirection="column">
-      {rows.slice(offset, offset + PAGE_SIZE).map((m) => (
+      {rows.slice(offset, offset + pageSize).map((m) => (
         <Text key={m.month}>
           <Text color="cyan">{m.month} </Text>
           {formatUSD(m.cost).padStart(9)}{" "}
@@ -183,16 +214,18 @@ function ProjectsPanel({
   rows,
   cursor,
   offset,
+  pageSize,
   active,
 }: {
   rows: ProjectRow[];
   cursor: number;
   offset: number;
+  pageSize: number;
   active: boolean;
 }) {
   return (
     <Box flexDirection="column">
-      {rows.slice(offset, offset + PAGE_SIZE).map((p, i) => {
+      {rows.slice(offset, offset + pageSize).map((p, i) => {
         const selected = offset + i === cursor && active;
         return (
           <Text
@@ -211,10 +244,18 @@ function ProjectsPanel({
   );
 }
 
-function ModelsPanel({ rows, offset }: { rows: ModelRow[]; offset: number }) {
+function ModelsPanel({
+  rows,
+  offset,
+  pageSize,
+}: {
+  rows: ModelRow[];
+  offset: number;
+  pageSize: number;
+}) {
   return (
     <Box flexDirection="column">
-      {rows.slice(offset, offset + PAGE_SIZE).map((m) => (
+      {rows.slice(offset, offset + pageSize).map((m) => (
         <Text key={m.model}>
           {formatUSD(m.cost).padStart(9)}{" "}
           <Text dimColor>{formatTokens(m.ioTokens, m.cacheTokens).padStart(16)} </Text>
@@ -230,16 +271,18 @@ function SessionsPanel({
   rows,
   cursor,
   offset,
+  pageSize,
   active,
 }: {
   rows: SessionRankRow[];
   cursor: number;
   offset: number;
+  pageSize: number;
   active: boolean;
 }) {
   return (
     <Box flexDirection="column">
-      {rows.slice(offset, offset + PAGE_SIZE).map((sr, i) => {
+      {rows.slice(offset, offset + pageSize).map((sr, i) => {
         const selected = offset + i === cursor && active;
         return (
           <Text

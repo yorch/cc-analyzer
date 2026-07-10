@@ -3,7 +3,12 @@ import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import type { PricingTable } from "../core/pricing.ts";
-import { listIndexedProjects, listIndexedSessions, sessionPathById } from "../core/queries.ts";
+import {
+  listIndexedProjects,
+  listIndexedSessions,
+  searchSessions,
+  sessionPathById,
+} from "../core/queries.ts";
 import {
   portfolioSummary,
   spendByModel,
@@ -30,6 +35,14 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
+
+  // Registered before "/api/sessions/:id" so "search" isn't captured as an id.
+  api.get("/api/sessions/search", (c) => {
+    const q = c.req.query("q") ?? "";
+    const parsed = Number(c.req.query("limit") ?? "100");
+    const limit = Number.isFinite(parsed) ? parsed : 100;
+    return c.json(q.trim() ? searchSessions(db, q, limit) : []);
+  });
 
   api.get("/api/sessions/:id", async (c) => {
     const path = sessionPathById(db, c.req.param("id"));
