@@ -91,7 +91,8 @@ month/project/model, and the most expensive sessions.
 
 Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink):
 browse **projects → sessions → session detail**, where the detail view has
-**Summary**, **Turns**, and **Transcript** tabs. It reads from the index, so run
+**Summary**, **Turns** (a scrollable step timeline of narration + tool
+operations with result hints), and **Transcript** tabs. It reads from the index, so run
 `cc-analyzer index` first. The project and session lists have an inline
 substring **filter** — just start typing. Keys: `↑/↓` move, `enter` open, type
 to filter, `esc` clears the filter (or goes back when empty), `1/2/3` or `tab`
@@ -103,8 +104,11 @@ piped/non-interactive use falls back to a hint about the scriptable commands.
 `cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
 with a portfolio dashboard, project drill-down, and a per-session view. Projects
 and sessions can be **filtered** by name; the **Turns** tab expands each turn
-into its API calls and tool calls; and the color-coded **transcript** reader is
-windowed ("show more") so very large sessions stay responsive. The SPA is built
+into a **step timeline** — assistant narration, thinking markers, and tool
+operations with a one-line summary and a result status/hint (`✓ 71 lines`,
+`✗ error…`), each step click-to-expand for its full input and result; and the
+color-coded **transcript** reader is windowed ("show more") so very large
+sessions stay responsive. The SPA is built
 by Vite into a single self-contained HTML file (`bun run build:web`) and baked
 into the binary, so the release build serves the whole UI with no external
 assets.

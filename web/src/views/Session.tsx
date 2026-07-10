@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type SessionAnalysis, type TranscriptItem } from "../api.ts";
+import { api, type SessionAnalysis, type TranscriptItem, type TurnStep } from "../api.ts";
 import { count, duration, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
@@ -144,19 +144,14 @@ function Turns({ a }: { a: SessionAnalysis }) {
               <div className="turncalls">
                 {t.apiCalls.map((call, ci) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: API calls within a turn have no stable id; order is fixed
-                  <div key={`${t.index}.${ci}`} className="call">
-                    <span className="muted">{call.model ?? "?"}</span> · {usd(call.cost.total)}
-                    {call.toolCalls.length > 0 && (
-                      <span>
-                        {"  "}
-                        {call.toolCalls.map((tc) => (
-                          <span className={`tag ${tc.isError ? "err" : ""}`} key={tc.id}>
-                            {tc.name}
-                            {tc.isError ? " ✗" : ""}
-                          </span>
-                        ))}
-                      </span>
-                    )}
+                  <div key={`${t.index}.${ci}`} className="callblock">
+                    <div className="calldivider">
+                      <span className="muted">{call.model ?? "?"}</span>
+                      <span className="muted">{usd(call.cost.total)}</span>
+                    </div>
+                    {call.steps.map((step, si) => (
+                      <StepRow key={step.toolUseId ?? `${t.index}.${ci}.${si}`} step={step} />
+                    ))}
                   </div>
                 ))}
               </div>
@@ -167,6 +162,66 @@ function Turns({ a }: { a: SessionAnalysis }) {
     </div>
   );
 }
+
+function StepRow({ step }: { step: TurnStep }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = Boolean(step.detail?.input || step.detail?.result);
+  const icon = STEP_ICON[step.kind] ?? "·";
+  return (
+    <div className={`step k-${step.kind}`}>
+      <button
+        type="button"
+        className="steprow"
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{ cursor: hasDetail ? "pointer" : "default" }}
+      >
+        <span className="stepicon">{icon}</span>
+        <span className="steplabel">{step.label}</span>
+        {step.summary && <span className="stepsummary">{step.summary}</span>}
+        {step.status === "error" && <span className="err"> ✗</span>}
+        {step.status === "ok" && <span className="ok"> ✓</span>}
+        {step.resultHint && <span className="stephint">{step.resultHint}</span>}
+      </button>
+      {open && hasDetail && (
+        <div className="stepdetail">
+          {step.detail?.input && step.kind !== "note" && step.kind !== "thinking" && (
+            <>
+              <div className="stepdetaillabel">input</div>
+              <pre>{step.detail.input}</pre>
+            </>
+          )}
+          {step.detail?.result && (
+            <>
+              <div className="stepdetaillabel">
+                {step.kind === "note" || step.kind === "thinking" ? "full text" : "result"}
+              </div>
+              <pre>{step.detail.result}</pre>
+            </>
+          )}
+          {step.detail?.truncated && (
+            <div className="muted">truncated · see Transcript for full</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STEP_ICON: Record<string, string> = {
+  note: "»",
+  thinking: "◦",
+  run: "$",
+  read: "▤",
+  edit: "✎",
+  search: "⌕",
+  skill: "◆",
+  subagent: "⌥",
+  web: "◍",
+  task: "☑",
+  ask: "?",
+  tool: "·",
+};
 
 const TRANSCRIPT_WINDOW = 200;
 

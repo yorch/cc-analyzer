@@ -74,15 +74,35 @@ export interface CostBreakdown {
   total: number;
   estimated: boolean;
 }
-export interface ToolCall {
-  id: string;
-  name: string;
-  isError: boolean;
+export type StepKind =
+  | "note"
+  | "thinking"
+  | "run"
+  | "read"
+  | "edit"
+  | "search"
+  | "skill"
+  | "subagent"
+  | "web"
+  | "task"
+  | "ask"
+  | "tool";
+
+export interface TurnStep {
+  kind: StepKind;
+  tool?: string;
+  label: string;
+  summary: string;
+  status?: "ok" | "error";
+  resultHint?: string;
+  toolUseId?: string;
+  detail?: { input?: string; result?: string; truncated?: boolean };
 }
+
 export interface ApiCall {
   model?: string;
   cost: CostBreakdown;
-  toolCalls: ToolCall[];
+  steps: TurnStep[];
 }
 export interface Turn {
   index: number;
