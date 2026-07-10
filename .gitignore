@@ -12,3 +12,6 @@ web/dist/
 # Regenerated from the Vite build by scripts/embed-spa.ts.
 # The placeholder is force-added once; regenerated content stays out of git.
 src/web/spa.ts
+
+# AI
+.claude/worktrees/
