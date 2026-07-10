@@ -6,3 +6,4 @@ tmp/
 
 # local build artifacts
 *.tsbuildinfo
+*.bun-build

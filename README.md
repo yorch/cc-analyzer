@@ -4,8 +4,8 @@ A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-co
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
 
-> Status: **Phase 2 (analysis core + SQLite index + portfolio analytics)**.
-> TUI and web app are planned. See [`docs/superpowers/specs`](docs/superpowers/specs)
+> Status: **Phase 3 (core + index + analytics + interactive TUI)**.
+> The web app is planned. See [`docs/superpowers/specs`](docs/superpowers/specs)
 > for the full design.
 
 ## Why
@@ -38,6 +38,7 @@ bun run build          # -> dist/cc-analyzer
 ## Usage
 
 ```bash
+cc-analyzer                          # launch the interactive TUI (needs an index)
 cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
@@ -83,8 +84,18 @@ files (by size + mtime) are re-parsed — and the cache is disposable (delete an
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
 month/project/model, and the most expensive sessions.
 
+### Interactive TUI
+
+Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink):
+browse **projects → sessions → session detail**, where the detail view has
+**Summary**, **Turns**, and **Transcript** tabs. It reads from the index, so run
+`cc-analyzer index` first. Keys: `↑/↓` or `j/k` move, `enter` open, `esc` back,
+`1/2/3` or `tab` switch detail tabs, `q` quit. It requires an interactive
+terminal (TTY); piped/non-interactive use falls back to a hint about the
+scriptable commands above.
+
 ## Roadmap
 
 - ~~SQLite index + portfolio analytics~~ ✓
-- Phase 3: interactive TUI (Ink).
+- ~~Interactive TUI (Ink)~~ ✓
 - Phase 4: embedded local web app (Hono + React SPA).

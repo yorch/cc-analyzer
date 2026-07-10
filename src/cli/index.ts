@@ -18,6 +18,7 @@ import { renderSessionSummary, renderStats } from "./render.ts";
 const HELP = `cc-analyzer — analyze Claude Code sessions in ~/.claude
 
 Usage:
+  cc-analyzer                          Launch the interactive TUI (needs an index)
   cc-analyzer projects                 List all projects
   cc-analyzer sessions <projectId>     List sessions in a project
   cc-analyzer analyze <id|path> [--json]
@@ -167,7 +168,11 @@ async function main(): Promise<number> {
       if (positional[0] === "update") return cmdPricingUpdate();
       console.error("usage: cc-analyzer pricing update");
       return 2;
-    case undefined:
+    case undefined: {
+      const { runTui } = await import("../tui/run.tsx");
+      await runTui();
+      return 0;
+    }
     case "help":
     case "--help":
     case "-h":
