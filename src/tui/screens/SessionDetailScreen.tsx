@@ -391,14 +391,34 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
 }
 
 function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
+  const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
+
   useInput(
     (input, key) => {
-      if (key.downArrow || input === "j")
-        setOffset((o) => Math.min(o + 1, Math.max(0, items.length - 1)));
-      else if (key.upArrow || input === "k") setOffset((o) => Math.max(0, o - 1));
-      else if (input === "g") setOffset(0);
-      else if (input === "G") setOffset(Math.max(0, items.length - PAGE_SIZE));
+      if (key.return || input === " ") {
+        const item = items[activeCursor];
+        if (item?.body) setExpanded((prev) => toggle(prev, item.index));
+        return;
+      }
+      if (input === "g") {
+        setCursor(0);
+        setOffset(0);
+        return;
+      }
+      if (input === "G") {
+        setCursor(items.length - 1);
+        setOffset(Math.max(0, items.length - PAGE_SIZE));
+        return;
+      }
+      const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
+      if (dir === 0 || items.length === 0) return;
+      const next = Math.max(0, Math.min(activeCursor + dir, items.length - 1));
+      setCursor(next);
+      if (next < offset) setOffset(next);
+      else if (next >= offset + PAGE_SIZE) setOffset(next - PAGE_SIZE + 1);
     },
     { isActive },
   );
@@ -406,19 +426,31 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   const visible = items.slice(offset, offset + PAGE_SIZE);
   return (
     <Box flexDirection="column">
-      {visible.map((item) => {
-        const body = item.body.split("\n").slice(0, 4).join("\n");
-        const more = item.body.split("\n").length > 4 ? " …" : "";
+      {visible.map((item, i) => {
+        const selected = offset + i === activeCursor;
+        const isOpen = expanded.has(item.index);
+        const chevron = item.body ? (isOpen ? "▾" : "▸") : " ";
+        const preview = item.body.split("\n")[0] ?? "";
         return (
-          <Box key={item.index} flexDirection="column" marginBottom={1}>
-            <Text color={KIND_COLOR[item.kind]} bold>
-              {item.label}
+          <Box key={item.index} flexDirection="column">
+            <Text
+              bold
+              color={selected ? "black" : KIND_COLOR[item.kind]}
+              backgroundColor={selected ? "cyan" : undefined}
+            >
+              {chevron} {item.label}
               {item.isError ? " ✗" : ""}
+              {!isOpen && item.body ? (
+                <Text dimColor={!selected}> {truncate(preview, 56)}</Text>
+              ) : null}
             </Text>
-            <Text color={item.kind === "thinking" ? "gray" : undefined}>
-              {truncate(body, 320)}
-              {more}
-            </Text>
+            {isOpen && (
+              <Box marginBottom={1}>
+                <Text color={item.kind === "thinking" ? "gray" : undefined}>
+                  {capLines(item.body, 40).join("\n") || "(empty)"}
+                </Text>
+              </Box>
+            )}
           </Box>
         );
       })}

@@ -87,4 +87,19 @@ describe("SessionDetailScreen (smoke)", () => {
     expect(frame).toMatch(/input:|result:|full text:/);
     unmount();
   });
+
+  test("transcript items collapse and expand", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+    );
+    await wait();
+    stdin.write("3"); // Transcript tab
+    await wait();
+    const collapsed = lastFrame() ?? "";
+    expect(collapsed).toContain("▸"); // collapsed chevron on an item with a body
+    stdin.write("\r"); // expand the item under the cursor
+    await wait();
+    expect(lastFrame() ?? "").toContain("▾"); // now expanded
+    unmount();
+  });
 });
