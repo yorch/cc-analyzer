@@ -4,6 +4,7 @@ import { openDb } from "../core/db.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { isIndexEmpty } from "../core/queries.ts";
+import { injectSpaTelemetry } from "../core/telemetry.ts";
 import { createApi } from "./api.ts";
 import { hasSpa, spaHtml } from "./spa.ts";
 
@@ -62,9 +63,13 @@ export function createApp(
   // Unknown API paths must fail as JSON, not fall through to the SPA HTML.
   app.get("/api/*", (c) => c.json({ error: "not found" }, 404));
 
+  // Inject the Plausible tag once (the telemetry setting is fixed for the
+  // server's lifetime); omitted entirely when telemetry is opted out.
+  const html = injectSpaTelemetry(spaHtml);
+
   // Serve the single-page app for everything that is not an API route.
   app.get("*", (c) => {
-    if (hasSpa) return c.html(spaHtml);
+    if (hasSpa) return c.html(html);
     return c.text(
       "Web UI is not built into this binary. Run `bun run build:web` (dev) or use a release build.",
       200,

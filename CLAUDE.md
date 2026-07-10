@@ -187,6 +187,17 @@ resolved (error count + step patch) when its result arrives later in the stream 
 so a single forward pass suffices, which is what makes the streaming indexer path
 possible.
 
+**Telemetry has one authority, two governed surfaces.** `core/telemetry.ts` owns
+enablement (`CC_ANALYZER_TELEMETRY` → `DO_NOT_TRACK` → `CI` → persisted
+`telemetry.json` → default on) and the Plausible poster. The CLI/TUI call
+`trackCommand()` at **dispatch time** (before `serve`/`tui` block forever); the
+`serve` command's SPA is governed by the **same** switch via `injectSpaTelemetry()`,
+which uses Plausible's `script.local.js` because the standard script ignores
+localhost. The docs site (`site/.vitepress/config.ts`) is a **separate** static
+lifecycle — its opt-out is Do-Not-Track / `plausible_ignore`, not the runtime switch.
+`trackCommand` is fire-and-forget (swallows all errors, never blocks); telemetry
+state lives in the state dir, never `~/.claude`.
+
 ## Self-update subsystem
 
 `version.ts` embeds the version by importing `package.json` (bundled by

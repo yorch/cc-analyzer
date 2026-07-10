@@ -12,7 +12,21 @@ export default withMermaid({
   // with the light "print-out" theme still one toggle away.
   appearance: "dark",
 
-  head: [["link", { rel: "icon", href: "/favicon.svg" }]],
+  head: [
+    ["link", { rel: "icon", href: "/favicon.svg" }],
+    // Privacy-respecting, cookieless analytics via a self-hosted Plausible
+    // instance. The standard script auto-ignores localhost, so local previews
+    // don't pollute stats. Opt out with Do-Not-Track or
+    // `localStorage.plausible_ignore = "true"`.
+    [
+      "script",
+      {
+        defer: "",
+        "data-domain": "cc-analyzer.brnby.com",
+        src: "https://plausible.brnby.com/js/script.js",
+      },
+    ],
+  ],
 
   // Light-mode ("print-out") diagram palette: warm-cream nodes, amber-ink
   // borders, monospace labels. Dark mode uses mermaid's built-in dark theme
