@@ -2,10 +2,9 @@
 // A scripted quick-start session. `k` tags each token for phosphor coloring:
 //   c = comment, p = prompt/command, x = command continuation, o = output.
 const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
-  { k: "c", t: "# 1 · grab the single binary for your platform (no runtime needed)" },
-  { k: "p", t: "curl -fL -o cc-analyzer \\" },
-  { k: "x", t: "  …/releases/latest/download/cc-analyzer-darwin-arm64" },
-  { k: "p", t: "chmod +x cc-analyzer && sudo mv cc-analyzer /usr/local/bin/" },
+  { k: "c", t: "# 1 · install — one line; detects your platform, grabs the latest binary" },
+  { k: "p", t: "curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh" },
+  { k: "c", t: "#   (Windows PowerShell one-liner in the install guide ▸)" },
   { k: "c", t: "" },
   { k: "c", t: "# 2 · build the index from ~/.claude, then read the totals" },
   { k: "p", t: "cc-analyzer index" },
