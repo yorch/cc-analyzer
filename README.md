@@ -27,7 +27,28 @@ The tool is **read-only**: it never writes to `~/.claude`. Its own state
 
 ## Install
 
-### Download a prebuilt binary (recommended)
+### One-line install (recommended)
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.ps1 | iex
+```
+
+The script detects your OS and architecture, downloads the matching binary from
+the latest [release](https://github.com/yorch/cc-analyzer/releases/latest), and
+installs it to `~/.local/bin` (macOS/Linux) or `%LOCALAPPDATA%\cc-analyzer\bin`
+(Windows). Override the target with `CC_ANALYZER_INSTALL_DIR`, or pin a version
+with `CC_ANALYZER_VERSION=v0.2.0`. Prefer to inspect first? The scripts are
+[`install.sh`](install.sh) and [`install.ps1`](install.ps1) in this repo.
+
+### Download a prebuilt binary (manual)
 
 Every [release](https://github.com/yorch/cc-analyzer/releases/latest) ships a
 self-contained binary for each platform — no Bun, Node, or other runtime
