@@ -11,6 +11,28 @@ export default withMermaid({
 
   head: [["link", { rel: "icon", href: "/cc-analyzer/favicon.svg" }]],
 
+  // Light-mode diagram palette: warm-paper nodes, ledger-amber borders,
+  // monospace labels. Dark mode uses mermaid's built-in dark theme (forced by
+  // the plugin), refined with amber accents in the site's custom CSS.
+  mermaid: {
+    theme: "base",
+    themeVariables: {
+      fontFamily: 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: "14px",
+      primaryColor: "#f4eee1",
+      primaryBorderColor: "#b5822e",
+      primaryTextColor: "#33302a",
+      secondaryColor: "#e9effb",
+      secondaryBorderColor: "#3451b2",
+      tertiaryColor: "#faf7f0",
+      tertiaryBorderColor: "#d8cdb6",
+      lineColor: "#a99f8b",
+      clusterBkg: "#faf7f0",
+      clusterBorder: "#d8cdb6",
+      edgeLabelBackground: "#faf7f0",
+    },
+  },
+
   themeConfig: {
     nav: [
       { text: "Home", link: "/" },
