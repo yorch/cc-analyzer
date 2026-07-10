@@ -1,0 +1,125 @@
+#!/usr/bin/env bun
+import { analyzeSession } from "../core/analyze.ts";
+import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
+import { parseSessionFile } from "../core/parser.ts";
+import { loadPricing } from "../core/pricing-source.ts";
+import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
+import { renderSessionSummary } from "./render.ts";
+
+const HELP = `cc-analyzer — analyze Claude Code sessions in ~/.claude
+
+Usage:
+  cc-analyzer projects                 List all projects
+  cc-analyzer sessions <projectId>     List sessions in a project
+  cc-analyzer analyze <id|path> [--json]
+                                       Analyze a single session
+  cc-analyzer pricing update           Refresh the pricing cache
+  cc-analyzer help                     Show this help
+
+Notes:
+  <id> is a session uuid (searched across all projects) or a path to a .jsonl file.
+`;
+
+async function cmdProjects(): Promise<number> {
+  const projects = await listProjects();
+  if (projects.length === 0) {
+    console.log("No projects found under ~/.claude/projects.");
+    return 0;
+  }
+  console.log(
+    table(
+      ["sessions", "project"],
+      projects.map((p) => [String(p.sessionCount), truncate(p.label, 80)]),
+    ),
+  );
+  console.log(`\n${projects.length} projects`);
+  return 0;
+}
+
+async function cmdSessions(projectId: string | undefined): Promise<number> {
+  if (!projectId) {
+    console.error("error: missing <projectId>. Run `cc-analyzer projects` to list ids.");
+    return 2;
+  }
+  const sessions = await listSessions(projectId);
+  if (sessions.length === 0) {
+    console.error(`No sessions found for project '${projectId}'.`);
+    return 1;
+  }
+  console.log(
+    table(
+      ["session id", "modified", "size"],
+      sessions.map((s) => [s.id, formatRelativeTime(s.mtimeMs), formatBytes(s.sizeBytes)]),
+    ),
+  );
+  console.log(`\n${sessions.length} sessions`);
+  return 0;
+}
+
+async function resolveSessionPath(ref: string): Promise<string | undefined> {
+  if (ref.endsWith(".jsonl") || ref.includes("/")) {
+    return (await Bun.file(ref).exists()) ? ref : undefined;
+  }
+  return (await findSessionById(ref))?.path;
+}
+
+async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<number> {
+  if (!ref) {
+    console.error("error: missing <id|path>.");
+    return 2;
+  }
+  const path = await resolveSessionPath(ref);
+  if (!path) {
+    console.error(`error: session '${ref}' not found.`);
+    return 1;
+  }
+  const { events, errors } = await parseSessionFile(path);
+  const { table: pricing } = await loadPricing();
+  const analysis = analyzeSession(events, pricing);
+
+  if (json) {
+    console.log(JSON.stringify({ ...analysis, parseErrors: errors.length }, null, 2));
+  } else {
+    console.log(renderSessionSummary(analysis));
+    if (errors.length) console.log(`\n(${errors.length} unparseable lines skipped)`);
+  }
+  return 0;
+}
+
+async function cmdPricingUpdate(): Promise<number> {
+  const loaded = await loadPricing({ force: true });
+  const count = Object.keys(loaded.table).length;
+  console.log(`Pricing loaded from ${loaded.source}: ${formatCount(count)} models.`);
+  return loaded.source === "remote" ? 0 : 1;
+}
+
+async function main(): Promise<number> {
+  const [, , command, ...rest] = process.argv;
+  const json = rest.includes("--json");
+  const positional = rest.filter((a) => !a.startsWith("--"));
+
+  switch (command) {
+    case "projects":
+      return cmdProjects();
+    case "sessions":
+      return cmdSessions(positional[0]);
+    case "analyze":
+      return cmdAnalyze(positional[0], json);
+    case "pricing":
+      if (positional[0] === "update") return cmdPricingUpdate();
+      console.error("usage: cc-analyzer pricing update");
+      return 2;
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      console.log(HELP);
+      return 0;
+    default:
+      console.error(`unknown command: ${command}\n`);
+      console.log(HELP);
+      return 2;
+  }
+}
+
+process.exit(await main());

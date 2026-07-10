@@ -1,0 +1,26 @@
+{
+  "name": "cc-analyzer",
+  "version": "0.1.0",
+  "description": "Read-only CLI to browse and analyze Claude Code sessions in ~/.claude",
+  "type": "module",
+  "bin": {
+    "cc-analyzer": "./src/cli/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli/index.ts",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build --compile --outfile dist/cc-analyzer src/cli/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}
