@@ -29,6 +29,32 @@ export interface IndexedSession {
   mtimeMs: number;
 }
 
+/** A session row that also carries its project path, for cross-project listings. */
+export interface SessionWithProject extends IndexedSession {
+  projectPath: string | null;
+}
+
+/** Session columns shared by the cross-project queries below. */
+const SESSION_COLUMNS = `session_id AS sessionId,
+  path,
+  title,
+  project_path AS projectPath,
+  cost_total AS cost,
+  cost_estimated AS costEstimated,
+  (${IO_TOKENS}) AS ioTokens,
+  (${CACHE_TOKENS}) AS cacheTokens,
+  start_time AS startTime,
+  turns,
+  api_calls AS apiCalls,
+  tool_calls AS toolCalls,
+  mtime_ms AS mtimeMs`;
+
+type RawSessionWithProject = Omit<SessionWithProject, "costEstimated"> & { costEstimated: number };
+const toSessionWithProject = (r: RawSessionWithProject): SessionWithProject => ({
+  ...r,
+  costEstimated: r.costEstimated === 1,
+});
+
 /** Projects with rollups, for the TUI/web project list. */
 export function listIndexedProjects(db: Database): IndexedProject[] {
   const rows = db
@@ -94,6 +120,27 @@ export function indexedSessionById(db: Database, id: string): IndexedSession | u
     )
     .get(id) as (Omit<IndexedSession, "costEstimated"> & { costEstimated: number }) | undefined;
   return row ? { ...row, costEstimated: row.costEstimated === 1 } : undefined;
+}
+
+/** Every session across all projects, most recent first (for TUI global search). */
+export function listAllSessions(db: Database): SessionWithProject[] {
+  const rows = db
+    .query(`SELECT ${SESSION_COLUMNS} FROM sessions ORDER BY mtime_ms DESC`)
+    .all() as RawSessionWithProject[];
+  return rows.map(toSessionWithProject);
+}
+
+/** Sessions across all projects matching a query on title / session id / project path. */
+export function searchSessions(db: Database, q: string, limit = 100): SessionWithProject[] {
+  const like = `%${q}%`;
+  const rows = db
+    .query(
+      `SELECT ${SESSION_COLUMNS} FROM sessions
+      WHERE title LIKE ? OR session_id LIKE ? OR project_path LIKE ?
+      ORDER BY mtime_ms DESC LIMIT ?`,
+    )
+    .all(like, like, like, limit) as RawSessionWithProject[];
+  return rows.map(toSessionWithProject);
 }
 
 export function isIndexEmpty(db: Database): boolean {
