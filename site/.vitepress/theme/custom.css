@@ -1,0 +1,101 @@
+/* cc-analyzer site — ledger-amber accent layered over VitePress's blue chrome.
+   Amber is cc-analyzer's signature: it marks the feature icons and the accent
+   details of the rendered diagrams, echoing the app's "session ledger" UI. */
+
+:root {
+  --cc-accent: #a9761f;
+  --cc-accent-strong: #b5822e;
+  --cc-accent-soft: rgba(181, 130, 46, 0.1);
+  --cc-accent-line: rgba(181, 130, 46, 0.32);
+}
+
+.dark {
+  --cc-accent: #e2b25a;
+  --cc-accent-strong: #e2b25a;
+  --cc-accent-soft: rgba(226, 178, 90, 0.12);
+  --cc-accent-line: rgba(226, 178, 90, 0.3);
+}
+
+/* ---- Feature icons ------------------------------------------------------ */
+/* Custom line icons sit in an amber-tinted, softly bordered tile instead of
+   the default flat emoji box. */
+.VPFeature .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-accent-soft) !important;
+  border: 1px solid var(--cc-accent-line);
+  border-radius: 10px;
+}
+
+.VPFeature .icon svg {
+  width: 24px;
+  height: 24px;
+  color: var(--cc-accent);
+}
+
+/* Warm the card border on hover to reinforce the accent. */
+.VPFeature:hover {
+  border-color: var(--cc-accent-line);
+}
+
+/* ---- Rendered diagrams -------------------------------------------------- */
+/* Wrap every mermaid diagram in a subtle "plate" so it reads as an inset
+   figure rather than loose SVG, and let wide diagrams scroll on small screens. */
+.vp-doc .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 28px 0;
+  padding: 22px 20px;
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 14px;
+  overflow-x: auto;
+}
+
+.vp-doc .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Slightly heavier, rounded node outlines read as intentional line-work. */
+.vp-doc .mermaid .node rect,
+.vp-doc .mermaid .node polygon,
+.vp-doc .mermaid .node path,
+.vp-doc .mermaid .node circle,
+.vp-doc .mermaid .node ellipse {
+  rx: 6px;
+  stroke-width: 1.5px;
+}
+
+/* Dark mode: mermaid's built-in dark theme is legible but generic. Re-tint the
+   node borders and cluster frames with the amber accent for cohesion, and warm
+   the plate background. */
+.dark .vp-doc .mermaid {
+  background: var(--vp-c-bg-alt);
+}
+
+.dark .vp-doc .mermaid .node rect,
+.dark .vp-doc .mermaid .node polygon,
+.dark .vp-doc .mermaid .node path,
+.dark .vp-doc .mermaid .node ellipse {
+  stroke: var(--cc-accent) !important;
+}
+
+.dark .vp-doc .mermaid .cluster rect {
+  stroke: var(--cc-accent-line) !important;
+}
+
+/* Edge labels: the configured light `edgeLabelBackground` leaks into dark mode,
+   painting little white plates behind link text. Repaint them to match the dark
+   plate and lift the text to a legible tone. */
+.dark .vp-doc .mermaid .edgeLabel .labelBkg {
+  background: var(--vp-c-bg-alt) !important;
+}
+
+.dark .vp-doc .mermaid .edgeLabel,
+.dark .vp-doc .mermaid .edgeLabel span,
+.dark .vp-doc .mermaid .edgeLabel p {
+  background-color: transparent !important;
+  color: var(--vp-c-text-2) !important;
+}
