@@ -1,10 +1,16 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
-import { formatDuration, formatUSD, truncate } from "../../cli/format.ts";
+import {
+  formatCount,
+  formatDuration,
+  formatTokens,
+  formatUSD,
+  truncate,
+} from "../../cli/format.ts";
 import type { SessionAnalysis } from "../../core/analyze.ts";
 import { analyzeSession } from "../../core/analyze.ts";
 import { parseSessionFile } from "../../core/parser.ts";
-import type { PricingTable } from "../../core/pricing.ts";
+import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
 import type { StepKind, TurnStep } from "../../core/steps.ts";
 import {
@@ -134,6 +140,11 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
       {line("  output", formatUSD(c.output))}
       {line("  cache write", formatUSD(c.cacheWrite))}
       {line("  cache read", formatUSD(c.cacheRead))}
+      {line("tokens", formatTokens(ioTokens(a.totals.tokens), cacheTokens(a.totals.tokens)))}
+      {line(
+        "  input/output",
+        `${formatCount(a.totals.tokens.inputTokens)} / ${formatCount(a.totals.tokens.outputTokens)}`,
+      )}
       {line("turns", String(a.totals.turns))}
       {line("api calls", String(a.totals.apiCalls))}
       {line("tool calls", String(a.totals.toolCalls))}
@@ -153,8 +164,8 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
 }
 
 type TurnRow =
-  | { type: "turn"; index: number; cost: number; calls: number; prompt: string }
-  | { type: "call"; model: string; cost: number }
+  | { type: "turn"; index: number; cost: number; tokens: string; calls: number; prompt: string }
+  | { type: "call"; model: string; cost: number; tokens: string }
   | { type: "step"; step: TurnStep };
 
 /** Flatten turns → api-call dividers → step rows for a scrollable timeline. */
@@ -165,12 +176,18 @@ function buildTurnRows(a: SessionAnalysis): TurnRow[] {
       type: "turn",
       index: t.index,
       cost: t.cost.total,
+      tokens: formatTokens(ioTokens(t.tokens), cacheTokens(t.tokens)),
       calls: t.apiCalls.length,
       prompt: t.prompt,
     });
     for (const call of t.apiCalls) {
       if (call.steps.length === 0) continue;
-      rows.push({ type: "call", model: call.model ?? "?", cost: call.cost.total });
+      rows.push({
+        type: "call",
+        model: call.model ?? "?",
+        cost: call.cost.total,
+        tokens: formatTokens(ioTokens(call.tokens), cacheTokens(call.tokens)),
+      });
       for (const step of call.steps) rows.push({ type: "step", step });
     }
   }
@@ -224,9 +241,11 @@ function TurnsView({
           return (
             <Text key={key} bold>
               <Text color="cyan">
-                #{row.index + 1} {formatUSD(row.cost).padStart(9)} {row.calls}c{" "}
+                #{row.index + 1} {formatUSD(row.cost).padStart(9)}{" "}
               </Text>
-              {truncate(row.prompt || "(no text)", 52)}
+              <Text dimColor>{row.tokens} </Text>
+              <Text color="cyan">{row.calls}c </Text>
+              {truncate(row.prompt || "(no text)", 44)}
             </Text>
           );
         }
@@ -234,7 +253,7 @@ function TurnsView({
           return (
             <Text key={key} dimColor>
               {"  "}
-              {row.model} · {formatUSD(row.cost)}
+              {row.model} · {formatUSD(row.cost)} · {row.tokens}
             </Text>
           );
         }

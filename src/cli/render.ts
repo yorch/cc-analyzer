@@ -7,7 +7,7 @@ import type {
   ProjectRow,
   SessionRankRow,
 } from "../core/stats.ts";
-import { formatCount, formatDuration, formatUSD, table, truncate } from "./format.ts";
+import { formatCount, formatDuration, formatTokens, formatUSD, table, truncate } from "./format.ts";
 
 function totalTokens(t: TokenCounts): number {
   return (
@@ -133,7 +133,7 @@ export function renderStats(v: PortfolioView): string {
           m.month,
           formatUSD(m.cost),
           String(m.sessions),
-          formatCount(m.tokens),
+          formatTokens(m.ioTokens, m.cacheTokens),
         ]),
       ),
     );
@@ -143,11 +143,12 @@ export function renderStats(v: PortfolioView): string {
     lines.push("\nTop projects by cost");
     lines.push(
       table(
-        ["cost", "sessions", "project"],
+        ["cost", "tokens", "sessions", "project"],
         v.byProject.map((p) => [
           formatUSD(p.cost),
+          formatTokens(p.ioTokens, p.cacheTokens),
           String(p.sessions),
-          truncate(p.projectPath ?? p.projectId, 60),
+          truncate(p.projectPath ?? p.projectId, 52),
         ]),
       ),
     );
@@ -157,8 +158,13 @@ export function renderStats(v: PortfolioView): string {
     lines.push("\nSpend by model");
     lines.push(
       table(
-        ["model", "calls", "cost"],
-        v.byModel.map((m) => [m.model, formatCount(m.calls), formatUSD(m.cost)]),
+        ["model", "calls", "cost", "tokens"],
+        v.byModel.map((m) => [
+          m.model,
+          formatCount(m.calls),
+          formatUSD(m.cost),
+          formatTokens(m.ioTokens, m.cacheTokens),
+        ]),
       ),
     );
   }
@@ -167,11 +173,12 @@ export function renderStats(v: PortfolioView): string {
     lines.push("\nMost expensive sessions");
     lines.push(
       table(
-        ["cost", "date", "title"],
+        ["cost", "tokens", "date", "title"],
         v.top.map((t) => [
           formatUSD(t.cost),
+          formatTokens(t.ioTokens, t.cacheTokens),
           t.startTime?.slice(0, 10) ?? "-",
-          truncate(t.title ?? t.sessionId ?? "?", 55),
+          truncate(t.title ?? t.sessionId ?? "?", 48),
         ]),
       ),
     );

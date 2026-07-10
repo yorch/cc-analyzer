@@ -1,10 +1,16 @@
 import type { Database } from "bun:sqlite";
 
+/** SQL fragments summing the two token buckets shown next to cost. */
+const IO_TOKENS = "input_tokens + output_tokens";
+const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+
 export interface IndexedProject {
   projectId: string;
   projectPath: string | null;
   sessions: number;
   cost: number;
+  ioTokens: number;
+  cacheTokens: number;
   lastActivityMs: number;
 }
 
@@ -14,6 +20,8 @@ export interface IndexedSession {
   title: string | null;
   cost: number;
   costEstimated: boolean;
+  ioTokens: number;
+  cacheTokens: number;
   startTime: string | null;
   turns: number;
   apiCalls: number;
@@ -29,6 +37,8 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
         MAX(project_path) AS projectPath,
         COUNT(*) AS sessions,
         SUM(cost_total) AS cost,
+        SUM(${IO_TOKENS}) AS ioTokens,
+        SUM(${CACHE_TOKENS}) AS cacheTokens,
         MAX(mtime_ms) AS lastActivityMs
       FROM sessions
       GROUP BY project_id
@@ -47,6 +57,8 @@ export function listIndexedSessions(db: Database, projectId: string): IndexedSes
         title,
         cost_total AS cost,
         cost_estimated AS costEstimated,
+        (${IO_TOKENS}) AS ioTokens,
+        (${CACHE_TOKENS}) AS cacheTokens,
         start_time AS startTime,
         turns,
         api_calls AS apiCalls,

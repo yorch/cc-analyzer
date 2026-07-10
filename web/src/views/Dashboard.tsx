@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api.ts";
-import { count, usd } from "../format.ts";
+import { count, tokens, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
 
@@ -13,6 +13,8 @@ export function Dashboard() {
 
   const { summary, byMonth, byProject, byModel, top } = data;
   const maxMonth = Math.max(1, ...byMonth.map((m) => m.cost));
+  const totalIo = summary.inputTokens + summary.outputTokens;
+  const totalCache = summary.cacheWriteTokens + summary.cacheReadTokens;
   const pct = (summary.estimatedShare * 100).toFixed(0);
   const range =
     summary.firstDay && summary.lastDay ? `${summary.firstDay} → ${summary.lastDay}` : "—";
@@ -28,8 +30,10 @@ export function Dashboard() {
           <div className="hero-label">Total spend</div>
           <div className="hero-figure">{usd(summary.cost)}</div>
           <div className="hero-sub">
-            <span className="est">{pct}% estimated</span> · {range} · {count(summary.sessions)}{" "}
-            sessions
+            <span className="est">{pct}% estimated</span> · {tokens(totalIo, totalCache)} tokens
+          </div>
+          <div className="hero-sub">
+            {range} · {count(summary.sessions)} sessions
           </div>
         </div>
         <dl className="hero-stats">
@@ -64,8 +68,9 @@ export function Dashboard() {
               <tr>
                 <th>Month</th>
                 <th className="num">Cost</th>
+                <th className="num">Tokens</th>
                 <th className="num">Sessions</th>
-                <th style={{ width: "42%" }} />
+                <th style={{ width: "34%" }} />
               </tr>
             </thead>
             <tbody>
@@ -73,6 +78,7 @@ export function Dashboard() {
                 <tr key={m.month}>
                   <td>{m.month}</td>
                   <td className="num">{usd(m.cost)}</td>
+                  <td className="num">{tokens(m.ioTokens, m.cacheTokens)}</td>
                   <td className="num">{m.sessions}</td>
                   <td>
                     <div className="bar">
@@ -100,6 +106,7 @@ export function Dashboard() {
             <thead>
               <tr>
                 <th className="num">Cost</th>
+                <th className="num">Tokens</th>
                 <th className="num">Sessions</th>
                 <th>Project</th>
               </tr>
@@ -108,6 +115,7 @@ export function Dashboard() {
               {projectRows.map((p) => (
                 <tr key={p.projectId}>
                   <td className="num">{usd(p.cost)}</td>
+                  <td className="num">{tokens(p.ioTokens, p.cacheTokens)}</td>
                   <td className="num">{p.sessions}</td>
                   <td>
                     <a href={link.project(p.projectId)}>{p.projectPath ?? p.projectId}</a>
@@ -128,6 +136,7 @@ export function Dashboard() {
                 <th>Model</th>
                 <th className="num">Calls</th>
                 <th className="num">Cost</th>
+                <th className="num">Tokens</th>
               </tr>
             </thead>
             <tbody>
@@ -136,6 +145,7 @@ export function Dashboard() {
                   <td>{m.model}</td>
                   <td className="num">{count(m.calls)}</td>
                   <td className="num">{usd(m.cost)}</td>
+                  <td className="num">{tokens(m.ioTokens, m.cacheTokens)}</td>
                 </tr>
               ))}
             </tbody>
@@ -150,6 +160,7 @@ export function Dashboard() {
             <thead>
               <tr>
                 <th className="num">Cost</th>
+                <th className="num">Tokens</th>
                 <th>Date</th>
                 <th>Title</th>
               </tr>
@@ -158,6 +169,7 @@ export function Dashboard() {
               {top.map((t) => (
                 <tr key={`${t.sessionId}-${t.startTime}`}>
                   <td className="num">{usd(t.cost)}</td>
+                  <td className="num">{tokens(t.ioTokens, t.cacheTokens)}</td>
                   <td className="muted">{t.startTime?.slice(0, 10) ?? "—"}</td>
                   <td>
                     {t.sessionId ? (
