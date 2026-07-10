@@ -11,6 +11,12 @@ export interface FilterableListProps<T> {
   onBack: () => void;
   pageSize?: number;
   isActive?: boolean;
+  /** Current sort indicator (e.g. "cost ↓"); shown in the header when provided. */
+  sortLabel?: string;
+  /** Tab cycles the sort field. */
+  onCycleSort?: () => void;
+  /** Shift-Tab flips the sort direction. */
+  onReverseSort?: () => void;
 }
 
 /**
@@ -27,6 +33,9 @@ export function FilterableList<T>({
   onBack,
   pageSize = 15,
   isActive = true,
+  sortLabel,
+  onCycleSort,
+  onReverseSort,
 }: FilterableListProps<T>) {
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -65,6 +74,11 @@ export function FilterableList<T>({
         else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
         return;
       }
+      if (key.tab) {
+        if (key.shift) onReverseSort?.();
+        else onCycleSort?.();
+        return;
+      }
       if (key.backspace || key.delete) {
         setQuery((cur) => cur.slice(0, -1));
         reset();
@@ -88,6 +102,11 @@ export function FilterableList<T>({
           {"  "}
           {filtered.length}/{items.length}
         </Text>
+        {sortLabel && (
+          <Text dimColor>
+            {"  "}· sort: <Text color="cyan">{sortLabel}</Text> (tab)
+          </Text>
+        )}
       </Box>
       <Box flexDirection="column" marginTop={1}>
         {visible.length === 0 ? (

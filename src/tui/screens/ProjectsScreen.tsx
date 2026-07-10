@@ -8,6 +8,7 @@ import {
 } from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
   projects: IndexedProject[];
@@ -16,7 +17,17 @@ interface Props {
   isActive: boolean;
 }
 
+const SORT_FIELDS: SortField<IndexedProject>[] = [
+  { key: "recent", label: "recent", value: (p) => p.lastActivityMs },
+  { key: "cost", label: "cost", value: (p) => p.cost },
+  { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
+  { key: "sessions", label: "sessions", value: (p) => p.sessions },
+  { key: "name", label: "name", value: (p) => p.projectPath ?? p.projectId },
+];
+
 export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
+  const sort = useSort(SORT_FIELDS);
+  const rows = sort.sorted(projects);
   return (
     <Box flexDirection="column">
       <Text bold color="cyan">
@@ -27,10 +38,13 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
         <Text dimColor>cost · tokens · sessions · last active · path</Text>
       </Box>
       <FilterableList
-        items={projects}
+        items={rows}
         isActive={isActive}
         onSelect={onOpen}
         onBack={onBack}
+        sortLabel={sort.label}
+        onCycleSort={sort.cycle}
+        onReverseSort={sort.reverse}
         filterText={(p) => p.projectPath ?? p.projectId}
         renderItem={(p, selected) => (
           <Text

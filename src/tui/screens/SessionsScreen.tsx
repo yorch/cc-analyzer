@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
+import { type SortField, useSort } from "../useSort.ts";
 
 interface Props {
   project: IndexedProject;
@@ -11,7 +12,16 @@ interface Props {
   isActive: boolean;
 }
 
+const SORT_FIELDS: SortField<IndexedSession>[] = [
+  { key: "recent", label: "recent", value: (s) => s.mtimeMs },
+  { key: "cost", label: "cost", value: (s) => s.cost },
+  { key: "tokens", label: "tokens", value: (s) => s.ioTokens + s.cacheTokens },
+  { key: "title", label: "title", value: (s) => s.title ?? s.sessionId ?? "" },
+];
+
 export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: Props) {
+  const sort = useSort(SORT_FIELDS);
+  const rows = sort.sorted(sessions);
   return (
     <Box flexDirection="column">
       <Text bold color="cyan">
@@ -21,10 +31,13 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
         <Text dimColor>{sessions.length} sessions · cost · tokens · modified · title</Text>
       </Box>
       <FilterableList
-        items={sessions}
+        items={rows}
         isActive={isActive}
         onSelect={onOpen}
         onBack={onBack}
+        sortLabel={sort.label}
+        onCycleSort={sort.cycle}
+        onReverseSort={sort.reverse}
         filterText={(s) => `${s.title ?? ""} ${s.sessionId ?? ""}`}
         renderItem={(s, selected) => (
           <Text

@@ -1,8 +1,19 @@
 import { useState } from "react";
-import { api } from "../api.ts";
+import { api, type IndexedSession } from "../api.ts";
 import { relTime, tokens, usd } from "../format.ts";
 import { link } from "../router.ts";
+import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
+import { type Accessors, useSort } from "../useSort.ts";
+
+const SESSION_SORT: Accessors<IndexedSession> = {
+  cost: (s) => s.cost,
+  tokens: (s) => s.ioTokens + s.cacheTokens,
+  turns: (s) => s.turns,
+  tools: (s) => s.toolCalls,
+  modified: (s) => s.mtimeMs,
+  title: (s) => s.title ?? s.sessionId ?? "",
+};
 
 export function Project({ id }: { id: string }) {
   const { data, error, loading } = useAsync(
@@ -10,16 +21,18 @@ export function Project({ id }: { id: string }) {
     [id],
   );
   const [query, setQuery] = useState("");
+  const [projects, allSessions] = data ?? [[], []];
+  const q = query.toLowerCase();
+  const filtered = q
+    ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
+    : allSessions;
+  const sort = useSort(filtered, SESSION_SORT, "modified");
+  const sessions = sort.sorted;
   if (loading) return <div className="loading">Loading project…</div>;
   if (error) return <div className="loading err">Error: {error}</div>;
   if (!data) return null;
 
-  const [projects, allSessions] = data;
   const project = projects.find((p) => p.projectId === id);
-  const q = query.toLowerCase();
-  const sessions = q
-    ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
-    : allSessions;
 
   return (
     <>
@@ -47,12 +60,12 @@ export function Project({ id }: { id: string }) {
         <table>
           <thead>
             <tr>
-              <th className="num">Cost</th>
-              <th className="num">Tokens</th>
-              <th className="num">Turns</th>
-              <th className="num">Tools</th>
-              <th>Modified</th>
-              <th>Title</th>
+              <SortTh label="Cost" col="cost" sort={sort} className="num" />
+              <SortTh label="Tokens" col="tokens" sort={sort} className="num" />
+              <SortTh label="Turns" col="turns" sort={sort} className="num" />
+              <SortTh label="Tools" col="tools" sort={sort} className="num" />
+              <SortTh label="Modified" col="modified" sort={sort} />
+              <SortTh label="Title" col="title" sort={sort} />
             </tr>
           </thead>
           <tbody>
