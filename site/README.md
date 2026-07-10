@@ -6,6 +6,10 @@ The VitePress source for the project's GitHub Pages site
 This is an **isolated toolchain** — its own `package.json` and `bun.lock` — so
 VitePress's Vite 5 does not collide with the SPA's Vite 8 in the repo root.
 
+Before changing icons, diagrams, or the preview workflow, skim
+[`GOTCHAS.md`](./GOTCHAS.md) — it records three non-obvious VitePress/Mermaid
+pitfalls (and their fixes) hit while building this site.
+
 ## Local development
 
 ```bash
