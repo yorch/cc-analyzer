@@ -1,101 +1,503 @@
-/* cc-analyzer site — ledger-amber accent layered over VitePress's blue chrome.
-   Amber is cc-analyzer's signature: it marks the feature icons and the accent
-   details of the rendered diagrams, echoing the app's "session ledger" UI. */
+/* ============================================================================
+   cc-analyzer — "amber phosphor" retro-terminal theme for VitePress
+   ----------------------------------------------------------------------------
+   A CRT dev-tool aesthetic built on the app's existing amber "session ledger"
+   identity: amber monochrome-monitor phosphor on near-black in dark mode, and a
+   warm dot-matrix "print-out" (amber ink on cream) in light mode. Display type
+   is Departure Mono (pixel); everything else is IBM Plex Mono.
+   ============================================================================ */
+
+@font-face {
+  font-family: "Departure Mono";
+  src: url("./fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- Design tokens ------------------------------------------------------- */
 
 :root {
-  --cc-accent: #a9761f;
-  --cc-accent-strong: #b5822e;
-  --cc-accent-soft: rgba(181, 130, 46, 0.1);
-  --cc-accent-line: rgba(181, 130, 46, 0.32);
+  --cc-display: "Departure Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --cc-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* DARK (primary): amber-phosphor CRT ------------------------------------ */
+  --cc-bg: #0b0c0a;
+  --cc-bg-1: #101210;
+  --cc-bg-2: #15170f;
+  --cc-panel: #121410;
+  --cc-panel-2: #171a13;
+
+  --cc-amber: #ffb454; /* bright phosphor — headings, accents */
+  --cc-amber-hi: #ffc978; /* highlight / hover */
+  --cc-amber-dim: #d7a24a; /* links */
+  --cc-ink: #e7d6ad; /* body copy — warm parchment amber */
+  --cc-ink-2: #b09a6d; /* secondary text */
+  --cc-ink-3: #7c6f4f; /* muted / comments */
+  --cc-green: #74d68a; /* status "ok" ticks, used sparingly */
+  --cc-red: #ff6b5e;
+
+  --cc-line: rgba(255, 180, 84, 0.16);
+  --cc-line-strong: rgba(255, 180, 84, 0.34);
+  --cc-glow: rgba(255, 165, 60, 0.5);
+  --cc-scan: rgba(255, 180, 84, 0.03);
 }
 
-.dark {
-  --cc-accent: #e2b25a;
-  --cc-accent-strong: #e2b25a;
-  --cc-accent-soft: rgba(226, 178, 90, 0.12);
-  --cc-accent-line: rgba(226, 178, 90, 0.3);
+/* LIGHT: warm dot-matrix print-out — amber ink on cream --------------------- */
+:root:not(.dark) {
+  --cc-bg: #f3ead4;
+  --cc-bg-1: #efe4c9;
+  --cc-bg-2: #eaddbd;
+  --cc-panel: #f7efdc;
+  --cc-panel-2: #efe4c9;
+
+  --cc-amber: #9a5f12;
+  --cc-amber-hi: #7c4a0c;
+  --cc-amber-dim: #8a5410;
+  --cc-ink: #3a2c14;
+  --cc-ink-2: #6a5730;
+  --cc-ink-3: #927a49;
+  --cc-green: #3f7d43;
+  --cc-red: #b23a2c;
+
+  --cc-line: rgba(120, 84, 24, 0.2);
+  --cc-line-strong: rgba(120, 84, 24, 0.4);
+  --cc-glow: rgba(154, 95, 18, 0.12);
+  --cc-scan: rgba(120, 84, 24, 0.028);
 }
 
-/* ---- Feature icons ------------------------------------------------------ */
-/* Custom line icons sit in an amber-tinted, softly bordered tile instead of
-   the default flat emoji box. */
-.VPFeature .icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--cc-accent-soft) !important;
-  border: 1px solid var(--cc-accent-line);
-  border-radius: 10px;
+/* ---- Map tokens onto VitePress variables --------------------------------- */
+
+:root {
+  --vp-font-family-base: var(--cc-mono);
+  --vp-font-family-mono: var(--cc-mono);
+
+  --vp-c-bg: var(--cc-bg);
+  --vp-c-bg-alt: var(--cc-bg-1);
+  --vp-c-bg-soft: var(--cc-panel);
+  --vp-c-bg-elv: var(--cc-panel-2);
+
+  --vp-c-text-1: var(--cc-ink);
+  --vp-c-text-2: var(--cc-ink-2);
+  --vp-c-text-3: var(--cc-ink-3);
+
+  --vp-c-divider: var(--cc-line);
+  --vp-c-border: var(--cc-line-strong);
+  --vp-c-gutter: var(--cc-line);
+
+  --vp-c-brand-1: var(--cc-amber);
+  --vp-c-brand-2: var(--cc-amber-hi);
+  --vp-c-brand-3: var(--cc-amber-dim);
+  --vp-c-brand-soft: var(--cc-line);
+  --vp-c-brand-softer: var(--cc-scan);
+
+  --vp-button-brand-bg: var(--cc-amber);
+  --vp-button-brand-border: var(--cc-amber);
+  --vp-button-brand-text: #14100a;
+  --vp-button-brand-hover-bg: var(--cc-amber-hi);
+  --vp-button-brand-hover-border: var(--cc-amber-hi);
+  --vp-button-brand-hover-text: #14100a;
+  --vp-button-brand-active-bg: var(--cc-amber-dim);
+
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-border: var(--cc-line-strong);
+  --vp-button-alt-text: var(--cc-ink);
+  --vp-button-alt-hover-bg: var(--cc-scan);
+  --vp-button-alt-hover-border: var(--cc-amber);
+  --vp-button-alt-hover-text: var(--cc-amber);
+
+  --vp-code-block-bg: var(--cc-bg-1);
+  --vp-code-block-color: var(--cc-ink);
+  --vp-code-line-highlight-color: var(--cc-scan);
+  --vp-code-tab-active-text-color: var(--cc-amber);
+  --vp-code-tab-active-bar-color: var(--cc-amber);
+
+  --vp-c-default-soft: var(--cc-scan);
+  --vp-custom-block-tip-border: var(--cc-line);
+  --vp-custom-block-tip-bg: var(--cc-scan);
+
+  --vp-home-hero-name-color: var(--cc-amber);
 }
 
-.VPFeature .icon svg {
-  width: 24px;
-  height: 24px;
-  color: var(--cc-accent);
+/* ---- Base surface: warm near-black + faint phosphor grain ----------------- */
+
+html {
+  background: var(--cc-bg);
 }
 
-/* Warm the card border on hover to reinforce the accent. */
-.VPFeature:hover {
-  border-color: var(--cc-accent-line);
+body {
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--cc-bg-2), var(--cc-bg) 60%),
+    var(--cc-bg);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ---- Rendered diagrams -------------------------------------------------- */
-/* Wrap every mermaid diagram in a subtle "plate" so it reads as an inset
-   figure rather than loose SVG, and let wide diagrams scroll on small screens. */
+/* ---- Global CRT overlay: scanlines + vignette + subtle flicker ------------ */
+/* Scanlines belong to the phosphor tube — the light "print-out" theme has none,
+   which also keeps mix-blend-mode away from the cream surface entirely. */
+
+.cc-crt {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+:root:not(.dark) .cc-crt {
+  display: none;
+}
+
+/* fine scanlines */
+.cc-crt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--cc-scan) 0,
+    var(--cc-scan) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+/* corner vignette so the tube edges fall off (dark theme only) */
+.cc-crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    130% 130% at 50% 50%,
+    transparent 62%,
+    rgba(0, 0, 0, 0.32) 100%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cc-crt {
+    animation: cc-flicker 6s steps(60) infinite;
+  }
+  @keyframes cc-flicker {
+    0%, 96%, 100% { opacity: 1; }
+    97% { opacity: 0.94; }
+    98% { opacity: 1; }
+    99% { opacity: 0.97; }
+  }
+}
+
+/* ---- Typography: display headings in pixel type -------------------------- */
+
+.vp-doc h1,
+.vp-doc h2,
+h1.name,
+.VPHero .name,
+.cc-display {
+  font-family: var(--cc-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.vp-doc h1 {
+  font-size: 2rem;
+  color: var(--cc-amber);
+  text-shadow: 0 0 18px var(--cc-glow);
+}
+.vp-doc h2 {
+  color: var(--cc-amber);
+  border-top: 1px solid var(--cc-line);
+  padding-top: 1.4rem;
+  margin-top: 3rem;
+}
+/* a leading prompt caret on section headers */
+.vp-doc h2::before {
+  content: "▌ ";
+  color: var(--cc-amber-dim);
+  opacity: 0.75;
+}
+.vp-doc h3 {
+  color: var(--cc-ink);
+  font-weight: 600;
+}
+.vp-doc h3::before {
+  content: "» ";
+  color: var(--cc-ink-3);
+}
+
+.vp-doc a,
+.VPLink.link {
+  color: var(--cc-amber-dim);
+  text-decoration-color: var(--cc-line-strong);
+  text-underline-offset: 3px;
+  transition: color 0.15s ease, text-shadow 0.15s ease;
+}
+.vp-doc a:hover {
+  color: var(--cc-amber-hi);
+  text-shadow: 0 0 12px var(--cc-glow);
+}
+
+.vp-doc strong {
+  color: var(--cc-amber);
+  font-weight: 600;
+}
+.vp-doc code {
+  font-family: var(--cc-mono);
+  color: var(--cc-amber-hi);
+  background: var(--cc-scan);
+  border: 1px solid var(--cc-line);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  font-size: 0.86em;
+}
+
+/* ---- Code blocks: terminal panels with a title strip --------------------- */
+
+.vp-doc div[class*="language-"] {
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  background: var(--cc-bg-1);
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.25);
+}
+.vp-doc [class*="language-"] > span.lang {
+  color: var(--cc-ink-3);
+  font-family: var(--cc-mono);
+  text-transform: lowercase;
+}
+.vp-doc [class*="language-"] pre {
+  padding-top: 22px;
+}
+/* faux window dots on every code block */
+.vp-doc div[class*="language-"]::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 14px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cc-amber);
+  box-shadow: 13px 0 0 var(--cc-ink-3), 26px 0 0 var(--cc-line-strong);
+  opacity: 0.7;
+  z-index: 3;
+}
+.vp-doc [class*="language-"] code {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--cc-ink);
+}
+
+/* ---- Nav + sidebar chrome ------------------------------------------------ */
+
+.VPNav {
+  backdrop-filter: blur(8px);
+}
+.VPNavBar {
+  border-bottom: 1px solid var(--cc-line) !important;
+  background: color-mix(in srgb, var(--cc-bg) 82%, transparent) !important;
+}
+.VPNavBarTitle .title {
+  font-family: var(--cc-display);
+  color: var(--cc-amber);
+  letter-spacing: 0.02em;
+}
+/* blinking prompt before the wordmark */
+.VPNavBarTitle .title::before {
+  content: "▸";
+  color: var(--cc-amber);
+  margin-right: 8px;
+  animation: cc-blink 1.2s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .VPNavBarTitle .title::before { animation: none; }
+}
+@keyframes cc-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.15; }
+}
+
+.VPSidebar {
+  background: var(--cc-bg-1) !important;
+  border-right: 1px solid var(--cc-line);
+}
+.VPSidebarItem.level-0 > .item > .text {
+  font-family: var(--cc-display);
+  color: var(--cc-ink-2);
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+.VPSidebarItem.is-active > .item .link .text {
+  color: var(--cc-amber) !important;
+  text-shadow: 0 0 12px var(--cc-glow);
+}
+.VPSidebarItem .link:hover .text {
+  color: var(--cc-amber-hi);
+}
+
+/* local search box */
+.DocSearch-Button {
+  border: 1px solid var(--cc-line) !important;
+  border-radius: 6px;
+  background: var(--cc-scan) !important;
+  font-family: var(--cc-mono);
+}
+
+/* ---- Custom blocks / tables ---------------------------------------------- */
+
+.vp-doc table {
+  font-size: 0.9em;
+}
+.vp-doc tr {
+  background: transparent;
+  border-top: 1px solid var(--cc-line);
+}
+.vp-doc th {
+  font-family: var(--cc-display);
+  color: var(--cc-amber);
+  text-transform: uppercase;
+  font-size: 0.8em;
+  letter-spacing: 0.04em;
+  background: var(--cc-scan);
+}
+.vp-doc td {
+  border-color: var(--cc-line);
+}
+
+/* ---- Footer -------------------------------------------------------------- */
+
+.VPFooter {
+  border-top: 1px solid var(--cc-line) !important;
+  background: var(--cc-bg-1) !important;
+  font-family: var(--cc-mono);
+  font-size: 12px;
+}
+.VPFooter .message,
+.VPFooter .copyright {
+  color: var(--cc-ink-3);
+}
+
+/* ---- Rendered mermaid diagrams: inset terminal figures ------------------- */
+
 .vp-doc .mermaid {
   display: flex;
   justify-content: center;
   margin: 28px 0;
   padding: 22px 20px;
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 14px;
+  background: var(--cc-bg-1);
+  border: 1px solid var(--cc-line);
+  border-radius: 12px;
   overflow-x: auto;
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.22);
 }
-
 .vp-doc .mermaid svg {
   max-width: 100%;
   height: auto;
 }
 
-/* Slightly heavier, rounded node outlines read as intentional line-work. */
-.vp-doc .mermaid .node rect,
-.vp-doc .mermaid .node polygon,
-.vp-doc .mermaid .node path,
-.vp-doc .mermaid .node circle,
-.vp-doc .mermaid .node ellipse {
-  rx: 6px;
-  stroke-width: 1.5px;
-}
-
-/* Dark mode: mermaid's built-in dark theme is legible but generic. Re-tint the
-   node borders and cluster frames with the amber accent for cohesion, and warm
-   the plate background. */
-.dark .vp-doc .mermaid {
-  background: var(--vp-c-bg-alt);
-}
-
+/* Dark mode: the plugin forces mermaid's built-in dark theme but the
+   light-tuned themeVariables (config.ts) still leak — white edge-label plates,
+   light node fills. Repaint nodes/clusters with the amber accent and fix the
+   leaked edge-label backgrounds. */
 .dark .vp-doc .mermaid .node rect,
 .dark .vp-doc .mermaid .node polygon,
 .dark .vp-doc .mermaid .node path,
 .dark .vp-doc .mermaid .node ellipse {
-  stroke: var(--cc-accent) !important;
+  fill: var(--cc-panel-2) !important;
+  stroke: var(--cc-amber) !important;
+  stroke-width: 1.4px;
 }
-
 .dark .vp-doc .mermaid .cluster rect {
-  stroke: var(--cc-accent-line) !important;
+  fill: transparent !important;
+  stroke: var(--cc-line-strong) !important;
 }
-
-/* Edge labels: the configured light `edgeLabelBackground` leaks into dark mode,
-   painting little white plates behind link text. Repaint them to match the dark
-   plate and lift the text to a legible tone. */
+.dark .vp-doc .mermaid .nodeLabel,
+.dark .vp-doc .mermaid .nodeLabel * {
+  color: var(--cc-ink) !important;
+  fill: var(--cc-ink) !important;
+}
 .dark .vp-doc .mermaid .edgeLabel .labelBkg {
-  background: var(--vp-c-bg-alt) !important;
+  background: var(--cc-bg-1) !important;
 }
-
 .dark .vp-doc .mermaid .edgeLabel,
 .dark .vp-doc .mermaid .edgeLabel span,
 .dark .vp-doc .mermaid .edgeLabel p {
   background-color: transparent !important;
-  color: var(--vp-c-text-2) !important;
+  color: var(--cc-ink-2) !important;
+}
+.dark .vp-doc .mermaid .edgePath .path,
+.dark .vp-doc .mermaid marker path {
+  stroke: var(--cc-ink-3) !important;
+  fill: var(--cc-ink-3) !important;
+}
+
+/* ---- Landing page (layout: page) ----------------------------------------- */
+
+.cc-landing .VPPage {
+  padding-bottom: 4.5rem;
+}
+/* the flat page layout has no vp-doc wrapper, so components sit full-bleed */
+
+/* global buttons reused in the closing band (component buttons are scoped) */
+.cc-landing .cc-btn {
+  font-family: var(--cc-display);
+  font-size: 0.95rem;
+  padding: 0.72rem 1.4rem;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, background 0.2s ease;
+  white-space: nowrap;
+}
+.cc-landing .cc-btn--brand {
+  background: var(--cc-amber);
+  color: #14100a;
+}
+.cc-landing .cc-btn--brand:hover {
+  background: var(--cc-amber-hi);
+  box-shadow: 0 6px 30px var(--cc-glow);
+  transform: translateY(-1px);
+}
+.cc-landing .cc-btn--ghost {
+  border-color: var(--cc-line-strong);
+  color: var(--cc-ink);
+}
+.cc-landing .cc-btn--ghost:hover {
+  border-color: var(--cc-amber);
+  color: var(--cc-amber);
+}
+
+.cc-closing {
+  max-width: 1152px;
+  margin: 4.5rem auto 0;
+  padding: 2.6rem 24px 0;
+  border-top: 1px solid var(--cc-line);
+  text-align: center;
+}
+.cc-closing__line {
+  font-family: var(--cc-mono);
+  color: var(--cc-ink-2);
+  font-size: 0.95rem;
+  margin: 0 0 1.5rem;
+}
+.cc-closing__line code {
+  color: var(--cc-amber-hi);
+}
+.cc-closing__ok {
+  color: var(--cc-green);
+}
+.cc-closing__actions {
+  display: flex;
+  gap: 0.9rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* selection */
+::selection {
+  background: var(--cc-amber);
+  color: #14100a;
+}
+
+/* scrollbars */
+* {
+  scrollbar-color: var(--cc-line-strong) transparent;
 }
