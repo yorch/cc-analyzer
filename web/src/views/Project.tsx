@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api.ts";
-import { relTime, usd } from "../format.ts";
+import { relTime, tokens, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
 
@@ -31,6 +31,7 @@ export function Project({ id }: { id: string }) {
         <span className="muted">
           {sessions.length}
           {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
+          {project ? ` · ${tokens(project.ioTokens, project.cacheTokens)} tokens` : ""}
         </span>
       </header>
 
@@ -47,6 +48,7 @@ export function Project({ id }: { id: string }) {
           <thead>
             <tr>
               <th className="num">Cost</th>
+              <th className="num">Tokens</th>
               <th className="num">Turns</th>
               <th className="num">Tools</th>
               <th>Modified</th>
@@ -60,6 +62,7 @@ export function Project({ id }: { id: string }) {
                   {usd(s.cost)}
                   {s.costEstimated && <span className="est"> ~</span>}
                 </td>
+                <td className="num">{tokens(s.ioTokens, s.cacheTokens)}</td>
                 <td className="num">{s.turns}</td>
                 <td className="num">{s.toolCalls}</td>
                 <td className="muted">{relTime(s.mtimeMs)}</td>

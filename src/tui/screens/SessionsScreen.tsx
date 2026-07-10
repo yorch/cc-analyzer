@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import { formatRelativeTime, formatUSD, truncate } from "../../cli/format.ts";
+import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 
@@ -18,7 +18,7 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
         {truncate(project.projectPath ?? project.projectId, 70)}
       </Text>
       <Box marginBottom={1}>
-        <Text dimColor>{sessions.length} sessions · cost · modified · title</Text>
+        <Text dimColor>{sessions.length} sessions · cost · tokens · modified · title</Text>
       </Box>
       <FilterableList
         items={sessions}
@@ -32,9 +32,11 @@ export function SessionsScreen({ project, sessions, onOpen, onBack, isActive }: 
             backgroundColor={selected ? "cyan" : undefined}
           >
             {formatUSD(s.cost).padStart(9)}
-            {s.costEstimated ? "~" : " "} {formatRelativeTime(s.mtimeMs).padEnd(10)}
+            {s.costEstimated ? "~" : " "}
+            {formatTokens(s.ioTokens, s.cacheTokens).padStart(18)}{" "}
+            {formatRelativeTime(s.mtimeMs).padEnd(10)}
             {"  "}
-            {truncate(s.title ?? s.sessionId ?? "(untitled)", 55)}
+            {truncate(s.title ?? s.sessionId ?? "(untitled)", 42)}
           </Text>
         )}
       />

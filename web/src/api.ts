@@ -13,25 +13,27 @@ export interface PortfolioSummary {
   firstDay: string | null;
   lastDay: string | null;
 }
-export interface MonthRow {
+export interface TokenSplit {
+  ioTokens: number;
+  cacheTokens: number;
+}
+export interface MonthRow extends TokenSplit {
   month: string;
   cost: number;
   sessions: number;
-  tokens: number;
 }
-export interface ProjectRow {
+export interface ProjectRow extends TokenSplit {
   projectId: string;
   projectPath: string | null;
   cost: number;
   sessions: number;
-  tokens: number;
 }
-export interface ModelRow {
+export interface ModelRow extends TokenSplit {
   model: string;
   calls: number;
   cost: number;
 }
-export interface SessionRankRow {
+export interface SessionRankRow extends TokenSplit {
   sessionId: string | null;
   projectPath: string | null;
   title: string | null;
@@ -46,14 +48,14 @@ export interface StatsResponse {
   top: SessionRankRow[];
 }
 
-export interface IndexedProject {
+export interface IndexedProject extends TokenSplit {
   projectId: string;
   projectPath: string | null;
   sessions: number;
   cost: number;
   lastActivityMs: number;
 }
-export interface IndexedSession {
+export interface IndexedSession extends TokenSplit {
   sessionId: string | null;
   path: string;
   title: string | null;
@@ -73,6 +75,13 @@ export interface CostBreakdown {
   cacheRead: number;
   total: number;
   estimated: boolean;
+}
+export interface TokenCounts {
+  inputTokens: number;
+  outputTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  cacheReadTokens: number;
 }
 export type StepKind =
   | "note"
@@ -102,12 +111,14 @@ export interface TurnStep {
 export interface ApiCall {
   model?: string;
   cost: CostBreakdown;
+  tokens: TokenCounts;
   steps: TurnStep[];
 }
 export interface Turn {
   index: number;
   prompt: string;
   cost: CostBreakdown;
+  tokens: TokenCounts;
   apiCalls: ApiCall[];
   toolCounts: Record<string, number>;
 }
@@ -123,11 +134,12 @@ export interface SessionAnalysis {
     apiCalls: number;
     toolCalls: number;
     cost: CostBreakdown;
+    tokens: TokenCounts;
     webSearches: number;
     webFetches: number;
   };
   turns: Turn[];
-  models: Record<string, { apiCalls: number; cost: CostBreakdown }>;
+  models: Record<string, { apiCalls: number; cost: CostBreakdown; tokens: TokenCounts }>;
   tools: Record<string, number>;
   skills: string[];
   subagents: string[];

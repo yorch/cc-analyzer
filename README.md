@@ -59,6 +59,9 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
 - **Totals**: cost, turns, API calls, tool calls, tokens, duration, web search/fetch.
 - **Cost breakdown** by token category (input / output / cache-write / cache-read)
   and by model.
+- **Tokens alongside cost** everywhere the Web UI and TUI show a cost figure —
+  shown as input+output with the (much larger) cache volume broken out, e.g.
+  `213M +52B cache`.
 - **Tools**, **skills**, and **subagents** used; files touched.
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.

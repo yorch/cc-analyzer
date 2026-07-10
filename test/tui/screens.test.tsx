@@ -10,6 +10,8 @@ const projects: IndexedProject[] = [
     projectPath: "/Users/dev/alpha",
     sessions: 3,
     cost: 12.5,
+    ioTokens: 1000,
+    cacheTokens: 5000,
     lastActivityMs: Date.now(),
   },
   {
@@ -17,6 +19,8 @@ const projects: IndexedProject[] = [
     projectPath: "/Users/dev/beta",
     sessions: 1,
     cost: 0.4,
+    ioTokens: 1000,
+    cacheTokens: 5000,
     lastActivityMs: Date.now(),
   },
 ];
@@ -28,6 +32,8 @@ const sessions: IndexedSession[] = [
     title: "Fix the parser",
     cost: 3.2,
     costEstimated: false,
+    ioTokens: 1000,
+    cacheTokens: 5000,
     startTime: "2026-07-01T00:00:00Z",
     turns: 4,
     apiCalls: 20,

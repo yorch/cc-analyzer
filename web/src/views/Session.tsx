@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type SessionAnalysis, type TranscriptItem, type TurnStep } from "../api.ts";
-import { count, duration, usd } from "../format.ts";
+import { count, duration, tokensOf, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
 
@@ -30,6 +30,7 @@ export function Session({ id }: { id: string }) {
 
       <div className="cards">
         <Card label="Cost" value={usd(c.total)} sub={c.estimated ? "estimated" : undefined} />
+        <Card label="Tokens" value={tokensOf(a.totals.tokens)} />
         <Card label="Turns" value={String(a.totals.turns)} sub={`${a.totals.apiCalls} api calls`} />
         <Card label="Tool calls" value={String(a.totals.toolCalls)} />
         <Card label="Duration" value={duration(a.durationMs)} />
@@ -69,6 +70,7 @@ function Card({ label, value, sub }: { label: string; value: string; sub?: strin
 
 function Summary({ a }: { a: SessionAnalysis }) {
   const c = a.totals.cost;
+  const t = a.totals.tokens;
   return (
     <section>
       <div className="tablewrap">
@@ -76,6 +78,14 @@ function Summary({ a }: { a: SessionAnalysis }) {
           <tbody>
             <Row k="Cost (input/output)" v={`${usd(c.input)} / ${usd(c.output)}`} />
             <Row k="Cost (cache write/read)" v={`${usd(c.cacheWrite)} / ${usd(c.cacheRead)}`} />
+            <Row
+              k="Tokens (input/output)"
+              v={`${count(t.inputTokens)} / ${count(t.outputTokens)}`}
+            />
+            <Row
+              k="Tokens (cache write/read)"
+              v={`${count(t.cacheWrite5mTokens + t.cacheWrite1hTokens)} / ${count(t.cacheReadTokens)}`}
+            />
             <Row k="Models" v={Object.keys(a.models).join(", ") || "-"} />
             <Row k="Web search / fetch" v={`${a.totals.webSearches} / ${a.totals.webFetches}`} />
             <Row k="Git branches" v={a.gitBranches.join(", ") || "-"} />
@@ -132,7 +142,7 @@ function Turns({ a }: { a: SessionAnalysis }) {
             >
               <span className="muted">{expanded ? "▾" : "▸"}</span>{" "}
               <span className="num">#{t.index + 1}</span> · {usd(t.cost.total)} ·{" "}
-              {t.apiCalls.length} calls ·{" "}
+              <span className="muted">{tokensOf(t.tokens)}</span> · {t.apiCalls.length} calls ·{" "}
               <span className="muted">
                 {Object.entries(t.toolCounts)
                   .map(([n, c]) => `${n}:${c}`)
@@ -147,7 +157,9 @@ function Turns({ a }: { a: SessionAnalysis }) {
                   <div key={`${t.index}.${ci}`} className="callblock">
                     <div className="calldivider">
                       <span className="muted">{call.model ?? "?"}</span>
-                      <span className="muted">{usd(call.cost.total)}</span>
+                      <span className="muted">
+                        {usd(call.cost.total)} · {tokensOf(call.tokens)}
+                      </span>
                     </div>
                     {call.steps.map((step, si) => (
                       <StepRow key={step.toolUseId ?? `${t.index}.${ci}.${si}`} step={step} />

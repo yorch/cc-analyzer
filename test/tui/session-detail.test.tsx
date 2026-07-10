@@ -21,6 +21,8 @@ const session: IndexedSession = {
   title: "Fixture session",
   cost: 1,
   costEstimated: false,
+  ioTokens: 1000,
+  cacheTokens: 5000,
   startTime: null,
   turns: 2,
   apiCalls: 3,
@@ -42,6 +44,7 @@ describe("SessionDetailScreen (smoke)", () => {
     expect(frame).toContain("Write"); // an edit operation step
     expect(frame).toContain("Bash"); // a run operation step
     expect(frame).toContain("Assistant"); // narration step
+    expect(frame).toContain("cache"); // token annotation on turn/call rows
     unmount();
   });
 });

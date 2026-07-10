@@ -45,6 +45,13 @@ export const zeroTokens = (): TokenCounts => ({
   cacheReadTokens: 0,
 });
 
+/** Input + output tokens (the "real work" excluding cache). */
+export const ioTokens = (t: TokenCounts): number => t.inputTokens + t.outputTokens;
+
+/** Cache tokens (write 5m + 1h + read). */
+export const cacheTokens = (t: TokenCounts): number =>
+  t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens;
+
 export const addTokens = (a: TokenCounts, b: TokenCounts): TokenCounts => ({
   inputTokens: a.inputTokens + b.inputTokens,
   outputTokens: a.outputTokens + b.outputTokens,

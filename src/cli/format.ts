@@ -9,7 +9,14 @@ export function formatUSD(n: number): string {
 export function formatCount(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return `${(n / 1_000_000_000).toFixed(2)}B`;
+}
+
+/** Token count next to a cost: "213M" or "213M +52B cache". */
+export function formatTokens(io: number, cache: number): string {
+  const base = formatCount(io);
+  return cache > 0 ? `${base} +${formatCount(cache)} cache` : base;
 }
 
 export function formatBytes(n: number): string {

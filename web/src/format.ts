@@ -12,6 +12,20 @@ export function count(n: number): string {
   return `${(n / 1_000_000_000).toFixed(2)}B`;
 }
 
+import type { TokenCounts } from "./api.ts";
+
+/** Token count next to a cost: "213M" or "213M +52B cache". */
+export function tokens(io: number, cache: number): string {
+  const base = count(io);
+  return cache > 0 ? `${base} +${count(cache)} cache` : base;
+}
+
+export const ioOf = (t: TokenCounts): number => t.inputTokens + t.outputTokens;
+export const cacheOf = (t: TokenCounts): number =>
+  t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens;
+/** Token label from a TokenCounts: "213M +52B cache". */
+export const tokensOf = (t: TokenCounts): string => tokens(ioOf(t), cacheOf(t));
+
 export function duration(ms?: number): string {
   if (ms === undefined || Number.isNaN(ms)) return "-";
   const s = Math.round(ms / 1000);

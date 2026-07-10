@@ -17,7 +17,8 @@ export interface MonthRow {
   month: string;
   cost: number;
   sessions: number;
-  tokens: number;
+  ioTokens: number;
+  cacheTokens: number;
 }
 
 export interface ProjectRow {
@@ -25,7 +26,8 @@ export interface ProjectRow {
   projectPath: string | null;
   cost: number;
   sessions: number;
-  tokens: number;
+  ioTokens: number;
+  cacheTokens: number;
 }
 
 export interface SessionRankRow {
@@ -33,6 +35,8 @@ export interface SessionRankRow {
   projectPath: string | null;
   title: string | null;
   cost: number;
+  ioTokens: number;
+  cacheTokens: number;
   startTime: string | null;
 }
 
@@ -40,9 +44,12 @@ export interface ModelRow {
   model: string;
   calls: number;
   cost: number;
+  ioTokens: number;
+  cacheTokens: number;
 }
 
-const TOKEN_SUM = "input_tokens + output_tokens + cache_write_5m + cache_write_1h + cache_read";
+const IO_TOKENS = "input_tokens + output_tokens";
+const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
 
 export function portfolioSummary(db: Database): PortfolioSummary {
   const r = db
@@ -92,7 +99,8 @@ export function spendByMonth(db: Database): MonthRow[] {
       `SELECT month,
         SUM(cost_total) AS cost,
         COUNT(*) AS sessions,
-        SUM(${TOKEN_SUM}) AS tokens
+        SUM(${IO_TOKENS}) AS ioTokens,
+        SUM(${CACHE_TOKENS}) AS cacheTokens
       FROM sessions WHERE month IS NOT NULL
       GROUP BY month ORDER BY month`,
     )
@@ -106,7 +114,8 @@ export function spendByProject(db: Database, limit = 20): ProjectRow[] {
         MAX(project_path) AS projectPath,
         SUM(cost_total) AS cost,
         COUNT(*) AS sessions,
-        SUM(${TOKEN_SUM}) AS tokens
+        SUM(${IO_TOKENS}) AS ioTokens,
+        SUM(${CACHE_TOKENS}) AS cacheTokens
       FROM sessions
       GROUP BY project_id ORDER BY cost DESC LIMIT ?`,
     )
@@ -120,31 +129,54 @@ export function topSessions(db: Database, limit = 10): SessionRankRow[] {
         project_path AS projectPath,
         title,
         cost_total AS cost,
+        (${IO_TOKENS}) AS ioTokens,
+        (${CACHE_TOKENS}) AS cacheTokens,
         start_time AS startTime
       FROM sessions ORDER BY cost_total DESC LIMIT ?`,
     )
     .all(limit) as SessionRankRow[];
 }
 
+interface JsonTokens {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheWrite5mTokens?: number;
+  cacheWrite1hTokens?: number;
+  cacheReadTokens?: number;
+}
+
 /** Aggregate per-model spend across all sessions (models live in a JSON column). */
 export function spendByModel(db: Database): ModelRow[] {
   const rows = db.query("SELECT models_json FROM sessions").all() as { models_json: string }[];
-  const totals = new Map<string, { calls: number; cost: number }>();
+  const totals = new Map<string, { calls: number; cost: number; io: number; cache: number }>();
   for (const row of rows) {
-    let models: Record<string, { apiCalls?: number; cost?: { total?: number } }>;
+    let models: Record<
+      string,
+      { apiCalls?: number; cost?: { total?: number }; tokens?: JsonTokens }
+    >;
     try {
       models = JSON.parse(row.models_json ?? "{}");
     } catch {
       continue;
     }
     for (const [model, usage] of Object.entries(models)) {
-      const acc = totals.get(model) ?? { calls: 0, cost: 0 };
+      const acc = totals.get(model) ?? { calls: 0, cost: 0, io: 0, cache: 0 };
       acc.calls += usage.apiCalls ?? 0;
       acc.cost += usage.cost?.total ?? 0;
+      const t = usage.tokens ?? {};
+      acc.io += (t.inputTokens ?? 0) + (t.outputTokens ?? 0);
+      acc.cache +=
+        (t.cacheWrite5mTokens ?? 0) + (t.cacheWrite1hTokens ?? 0) + (t.cacheReadTokens ?? 0);
       totals.set(model, acc);
     }
   }
   return [...totals.entries()]
-    .map(([model, v]) => ({ model, calls: v.calls, cost: v.cost }))
+    .map(([model, v]) => ({
+      model,
+      calls: v.calls,
+      cost: v.cost,
+      ioTokens: v.io,
+      cacheTokens: v.cache,
+    }))
     .sort((a, b) => b.cost - a.cost);
 }

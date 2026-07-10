@@ -1,5 +1,11 @@
 import { Box, Text } from "ink";
-import { formatCount, formatRelativeTime, formatUSD, truncate } from "../../cli/format.ts";
+import {
+  formatCount,
+  formatRelativeTime,
+  formatTokens,
+  formatUSD,
+  truncate,
+} from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 
@@ -18,7 +24,7 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
         {formatCount(projects.reduce((s, p) => s + p.sessions, 0))} sessions
       </Text>
       <Box marginBottom={1}>
-        <Text dimColor>cost · sessions · last active · path</Text>
+        <Text dimColor>cost · tokens · sessions · last active · path</Text>
       </Box>
       <FilterableList
         items={projects}
@@ -31,11 +37,12 @@ export function ProjectsScreen({ projects, onOpen, onBack, isActive }: Props) {
             color={selected ? "black" : undefined}
             backgroundColor={selected ? "cyan" : undefined}
           >
-            {formatUSD(p.cost).padStart(9)} {String(p.sessions).padStart(5)}
+            {formatUSD(p.cost).padStart(9)} {formatTokens(p.ioTokens, p.cacheTokens).padStart(18)}{" "}
+            {String(p.sessions).padStart(5)}
             {"  "}
             {formatRelativeTime(p.lastActivityMs).padEnd(10)}
             {"  "}
-            {truncate(p.projectPath ?? p.projectId, 60)}
+            {truncate(p.projectPath ?? p.projectId, 48)}
           </Text>
         )}
       />

@@ -46,18 +46,23 @@ describe("queries", () => {
     expect(isIndexEmpty(openDb(":memory:"))).toBe(true);
   });
 
-  test("listIndexedProjects rolls up sessions and cost", () => {
+  test("listIndexedProjects rolls up sessions, cost and tokens", () => {
     const projects = listIndexedProjects(db);
     expect(projects).toHaveLength(1);
     expect(projects[0]?.sessions).toBe(2);
     expect(projects[0]?.projectPath).toBe("/Users/dev/proj");
     expect(projects[0]?.cost).toBeGreaterThan(0);
+    // 2 sessions × (io 123, cache 10000) from the fixture
+    expect(projects[0]?.ioTokens).toBe(246);
+    expect(projects[0]?.cacheTokens).toBe(20000);
   });
 
-  test("listIndexedSessions returns per-session rows", () => {
+  test("listIndexedSessions returns per-session rows with token split", () => {
     const sessions = listIndexedSessions(db, "proj-a");
     expect(sessions).toHaveLength(2);
     expect(sessions[0]?.turns).toBe(2);
     expect(typeof sessions[0]?.costEstimated).toBe("boolean");
+    expect(sessions[0]?.ioTokens).toBe(123);
+    expect(sessions[0]?.cacheTokens).toBe(10000);
   });
 });
