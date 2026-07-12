@@ -5,6 +5,7 @@ import { findSessionById, listProjects, listSessions } from "../core/discover.ts
 import { reindex } from "../core/indexer.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
+import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import {
   portfolioSummary,
   spendByModel,
@@ -12,10 +13,13 @@ import {
   spendByProject,
   topSessions,
 } from "../core/stats.ts";
+import { performUpdate } from "../core/update.ts";
+import { maybeNotifyUpdate } from "../core/update-check.ts";
+import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
 import { renderSessionSummary, renderStats } from "./render.ts";
 
-const HELP = `cc-analyzer — analyze Claude Code sessions in ~/.claude
+const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
 
 Usage:
   cc-analyzer                          Launch the interactive TUI (needs an index)
@@ -27,6 +31,8 @@ Usage:
   cc-analyzer stats [--json]           Portfolio-wide analytics (needs an index)
   cc-analyzer serve [--port=4317]      Launch the local web app (needs an index)
   cc-analyzer pricing update           Refresh the pricing cache
+  cc-analyzer update [--check]         Update to the latest release (or just check)
+  cc-analyzer version                  Print the version
   cc-analyzer help                     Show this help
 
 Notes:
@@ -149,8 +155,33 @@ async function cmdPricingUpdate(): Promise<number> {
   return loaded.source === "remote" ? 0 : 1;
 }
 
-async function main(): Promise<number> {
-  const [, , command, ...rest] = process.argv;
+async function cmdUpdate(checkOnly: boolean): Promise<number> {
+  try {
+    if (checkOnly) {
+      const latest = await fetchLatestVersion();
+      if (compareVersions(latest, VERSION) <= 0) {
+        console.log(`You're on the latest version (v${VERSION}).`);
+      } else {
+        console.log(
+          `v${latest} is available (you have v${VERSION}).\n` +
+            `Run 'cc-analyzer update' to install it.`,
+        );
+      }
+      return 0;
+    }
+    const result = await performUpdate();
+    console.log(result.message);
+    return result.status === "unsupported" ? 1 : 0;
+  } catch (err) {
+    console.error(`update failed: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+/** Commands that emit a passive "update available" notice when appropriate. */
+const NOTIFY_COMMANDS = new Set(["projects", "sessions", "analyze", "index", "stats", "pricing"]);
+
+async function runCommand(command: string | undefined, rest: string[]): Promise<number> {
   const json = rest.includes("--json");
   const positional = rest.filter((a) => !a.startsWith("--"));
 
@@ -176,6 +207,13 @@ async function main(): Promise<number> {
       if (positional[0] === "update") return cmdPricingUpdate();
       console.error("usage: cc-analyzer pricing update");
       return 2;
+    case "update":
+      return cmdUpdate(rest.includes("--check"));
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(VERSION);
+      return 0;
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
       await runTui();
@@ -191,6 +229,17 @@ async function main(): Promise<number> {
       console.log(HELP);
       return 2;
   }
+}
+
+async function main(): Promise<number> {
+  const [, , command, ...rest] = process.argv;
+  const code = await runCommand(command, rest);
+
+  // Best-effort, non-blocking "update available" notice for quick commands.
+  if (command && NOTIFY_COMMANDS.has(command) && !rest.includes("--json")) {
+    await maybeNotifyUpdate();
+  }
+  return code;
 }
 
 process.exit(await main());
