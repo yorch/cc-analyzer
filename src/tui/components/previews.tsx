@@ -13,7 +13,7 @@ import { palette, role } from "../theme.ts";
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Text>
-      <Text color={role.muted}>{label.padEnd(11)}</Text>
+      <Text color={role.muted}>{label.padEnd(12)}</Text>
       {children}
     </Text>
   );

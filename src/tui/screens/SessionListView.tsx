@@ -1,11 +1,11 @@
 import { Text } from "ink";
 import { useState } from "react";
-import { formatRelativeTime, formatTokens, formatUSD, truncate } from "../../cli/format.ts";
+import { formatRelativeTime, formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedSession, SessionWithProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { SessionPreview } from "../components/previews.tsx";
-import { MasterDetail } from "../shell/MasterDetail.tsx";
-import { gutter, palette, selection } from "../theme.ts";
+import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
+import { gutter, selection } from "../theme.ts";
 import { type SortField, useSort } from "../useSort.ts";
 
 const SORT_FIELDS: SortField<IndexedSession>[] = [
@@ -38,9 +38,11 @@ export function SessionListView<T extends IndexedSession>({
   const sort = useSort(SORT_FIELDS as SortField<T>[]);
   const rows = sort.sorted(sessions);
   const [highlighted, setHighlighted] = useState<T | undefined>(rows[0]);
-
+  // Project (when relevant) stays searchable but shows in the preview, not the
+  // row, so the lean master row fits without wrapping.
   const projectOf = (s: T): string =>
     showProject && "projectPath" in s ? ((s as SessionWithProject).projectPath ?? "") : "";
+  const titleW = Math.max(8, masterWidth(columns) - 24);
 
   return (
     <MasterDetail
@@ -61,12 +63,8 @@ export function SessionListView<T extends IndexedSession>({
               {gutter(sel)}
               {formatUSD(s.cost).padStart(9)}
               {s.costEstimated ? "~" : " "}
-              {formatTokens(s.ioTokens, s.cacheTokens).padStart(16)}{" "}
-              {formatRelativeTime(s.mtimeMs).padEnd(9)}{" "}
-              {truncate(s.title ?? s.sessionId ?? "(untitled)", showProject ? 24 : 34)}
-              {showProject && projectOf(s) ? (
-                <Text color={sel ? palette.bg : palette.ink3}> {truncate(projectOf(s), 22)}</Text>
-              ) : null}
+              {formatRelativeTime(s.mtimeMs).padEnd(8)}{" "}
+              {truncate(s.title ?? s.sessionId ?? "(untitled)", titleW)}
             </Text>
           )}
         />

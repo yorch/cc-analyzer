@@ -15,6 +15,7 @@ import type { IndexedSession } from "../../core/queries.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
 import { Loading } from "../components/ui.tsx";
+import { masterWidth } from "../shell/MasterDetail.tsx";
 import { KIND_COLOR, palette, role, STEP_COLOR, STEP_ICON, selection } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
 import { layoutMode } from "../useTermSize.ts";
@@ -204,6 +205,7 @@ function TurnsPane({
     { isActive },
   );
 
+  const promptW = wide ? Math.max(8, masterWidth(columns) - 18) : 40;
   const master = (
     <Box flexDirection="column">
       <Text color={role.muted}>turns · {rows.length}</Text>
@@ -212,7 +214,7 @@ function TurnsPane({
         return (
           <Text key={r.index} {...selection(sel && pane === "turns")}>
             {sel && pane === "turns" ? "❯" : " "} #{r.index + 1} {formatUSD(r.cost).padStart(8)}{" "}
-            {truncate(r.prompt || "(no text)", wide ? 22 : 40)}
+            {truncate(r.prompt || "(no text)", promptW)}
           </Text>
         );
       })}
@@ -247,12 +249,12 @@ function TurnsPane({
       </Box>
     );
   }
-  const masterCols = Math.max(22, Math.floor((columns * 40) / 100));
   return (
     <Box>
       <Box
         flexDirection="column"
-        width={masterCols}
+        width={masterWidth(columns)}
+        flexShrink={0}
         borderStyle="single"
         borderColor={palette.line}
         borderTop={false}

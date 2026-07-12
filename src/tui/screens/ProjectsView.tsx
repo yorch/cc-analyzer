@@ -1,10 +1,10 @@
 import { Text } from "ink";
 import { useState } from "react";
-import { formatTokens, formatUSD, truncate } from "../../cli/format.ts";
+import { formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { ProjectPreview } from "../components/previews.tsx";
-import { MasterDetail } from "../shell/MasterDetail.tsx";
+import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
 import { gutter, selection } from "../theme.ts";
 import { type SortField, useSort } from "../useSort.ts";
 
@@ -29,6 +29,8 @@ export function ProjectsView({ projects, columns, isActive, onOpen, onBack }: Pr
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
+  // Master rows are a lean index (cost + name); full stats live in the preview.
+  const nameW = Math.max(10, masterWidth(columns) - 15);
 
   return (
     <MasterDetail
@@ -47,9 +49,7 @@ export function ProjectsView({ projects, columns, isActive, onOpen, onBack }: Pr
           renderItem={(p, sel) => (
             <Text {...selection(sel)}>
               {gutter(sel)}
-              {formatUSD(p.cost).padStart(9)} {formatTokens(p.ioTokens, p.cacheTokens).padStart(16)}
-              {"  "}
-              {truncate(p.projectPath ?? p.projectId, 30)}
+              {formatUSD(p.cost).padStart(9)} {truncate(p.projectPath ?? p.projectId, nameW)}
             </Text>
           )}
         />

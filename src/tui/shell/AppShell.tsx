@@ -81,6 +81,7 @@ function NavRail({
   return (
     <Box
       flexDirection="column"
+      flexShrink={0}
       borderStyle="single"
       borderColor={focused ? palette.amber : palette.line}
       borderTop={false}
