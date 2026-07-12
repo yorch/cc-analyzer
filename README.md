@@ -111,7 +111,15 @@ cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer stats [--json]           # portfolio-wide analytics (needs an index)
 cc-analyzer serve [--port=4317]      # launch the local web app (needs an index)
 cc-analyzer pricing update           # refresh the pricing cache
+cc-analyzer update [--check]         # self-update to the latest release (or just check)
+cc-analyzer version                  # print the version
 ```
+
+The CLI checks for a newer release at most once a day and prints a one-line
+notice when one is available (`cc-analyzer update` to install it). Set
+`CC_ANALYZER_NO_UPDATE_CHECK=1` to disable that check; it is also skipped in CI
+and non-interactive shells. `update` replaces the installed binary in place on
+macOS/Linux; on Windows it points you at the PowerShell installer.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.
