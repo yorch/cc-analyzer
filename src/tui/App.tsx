@@ -98,6 +98,7 @@ export function App({ db, pricing }: Props) {
           session={openSession}
           pricing={pricing}
           isActive
+          columns={columns}
           onBack={() => setOpenSession(null)}
         />
       </Box>
