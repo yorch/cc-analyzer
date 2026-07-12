@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import type { IndexedProject, IndexedSession } from "../../src/core/queries.ts";
-import { ProjectsScreen } from "../../src/tui/screens/ProjectsScreen.tsx";
-import { SessionsScreen } from "../../src/tui/screens/SessionsScreen.tsx";
+import { ProjectsView } from "../../src/tui/screens/ProjectsView.tsx";
+import { SessionListView } from "../../src/tui/screens/SessionListView.tsx";
 
 const projects: IndexedProject[] = [
   {
@@ -21,7 +21,7 @@ const projects: IndexedProject[] = [
     cost: 0.4,
     ioTokens: 1000,
     cacheTokens: 5000,
-    lastActivityMs: Date.now(),
+    lastActivityMs: Date.now() - 1000,
   },
 ];
 
@@ -42,21 +42,29 @@ const sessions: IndexedSession[] = [
   },
 ];
 
-describe("TUI screens (smoke render)", () => {
-  test("ProjectsScreen lists projects with cost and path", () => {
+const noop = () => {};
+
+describe("TUI list views (smoke render)", () => {
+  test("ProjectsView lists projects and previews the selection", () => {
     const { lastFrame, unmount } = render(
-      <ProjectsScreen projects={projects} onOpen={() => {}} onBack={() => {}} isActive={false} />,
+      <ProjectsView
+        projects={projects}
+        columns={120}
+        isActive={false}
+        onOpen={noop}
+        onBack={noop}
+      />,
     );
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("Projects (2)");
-    expect(frame).toContain("/Users/dev/alpha");
+    expect(frame).toContain("/Users/dev/alpha"); // master row
     expect(frame).toContain("$12.50");
+    expect(frame).toContain("last active"); // preview pane field
     unmount();
   });
 
-  test("ProjectsScreen sort: Tab cycles field, shift-Tab flips direction", async () => {
+  test("ProjectsView sort: Tab cycles field, shift-Tab flips direction", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <ProjectsScreen projects={projects} onOpen={() => {}} onBack={() => {}} isActive={true} />,
+      <ProjectsView projects={projects} columns={120} isActive onOpen={noop} onBack={noop} />,
     );
     const wait = () => new Promise((r) => setTimeout(r, 20));
     expect(lastFrame() ?? "").toContain("sort: recent ↓"); // default
@@ -69,19 +77,20 @@ describe("TUI screens (smoke render)", () => {
     unmount();
   });
 
-  test("SessionsScreen lists sessions with title", () => {
+  test("SessionListView lists sessions and previews the selection", () => {
     const { lastFrame, unmount } = render(
-      <SessionsScreen
-        project={projects[0] as IndexedProject}
+      <SessionListView
         sessions={sessions}
-        onOpen={() => {}}
-        onBack={() => {}}
+        columns={120}
         isActive={false}
+        onOpen={noop}
+        onBack={noop}
       />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Fix the parser");
     expect(frame).toContain("$3.20");
+    expect(frame).toContain("turns"); // preview pane field
     unmount();
   });
 });

@@ -19,6 +19,8 @@ interface Props {
   /** Context-specific key hints; `? help · ctrl-c quit` is appended. */
   keyHints: string;
   columns: number;
+  /** Whether the nav rail (vs. the body) currently has input focus. */
+  railFocused?: boolean;
   /** Optional band under the title bar (e.g. the portfolio lede). */
   lede?: ReactNode;
   children: ReactNode;
@@ -31,6 +33,7 @@ export function AppShell({
   active,
   keyHints,
   columns,
+  railFocused = false,
   lede,
   children,
 }: Props) {
@@ -40,7 +43,9 @@ export function AppShell({
       <TitleBar breadcrumb={breadcrumb} />
       {lede}
       <Box marginTop={1}>
-        {mode !== "narrow" && <NavRail entries={entries} active={active} mode={mode} />}
+        {mode !== "narrow" && (
+          <NavRail entries={entries} active={active} mode={mode} focused={railFocused} />
+        )}
         <Box flexDirection="column" flexGrow={1}>
           {children}
         </Box>
@@ -65,17 +70,19 @@ function NavRail({
   entries,
   active,
   mode,
+  focused,
 }: {
   entries: NavEntry[];
   active: string;
   mode: LayoutMode;
+  focused: boolean;
 }) {
   const compact = mode === "compact";
   return (
     <Box
       flexDirection="column"
       borderStyle="single"
-      borderColor={palette.line}
+      borderColor={focused ? palette.amber : palette.line}
       borderTop={false}
       borderBottom={false}
       borderLeft={false}
@@ -85,9 +92,10 @@ function NavRail({
       {entries.map((e) => {
         const on = e.key === active;
         const fg = on ? palette.bg : e.soon ? palette.ink3 : palette.ink2;
+        const marker = on && focused ? "❯" : " ";
         return (
           <Text key={e.key} color={fg} backgroundColor={on ? palette.amber : undefined}>
-            {e.icon}
+            {marker} {e.icon}
             {compact ? "" : ` ${e.label}`}
           </Text>
         );

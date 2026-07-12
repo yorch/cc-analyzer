@@ -1,66 +1,87 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
+import { truncate } from "../cli/format.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   type IndexedProject,
   type IndexedSession,
-  indexedSessionById,
   listAllSessions,
   listIndexedProjects,
   listIndexedSessions,
 } from "../core/queries.ts";
+import { portfolioSummary, spendByMonth } from "../core/stats.ts";
+import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
-import { DashboardScreen } from "./screens/DashboardScreen.tsx";
-import { ProjectsScreen } from "./screens/ProjectsScreen.tsx";
-import { SearchScreen } from "./screens/SearchScreen.tsx";
+import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
-import { SessionsScreen } from "./screens/SessionsScreen.tsx";
+import { SessionListView } from "./screens/SessionListView.tsx";
+import { AppShell, type NavEntry } from "./shell/AppShell.tsx";
+import { role } from "./theme.ts";
+import { useTermSize } from "./useTermSize.ts";
 
 interface Props {
   db: Database;
   pricing: PricingTable;
 }
 
-type Nav =
-  | { screen: "dashboard" }
-  | { screen: "projects" }
-  | { screen: "search" }
-  | { screen: "sessions"; project: IndexedProject; sessions: IndexedSession[] }
-  | { screen: "detail"; session: IndexedSession };
+type View = "portfolio" | "projects" | "sessions" | "insights" | "trends";
+const VIEW_KEYS: View[] = ["portfolio", "projects", "sessions", "insights", "trends"];
+const RAIL: NavEntry[] = [
+  { key: "portfolio", label: "portfolio", icon: "▤" },
+  { key: "projects", label: "projects", icon: "▸" },
+  { key: "sessions", label: "sessions", icon: "≡" },
+  { key: "insights", label: "insights", icon: "◈", soon: true },
+  { key: "trends", label: "trends", icon: "∿", soon: true },
+];
 
 export function App({ db, pricing }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
   const allSessions = useMemo(() => listAllSessions(db), [db]);
-  const [stack, setStack] = useState<Nav[]>([{ screen: "dashboard" }]);
+  const summary = useMemo(() => portfolioSummary(db), [db]);
+  const months = useMemo(() => spendByMonth(db), [db]);
+  const { columns } = useTermSize();
+
+  const [view, setView] = useState<View>("portfolio");
+  const [focus, setFocus] = useState<"rail" | "body">("body");
+  const [drill, setDrill] = useState<IndexedProject | null>(null);
+  const [drillSessions, setDrillSessions] = useState<IndexedSession[]>([]);
+  const [openSession, setOpenSession] = useState<IndexedSession | null>(null);
   const [help, setHelp] = useState(false);
 
-  const push = (nav: Nav) => setStack((s) => [...s, nav]);
-  const back = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  const moveView = (delta: number) => {
+    const idx = VIEW_KEYS.indexOf(view);
+    const next = VIEW_KEYS[Math.max(0, Math.min(idx + delta, VIEW_KEYS.length - 1))];
+    if (next) setView(next);
+  };
 
   useInput(
-    (input) => {
-      if (input === "?") setHelp(true);
+    (input, key) => {
+      if (input === "?") return setHelp(true);
+      if (focus !== "rail") return; // body focus: the active view owns input
+      if (key.upArrow) return moveView(-1);
+      if (key.downArrow) return moveView(1);
+      if (key.return || key.rightArrow || key.escape || key.leftArrow) return setFocus("body");
+      const n = "12345".indexOf(input);
+      if (n >= 0) {
+        setView(VIEW_KEYS[n] as View);
+        setFocus("body");
+      }
     },
-    { isActive: !help },
+    { isActive: !help && !openSession },
   );
-
-  const openProjectSessions = (project: IndexedProject) =>
-    push({ screen: "sessions", project, sessions: listIndexedSessions(db, project.projectId) });
 
   if (projects.length === 0) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="yellow">The index is empty.</Text>
-        <Text>
-          Run <Text color="cyan">cc-analyzer index</Text> first, then relaunch.
+        <Text color={role.heading}>The index is empty.</Text>
+        <Text color={role.body}>
+          Run <Text color={role.accent}>cc-analyzer index</Text> first, then relaunch.
         </Text>
-        <Text dimColor>Press ctrl-c to quit.</Text>
+        <Text color={role.muted}>Press ctrl-c to quit.</Text>
       </Box>
     );
   }
-
-  const nav = stack[stack.length - 1] as Nav;
 
   if (help) {
     return (
@@ -70,48 +91,106 @@ export function App({ db, pricing }: Props) {
     );
   }
 
+  if (openSession) {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <SessionDetailScreen
+          session={openSession}
+          pricing={pricing}
+          isActive
+          onBack={() => setOpenSession(null)}
+        />
+      </Box>
+    );
+  }
+
+  const bodyActive = focus === "body";
+  const focusRail = () => setFocus("rail");
+  const openProject = (p: IndexedProject) => {
+    setDrill(p);
+    setDrillSessions(listIndexedSessions(db, p.projectId));
+    setFocus("body");
+  };
+  const popDrill = () => {
+    setDrill(null);
+    setDrillSessions([]);
+  };
+
+  const breadcrumb = drill
+    ? `projects ▸ ${truncate(drill.projectPath ?? drill.projectId, 40)}`
+    : view;
+
+  const keyHints =
+    focus === "rail"
+      ? "↑↓ switch view · ↵ focus list · 1-5 jump"
+      : drill
+        ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
+        : view === "insights" || view === "trends"
+          ? "esc menu"
+          : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
+
+  let body: React.ReactNode;
+  if (drill) {
+    body = (
+      <SessionListView
+        sessions={drillSessions}
+        columns={columns}
+        isActive={bodyActive}
+        onOpen={setOpenSession}
+        onBack={popDrill}
+      />
+    );
+  } else if (view === "portfolio" || view === "projects") {
+    body = (
+      <ProjectsView
+        projects={projects}
+        columns={columns}
+        isActive={bodyActive}
+        onOpen={openProject}
+        onBack={focusRail}
+      />
+    );
+  } else if (view === "sessions") {
+    body = (
+      <SessionListView
+        sessions={allSessions}
+        columns={columns}
+        isActive={bodyActive}
+        showProject
+        onOpen={setOpenSession}
+        onBack={focusRail}
+      />
+    );
+  } else {
+    body = <Placeholder label={view === "insights" ? "Insights" : "Trends"} />;
+  }
+
   return (
     <Box flexDirection="column" padding={1}>
-      {nav.screen === "dashboard" && (
-        <DashboardScreen
-          db={db}
-          isActive
-          onBack={() => {}}
-          onOpenProjects={() => push({ screen: "projects" })}
-          onOpenSearch={() => push({ screen: "search" })}
-          onOpenProject={(projectId) => {
-            const project = projects.find((p) => p.projectId === projectId);
-            if (project) openProjectSessions(project);
-          }}
-          onOpenSession={(sessionId) => {
-            const session = indexedSessionById(db, sessionId);
-            if (session) push({ screen: "detail", session });
-          }}
-        />
-      )}
-      {nav.screen === "projects" && (
-        <ProjectsScreen projects={projects} isActive onBack={back} onOpen={openProjectSessions} />
-      )}
-      {nav.screen === "search" && (
-        <SearchScreen
-          sessions={allSessions}
-          isActive
-          onBack={back}
-          onOpen={(session) => push({ screen: "detail", session })}
-        />
-      )}
-      {nav.screen === "sessions" && (
-        <SessionsScreen
-          project={nav.project}
-          sessions={nav.sessions}
-          isActive
-          onBack={back}
-          onOpen={(session) => push({ screen: "detail", session })}
-        />
-      )}
-      {nav.screen === "detail" && (
-        <SessionDetailScreen session={nav.session} pricing={pricing} isActive onBack={back} />
-      )}
+      <AppShell
+        breadcrumb={breadcrumb}
+        entries={RAIL}
+        active={view}
+        keyHints={keyHints}
+        columns={columns}
+        railFocused={focus === "rail"}
+        lede={
+          view === "portfolio" && !drill ? (
+            <PortfolioLede summary={summary} months={months} />
+          ) : undefined
+        }
+      >
+        {body}
+      </AppShell>
+    </Box>
+  );
+}
+
+function Placeholder({ label }: { label: string }) {
+  return (
+    <Box flexDirection="column">
+      <Text color={role.heading}>{label}</Text>
+      <Text color={role.muted}>Coming in a later phase of the TUI revamp.</Text>
     </Box>
   );
 }
