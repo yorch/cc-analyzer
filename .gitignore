@@ -15,3 +15,6 @@ src/web/spa.ts
 
 # AI
 .claude/worktrees/
+
+# Visual brainstorming companion (superpowers)
+.superpowers/
