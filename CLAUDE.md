@@ -85,6 +85,25 @@ the id. Never round-trip a real path through the encoded id.
 `ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
 tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
 
+## Self-update subsystem
+
+`version.ts` embeds the version by importing `package.json` (bundled by
+`bun --compile`), so a compiled binary knows its own version — keep the tag and
+`package.json` version in lockstep at release time. `release.ts` resolves the
+latest version by following the `/releases/latest` redirect (no API token/rate
+limit) and maps `process.platform`/`process.arch` to release asset names.
+
+`update.ts` self-updates only when running as a **compiled** binary (detected via
+the `$bunfs` marker in `import.meta.url`, with an `execPath`-basename fallback);
+it downloads the asset, verifies it against the release `SHA256SUMS`
+(`checksum.ts`, best-effort/graceful), then atomically `rename()`s over
+`process.execPath`. Windows delegates to the PowerShell installer; running from
+source refuses. `update-check.ts` prints a passive, once-a-day cached "update
+available" notice — gated off in CI, non-TTY, `--json`, and via
+`CC_ANALYZER_NO_UPDATE_CHECK`; it never affects exit codes. The same install
+scripts live in `site/public/install.{sh,ps1}` and do the equivalent checksum
+verification.
+
 ## Build & the generated SPA
 
 `src/web/spa.ts` is a **generated, gitignored artifact** — do not edit it by hand.
