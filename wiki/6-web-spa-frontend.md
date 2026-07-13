@@ -12,13 +12,14 @@
 - [web/src/SortTh.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx)
 - [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts)
 - [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx)
+- [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx)
 - [web/src/views/Project.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx)
 - [web/src/views/Session.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx)
 - [web/vite.config.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts)
 
 ## Overview
 
-The Web Single-Page Application (SPA) is the browser front end that `cc-analyzer serve` ships. It lives in the `web/` tree, which is distinct from the `src/web/` server tree that hosts the JavaScript Object Notation (JSON) Application Programming Interface (API). The SPA is a React 19 application built with three top-level views — Dashboard, Project, and Session — wired together by a hash-based router in [web/src/router.ts#L17-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L17-L31) and mounted by [web/src/App.tsx#L6-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L6-L24).
+The Web Single-Page Application (SPA) is the browser front end that `cc-analyzer serve` ships. It lives in the `web/` tree, which is distinct from the `src/web/` server tree that hosts the JavaScript Object Notation (JSON) Application Programming Interface (API). The SPA is a React 19 application built with four top-level views — Dashboard, Insights, Project, and Session — wired together by a hash-based router in [web/src/router.ts#L17-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L17-L31) and mounted by [web/src/App.tsx#L6-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L6-L24). A masthead nav links Dashboard and Insights ([web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/App.tsx)).
 
 Data enters exclusively through the typed client in [web/src/api.ts#L168-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L168-L178), whose response interfaces mirror the server's `core/stats`, `core/queries`, `core/analyze`, and `core/transcript` outputs. Shared behavior lives in small hooks and helpers: [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts) for fetch state, [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts) with [web/src/SortTh.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx) for sortable tables, and [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts) for currency, token, and time formatting. Vite compiles the whole tree into one self-contained Hypertext Markup Language (HTML) file that the binary embeds and serves.
 
@@ -61,6 +62,7 @@ flowchart LR
 | `useSort` / `SortTh` | [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts) | Client-side table sort and clickable headers |
 | `format` | [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts) | Currency, token, duration, path helpers |
 | `Dashboard` | [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx) | Portfolio overview, search, project filter |
+| `Insights` | [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) | Cache-efficiency hit-list (projects → sessions) |
 | `Project` | [web/src/views/Project.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx) | Per-project session list |
 | `Session` | [web/src/views/Session.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx) | Per-session summary, turns, transcript |
 | `vite.config` | [web/vite.config.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts) | Single-file build configuration |
@@ -77,7 +79,7 @@ Sources: [web/src/App.tsx:L1-L24](https://github.com/yorch/cc-analyzer/blob/bf5a
 
 ### API client and types
 
-`api.ts` exposes a single `get<T>` helper that wraps `fetch`, throws on a non-`ok` status, and casts the parsed JSON to the requested type in [web/src/api.ts#L162-L166](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L162-L166). The exported `api` object binds six endpoints: `stats`, `projects`, `sessions`, `session`, `transcript`, and `searchSessions`, each URL-encoding its path parameters in [web/src/api.ts#L168-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L168-L178). The file also declares the full response contract, including `StatsResponse` for the dashboard, `SessionAnalysis` with nested `Turn`, `ApiCall`, and `TurnStep` shapes for the session view, and `TranscriptItem` for the reader in [web/src/api.ts#L43-L160](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L43-L160).
+`api.ts` exposes a single `get<T>` helper that wraps `fetch`, throws on a non-`ok` status, and casts the parsed JSON to the requested type in [web/src/api.ts#L162-L166](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L162-L166). The exported `api` object binds the read endpoints — `stats`, `projects`, `sessions`, `session`, `transcript`, and `searchSessions` — each URL-encoding its path parameters in [web/src/api.ts#L168-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L168-L178), plus `insights` and `insightsSessions` for the cache-efficiency view and a client-side `cacheVerdict` mirror ([web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/api.ts)). The file also declares the full response contract, including `StatsResponse` for the dashboard, `SessionAnalysis` with nested `Turn`, `ApiCall`, and `TurnStep` shapes for the session view, and `TranscriptItem` for the reader in [web/src/api.ts#L43-L160](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L43-L160).
 
 Sources: [web/src/api.ts:L1-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L1-L178)
 
@@ -104,6 +106,12 @@ Sources: [web/src/views/Dashboard.tsx:L1-L303](https://github.com/yorch/cc-analy
 `Project` fetches the project list and the project's sessions together with `Promise.all`, re-running whenever the route `id` changes in [web/src/views/Project.tsx#L18-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L18-L22). It resolves the current project's metadata by matching `projectId`, renders a header with a session count and cost, and offers a title/id filter input in [web/src/views/Project.tsx#L35-L57](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L35-L57). The session table is sortable across cost, tokens, turns, tools, modified time, and title, defaulting to most-recently modified, and each title links to its session page in [web/src/views/Project.tsx#L9-L16](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L9-L16) and [web/src/views/Project.tsx#L72-L91](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L72-L91).
 
 Sources: [web/src/views/Project.tsx:L1-L96](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L1-L96)
+
+### Insights view
+
+`Insights` is the web parity of the TUI's cache-efficiency view. It fetches `api.insights()` and renders projects ranked by **un-amortized cache-write $** (waste) in a sortable table alongside a read:write ratio and a colored `Verdict` badge (efficient / ok / leaky, from `cacheVerdict`), above a summary line of total cache-write spend, waste, and waste as a percentage of spend. Each project links to `InsightsProject`, which fetches `api.insightsSessions(id)` and ranks that project's sessions by the same waste metric, linking each session to its detail page. Both reuse `useAsync`, `useSort`, and `SortTh` like the other tables ([web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) · [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/router.ts)).
+
+Sources: [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/router.ts)
 
 ### Session view
 

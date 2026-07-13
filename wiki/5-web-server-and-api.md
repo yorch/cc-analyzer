@@ -58,6 +58,8 @@ Sources: [src/web/server.ts:L7-L38](https://github.com/yorch/cc-analyzer/blob/bf
 
 Project drill-down uses two routes: `/api/projects` lists every indexed project via `listIndexedProjects`, and `/api/projects/:id/sessions` lists the sessions for one project via `listIndexedSessions` using the `id` path parameter ([src/web/api.ts:L35-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L35-L37)). Both delegate to the core query layer ([src/core/queries.ts:L59-L78](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L59-L78)).
 
+Two cache-efficiency routes back the web **Insights** view: `/api/insights` returns a portfolio `cacheSummary` plus projects ranked by un-amortized cache-write cost from `cacheWasteByProject`, and `/api/insights/:id/sessions` ranks one project's sessions by the same waste metric via `cacheWasteBySession` ([src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/web/api.ts) · [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/core/stats.ts)). Like the other reads, these are pure SQL aggregates over the index.
+
 Sources: [src/web/api.ts:L22-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L22-L45) [src/core/stats.ts:L54-L149](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/stats.ts#L54-L149) [src/core/queries.ts:L59-L78](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L59-L78)
 
 ### Search and session routes
