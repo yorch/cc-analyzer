@@ -1,10 +1,12 @@
 import { link, useHashRoute } from "./router.ts";
 import { Dashboard } from "./views/Dashboard.tsx";
+import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
 import { Session } from "./views/Session.tsx";
 
 export function App() {
   const route = useHashRoute();
+  const onInsights = route.name === "insights" || route.name === "insightsProject";
   return (
     <div className="wrap">
       <header className="masthead">
@@ -12,11 +14,21 @@ export function App() {
           <span className="brand-mark">cc</span>
           <span className="brand-name">analyzer</span>
         </a>
+        <nav className="masthead-nav">
+          <a className={route.name === "dashboard" ? "active" : ""} href={link.dashboard()}>
+            Dashboard
+          </a>
+          <a className={onInsights ? "active" : ""} href={link.insights()}>
+            Insights
+          </a>
+        </nav>
         <span className="masthead-tag">Claude Code · Session Ledger</span>
         <span className="masthead-rule" />
         <span className="masthead-blink" />
       </header>
       {route.name === "dashboard" && <Dashboard />}
+      {route.name === "insights" && <Insights />}
+      {route.name === "insightsProject" && <InsightsProject id={route.id} />}
       {route.name === "project" && <Project id={route.id} />}
       {route.name === "session" && <Session id={route.id} />}
     </div>

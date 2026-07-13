@@ -72,6 +72,46 @@ export interface SessionWithProject extends IndexedSession {
   projectPath: string | null;
 }
 
+export interface CacheMetrics {
+  writeTokens: number;
+  readTokens: number;
+  writeCost: number;
+  readCost: number;
+  inputCost: number;
+  outputCost: number;
+  totalCost: number;
+  ratio: number;
+  waste: number;
+}
+export interface ProjectCacheRow extends CacheMetrics {
+  projectId: string;
+  projectPath: string | null;
+  sessions: number;
+}
+export interface SessionCacheRow extends CacheMetrics {
+  sessionId: string | null;
+  title: string | null;
+  startTime: string | null;
+  projectPath: string | null;
+}
+export interface CacheSummaryRow {
+  writeCost: number;
+  readCost: number;
+  waste: number;
+  totalCost: number;
+}
+export interface InsightsResponse {
+  summary: CacheSummaryRow;
+  projects: ProjectCacheRow[];
+}
+export type CacheVerdict = "efficient" | "ok" | "leaky";
+/** Mirror of core stats.cacheVerdict, for the web insights view. */
+export function cacheVerdict(ratio: number): CacheVerdict {
+  if (ratio >= 2) return "efficient";
+  if (ratio >= 1) return "ok";
+  return "leaky";
+}
+
 export interface CostBreakdown {
   input: number;
   output: number;
@@ -175,4 +215,7 @@ export const api = {
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
   searchSessions: (q: string) =>
     get<SessionWithProject[]>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  insights: () => get<InsightsResponse>("/api/insights"),
+  insightsSessions: (projectId: string) =>
+    get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
 };

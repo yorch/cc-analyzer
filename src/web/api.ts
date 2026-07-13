@@ -10,6 +10,9 @@ import {
   sessionPathById,
 } from "../core/queries.ts";
 import {
+  cacheSummary,
+  cacheWasteByProject,
+  cacheWasteBySession,
   portfolioSummary,
   spendByModel,
   spendByMonth,
@@ -33,6 +36,16 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   );
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
+
+  // Cache-efficiency insights: projects ranked by un-amortized cache-write $,
+  // plus a portfolio summary; drill into one project's sessions.
+  api.get("/api/insights", (c) =>
+    c.json({ summary: cacheSummary(db), projects: cacheWasteByProject(db, 100) }),
+  );
+
+  api.get("/api/insights/:id/sessions", (c) =>
+    c.json(cacheWasteBySession(db, c.req.param("id"), 200)),
+  );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
 

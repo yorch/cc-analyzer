@@ -150,6 +150,20 @@ a:hover {
   font-size: 26px;
   letter-spacing: -0.01em;
 }
+.masthead-nav {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.masthead-nav a {
+  color: var(--muted);
+}
+.masthead-nav a:hover,
+.masthead-nav a.active {
+  color: var(--signal);
+}
 .masthead-tag {
   font-size: 10px;
   letter-spacing: 0.32em;
@@ -440,6 +454,26 @@ th.num {
 .tag.err {
   border-color: var(--red);
   color: var(--red);
+}
+.verdict {
+  display: inline-block;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.verdict.efficient {
+  color: var(--teal);
+  border-color: var(--teal);
+}
+.verdict.ok {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+.verdict.leaky {
+  color: var(--red);
+  border-color: var(--red);
 }
 .est {
   color: var(--signal);
