@@ -48,6 +48,50 @@ export interface ModelRow {
   cacheTokens: number;
 }
 
+/** Cache-efficiency metrics shared by the project and session insight rows. */
+export interface CacheMetrics {
+  writeTokens: number;
+  readTokens: number;
+  writeCost: number;
+  readCost: number;
+  inputCost: number;
+  outputCost: number;
+  totalCost: number;
+  /** readTokens / writeTokens; 0 when nothing was written. */
+  ratio: number;
+  /** Cache-write $ that was not read back: Σ writeCost × max(0, 1 − min(1, read/write)). */
+  waste: number;
+}
+
+export interface ProjectCacheRow extends CacheMetrics {
+  projectId: string;
+  projectPath: string | null;
+  sessions: number;
+}
+
+export interface SessionCacheRow extends CacheMetrics {
+  sessionId: string | null;
+  title: string | null;
+  startTime: string | null;
+  projectPath: string | null;
+}
+
+export interface CacheSummary {
+  writeCost: number;
+  readCost: number;
+  waste: number;
+  totalCost: number;
+}
+
+export type CacheVerdict = "efficient" | "ok" | "leaky";
+
+/** Classify cache amortization from the read:write token ratio. */
+export function cacheVerdict(ratio: number): CacheVerdict {
+  if (ratio >= 2) return "efficient";
+  if (ratio >= 1) return "ok";
+  return "leaky";
+}
+
 const IO_TOKENS = "input_tokens + output_tokens";
 const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
 
@@ -179,4 +223,84 @@ export function spendByModel(db: Database): ModelRow[] {
       cacheTokens: v.cache,
     }))
     .sort((a, b) => b.cost - a.cost);
+}
+
+const CACHE_WRITE = "cache_write_5m + cache_write_1h";
+/** Per-session un-amortized cache-write cost: the write $ not read back. */
+const WASTE_EXPR = `cost_cache_write * max(0.0, 1.0 - min(1.0, CASE
+  WHEN (${CACHE_WRITE}) > 0 THEN CAST(cache_read AS REAL) / (${CACHE_WRITE})
+  ELSE 1.0 END))`;
+
+const withRatio = <T extends { writeTokens: number; readTokens: number }>(
+  r: T,
+): T & { ratio: number } => ({
+  ...r,
+  ratio: r.writeTokens > 0 ? r.readTokens / r.writeTokens : 0,
+});
+
+/** Portfolio-wide cache totals for the insights header. */
+export function cacheSummary(db: Database): CacheSummary {
+  return db
+    .query(
+      `SELECT COALESCE(SUM(cost_cache_write), 0) AS writeCost,
+        COALESCE(SUM(cost_cache_read), 0) AS readCost,
+        COALESCE(SUM(${WASTE_EXPR}), 0) AS waste,
+        COALESCE(SUM(cost_total), 0) AS totalCost
+      FROM sessions`,
+    )
+    .get() as CacheSummary;
+}
+
+/** Projects ranked by un-amortized cache-write spend (worst offenders first). */
+export function cacheWasteByProject(db: Database, limit = 50): ProjectCacheRow[] {
+  const rows = db
+    .query(
+      `SELECT project_id AS projectId,
+        MAX(project_path) AS projectPath,
+        COUNT(*) AS sessions,
+        SUM(${CACHE_WRITE}) AS writeTokens,
+        SUM(cache_read) AS readTokens,
+        SUM(cost_cache_write) AS writeCost,
+        SUM(cost_cache_read) AS readCost,
+        SUM(cost_input) AS inputCost,
+        SUM(cost_output) AS outputCost,
+        SUM(cost_total) AS totalCost,
+        SUM(${WASTE_EXPR}) AS waste
+      FROM sessions
+      GROUP BY project_id
+      HAVING SUM(${CACHE_WRITE}) > 0
+      ORDER BY waste DESC, writeCost DESC
+      LIMIT ?`,
+    )
+    .all(limit) as Omit<ProjectCacheRow, "ratio">[];
+  return rows.map(withRatio);
+}
+
+/** Sessions in one project ranked by un-amortized cache-write spend. */
+export function cacheWasteBySession(
+  db: Database,
+  projectId: string,
+  limit = 100,
+): SessionCacheRow[] {
+  const rows = db
+    .query(
+      `SELECT session_id AS sessionId,
+        title,
+        start_time AS startTime,
+        project_path AS projectPath,
+        (${CACHE_WRITE}) AS writeTokens,
+        cache_read AS readTokens,
+        cost_cache_write AS writeCost,
+        cost_cache_read AS readCost,
+        cost_input AS inputCost,
+        cost_output AS outputCost,
+        cost_total AS totalCost,
+        (${WASTE_EXPR}) AS waste
+      FROM sessions
+      WHERE project_id = ? AND (${CACHE_WRITE}) > 0
+      ORDER BY waste DESC, cost_cache_write DESC
+      LIMIT ?`,
+    )
+    .all(projectId, limit) as Omit<SessionCacheRow, "ratio">[];
+  return rows.map(withRatio);
 }
