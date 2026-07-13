@@ -67,6 +67,14 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "Trends",
+    keys: [
+      ["tab / 1 / 2", "burn / heatmap panel"],
+      ["m", "cycle metric"],
+      ["g", "cycle granularity (burn)"],
+    ],
+  },
+  {
     title: "Session detail",
     keys: [
       ["1-3 / tab", "summary / turns / transcript"],

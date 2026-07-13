@@ -3,6 +3,7 @@ import { Dashboard } from "./views/Dashboard.tsx";
 import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
 import { Session } from "./views/Session.tsx";
+import { Trends } from "./views/Trends.tsx";
 
 export function App() {
   const route = useHashRoute();
@@ -21,6 +22,9 @@ export function App() {
           <a className={onInsights ? "active" : ""} href={link.insights()}>
             Insights
           </a>
+          <a className={route.name === "trends" ? "active" : ""} href={link.trends()}>
+            Trends
+          </a>
         </nav>
         <span className="masthead-tag">Claude Code · Session Ledger</span>
         <span className="masthead-rule" />
@@ -29,6 +33,7 @@ export function App() {
       {route.name === "dashboard" && <Dashboard />}
       {route.name === "insights" && <Insights />}
       {route.name === "insightsProject" && <InsightsProject id={route.id} />}
+      {route.name === "trends" && <Trends />}
       {route.name === "project" && <Project id={route.id} />}
       {route.name === "session" && <Session id={route.id} />}
     </div>

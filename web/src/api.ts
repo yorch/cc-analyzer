@@ -104,6 +104,24 @@ export interface InsightsResponse {
   summary: CacheSummaryRow;
   projects: ProjectCacheRow[];
 }
+export interface DayRow {
+  day: string;
+  cost: number;
+  sessions: number;
+  ioTokens: number;
+  cacheTokens: number;
+}
+export interface HeatCell {
+  weekday: number; // 0=Sunday … 6=Saturday
+  hour: number; // 0…23, local
+  sessions: number;
+  cost: number;
+}
+export interface TrendsResponse {
+  daily: DayRow[];
+  heatmap: HeatCell[];
+}
+
 export type CacheVerdict = "efficient" | "ok" | "leaky";
 /** Mirror of core stats.cacheVerdict, for the web insights view. */
 export function cacheVerdict(ratio: number): CacheVerdict {
@@ -218,4 +236,5 @@ export const api = {
   insights: () => get<InsightsResponse>("/api/insights"),
   insightsSessions: (projectId: string) =>
     get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
+  trends: () => get<TrendsResponse>("/api/trends"),
 };

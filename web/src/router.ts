@@ -4,6 +4,7 @@ export type Route =
   | { name: "dashboard" }
   | { name: "insights" }
   | { name: "insightsProject"; id: string }
+  | { name: "trends" }
   | { name: "project"; id: string }
   | { name: "session"; id: string };
 
@@ -13,6 +14,7 @@ function parse(hash: string): Route {
   if (insightsProject)
     return { name: "insightsProject", id: decodeURIComponent(insightsProject[1] as string) };
   if (path === "/insights") return { name: "insights" };
+  if (path === "/trends") return { name: "trends" };
   const project = path.match(/^\/project\/(.+)$/);
   if (project) return { name: "project", id: decodeURIComponent(project[1] as string) };
   const session = path.match(/^\/session\/(.+)$/);
@@ -34,6 +36,7 @@ export const link = {
   dashboard: () => "#/",
   insights: () => "#/insights",
   insightsProject: (id: string) => `#/insights/${encodeURIComponent(id)}`,
+  trends: () => "#/trends",
   project: (id: string) => `#/project/${encodeURIComponent(id)}`,
   session: (id: string) => `#/session/${encodeURIComponent(id)}`,
 };

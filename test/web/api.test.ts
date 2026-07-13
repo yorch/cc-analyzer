@@ -116,4 +116,17 @@ describe("web API", () => {
     expect(body).toHaveLength(1);
     expect(body[0]?.writeTokens).toBe(1000);
   });
+
+  test("GET /api/trends returns the daily series and the activity heatmap", async () => {
+    const res = await api.request("/api/trends");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      daily: { day: string; cost: number }[];
+      heatmap: { weekday: number; hour: number; sessions: number }[];
+    };
+    expect(body.daily.length).toBeGreaterThan(0);
+    expect(typeof body.daily[0]?.day).toBe("string");
+    expect(body.heatmap.length).toBeGreaterThan(0);
+    expect(body.heatmap[0]?.sessions).toBeGreaterThan(0);
+  });
 });

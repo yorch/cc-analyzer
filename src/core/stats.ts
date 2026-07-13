@@ -21,6 +21,25 @@ export interface MonthRow {
   cacheTokens: number;
 }
 
+/** One day of the spend burn series (day is the stored YYYY-MM-DD column). */
+export interface DayRow {
+  day: string;
+  cost: number;
+  sessions: number;
+  ioTokens: number;
+  cacheTokens: number;
+}
+
+/** One weekday×hour cell of the activity heatmap (local time). */
+export interface HeatCell {
+  /** 0=Sunday … 6=Saturday, from strftime('%w'). */
+  weekday: number;
+  /** 0…23, local hour. */
+  hour: number;
+  sessions: number;
+  cost: number;
+}
+
 export interface ProjectRow {
   projectId: string;
   projectPath: string | null;
@@ -303,4 +322,34 @@ export function cacheWasteBySession(
     )
     .all(projectId, limit) as Omit<SessionCacheRow, "ratio">[];
   return rows.map(withRatio);
+}
+
+/** Daily spend/activity series for the trends burn chart, oldest day first. */
+export function spendByDay(db: Database): DayRow[] {
+  return db
+    .query(
+      `SELECT day,
+        SUM(cost_total) AS cost,
+        COUNT(*) AS sessions,
+        SUM(${IO_TOKENS}) AS ioTokens,
+        SUM(${CACHE_TOKENS}) AS cacheTokens
+      FROM sessions WHERE day IS NOT NULL
+      GROUP BY day ORDER BY day`,
+    )
+    .all() as DayRow[];
+}
+
+/** Sessions and cost bucketed by local weekday × hour for the activity heatmap.
+ * `localtime` converts the stored UTC start_time to the machine's timezone. */
+export function activityHeatmap(db: Database): HeatCell[] {
+  return db
+    .query(
+      `SELECT CAST(strftime('%w', start_time, 'localtime') AS INTEGER) AS weekday,
+        CAST(strftime('%H', start_time, 'localtime') AS INTEGER) AS hour,
+        COUNT(*) AS sessions,
+        SUM(cost_total) AS cost
+      FROM sessions WHERE start_time IS NOT NULL
+      GROUP BY weekday, hour`,
+    )
+    .all() as HeatCell[];
 }

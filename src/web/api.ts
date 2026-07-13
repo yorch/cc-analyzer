@@ -10,10 +10,12 @@ import {
   sessionPathById,
 } from "../core/queries.ts";
 import {
+  activityHeatmap,
   cacheSummary,
   cacheWasteByProject,
   cacheWasteBySession,
   portfolioSummary,
+  spendByDay,
   spendByModel,
   spendByMonth,
   spendByProject,
@@ -46,6 +48,10 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   api.get("/api/insights/:id/sessions", (c) =>
     c.json(cacheWasteBySession(db, c.req.param("id"), 200)),
   );
+
+  // Time-series for the trends view: raw daily spend series + weekday×hour
+  // activity heatmap. Bucketing/metric selection happens client-side.
+  api.get("/api/trends", (c) => c.json({ daily: spendByDay(db), heatmap: activityHeatmap(db) }));
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
 

@@ -18,6 +18,7 @@ import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
 import { SessionListView } from "./screens/SessionListView.tsx";
+import { TrendsView } from "./screens/TrendsView.tsx";
 import { AppShell, type NavEntry } from "./shell/AppShell.tsx";
 import { role } from "./theme.ts";
 import { useTermSize } from "./useTermSize.ts";
@@ -34,7 +35,7 @@ const RAIL: NavEntry[] = [
   { key: "projects", label: "projects", icon: "▸" },
   { key: "sessions", label: "sessions", icon: "≡" },
   { key: "insights", label: "insights", icon: "◈" },
-  { key: "trends", label: "trends", icon: "∿", soon: true },
+  { key: "trends", label: "trends", icon: "∿" },
 ];
 
 export function App({ db, pricing }: Props) {
@@ -140,7 +141,7 @@ export function App({ db, pricing }: Props) {
       : drill
         ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
         : view === "trends"
-          ? "esc menu"
+          ? "tab/1·2 panel · m metric · g granularity · esc menu"
           : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
 
   let body: React.ReactNode;
@@ -190,7 +191,9 @@ export function App({ db, pricing }: Props) {
       />
     );
   } else {
-    body = <Placeholder label="Trends" />;
+    body = (
+      <TrendsView db={db} columns={columns} rows={rows} isActive={bodyActive} onBack={focusRail} />
+    );
   }
 
   return (
@@ -207,15 +210,6 @@ export function App({ db, pricing }: Props) {
       >
         {body}
       </AppShell>
-    </Box>
-  );
-}
-
-function Placeholder({ label }: { label: string }) {
-  return (
-    <Box flexDirection="column">
-      <Text color={role.heading}>{label}</Text>
-      <Text color={role.muted}>Coming in a later phase of the TUI revamp.</Text>
     </Box>
   );
 }

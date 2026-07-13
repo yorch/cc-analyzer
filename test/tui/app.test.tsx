@@ -86,6 +86,18 @@ describe("App (smoke render)", () => {
     unmount();
   });
 
+  test("trends is a live view with the burn/heatmap panels", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write(""); // esc → focus the nav rail
+    await wait();
+    stdin.write("5"); // jump to the 5th view (trends)
+    await wait();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("trends"); // breadcrumb
+    expect(frame).toContain("heatmap"); // panel switcher (no longer a placeholder)
+    unmount();
+  });
+
   test("pressing ? toggles the help overlay", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write("?");

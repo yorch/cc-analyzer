@@ -170,12 +170,16 @@ month/project/model, and the most expensive sessions.
 
 Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink)
 with an **amber-phosphor** retro-terminal look. It's a persistent shell — a
-title bar, a **nav rail** (portfolio · projects · sessions · insights; trends is
-coming), and a **two-pane master-detail** body: a list on the left drives a
+title bar, a **nav rail** (portfolio · projects · sessions · insights · trends),
+and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
-drills into the leakiest sessions. Opening a session zooms to
+drills into the leakiest sessions. The **trends** view is a two-panel
+time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
+time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
+(day/week/month) — and an activity **heatmap** of sessions by local weekday ×
+hour (`m` toggles to cost). Opening a session zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and
 **summary** modes (`t` / `s`). It reads from the index, so run `cc-analyzer
@@ -193,10 +197,12 @@ falls back to a hint about the scriptable commands.
 ### Web app
 
 `cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
-with a portfolio dashboard, project drill-down, a per-session view, and an
+with a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions). Projects
+into the leakiest sessions) — and a **Trends** page mirroring the TUI's
+time-series view (an SVG spend burn chart with metric/granularity toggles and a
+weekday × hour activity heatmap). Projects
 and sessions can be **filtered** by name; the **Turns** tab expands each turn
 into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,
