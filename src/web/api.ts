@@ -15,7 +15,7 @@ import {
   cacheWasteByProject,
   cacheWasteBySession,
   portfolioSummary,
-  skillUsage,
+  skillAnalytics,
   spendByDay,
   spendByModel,
   spendByMonth,
@@ -58,7 +58,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
 
   // Tool/skill/subagent usage analytics.
   api.get("/api/analytics", (c) =>
-    c.json({ tools: toolUsage(db), skills: skillUsage(db), subagents: subagentUsage(db) }),
+    c.json({ tools: toolUsage(db), skills: skillAnalytics(db), subagents: subagentUsage(db) }),
   );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));

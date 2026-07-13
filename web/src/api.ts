@@ -133,9 +133,27 @@ export interface NameUsageRow {
   name: string;
   sessions: number;
 }
+export interface SkillDayCount {
+  day: string;
+  count: number;
+}
+/** Mirror of core stats.SkillUsageRow. Cost is session-scoped (correlational). */
+export interface SkillUsageRow {
+  name: string;
+  invocations: number;
+  sessions: number;
+  projects: number;
+  errors: number;
+  errorRate: number;
+  firstUsed: string | null;
+  lastUsed: string | null;
+  totalCost: number;
+  avgCostPerSession: number;
+  daily: SkillDayCount[];
+}
 export interface AnalyticsResponse {
   tools: ToolUsageRow[];
-  skills: NameUsageRow[];
+  skills: SkillUsageRow[];
   subagents: NameUsageRow[];
 }
 
@@ -220,7 +238,7 @@ export interface SessionAnalysis {
   turns: Turn[];
   models: Record<string, { apiCalls: number; cost: CostBreakdown; tokens: TokenCounts }>;
   tools: Record<string, number>;
-  skills: string[];
+  skills: Record<string, number>;
   subagents: string[];
   filesTouched: string[];
 }

@@ -444,7 +444,13 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
           .map(([t, n]) => `${t}:${n}`)
           .join(" ") || "-",
       )}
-      {a.skills.length > 0 && line("skills", a.skills.join(", "))}
+      {Object.keys(a.skills).length > 0 &&
+        line(
+          "skills",
+          Object.entries(a.skills)
+            .map(([s, n]) => `${s}:${n}`)
+            .join(" "),
+        )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
       {line("files touched", String(a.filesTouched.length))}
     </Box>

@@ -70,7 +70,13 @@ export function renderSessionSummary(a: SessionAnalysis): string {
     lines.push(table(["tool", "count"], toolRows));
   }
 
-  if (a.skills.length) lines.push(`\nSkills: ${a.skills.join(", ")}`);
+  if (Object.keys(a.skills).length) {
+    lines.push(
+      `\nSkills: ${Object.entries(a.skills)
+        .map(([s, n]) => `${s}:${n}`)
+        .join(", ")}`,
+    );
+  }
   if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
 

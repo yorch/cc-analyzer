@@ -364,10 +364,41 @@ export interface ToolUsageRow {
   sessions: number;
 }
 
-/** A name (skill or subagent) and how many sessions used it. */
+/** A name (subagent) and how many sessions used it. */
 export interface NameUsageRow {
   name: string;
   sessions: number;
+}
+
+/** A day and how many times a skill was invoked on it (adoption sparkline). */
+export interface SkillDayCount {
+  day: string;
+  count: number;
+}
+
+/** Rich per-skill analytics: invocation depth, reach, reliability, adoption, and
+ * (session-scoped, correlational) cost. */
+export interface SkillUsageRow {
+  name: string;
+  /** Total `Skill` invocations across all sessions. */
+  invocations: number;
+  /** Sessions that invoked the skill at least once. */
+  sessions: number;
+  /** Distinct projects that invoked the skill. */
+  projects: number;
+  /** Invocations whose result was an error. */
+  errors: number;
+  /** errors / invocations, in [0, 1]. */
+  errorRate: number;
+  /** Earliest / latest day (YYYY-MM-DD) the skill was used, or null if undated. */
+  firstUsed: string | null;
+  lastUsed: string | null;
+  /** Σ cost_total over sessions that used the skill. Correlational, not causal:
+   * a session using N skills counts its full cost toward each of them. */
+  totalCost: number;
+  avgCostPerSession: number;
+  /** Per-day invocation counts, oldest first, for the adoption sparkline. */
+  daily: SkillDayCount[];
 }
 
 function parseJson<T>(s: string | null | undefined, fallback: T): T {
@@ -412,9 +443,9 @@ export function toolUsage(db: Database): ToolUsageRow[] {
     .sort((a, b) => b.uses - a.uses);
 }
 
-/** Skill/subagent names ranked by how many sessions used each (the JSON columns
- * hold a per-session deduped list). */
-function nameFrequency(db: Database, column: "skills_json" | "subagents_json"): NameUsageRow[] {
+/** Subagent names ranked by how many sessions used each (the JSON column holds a
+ * per-session deduped list). */
+function nameFrequency(db: Database, column: "subagents_json"): NameUsageRow[] {
   const rows = db.query(`SELECT ${column} AS j FROM sessions`).all() as { j: string | null }[];
   const freq = new Map<string, number>();
   for (const r of rows) {
@@ -427,5 +458,84 @@ function nameFrequency(db: Database, column: "skills_json" | "subagents_json"): 
     .sort((a, b) => b.sessions - a.sessions);
 }
 
-export const skillUsage = (db: Database): NameUsageRow[] => nameFrequency(db, "skills_json");
 export const subagentUsage = (db: Database): NameUsageRow[] => nameFrequency(db, "subagents_json");
+
+/** Rich per-skill analytics, folding the per-session skill count/error blobs with
+ * the project, day, and cost columns already on each row. Ranked by invocations. */
+export function skillAnalytics(db: Database): SkillUsageRow[] {
+  const rows = db
+    .query("SELECT skills_json, skill_errors_json, project_id, day, cost_total FROM sessions")
+    .all() as {
+    skills_json: string | null;
+    skill_errors_json: string | null;
+    project_id: string;
+    day: string | null;
+    cost_total: number | null;
+  }[];
+
+  interface Acc {
+    invocations: number;
+    sessions: number;
+    errors: number;
+    projects: Set<string>;
+    firstUsed: string | null;
+    lastUsed: string | null;
+    totalCost: number;
+    daily: Map<string, number>;
+  }
+  const acc = new Map<string, Acc>();
+  const get = (name: string): Acc => {
+    let a = acc.get(name);
+    if (!a) {
+      a = {
+        invocations: 0,
+        sessions: 0,
+        errors: 0,
+        projects: new Set(),
+        firstUsed: null,
+        lastUsed: null,
+        totalCost: 0,
+        daily: new Map(),
+      };
+      acc.set(name, a);
+    }
+    return a;
+  };
+
+  for (const r of rows) {
+    const skills = parseJson<Record<string, number>>(r.skills_json, {});
+    const errs = parseJson<Record<string, number>>(r.skill_errors_json, {});
+    const cost = r.cost_total ?? 0;
+    for (const [name, n] of Object.entries(skills)) {
+      const a = get(name);
+      a.invocations += n;
+      a.sessions += 1;
+      a.projects.add(r.project_id);
+      a.totalCost += cost;
+      if (r.day) {
+        if (a.firstUsed === null || r.day < a.firstUsed) a.firstUsed = r.day;
+        if (a.lastUsed === null || r.day > a.lastUsed) a.lastUsed = r.day;
+        a.daily.set(r.day, (a.daily.get(r.day) ?? 0) + n);
+      }
+    }
+    for (const [name, n] of Object.entries(errs)) get(name).errors += n;
+  }
+
+  return [...acc.entries()]
+    .map(([name, a]) => ({
+      name,
+      invocations: a.invocations,
+      sessions: a.sessions,
+      projects: a.projects.size,
+      errors: a.errors,
+      errorRate: a.invocations > 0 ? a.errors / a.invocations : 0,
+      firstUsed: a.firstUsed,
+      lastUsed: a.lastUsed,
+      totalCost: a.totalCost,
+      avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
+      daily: [...a.daily.entries()]
+        .map(([day, count]) => ({ day, count }))
+        .sort((x, y) => (x.day < y.day ? -1 : 1)),
+    }))
+    .sort((a, b) => b.invocations - a.invocations);
+}

@@ -114,6 +114,50 @@ export function brailleChart(values: number[], width: number, height: number): s
   return rows;
 }
 
+const SPARK = "▁▂▃▄▅▆▇█";
+/**
+ * A one-line block-eighths sparkline of `values`, downsampled to at most `width`
+ * buckets (summing within each bucket so totals survive) and scaled to the series
+ * max. Empty string for no data.
+ */
+export function sparkline(values: number[], width = 24): string {
+  if (values.length === 0) return "";
+  const n = Math.min(Math.max(1, Math.floor(width)), values.length);
+  const buckets = new Array<number>(n).fill(0);
+  for (let i = 0; i < values.length; i++) {
+    const b = Math.floor((i * n) / values.length);
+    buckets[b] = (buckets[b] ?? 0) + (values[i] ?? 0);
+  }
+  const max = Math.max(1e-9, ...buckets);
+  const last = SPARK.length - 1;
+  return buckets
+    .map((v) => (v <= 0 ? SPARK[0] : SPARK[Math.max(1, Math.round((v / max) * last))]))
+    .join("");
+}
+
+/**
+ * Dense weekly invocation totals across a skill's active span (gap weeks count as
+ * 0), oldest first — the series behind the adoption sparkline. Reuses `weekKey` so
+ * each bucket is an ISO week (Monday-anchored).
+ */
+export function weeklySkillSeries(daily: { day: string; count: number }[]): number[] {
+  if (daily.length === 0) return [];
+  const byWeek = new Map<string, number>();
+  for (const d of daily) byWeek.set(weekKey(d.day), (byWeek.get(weekKey(d.day)) ?? 0) + d.count);
+  const keys = [...byWeek.keys()].sort();
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  if (first === undefined || last === undefined) return [];
+  const out: number[] = [];
+  const cur = new Date(`${first}T00:00:00Z`);
+  const end = new Date(`${last}T00:00:00Z`);
+  while (cur <= end) {
+    out.push(byWeek.get(cur.toISOString().slice(0, 10)) ?? 0);
+    cur.setUTCDate(cur.getUTCDate() + 7);
+  }
+  return out;
+}
+
 const RAMP = " ·░▒▓█";
 /** strftime %w weekday for each display row, Monday first. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;

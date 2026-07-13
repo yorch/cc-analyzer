@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   tools_json TEXT,
   tool_errors_json TEXT,
   skills_json TEXT,
+  skill_errors_json TEXT,
   subagents_json TEXT,
   size_bytes INTEGER,
   mtime_ms REAL,
@@ -50,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_month ON sessions(month);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 `;
 
-export const SCHEMA_VERSION = "2";
+export const SCHEMA_VERSION = "3";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
