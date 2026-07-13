@@ -58,7 +58,7 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    title: "Lists (portfolio / projects / sessions)",
+    title: "Lists (portfolio / projects / sessions / insights)",
     keys: [
       ["type", "filter"],
       ["tab / shift-tab", "cycle sort / flip direction"],

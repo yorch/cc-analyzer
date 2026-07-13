@@ -6,6 +6,7 @@ import type { PricingTable } from "../core/pricing.ts";
 import {
   type IndexedProject,
   type IndexedSession,
+  indexedSessionById,
   listAllSessions,
   listIndexedProjects,
   listIndexedSessions,
@@ -13,6 +14,7 @@ import {
 import { portfolioSummary, spendByMonth } from "../core/stats.ts";
 import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
+import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
 import { SessionListView } from "./screens/SessionListView.tsx";
@@ -31,7 +33,7 @@ const RAIL: NavEntry[] = [
   { key: "portfolio", label: "portfolio", icon: "▤" },
   { key: "projects", label: "projects", icon: "▸" },
   { key: "sessions", label: "sessions", icon: "≡" },
-  { key: "insights", label: "insights", icon: "◈", soon: true },
+  { key: "insights", label: "insights", icon: "◈" },
   { key: "trends", label: "trends", icon: "∿", soon: true },
 ];
 
@@ -117,6 +119,10 @@ export function App({ db, pricing }: Props) {
     setDrill(null);
     setDrillSessions([]);
   };
+  const openSessionById = (id: string) => {
+    const session = indexedSessionById(db, id);
+    if (session) setOpenSession(session);
+  };
 
   const showLede = view === "portfolio" && !drill;
   // Rows the master list may render: terminal height minus the fixed shell
@@ -133,7 +139,7 @@ export function App({ db, pricing }: Props) {
       ? "↑↓ switch view · ↵ focus list · 1-5 jump"
       : drill
         ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
-        : view === "insights" || view === "trends"
+        : view === "trends"
           ? "esc menu"
           : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
 
@@ -172,8 +178,19 @@ export function App({ db, pricing }: Props) {
         onBack={focusRail}
       />
     );
+  } else if (view === "insights") {
+    body = (
+      <InsightsView
+        db={db}
+        columns={columns}
+        pageSize={listPageSize}
+        isActive={bodyActive}
+        onOpenSession={openSessionById}
+        onBack={focusRail}
+      />
+    );
   } else {
-    body = <Placeholder label={view === "insights" ? "Insights" : "Trends"} />;
+    body = <Placeholder label="Trends" />;
   }
 
   return (

@@ -74,6 +74,18 @@ describe("App (smoke render)", () => {
     unmount();
   });
 
+  test("insights is a live view showing the cache hit-list", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write(""); // esc → focus the nav rail
+    await wait();
+    stdin.write("4"); // jump to the 4th view (insights)
+    await wait();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("insights"); // breadcrumb
+    expect(frame).toContain("un-amortized"); // the cache summary header
+    unmount();
+  });
+
   test("pressing ? toggles the help overlay", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write("?");

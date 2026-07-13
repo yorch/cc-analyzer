@@ -94,4 +94,26 @@ describe("web API", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
+
+  test("GET /api/insights returns the cache summary and ranked projects", async () => {
+    const res = await api.request("/api/insights");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      summary: { writeCost: number };
+      projects: { projectId: string; writeTokens: number; readTokens: number; ratio: number }[];
+    };
+    expect(body.summary.writeCost).toBeGreaterThan(0);
+    expect(body.projects).toHaveLength(1); // proj-a has cache-write activity
+    expect(body.projects[0]?.projectId).toBe("proj-a");
+    // fixture: 1000 written, 9000 read → ratio 9, well amortized
+    expect(body.projects[0]?.ratio).toBeCloseTo(9, 5);
+  });
+
+  test("GET /api/insights/:id/sessions ranks a project's sessions by waste", async () => {
+    const res = await api.request("/api/insights/proj-a/sessions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { writeTokens: number }[];
+    expect(body).toHaveLength(1);
+    expect(body[0]?.writeTokens).toBe(1000);
+  });
 });
