@@ -7,7 +7,8 @@ import {
   truncate,
 } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
-import { palette, role } from "../theme.ts";
+import { type CacheMetrics, cacheVerdict } from "../../core/stats.ts";
+import { palette, role, VERDICT_COLOR } from "../theme.ts";
 
 /** A padded `label   value` line, shared by the preview panes. */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -104,6 +105,57 @@ export function SessionPreview({
       </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>↵ open full session</Text>
+      </Box>
+    </Box>
+  );
+}
+
+/** Detail-pane cache breakdown for a selected project or session. */
+export function CachePreview({
+  title,
+  row,
+  hint,
+}: {
+  title: string;
+  row: CacheMetrics | undefined;
+  hint: string;
+}) {
+  if (!row) return <Text color={role.muted}>(no selection)</Text>;
+  const verdict = cacheVerdict(row.ratio);
+  const pct = (c: number) =>
+    row.totalCost > 0 ? `${Math.round((c / row.totalCost) * 100)}%` : "—";
+  const money = (label: string, cost: number, extra: string) => (
+    <Field label={label}>
+      <Text color={role.body}>{formatUSD(cost).padStart(9)}</Text>
+      <Text color={role.muted}>
+        {"  "}
+        {pct(cost).padStart(4)} {extra}
+      </Text>
+    </Field>
+  );
+  return (
+    <Box flexDirection="column">
+      <Text bold color={role.heading}>
+        {truncate(title, 48)}
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        <Field label="verdict">
+          <Text color={VERDICT_COLOR[verdict]}>● {verdict}</Text>
+          <Text color={role.muted}> · {row.ratio.toFixed(1)}× read:write</Text>
+        </Field>
+        <Field label="waste">
+          <Text color={role.cost}>{formatUSD(row.waste)}</Text>
+          <Text color={role.muted}> un-amortized</Text>
+        </Field>
+        <Box marginTop={1} flexDirection="column">
+          {money("cache-write", row.writeCost, `${formatCount(row.writeTokens)} tok`)}
+          {money("cache-read", row.readCost, `${formatCount(row.readTokens)} tok`)}
+          {money("input", row.inputCost, "")}
+          {money("output", row.outputCost, "")}
+        </Box>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={role.muted}>{hint}</Text>
       </Box>
     </Box>
   );

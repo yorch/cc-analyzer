@@ -13,6 +13,7 @@
  * (site/.vitepress/theme/custom.css).
  */
 
+import type { CacheVerdict } from "../core/stats.ts";
 import type { StepKind } from "../core/steps.ts";
 import type { TranscriptKind } from "../core/transcript.ts";
 
@@ -111,6 +112,13 @@ export const STEP_COLOR: Record<StepKind, string> = {
   task: palette.ink3,
   ask: palette.amber,
   tool: palette.ink3,
+};
+
+/** Cache-efficiency verdict → color: green ok / amber marginal / red leaky. */
+export const VERDICT_COLOR: Record<CacheVerdict, string> = {
+  efficient: palette.green,
+  ok: palette.amberDim,
+  leaky: palette.red,
 };
 
 export const KIND_COLOR: Record<TranscriptKind, string> = {
