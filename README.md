@@ -184,8 +184,12 @@ time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
 time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
 hour (`m` toggles to cost). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
-**tools** by invocations with an error count and error rate (`s` sorts), and your
-**skills** and **subagents** by how many sessions used each. Opening a session
+**tools** by invocations with an error count and error rate (`s` sorts); goes
+deeper on **skills** — invocations, sessions, distinct projects, error rate, and
+session-scoped cost (`s` sorts), with an adoption detail strip (first/last used +
+a weekly invocation sparkline) for the selected skill; and lists **subagents** by
+how many sessions used each. (Skill cost is *correlational*: a session using
+several skills counts its full cost toward each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and
@@ -210,7 +214,9 @@ ranked by un-amortized cache-write spend, with a read:write verdict, drilling
 into the leakiest sessions) — a **Trends** page mirroring the TUI's
 time-series view (an SVG spend burn chart with metric/granularity toggles and a
 weekday × hour activity heatmap) — and a **Tools** page ranking tools (by
-invocations, with error rate), skills, and subagents (by sessions). Projects
+invocations, with error rate), **skills** (invocations, sessions, projects, error
+rate, and session-scoped cost — click a row for its adoption sparkline and
+first/last-used), and subagents (by sessions). Projects
 and sessions can be **filtered** by name; the **Turns** tab expands each turn
 into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,

@@ -37,6 +37,7 @@ export interface SessionRow {
   tools_json: string;
   tool_errors_json: string;
   skills_json: string;
+  skill_errors_json: string;
   subagents_json: string;
   size_bytes: number;
   mtime_ms: number;
@@ -82,6 +83,7 @@ export function toSessionRow(
     tools_json: JSON.stringify(analysis.tools),
     tool_errors_json: JSON.stringify(analysis.toolErrors),
     skills_json: JSON.stringify(analysis.skills),
+    skill_errors_json: JSON.stringify(analysis.skillErrors),
     subagents_json: JSON.stringify(analysis.subagents),
     size_bytes: info.sizeBytes,
     mtime_ms: info.mtimeMs,
@@ -120,6 +122,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "tools_json",
   "tool_errors_json",
   "skills_json",
+  "skill_errors_json",
   "subagents_json",
   "size_bytes",
   "mtime_ms",

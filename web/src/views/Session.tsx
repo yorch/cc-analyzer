@@ -101,7 +101,14 @@ function Summary({ a }: { a: SessionAnalysis }) {
           </span>
         ))}
       </div>
-      {a.skills.length > 0 && <p className="muted">Skills: {a.skills.join(", ")}</p>}
+      {Object.keys(a.skills).length > 0 && (
+        <p className="muted">
+          Skills:{" "}
+          {Object.entries(a.skills)
+            .map(([s, n]) => `${s}:${n}`)
+            .join(", ")}
+        </p>
+      )}
       {a.subagents.length > 0 && <p className="muted">Subagents: {a.subagents.join(", ")}</p>}
     </section>
   );

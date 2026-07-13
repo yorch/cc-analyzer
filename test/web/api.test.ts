@@ -135,13 +135,19 @@ describe("web API", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       tools: { tool: string; uses: number; errors: number; errorRate: number }[];
-      skills: unknown[];
+      skills: { name: string; invocations: number; projects: number; daily: unknown[] }[];
       subagents: unknown[];
     };
     expect(body.tools.length).toBeGreaterThan(0);
     expect(typeof body.tools[0]?.tool).toBe("string");
     expect(body.tools[0]?.uses).toBeGreaterThan(0);
     expect(Array.isArray(body.skills)).toBe(true);
+    for (const s of body.skills) {
+      expect(typeof s.name).toBe("string");
+      expect(typeof s.invocations).toBe("number");
+      expect(typeof s.projects).toBe("number");
+      expect(Array.isArray(s.daily)).toBe(true);
+    }
     expect(Array.isArray(body.subagents)).toBe(true);
   });
 });

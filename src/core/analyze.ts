@@ -82,7 +82,10 @@ export interface SessionAnalysis {
   tools: Record<string, number>;
   /** Per-tool count of tool_uses whose result was an error. */
   toolErrors: Record<string, number>;
-  skills: string[];
+  /** Per-skill invocation count (a `Skill` tool_use with a resolvable name). */
+  skills: Record<string, number>;
+  /** Per-skill count of `Skill` invocations whose result was an error. */
+  skillErrors: Record<string, number>;
   subagents: string[];
   filesTouched: string[];
 }
@@ -189,7 +192,8 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   const models: Record<string, ModelUsage> = {};
   const tools: Record<string, number> = {};
   const toolErrors: Record<string, number> = {};
-  const skills = new Set<string>();
+  const skills: Record<string, number> = {};
+  const skillErrors: Record<string, number> = {};
   const subagents = new Set<string>();
   const filesTouched = new Set<string>();
   let title: string | undefined;
@@ -291,9 +295,10 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         tools[tu.name] = (tools[tu.name] ?? 0) + 1;
         if (current) current.toolCounts[tu.name] = (current.toolCounts[tu.name] ?? 0) + 1;
 
+        let skillName: string | undefined;
         if (tu.name === "Skill") {
-          const s = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
-          if (s) skills.add(s);
+          skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
+          if (skillName) skills[skillName] = (skills[skillName] ?? 0) + 1;
         } else if (tu.name === "Task" || tu.name === "Agent") {
           const t = stringField(tu.input, "subagent_type");
           if (t) subagents.add(t);
@@ -304,7 +309,10 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         }
 
         const result = toolResults.get(tu.id);
-        if (result?.isError) toolErrors[tu.name] = (toolErrors[tu.name] ?? 0) + 1;
+        if (result?.isError) {
+          toolErrors[tu.name] = (toolErrors[tu.name] ?? 0) + 1;
+          if (skillName) skillErrors[skillName] = (skillErrors[skillName] ?? 0) + 1;
+        }
         const { kind, label, summary } = summarizeToolUse(tu.name, tu.input);
         const inputCapped = capDetail(JSON.stringify(tu.input ?? null, null, 2));
         const resultCapped = result ? capDetail(result.text) : undefined;
@@ -389,7 +397,8 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     models,
     tools,
     toolErrors,
-    skills: [...skills],
+    skills,
+    skillErrors,
     subagents: [...subagents],
     filesTouched: [...filesTouched],
   };

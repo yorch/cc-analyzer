@@ -598,6 +598,34 @@ th.num {
 p.muted {
   font-size: 12px;
 }
+.skill-detail {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.skill-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  font-size: 13px;
+}
+.skillspark {
+  width: 100%;
+  height: 60px;
+  display: block;
+  margin-top: 8px;
+}
+.spark-cap {
+  font-size: 11px;
+}
+.skillrow {
+  cursor: pointer;
+}
+.skillrow.sel > td {
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+}
 
 .search {
   width: 100%;

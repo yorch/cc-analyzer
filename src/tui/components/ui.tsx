@@ -78,8 +78,8 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     title: "Tools",
     keys: [
       ["tab / 1 / 2 / 3", "tools / skills / subagents"],
-      ["s", "cycle sort (tools)"],
-      ["↑/↓", "scroll"],
+      ["s", "cycle sort (tools / skills)"],
+      ["↑/↓", "move · skills: pick one for the adoption detail"],
     ],
   },
   {

@@ -5,7 +5,9 @@ import {
   bucketSeries,
   heatGrid,
   metricValue,
+  sparkline,
   WEEKDAY_LABELS,
+  weeklySkillSeries,
 } from "../../src/tui/charts.ts";
 
 const day = (d: string, cost: number, sessions = 1): DayRow => ({
@@ -67,6 +69,39 @@ describe("brailleChart", () => {
 
   test("all-zero values render blank braille", () => {
     expect(brailleChart([0, 0, 0, 0], 3, 1)).toEqual(["⠀⠀⠀"]);
+  });
+});
+
+describe("sparkline", () => {
+  test("empty input → empty string", () => {
+    expect(sparkline([])).toBe("");
+  });
+
+  test("one char per value when under the width budget, scaled to the max", () => {
+    const s = sparkline([0, 5, 10], 24);
+    expect([...s]).toHaveLength(3);
+    expect(s[0]).toBe("▁"); // zero → lowest block
+    expect(s[2]).toBe("█"); // max → full block
+  });
+
+  test("downsamples by summing into at most `width` buckets", () => {
+    expect([...sparkline([1, 1, 1, 1, 1, 1], 3)]).toHaveLength(3);
+  });
+});
+
+describe("weeklySkillSeries", () => {
+  test("empty input → empty series", () => {
+    expect(weeklySkillSeries([])).toEqual([]);
+  });
+
+  test("dense weekly totals with gap weeks as zero, oldest first", () => {
+    // Mon 2026-07-06 week, then skip a week, then Mon 2026-07-20 week.
+    const series = weeklySkillSeries([
+      { day: "2026-07-06", count: 2 },
+      { day: "2026-07-08", count: 1 }, // same ISO week as 07-06
+      { day: "2026-07-20", count: 5 },
+    ]);
+    expect(series).toEqual([3, 0, 5]);
   });
 });
 
