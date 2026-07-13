@@ -14,7 +14,8 @@ import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts"
 import type { IndexedSession } from "../../core/queries.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
-import { Loading } from "../components/ui.tsx";
+import { Loading, ScrollRange } from "../components/ui.tsx";
+import { scrollOffset } from "../scroll.ts";
 import { masterWidth } from "../shell/MasterDetail.tsx";
 import { KIND_COLOR, palette, role, STEP_COLOR, STEP_ICON, selection } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
@@ -93,8 +94,9 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, onBac
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · t transcript · s summary · esc back"
-            : "↑↓ move · ↵ expand · esc turns · "}
+            ? "↑↓ turn · →/tab steps · g/G jump · t transcript · s summary · esc back"
+            : "↑↓ move · ↵ expand · g/G jump · esc turns"}
+          {" · "}
           <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
         </Text>
       </Box>
@@ -168,11 +170,16 @@ function TurnsPane({
   const selectTurn = (next: number) => {
     const n = Math.max(0, Math.min(next, rows.length - 1));
     setTurnSel(n);
-    if (n < turnOff) setTurnOff(n);
-    else if (n >= turnOff + pageSize) setTurnOff(n - pageSize + 1);
+    setTurnOff(scrollOffset(n, turnOff, pageSize));
     setStepSel(0);
     setStepOff(0);
     setExpanded(new Set());
+  };
+
+  const selectStep = (next: number) => {
+    const n = Math.max(0, Math.min(next, steps.length - 1));
+    setStepSel(n);
+    setStepOff(scrollOffset(n, stepOff, pageSize));
   };
 
   useInput(
@@ -180,24 +187,18 @@ function TurnsPane({
       if (pane === "turns") {
         if (key.downArrow || input === "j") return selectTurn(activeTurn + 1);
         if (key.upArrow || input === "k") return selectTurn(activeTurn - 1);
+        if (input === "g") return selectTurn(0);
+        if (input === "G") return selectTurn(rows.length - 1);
         if ((key.rightArrow || key.tab || key.return) && steps.length > 0) return setPane("steps");
         if (key.escape) return onBack();
         return;
       }
       // pane === "steps"
       if (key.leftArrow || (key.tab && key.shift) || key.escape) return setPane("turns");
-      if (key.downArrow || input === "j") {
-        const n = Math.min(stepSel + 1, steps.length - 1);
-        setStepSel(n);
-        if (n >= stepOff + pageSize) setStepOff(n - pageSize + 1);
-        return;
-      }
-      if (key.upArrow || input === "k") {
-        const n = Math.max(stepSel - 1, 0);
-        setStepSel(n);
-        if (n < stepOff) setStepOff(n);
-        return;
-      }
+      if (key.downArrow || input === "j") return selectStep(stepSel + 1);
+      if (key.upArrow || input === "k") return selectStep(stepSel - 1);
+      if (input === "g") return selectStep(0);
+      if (input === "G") return selectStep(steps.length - 1);
       if (key.return || input === " ") {
         setExpanded((prev) => toggle(prev, stepSel));
       }
@@ -218,6 +219,7 @@ function TurnsPane({
           </Text>
         );
       })}
+      <ScrollRange offset={turnOff} size={pageSize} total={rows.length} />
     </Box>
   );
 
@@ -236,6 +238,7 @@ function TurnsPane({
           return <StepRow key={idx} step={step} selected={sel} expanded={open} />;
         })
       )}
+      <ScrollRange offset={stepOff} size={pageSize} total={steps.length} />
     </Box>
   );
 
@@ -354,6 +357,12 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
   const pageSize = usePageSize(11);
 
+  const select = (next: number) => {
+    const n = Math.max(0, Math.min(next, items.length - 1));
+    setCursor(n);
+    setOffset(scrollOffset(n, offset, pageSize));
+  };
+
   useInput(
     (input, key) => {
       if (key.return || input === " ") {
@@ -361,22 +370,10 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
         if (item?.body) setExpanded((prev) => toggle(prev, item.index));
         return;
       }
-      if (input === "g") {
-        setCursor(0);
-        setOffset(0);
-        return;
-      }
-      if (input === "G") {
-        setCursor(items.length - 1);
-        setOffset(Math.max(0, items.length - pageSize));
-        return;
-      }
-      const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
-      if (dir === 0 || items.length === 0) return;
-      const next = Math.max(0, Math.min(activeCursor + dir, items.length - 1));
-      setCursor(next);
-      if (next < offset) setOffset(next);
-      else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
+      if (input === "g") return select(0);
+      if (input === "G") return select(items.length - 1);
+      if (key.downArrow || input === "j") return select(activeCursor + 1);
+      if (key.upArrow || input === "k") return select(activeCursor - 1);
     },
     { isActive },
   );
@@ -408,11 +405,7 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
           </Box>
         );
       })}
-      {items.length > pageSize && (
-        <Text color={role.muted}>
-          {offset + 1}–{Math.min(offset + pageSize, items.length)} / {items.length}
-        </Text>
-      )}
+      <ScrollRange offset={offset} size={pageSize} total={items.length} />
     </Box>
   );
 }

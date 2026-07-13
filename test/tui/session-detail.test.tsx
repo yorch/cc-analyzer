@@ -70,6 +70,28 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 
+  test("G jumps to the last turn, g back to the first", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        onBack={() => {}}
+      />,
+    );
+    await wait();
+    stdin.write("G"); // jump to the last turn (Bash)
+    await wait();
+    expect(lastFrame() ?? "").toContain("Bash");
+    stdin.write("g"); // jump back to the first turn (Write)
+    await wait();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Write");
+    expect(frame).not.toContain("Bash");
+    unmount();
+  });
+
   test("descending into steps and expanding one reveals its detail", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen

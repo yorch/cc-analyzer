@@ -22,6 +22,24 @@ export function Empty({ label }: { label: string }) {
   return <Text color={role.muted}>{label}</Text>;
 }
 
+/** A consistent "showing X–Y / N" indicator; hidden when everything fits. */
+export function ScrollRange({
+  offset,
+  size,
+  total,
+}: {
+  offset: number;
+  size: number;
+  total: number;
+}) {
+  if (total <= size) return null;
+  return (
+    <Text color={role.muted}>
+      {offset + 1}–{Math.min(offset + size, total)} / {total}
+    </Text>
+  );
+}
+
 const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Global",

@@ -1,8 +1,9 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
+import { scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
-import { Empty } from "./ui.tsx";
+import { Empty, ScrollRange } from "./ui.tsx";
 
 export interface FilterableListProps<T> {
   items: T[];
@@ -46,7 +47,7 @@ export function FilterableList<T>({
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
-  const autoSize = usePageSize(8);
+  const autoSize = usePageSize(9);
   const size = pageSize ?? autoSize;
 
   const q = query.toLowerCase();
@@ -85,8 +86,7 @@ export function FilterableList<T>({
           Math.min(activeCursor + (key.downArrow ? 1 : -1), filtered.length - 1),
         );
         setCursor(next);
-        if (next < offset) setOffset(next);
-        else if (next >= offset + size) setOffset(next - size + 1);
+        setOffset(scrollOffset(next, offset, size));
         return;
       }
       if (key.tab) {
@@ -139,6 +139,7 @@ export function FilterableList<T>({
           })
         )}
       </Box>
+      <ScrollRange offset={offset} size={size} total={filtered.length} />
     </Box>
   );
 }
