@@ -95,7 +95,10 @@ limit) and maps `process.platform`/`process.arch` to release asset names.
 
 `update.ts` self-updates only when running as a **compiled** binary (detected via
 the `$bunfs` marker in `import.meta.url`, with an `execPath`-basename fallback);
-it downloads the asset, verifies it against the release `SHA256SUMS`
+it downloads the asset (streamed via `pumpStream` to a `Bun.FileSink` with a
+live progress line and a per-chunk **stall timeout**, so the multi-MB download
+shows progress instead of looking hung and a true stall aborts rather than
+hangs forever), verifies it against the release `SHA256SUMS`
 (`checksum.ts`, best-effort/graceful), then atomically `rename()`s over
 `process.execPath`. Windows delegates to the PowerShell installer; running from
 source refuses. `update-check.ts` prints a passive, once-a-day cached "update
