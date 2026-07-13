@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   web_fetches INTEGER,
   models_json TEXT,
   tools_json TEXT,
+  tool_errors_json TEXT,
   skills_json TEXT,
   subagents_json TEXT,
   size_bytes INTEGER,
@@ -49,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_month ON sessions(month);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 `;
 
-export const SCHEMA_VERSION = "1";
+export const SCHEMA_VERSION = "2";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
@@ -65,6 +66,10 @@ export function openDb(path: string = indexDbPath()): Database {
     | { value: string }
     | undefined;
   if (row?.value !== SCHEMA_VERSION) {
+    // The index is a disposable cache: on a schema change, drop and recreate the
+    // sessions table (with the current columns) so a rebuild fills it accurately.
+    db.exec("DROP TABLE IF EXISTS sessions;");
+    db.exec(SCHEMA);
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
       SCHEMA_VERSION,
     );
