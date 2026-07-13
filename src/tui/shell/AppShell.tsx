@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
+import { VERSION } from "../../core/version.ts";
 import { palette } from "../theme.ts";
 import { type LayoutMode, layoutMode } from "../useTermSize.ts";
 
@@ -59,7 +60,7 @@ function TitleBar({ breadcrumb }: { breadcrumb: string }) {
   return (
     <Box justifyContent="space-between">
       <Text bold color={palette.amber}>
-        ◆ cc-analyzer
+        ◆ cc-analyzer <Text color={palette.ink3}>v{VERSION}</Text>
       </Text>
       <Text color={palette.ink3}>{breadcrumb}</Text>
     </Box>
