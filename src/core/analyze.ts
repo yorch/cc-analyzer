@@ -80,6 +80,8 @@ export interface SessionAnalysis {
   turns: Turn[];
   models: Record<string, ModelUsage>;
   tools: Record<string, number>;
+  /** Per-tool count of tool_uses whose result was an error. */
+  toolErrors: Record<string, number>;
   skills: string[];
   subagents: string[];
   filesTouched: string[];
@@ -186,6 +188,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   const versions = new Set<string>();
   const models: Record<string, ModelUsage> = {};
   const tools: Record<string, number> = {};
+  const toolErrors: Record<string, number> = {};
   const skills = new Set<string>();
   const subagents = new Set<string>();
   const filesTouched = new Set<string>();
@@ -301,6 +304,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         }
 
         const result = toolResults.get(tu.id);
+        if (result?.isError) toolErrors[tu.name] = (toolErrors[tu.name] ?? 0) + 1;
         const { kind, label, summary } = summarizeToolUse(tu.name, tu.input);
         const inputCapped = capDetail(JSON.stringify(tu.input ?? null, null, 2));
         const resultCapped = result ? capDetail(result.text) : undefined;
@@ -384,6 +388,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     turns,
     models,
     tools,
+    toolErrors,
     skills: [...skills],
     subagents: [...subagents],
     filesTouched: [...filesTouched],

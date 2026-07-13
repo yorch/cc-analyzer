@@ -353,3 +353,79 @@ export function activityHeatmap(db: Database): HeatCell[] {
     )
     .all() as HeatCell[];
 }
+
+/** Aggregate tool usage across all sessions, with error counts and rate. */
+export interface ToolUsageRow {
+  tool: string;
+  uses: number;
+  errors: number;
+  /** errors / uses, in [0, 1]. */
+  errorRate: number;
+  sessions: number;
+}
+
+/** A name (skill or subagent) and how many sessions used it. */
+export interface NameUsageRow {
+  name: string;
+  sessions: number;
+}
+
+function parseJson<T>(s: string | null | undefined, fallback: T): T {
+  if (!s) return fallback;
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Tools ranked by total invocations, folding the per-session count and error
+ * JSON blobs. `sessions` is how many sessions used the tool at least once. */
+export function toolUsage(db: Database): ToolUsageRow[] {
+  const rows = db.query("SELECT tools_json, tool_errors_json FROM sessions").all() as {
+    tools_json: string | null;
+    tool_errors_json: string | null;
+  }[];
+  const uses = new Map<string, number>();
+  const errors = new Map<string, number>();
+  const sessions = new Map<string, number>();
+  for (const r of rows) {
+    const tools = parseJson<Record<string, number>>(r.tools_json, {});
+    const errs = parseJson<Record<string, number>>(r.tool_errors_json, {});
+    for (const [t, n] of Object.entries(tools)) {
+      uses.set(t, (uses.get(t) ?? 0) + n);
+      sessions.set(t, (sessions.get(t) ?? 0) + 1);
+    }
+    for (const [t, n] of Object.entries(errs)) errors.set(t, (errors.get(t) ?? 0) + n);
+  }
+  return [...uses.entries()]
+    .map(([tool, u]) => {
+      const e = errors.get(tool) ?? 0;
+      return {
+        tool,
+        uses: u,
+        errors: e,
+        errorRate: u > 0 ? e / u : 0,
+        sessions: sessions.get(tool) ?? 0,
+      };
+    })
+    .sort((a, b) => b.uses - a.uses);
+}
+
+/** Skill/subagent names ranked by how many sessions used each (the JSON columns
+ * hold a per-session deduped list). */
+function nameFrequency(db: Database, column: "skills_json" | "subagents_json"): NameUsageRow[] {
+  const rows = db.query(`SELECT ${column} AS j FROM sessions`).all() as { j: string | null }[];
+  const freq = new Map<string, number>();
+  for (const r of rows) {
+    for (const name of new Set(parseJson<string[]>(r.j, []))) {
+      freq.set(name, (freq.get(name) ?? 0) + 1);
+    }
+  }
+  return [...freq.entries()]
+    .map(([name, sessions]) => ({ name, sessions }))
+    .sort((a, b) => b.sessions - a.sessions);
+}
+
+export const skillUsage = (db: Database): NameUsageRow[] => nameFrequency(db, "skills_json");
+export const subagentUsage = (db: Database): NameUsageRow[] => nameFrequency(db, "subagents_json");

@@ -576,6 +576,19 @@ th.num {
   min-width: 6px;
   color: var(--muted);
 }
+
+/* tools/analytics view */
+.section-h {
+  font-size: 14px;
+  margin: 24px 0 8px;
+  color: var(--ink);
+}
+.rate-hi {
+  color: var(--red);
+}
+.rate-mid {
+  color: var(--signal);
+}
 .est {
   color: var(--signal);
 }

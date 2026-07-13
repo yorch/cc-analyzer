@@ -98,6 +98,18 @@ describe("App (smoke render)", () => {
     unmount();
   });
 
+  test("tools is a live view with the usage panels", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write(""); // esc → focus the nav rail
+    await wait();
+    stdin.write("6"); // jump to the 6th view (tools)
+    await wait();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("tools"); // breadcrumb + rail
+    expect(frame).toContain("subagents"); // panel switcher
+    unmount();
+  });
+
   test("pressing ? toggles the help overlay", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write("?");

@@ -59,6 +59,7 @@ describe("analyzeSession", () => {
   test("extracts tools, files, models and metadata", async () => {
     const a = await analyzeFixture();
     expect(a.tools).toEqual({ Write: 1, Bash: 1 });
+    expect(a.toolErrors).toEqual({ Bash: 1 }); // the fixture's Bash result is an error
     expect(a.filesTouched).toEqual(["/Users/dev/proj/hello.ts"]);
     expect(Object.keys(a.models).sort()).toEqual(["claude-opus-4-7", "claude-sonnet-4-5"]);
     expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(2);
