@@ -1,6 +1,6 @@
 {
   "name": "cc-analyzer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read-only CLI to browse and analyze Claude Code sessions in ~/.claude",
   "type": "module",
   "bin": {
