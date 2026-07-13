@@ -1,27 +1,12 @@
 import { Box, Text, useInput } from "ink";
-
-/** A consistent screen title with an optional dimmed subtitle line. */
-export function ScreenHeader({ title, subtitle }: { title: string; subtitle?: string }) {
-  return (
-    <Box flexDirection="column">
-      <Text bold color="cyan">
-        {title}
-      </Text>
-      {subtitle !== undefined && (
-        <Box marginBottom={1}>
-          <Text dimColor>{subtitle}</Text>
-        </Box>
-      )}
-    </Box>
-  );
-}
+import { palette, role } from "../theme.ts";
 
 /** A consistent bottom hint bar; `? help` is appended automatically. */
 export function Footer({ hints }: { hints: string }) {
   return (
     <Box marginTop={1}>
-      <Text dimColor>
-        {hints} · <Text color="cyan">?</Text> help · ctrl-c quit
+      <Text color={role.muted}>
+        {hints} · <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
       </Text>
     </Box>
   );
@@ -29,12 +14,30 @@ export function Footer({ hints }: { hints: string }) {
 
 /** A consistent loading line. */
 export function Loading({ label }: { label: string }) {
-  return <Text dimColor>{label}…</Text>;
+  return <Text color={role.muted}>{label}…</Text>;
 }
 
 /** A consistent empty-state line. */
 export function Empty({ label }: { label: string }) {
-  return <Text dimColor>{label}</Text>;
+  return <Text color={role.muted}>{label}</Text>;
+}
+
+/** A consistent "showing X–Y / N" indicator; hidden when everything fits. */
+export function ScrollRange({
+  offset,
+  size,
+  total,
+}: {
+  offset: number;
+  size: number;
+  total: number;
+}) {
+  if (total <= size) return null;
+  return (
+    <Text color={role.muted}>
+      {offset + 1}–{Math.min(offset + size, total)} / {total}
+    </Text>
+  );
 }
 
 const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
@@ -42,25 +45,25 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     title: "Global",
     keys: [
       ["?", "toggle this help"],
-      ["esc", "back / up a screen"],
       ["ctrl-c", "quit"],
     ],
   },
   {
-    title: "Dashboard",
+    title: "Navigation",
     keys: [
-      ["1-4 / tab", "switch panel"],
-      ["↑/↓ · enter", "move · open (projects/sessions)"],
-      ["p", "all projects"],
-      ["/", "search all sessions"],
+      ["esc", "focus the nav rail (from a list)"],
+      ["↑/↓ (in rail)", "switch view"],
+      ["1-5 (in rail)", "jump to a view"],
+      ["↵ / → (in rail)", "focus the list"],
     ],
   },
   {
-    title: "Lists (projects / sessions / search)",
+    title: "Lists (portfolio / projects / sessions)",
     keys: [
       ["type", "filter"],
       ["tab / shift-tab", "cycle sort / flip direction"],
-      ["↑/↓ · enter", "move · open"],
+      ["↑/↓", "move · updates the preview"],
+      ["↵", "open (drill in)"],
     ],
   },
   {
@@ -77,23 +80,25 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
 export function HelpOverlay({ isActive, onClose }: { isActive: boolean; onClose: () => void }) {
   useInput(() => onClose(), { isActive });
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
-      <Text bold color="cyan">
+    <Box flexDirection="column" borderStyle="round" borderColor={palette.amber} padding={1}>
+      <Text bold color={role.heading}>
         Keybindings
       </Text>
       {HELP_SECTIONS.map((s) => (
         <Box key={s.title} flexDirection="column" marginTop={1}>
-          <Text bold>{s.title}</Text>
+          <Text bold color={role.body}>
+            {s.title}
+          </Text>
           {s.keys.map(([k, desc]) => (
             <Text key={k}>
-              <Text color="cyan">{k.padEnd(16)}</Text>
-              <Text dimColor>{desc}</Text>
+              <Text color={palette.amberDim}>{k.padEnd(18)}</Text>
+              <Text color={role.muted}>{desc}</Text>
             </Text>
           ))}
         </Box>
       ))}
       <Box marginTop={1}>
-        <Text dimColor>press any key to close</Text>
+        <Text color={role.muted}>press any key to close</Text>
       </Box>
     </Box>
   );

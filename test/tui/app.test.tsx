@@ -43,31 +43,34 @@ afterAll(() => {
 const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 describe("App (smoke render)", () => {
-  test("opens on the dashboard home from a populated index", () => {
+  test("opens on the portfolio home in the amber shell", () => {
     const { lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("total"); // portfolio hero
-    expect(frame).toContain("months"); // panel switcher
-    expect(frame).toContain("projects");
+    expect(frame).toContain("cc-analyzer"); // title bar
+    expect(frame).toContain("total"); // portfolio lede
+    expect(frame).toContain("portfolio"); // nav rail (breadcrumb + rail entry)
+    expect(frame).toContain("sessions"); // nav rail entry
     unmount();
   });
 
-  test("pressing p opens the full projects list", async () => {
+  test("enter on a project drills into its sessions (breadcrumb updates)", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
-    stdin.write("p");
+    stdin.write("\r"); // enter on the highlighted project row
     await wait();
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("Projects (1)");
+    expect(frame).toContain("projects ▸"); // drilled breadcrumb
     expect(frame).toContain("/Users/dev/proj");
     unmount();
   });
 
-  test("pressing / opens global session search", async () => {
+  test("esc focuses the rail, then a number key jumps to the sessions view", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
-    stdin.write("/");
+    stdin.write(""); // esc on an empty filter → focus the nav rail
+    await wait();
+    stdin.write("3"); // jump to the 3rd view (sessions)
     await wait();
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("Search all sessions");
+    expect(frame).toContain("sessions"); // breadcrumb now reads "sessions"
     unmount();
   });
 

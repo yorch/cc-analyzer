@@ -1,7 +1,9 @@
 import { Box, Text, useInput } from "ink";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { scrollOffset } from "../scroll.ts";
+import { palette, role } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
-import { Empty } from "./ui.tsx";
+import { Empty, ScrollRange } from "./ui.tsx";
 
 export interface FilterableListProps<T> {
   items: T[];
@@ -19,6 +21,8 @@ export interface FilterableListProps<T> {
   onCycleSort?: () => void;
   /** Shift-Tab flips the sort direction. */
   onReverseSort?: () => void;
+  /** Fires with the highlighted item as the cursor/filter moves (live preview). */
+  onHighlight?: (item: T | undefined) => void;
 }
 
 /**
@@ -38,16 +42,24 @@ export function FilterableList<T>({
   sortLabel,
   onCycleSort,
   onReverseSort,
+  onHighlight,
 }: FilterableListProps<T>) {
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
-  const autoSize = usePageSize(8);
+  const autoSize = usePageSize(9);
   const size = pageSize ?? autoSize;
 
   const q = query.toLowerCase();
   const filtered = q ? items.filter((i) => filterText(i).toLowerCase().includes(q)) : items;
   const activeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
+
+  // Report the highlighted item to the parent for a live detail preview.
+  const current = filtered[activeCursor];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fire on real position/filter changes, not on onHighlight identity
+  useEffect(() => {
+    onHighlight?.(current);
+  }, [current]);
 
   const reset = () => {
     setCursor(0);
@@ -74,8 +86,7 @@ export function FilterableList<T>({
           Math.min(activeCursor + (key.downArrow ? 1 : -1), filtered.length - 1),
         );
         setCursor(next);
-        if (next < offset) setOffset(next);
-        else if (next >= offset + size) setOffset(next - size + 1);
+        setOffset(scrollOffset(next, offset, size));
         return;
       }
       if (key.tab) {
@@ -100,15 +111,19 @@ export function FilterableList<T>({
   return (
     <Box flexDirection="column">
       <Box>
-        <Text color="cyan">/ </Text>
-        {query ? <Text>{query}</Text> : <Text dimColor>type to filter</Text>}
-        <Text dimColor>
+        <Text color={role.accent}>/ </Text>
+        {query ? (
+          <Text color={role.body}>{query}</Text>
+        ) : (
+          <Text color={role.muted}>type to filter</Text>
+        )}
+        <Text color={role.muted}>
           {"  "}
           {filtered.length}/{items.length}
         </Text>
         {sortLabel && (
-          <Text dimColor>
-            {"  "}· sort: <Text color="cyan">{sortLabel}</Text> (tab)
+          <Text color={role.muted}>
+            {"  "}· <Text color={palette.amberDim}>{sortLabel}</Text>
           </Text>
         )}
       </Box>
@@ -124,6 +139,7 @@ export function FilterableList<T>({
           })
         )}
       </Box>
+      <ScrollRange offset={offset} size={size} total={filtered.length} />
     </Box>
   );
 }

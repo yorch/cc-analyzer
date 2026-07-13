@@ -168,15 +168,24 @@ month/project/model, and the most expensive sessions.
 
 ### Interactive TUI
 
-Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink):
-browse **projects → sessions → session detail**, where the detail view has
-**Summary**, **Turns** (a scrollable step timeline of narration + tool
-operations with result hints), and **Transcript** tabs. It reads from the index, so run
-`cc-analyzer index` first. The project and session lists have an inline
-substring **filter** — just start typing. Keys: `↑/↓` move, `enter` open, type
-to filter, `esc` clears the filter (or goes back when empty), `1/2/3` or `tab`
-switch detail tabs, `ctrl-c` quit. It requires an interactive terminal (TTY);
-piped/non-interactive use falls back to a hint about the scriptable commands.
+Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink)
+with an **amber-phosphor** retro-terminal look. It's a persistent shell — a
+title bar, a **nav rail** (portfolio · projects · sessions; insights and trends
+are coming), and a **two-pane master-detail** body: a list on the left drives a
+live **preview** on the right as you move the cursor. Opening a session zooms to
+a full-screen view with a vitals band and its own two-pane **turns → steps**
+(each step expands an amber card with its input/result), plus **transcript** and
+**summary** modes (`t` / `s`). It reads from the index, so run `cc-analyzer
+index` first.
+
+Navigation uses a two-zone focus model: in a list, just start typing to
+**filter**, `tab`/`shift-tab` cycles the **sort**, `↑/↓` moves (updating the
+preview), and `enter` drills in. Press `esc` on an empty filter to focus the nav
+rail, then `↑/↓` (or `1`-`5`) to switch views and `enter`/`→` to return to the
+list. `?` shows the full keybinding cheatsheet; `ctrl-c` quits. The layout is
+responsive — the rail collapses to icons, then to a single pane, on narrow
+terminals. It requires an interactive terminal (TTY); piped/non-interactive use
+falls back to a hint about the scriptable commands.
 
 ### Web app
 

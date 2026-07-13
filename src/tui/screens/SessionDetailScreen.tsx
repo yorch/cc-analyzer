@@ -12,41 +12,34 @@ import { analyzeSession } from "../../core/analyze.ts";
 import { parseSessionFile } from "../../core/parser.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
-import type { StepKind, TurnStep } from "../../core/steps.ts";
-import {
-  buildTranscript,
-  type TranscriptItem,
-  type TranscriptKind,
-} from "../../core/transcript.ts";
-import { Footer, Loading } from "../components/ui.tsx";
+import type { TurnStep } from "../../core/steps.ts";
+import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
+import { Loading, ScrollRange } from "../components/ui.tsx";
+import { scrollOffset } from "../scroll.ts";
+import { masterWidth } from "../shell/MasterDetail.tsx";
+import { KIND_COLOR, palette, role, STEP_COLOR, STEP_ICON, selection } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
+import { layoutMode } from "../useTermSize.ts";
 
 interface Props {
   session: IndexedSession;
   pricing: PricingTable;
   isActive: boolean;
+  columns: number;
+  rows: number;
   onBack: () => void;
 }
 
-type Tab = "summary" | "turns" | "transcript";
-const TABS: Tab[] = ["summary", "turns", "transcript"];
+type Mode = "turns" | "transcript" | "summary";
 
 interface Loaded {
   analysis: SessionAnalysis;
   transcript: TranscriptItem[];
 }
 
-const KIND_COLOR: Record<TranscriptKind, string> = {
-  prompt: "green",
-  text: "white",
-  thinking: "gray",
-  tool_use: "yellow",
-  tool_result: "blue",
-};
-
-export function SessionDetailScreen({ session, pricing, isActive, onBack }: Props) {
+export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
-  const [tab, setTab] = useState<Tab>("summary");
+  const [mode, setMode] = useState<Mode>("turns");
 
   useEffect(() => {
     let cancelled = false;
@@ -61,43 +54,359 @@ export function SessionDetailScreen({ session, pricing, isActive, onBack }: Prop
     };
   }, [session.path, pricing]);
 
+  // Mode switching lives here; each mode owns its own cursor/scroll and handles
+  // esc itself (steps→turns→close for turns mode; back-to-turns for the others).
   useInput(
     (input, key) => {
-      if (key.escape) return onBack();
-      if (input === "1" || input === "s") return setTab("summary");
-      if (input === "2" || input === "t") return setTab("turns");
-      if (input === "3" || input === "r") return setTab("transcript");
-      if (key.tab) setTab(TABS[(TABS.indexOf(tab) + 1) % TABS.length] as Tab);
+      if (input === "t") return setMode("transcript");
+      if (input === "s") return setMode("summary");
+      if (input === "u" || input === "1") return setMode("turns");
+      if (input === "2") return setMode("transcript");
+      if (input === "3") return setMode("summary");
+      if (key.escape && mode !== "turns") return setMode("turns");
     },
-    { isActive },
+    { isActive: isActive && !!data },
   );
 
   if (!data) return <Loading label="Loading session" />;
   const { analysis } = data;
 
   return (
-    <Box flexDirection="column">
-      <Text bold color="cyan">
+    <Box flexDirection="column" height={Math.max(1, rows - 2)} overflow="hidden">
+      <Text bold color={role.heading}>
         {truncate(analysis.title ?? session.sessionId ?? "(untitled)", 70)}
       </Text>
-      <Box>
-        {TABS.map((t) => (
-          <Text
-            key={t}
-            color={t === tab ? "black" : "gray"}
-            backgroundColor={t === tab ? "cyan" : undefined}
-          >
+      <SummaryBand a={analysis} />
+      <Box marginTop={1}>
+        {(["turns", "transcript", "summary"] as Mode[]).map((m) => (
+          <Text key={m} {...(m === mode ? selection(true) : { color: role.muted })}>
             {" "}
-            {t}{" "}
+            {m}{" "}
           </Text>
         ))}
       </Box>
-      <Box marginTop={1} flexDirection="column">
-        {tab === "summary" && <SummaryView a={analysis} />}
-        {tab === "turns" && <TurnsView a={analysis} isActive={isActive} />}
-        {tab === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
+      <Box marginTop={1} flexGrow={1} flexDirection="column" overflow="hidden">
+        {mode === "turns" && (
+          <TurnsPane a={analysis} columns={columns} isActive={isActive} onBack={onBack} />
+        )}
+        {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
+        {mode === "summary" && <SummaryView a={analysis} />}
       </Box>
-      <Footer hints="1/2/3 or tab · ↑/↓ move · enter expand · g/G jump · esc back" />
+      <Box marginTop={1}>
+        <Text color={role.muted}>
+          {mode === "turns"
+            ? "↑↓ turn · →/tab steps · g/G jump · t transcript · s summary · esc back"
+            : "↑↓ move · ↵ expand · g/G jump · esc turns"}
+          {" · "}
+          <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+/** One-line vitals for the session, always visible above the body. */
+function SummaryBand({ a }: { a: SessionAnalysis }) {
+  const io = ioTokens(a.totals.tokens);
+  const cache = cacheTokens(a.totals.tokens);
+  const cachePct = io + cache > 0 ? `${Math.round((cache / (io + cache)) * 100)}%` : "—";
+  const models = Object.keys(a.models).join(", ") || "-";
+  return (
+    <Box>
+      <Text color={role.cost}>{formatUSD(a.totals.cost.total)}</Text>
+      <Text color={role.muted}>
+        {a.totals.cost.estimated ? " (est)" : ""} · {a.totals.turns} turns · {a.totals.apiCalls}{" "}
+        calls · {a.totals.toolCalls} tools · cache {cachePct} · {truncate(models, 28)} ·{" "}
+        {formatDuration(a.durationMs)}
+      </Text>
+    </Box>
+  );
+}
+
+interface TurnRow {
+  index: number;
+  cost: number;
+  calls: number;
+  prompt: string;
+  steps: TurnStep[];
+}
+
+function turnRows(a: SessionAnalysis): TurnRow[] {
+  return a.turns.map((t) => ({
+    index: t.index,
+    cost: t.cost.total,
+    calls: t.apiCalls.length,
+    prompt: t.prompt,
+    steps: t.apiCalls.flatMap((c) => c.steps),
+  }));
+}
+
+/** Turns list (master) → selected turn's steps (detail), with a turns↔steps
+ * focus toggle mirroring the app shell's rail↔body model. */
+function TurnsPane({
+  a,
+  columns,
+  isActive,
+  onBack,
+}: {
+  a: SessionAnalysis;
+  columns: number;
+  isActive: boolean;
+  onBack: () => void;
+}) {
+  const rows = useMemo(() => turnRows(a), [a]);
+  const [pane, setPane] = useState<"turns" | "steps">("turns");
+  const [turnSel, setTurnSel] = useState(0);
+  const [turnOff, setTurnOff] = useState(0);
+  const [stepSel, setStepSel] = useState(0);
+  const [stepOff, setStepOff] = useState(0);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const wide = layoutMode(columns) !== "narrow";
+  const pageSize = usePageSize(11);
+
+  const activeTurn = Math.min(turnSel, Math.max(0, rows.length - 1));
+  const turn = rows[activeTurn];
+  const steps = turn?.steps ?? [];
+
+  const selectTurn = (next: number) => {
+    const n = Math.max(0, Math.min(next, rows.length - 1));
+    setTurnSel(n);
+    setTurnOff(scrollOffset(n, turnOff, pageSize));
+    setStepSel(0);
+    setStepOff(0);
+    setExpanded(new Set());
+  };
+
+  const selectStep = (next: number) => {
+    const n = Math.max(0, Math.min(next, steps.length - 1));
+    setStepSel(n);
+    setStepOff(scrollOffset(n, stepOff, pageSize));
+  };
+
+  useInput(
+    (input, key) => {
+      if (pane === "turns") {
+        if (key.downArrow || input === "j") return selectTurn(activeTurn + 1);
+        if (key.upArrow || input === "k") return selectTurn(activeTurn - 1);
+        if (input === "g") return selectTurn(0);
+        if (input === "G") return selectTurn(rows.length - 1);
+        if ((key.rightArrow || key.tab || key.return) && steps.length > 0) return setPane("steps");
+        if (key.escape) return onBack();
+        return;
+      }
+      // pane === "steps"
+      if (key.leftArrow || (key.tab && key.shift) || key.escape) return setPane("turns");
+      if (key.downArrow || input === "j") return selectStep(stepSel + 1);
+      if (key.upArrow || input === "k") return selectStep(stepSel - 1);
+      if (input === "g") return selectStep(0);
+      if (input === "G") return selectStep(steps.length - 1);
+      if (key.return || input === " ") {
+        setExpanded((prev) => toggle(prev, stepSel));
+      }
+    },
+    { isActive },
+  );
+
+  const promptW = wide ? Math.max(8, masterWidth(columns) - 18) : 40;
+  const master = (
+    <Box flexDirection="column">
+      <Text color={role.muted}>turns · {rows.length}</Text>
+      {rows.slice(turnOff, turnOff + pageSize).map((r, i) => {
+        const sel = turnOff + i === activeTurn;
+        return (
+          <Text key={r.index} {...selection(sel && pane === "turns")}>
+            {sel && pane === "turns" ? "❯" : " "} #{r.index + 1} {formatUSD(r.cost).padStart(8)}{" "}
+            {truncate(r.prompt || "(no text)", promptW)}
+          </Text>
+        );
+      })}
+      <ScrollRange offset={turnOff} size={pageSize} total={rows.length} />
+    </Box>
+  );
+
+  const detail = (
+    <Box flexDirection="column">
+      <Text color={role.heading}>
+        turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)}
+      </Text>
+      {steps.length === 0 ? (
+        <Text color={role.muted}>(no steps)</Text>
+      ) : (
+        steps.slice(stepOff, stepOff + pageSize).map((step, i) => {
+          const idx = stepOff + i;
+          const sel = idx === stepSel && pane === "steps";
+          const open = expanded.has(idx);
+          return <StepRow key={idx} step={step} selected={sel} expanded={open} />;
+        })
+      )}
+      <ScrollRange offset={stepOff} size={pageSize} total={steps.length} />
+    </Box>
+  );
+
+  if (!wide) {
+    return (
+      <Box flexDirection="column">
+        {master}
+        <Box marginTop={1} flexDirection="column">
+          {detail}
+        </Box>
+      </Box>
+    );
+  }
+  return (
+    <Box>
+      <Box
+        flexDirection="column"
+        width={masterWidth(columns)}
+        flexShrink={0}
+        borderStyle="single"
+        borderColor={palette.line}
+        borderTop={false}
+        borderBottom={false}
+        borderLeft={false}
+        paddingRight={1}
+        marginRight={1}
+      >
+        {master}
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        {detail}
+      </Box>
+    </Box>
+  );
+}
+
+function StepRow({
+  step,
+  selected,
+  expanded,
+}: {
+  step: TurnStep;
+  selected: boolean;
+  expanded: boolean;
+}) {
+  const hasDetail = Boolean(step.detail?.input || step.detail?.result);
+  const chevron = hasDetail ? (expanded ? "▾" : "▸") : " ";
+  const mark = step.status === "error" ? " ✗" : step.status === "ok" ? " ✓" : "";
+  return (
+    <Box flexDirection="column">
+      <Text {...selection(selected)}>
+        {chevron}{" "}
+        <Text color={selected ? palette.bg : STEP_COLOR[step.kind]}>
+          {STEP_ICON[step.kind]} {step.label}
+        </Text>
+        {step.summary ? <Text> {truncate(step.summary, 36)}</Text> : null}
+        <Text color={selected ? palette.bg : step.status === "error" ? role.error : role.ok}>
+          {mark}
+        </Text>
+      </Text>
+      {expanded && hasDetail ? (
+        <Box
+          flexDirection="column"
+          borderStyle="single"
+          borderColor={palette.amber}
+          borderTop={false}
+          borderRight={false}
+          borderBottom={false}
+          paddingLeft={1}
+          marginLeft={1}
+        >
+          {stepDetailLines(step).map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static, order-stable detail lines
+            <Text key={i} color={role.muted}>
+              {line}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+function stepDetailLines(step: TurnStep): string[] {
+  const isNote = step.kind === "note" || step.kind === "thinking";
+  const out: string[] = [];
+  if (step.detail?.input && !isNote) {
+    out.push("input:");
+    out.push(...capLines(step.detail.input, 12));
+  }
+  if (step.detail?.result) {
+    out.push(isNote ? "full text:" : "result:");
+    out.push(...capLines(step.detail.result, 12));
+  }
+  if (step.detail?.truncated) out.push("truncated · see transcript for full");
+  return out;
+}
+
+function capLines(s: string, n: number): string[] {
+  const lines = s.split("\n");
+  if (lines.length <= n) return lines;
+  return [...lines.slice(0, n), `… +${lines.length - n} more lines`];
+}
+
+function toggle<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
+  const [cursor, setCursor] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
+  const pageSize = usePageSize(11);
+
+  const select = (next: number) => {
+    const n = Math.max(0, Math.min(next, items.length - 1));
+    setCursor(n);
+    setOffset(scrollOffset(n, offset, pageSize));
+  };
+
+  useInput(
+    (input, key) => {
+      if (key.return || input === " ") {
+        const item = items[activeCursor];
+        if (item?.body) setExpanded((prev) => toggle(prev, item.index));
+        return;
+      }
+      if (input === "g") return select(0);
+      if (input === "G") return select(items.length - 1);
+      if (key.downArrow || input === "j") return select(activeCursor + 1);
+      if (key.upArrow || input === "k") return select(activeCursor - 1);
+    },
+    { isActive },
+  );
+
+  const visible = items.slice(offset, offset + pageSize);
+  return (
+    <Box flexDirection="column">
+      {visible.map((item, i) => {
+        const selected = offset + i === activeCursor;
+        const isOpen = expanded.has(item.index);
+        const chevron = item.body ? (isOpen ? "▾" : "▸") : " ";
+        const preview = item.body.split("\n")[0] ?? "";
+        return (
+          <Box key={item.index} flexDirection="column">
+            <Text bold {...(selected ? selection(true) : { color: KIND_COLOR[item.kind] })}>
+              {chevron} {item.label}
+              {item.isError ? " ✗" : ""}
+              {!isOpen && item.body ? (
+                <Text color={selected ? palette.bg : role.muted}> {truncate(preview, 56)}</Text>
+              ) : null}
+            </Text>
+            {isOpen && (
+              <Box marginBottom={1}>
+                <Text color={item.kind === "thinking" ? role.muted : undefined}>
+                  {capLines(item.body, 40).join("\n") || "(empty)"}
+                </Text>
+              </Box>
+            )}
+          </Box>
+        );
+      })}
+      <ScrollRange offset={offset} size={pageSize} total={items.length} />
     </Box>
   );
 }
@@ -107,8 +416,8 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
   const est = c.estimated ? " (estimated)" : "";
   const line = (k: string, v: string) => (
     <Text>
-      <Text dimColor>{k.padEnd(16)}</Text>
-      {v}
+      <Text color={role.muted}>{k.padEnd(16)}</Text>
+      <Text color={role.body}>{v}</Text>
     </Text>
   );
   return (
@@ -138,328 +447,6 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
       {a.skills.length > 0 && line("skills", a.skills.join(", "))}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
       {line("files touched", String(a.filesTouched.length))}
-    </Box>
-  );
-}
-
-const STEP_ICON: Record<StepKind, string> = {
-  note: "»",
-  thinking: "◦",
-  run: "$",
-  read: "▤",
-  edit: "✎",
-  search: "⌕",
-  skill: "◆",
-  subagent: "⌥",
-  web: "◍",
-  task: "☑",
-  ask: "?",
-  tool: "·",
-};
-const STEP_COLOR: Record<StepKind, string> = {
-  note: "white",
-  thinking: "gray",
-  run: "yellow",
-  read: "gray",
-  edit: "cyan",
-  search: "yellow",
-  skill: "magenta",
-  subagent: "cyan",
-  web: "blue",
-  task: "gray",
-  ask: "yellow",
-  tool: "gray",
-};
-
-type TRow =
-  | {
-      kind: "turn";
-      actionable: true;
-      index: number;
-      cost: number;
-      tokens: string;
-      calls: number;
-      prompt: string;
-      expandable: boolean;
-      expanded: boolean;
-    }
-  | { kind: "call"; actionable: false; model: string; cost: number; tokens: string }
-  | {
-      kind: "step";
-      actionable: true;
-      id: string;
-      step: TurnStep;
-      expandable: boolean;
-      expanded: boolean;
-    }
-  | { kind: "detail"; actionable: false; text: string };
-
-/** Flatten turns → calls → steps → step detail into visible rows, honoring the
- * collapsed/expanded state. Turns are collapsed by default. */
-function buildRows(
-  a: SessionAnalysis,
-  openTurns: Set<number>,
-  openSteps: Set<string>,
-): { rows: TRow[]; actionable: number[] } {
-  const rows: TRow[] = [];
-  for (const t of a.turns) {
-    const hasSteps = t.apiCalls.some((c) => c.steps.length > 0);
-    const turnOpen = openTurns.has(t.index);
-    rows.push({
-      kind: "turn",
-      actionable: true,
-      index: t.index,
-      cost: t.cost.total,
-      tokens: formatTokens(ioTokens(t.tokens), cacheTokens(t.tokens)),
-      calls: t.apiCalls.length,
-      prompt: t.prompt,
-      expandable: hasSteps,
-      expanded: turnOpen,
-    });
-    if (!turnOpen) continue;
-    t.apiCalls.forEach((call, ci) => {
-      if (call.steps.length === 0) return;
-      rows.push({
-        kind: "call",
-        actionable: false,
-        model: call.model ?? "?",
-        cost: call.cost.total,
-        tokens: formatTokens(ioTokens(call.tokens), cacheTokens(call.tokens)),
-      });
-      call.steps.forEach((step, si) => {
-        const id = `${t.index}:${ci}:${si}`;
-        const hasDetail = Boolean(step.detail?.input || step.detail?.result);
-        const stepOpen = openSteps.has(id);
-        rows.push({
-          kind: "step",
-          actionable: true,
-          id,
-          step,
-          expandable: hasDetail,
-          expanded: stepOpen,
-        });
-        if (stepOpen && hasDetail) {
-          for (const text of stepDetailLines(step))
-            rows.push({ kind: "detail", actionable: false, text });
-        }
-      });
-    });
-  }
-  const actionable = rows.map((r, i) => (r.actionable ? i : -1)).filter((i) => i >= 0);
-  return { rows, actionable };
-}
-
-function stepDetailLines(step: TurnStep): string[] {
-  const isNote = step.kind === "note" || step.kind === "thinking";
-  const out: string[] = [];
-  if (step.detail?.input && !isNote) {
-    out.push("input:");
-    out.push(...capLines(step.detail.input, 10));
-  }
-  if (step.detail?.result) {
-    out.push(isNote ? "full text:" : "result:");
-    out.push(...capLines(step.detail.result, 10));
-  }
-  if (step.detail?.truncated) out.push("truncated · see Transcript for full");
-  return out;
-}
-
-function capLines(s: string, n: number): string[] {
-  const lines = s.split("\n");
-  if (lines.length <= n) return lines;
-  return [...lines.slice(0, n), `… +${lines.length - n} more lines`];
-}
-
-function TurnsView({ a, isActive }: { a: SessionAnalysis; isActive: boolean }) {
-  const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
-  const [openSteps, setOpenSteps] = useState<Set<string>>(new Set());
-  const [sel, setSel] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const pageSize = usePageSize(7);
-
-  const { rows, actionable } = useMemo(
-    () => buildRows(a, openTurns, openSteps),
-    [a, openTurns, openSteps],
-  );
-  const activeSel = Math.min(sel, Math.max(0, actionable.length - 1));
-  const selectedRow = actionable[activeSel] ?? -1;
-
-  useInput(
-    (input, key) => {
-      if (key.return || input === " ") {
-        const row = rows[selectedRow];
-        if (row?.kind === "turn" && row.expandable) {
-          setOpenTurns((prev) => toggle(prev, row.index));
-        } else if (row?.kind === "step" && row.expandable) {
-          setOpenSteps((prev) => toggle(prev, row.id));
-        }
-        return;
-      }
-      if (input === "g") {
-        setSel(0);
-        setOffset(0);
-        return;
-      }
-      if (input === "G") {
-        setSel(actionable.length - 1);
-        setOffset(Math.max(0, rows.length - pageSize));
-        return;
-      }
-      const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
-      if (dir === 0 || actionable.length === 0) return;
-      const nextSel = Math.max(0, Math.min(activeSel + dir, actionable.length - 1));
-      setSel(nextSel);
-      const rowIdx = actionable[nextSel] ?? 0;
-      if (rowIdx < offset) setOffset(rowIdx);
-      else if (rowIdx >= offset + pageSize) setOffset(rowIdx - pageSize + 1);
-    },
-    { isActive },
-  );
-
-  const visible = rows.slice(offset, offset + pageSize);
-  return (
-    <Box flexDirection="column">
-      {visible.map((row, i) => {
-        const rowIndex = offset + i;
-        const selected = rowIndex === selectedRow;
-        return <RowView key={rowIndex} row={row} selected={selected} />;
-      })}
-      {rows.length > pageSize && (
-        <Text dimColor>
-          {offset + 1}–{Math.min(offset + pageSize, rows.length)} / {rows.length}
-        </Text>
-      )}
-    </Box>
-  );
-}
-
-function RowView({ row, selected }: { row: TRow; selected: boolean }) {
-  if (row.kind === "turn") {
-    const chevron = row.expandable ? (row.expanded ? "▾" : "▸") : " ";
-    return (
-      <Text
-        bold
-        color={selected ? "black" : undefined}
-        backgroundColor={selected ? "cyan" : undefined}
-      >
-        {chevron} #{row.index + 1} {formatUSD(row.cost).padStart(9)}{" "}
-        <Text dimColor={!selected}>{row.tokens} </Text>
-        {row.calls}c {truncate(row.prompt || "(no text)", 40)}
-      </Text>
-    );
-  }
-  if (row.kind === "call") {
-    return (
-      <Text dimColor>
-        {"    "}
-        {row.model} · {formatUSD(row.cost)} · {row.tokens}
-      </Text>
-    );
-  }
-  if (row.kind === "step") {
-    const { step } = row;
-    const chevron = row.expandable ? (row.expanded ? "▾" : "▸") : " ";
-    const mark = step.status === "error" ? " ✗" : step.status === "ok" ? " ✓" : "";
-    return (
-      <Text color={selected ? "black" : undefined} backgroundColor={selected ? "cyan" : undefined}>
-        {"  "}
-        {chevron}{" "}
-        <Text color={selected ? "black" : STEP_COLOR[step.kind]}>
-          {STEP_ICON[step.kind]} {step.label}
-        </Text>
-        {step.summary ? <Text> {truncate(step.summary, 40)}</Text> : null}
-        <Text color={selected ? "black" : step.status === "error" ? "red" : "green"}>{mark}</Text>
-        {step.resultHint ? (
-          <Text dimColor={!selected}> {truncate(step.resultHint, 20)}</Text>
-        ) : null}
-      </Text>
-    );
-  }
-  return (
-    <Text dimColor>
-      {"      │ "}
-      {truncate(row.text, 68)}
-    </Text>
-  );
-}
-
-function toggle<T>(set: Set<T>, value: T): Set<T> {
-  const next = new Set(set);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return next;
-}
-
-function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
-  const [cursor, setCursor] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
-  const pageSize = usePageSize(7);
-
-  useInput(
-    (input, key) => {
-      if (key.return || input === " ") {
-        const item = items[activeCursor];
-        if (item?.body) setExpanded((prev) => toggle(prev, item.index));
-        return;
-      }
-      if (input === "g") {
-        setCursor(0);
-        setOffset(0);
-        return;
-      }
-      if (input === "G") {
-        setCursor(items.length - 1);
-        setOffset(Math.max(0, items.length - pageSize));
-        return;
-      }
-      const dir = key.downArrow || input === "j" ? 1 : key.upArrow || input === "k" ? -1 : 0;
-      if (dir === 0 || items.length === 0) return;
-      const next = Math.max(0, Math.min(activeCursor + dir, items.length - 1));
-      setCursor(next);
-      if (next < offset) setOffset(next);
-      else if (next >= offset + pageSize) setOffset(next - pageSize + 1);
-    },
-    { isActive },
-  );
-
-  const visible = items.slice(offset, offset + pageSize);
-  return (
-    <Box flexDirection="column">
-      {visible.map((item, i) => {
-        const selected = offset + i === activeCursor;
-        const isOpen = expanded.has(item.index);
-        const chevron = item.body ? (isOpen ? "▾" : "▸") : " ";
-        const preview = item.body.split("\n")[0] ?? "";
-        return (
-          <Box key={item.index} flexDirection="column">
-            <Text
-              bold
-              color={selected ? "black" : KIND_COLOR[item.kind]}
-              backgroundColor={selected ? "cyan" : undefined}
-            >
-              {chevron} {item.label}
-              {item.isError ? " ✗" : ""}
-              {!isOpen && item.body ? (
-                <Text dimColor={!selected}> {truncate(preview, 56)}</Text>
-              ) : null}
-            </Text>
-            {isOpen && (
-              <Box marginBottom={1}>
-                <Text color={item.kind === "thinking" ? "gray" : undefined}>
-                  {capLines(item.body, 40).join("\n") || "(empty)"}
-                </Text>
-              </Box>
-            )}
-          </Box>
-        );
-      })}
-      {items.length > pageSize && (
-        <Text dimColor>
-          {offset + 1}–{Math.min(offset + pageSize, items.length)} / {items.length}
-        </Text>
-      )}
     </Box>
   );
 }

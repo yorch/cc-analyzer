@@ -33,70 +33,103 @@ const session: IndexedSession = {
 const wait = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 describe("SessionDetailScreen (smoke)", () => {
-  test("turns tab collapses turns by default and shows token annotations", async () => {
-    const { stdin, lastFrame, unmount } = render(
-      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+  test("turns mode previews the selected turn's steps in the detail pane", async () => {
+    const { lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
     );
     await wait(); // allow the async parse+analyze to settle
-    stdin.write("2"); // switch to the Turns tab
-    await wait();
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("#1"); // a turn headline row
-    expect(frame).toContain("cache"); // token annotation on collapsed turn rows
-    expect(frame).not.toContain("Bash"); // steps hidden while turns are collapsed
+    expect(frame).toContain("#1"); // a turn row in the master pane
+    expect(frame).toContain("cache"); // vitals band
+    expect(frame).toContain("turn #1"); // detail-pane header for the selected turn
+    expect(frame).toContain("Write"); // turn 1's steps shown live (edit op)
+    expect(frame).not.toContain("Bash"); // Bash lives in the next turn, not shown yet
     unmount();
   });
 
-  test("expanding turns reveals their step operations", async () => {
+  test("moving to the next turn previews its steps", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
     );
     await wait();
-    stdin.write("2"); // Turns tab
+    stdin.write("j"); // next turn (has the Bash step)
     await wait();
-    stdin.write("G"); // jump cursor to the last turn (has the Bash step)
-    await wait();
-    stdin.write("\r"); // expand it
-    await wait();
-    stdin.write("g"); // back to the first turn (has Assistant narration + Write)
-    await wait();
-    stdin.write("\r"); // expand it
-    await wait();
-    const frame = lastFrame() ?? "";
-    expect(frame).toContain("Write"); // an edit operation step
-    expect(frame).toContain("Bash"); // a run operation step
-    expect(frame).toContain("Assistant"); // narration step
+    expect(lastFrame() ?? "").toContain("Bash");
     unmount();
   });
 
-  test("expanding a step reveals its detail", async () => {
+  test("G jumps to the last turn, g back to the first", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
     );
     await wait();
-    stdin.write("2"); // Turns tab
+    stdin.write("G"); // jump to the last turn (Bash)
     await wait();
-    stdin.write("\r"); // expand the first turn
-    await wait();
-    stdin.write("j"); // move cursor down onto a step row
-    await wait();
-    stdin.write("\r"); // expand that step's detail
+    expect(lastFrame() ?? "").toContain("Bash");
+    stdin.write("g"); // jump back to the first turn (Write)
     await wait();
     const frame = lastFrame() ?? "";
-    // The detail block renders an "input:" or "full text:"/"result:" label.
-    expect(frame).toMatch(/input:|result:|full text:/);
+    expect(frame).toContain("Write");
+    expect(frame).not.toContain("Bash");
     unmount();
   });
 
-  test("transcript items collapse and expand", async () => {
+  test("descending into steps and expanding one reveals its detail", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <SessionDetailScreen session={session} pricing={pricing} isActive onBack={() => {}} />,
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
     );
     await wait();
-    stdin.write("3"); // Transcript tab
+    stdin.write("\t"); // focus the steps pane
     await wait();
-    const collapsed = lastFrame() ?? "";
-    expect(collapsed).toContain("▸"); // collapsed chevron on an item with a body
+    stdin.write("\r"); // expand the first step's detail card
+    await wait();
+    expect(lastFrame() ?? "").toMatch(/input:|result:|full text:/);
+    unmount();
+  });
+
+  test("transcript mode: items collapse and expand", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await wait();
+    stdin.write("t"); // transcript mode
+    await wait();
+    expect(lastFrame() ?? "").toContain("▸"); // collapsed chevron on an item with a body
     stdin.write("\r"); // expand the item under the cursor
     await wait();
     expect(lastFrame() ?? "").toContain("▾"); // now expanded
