@@ -1,29 +1,34 @@
 {
   "repo_url": "https://github.com/yorch/cc-analyzer",
-  "commit_sha": "4eeed24",
-  "indexed_at": "2026-07-10T04:34:57-05:00",
+  "commit_sha": "bf5a4c8",
+  "indexed_at": "2026-07-12T23:27:15-04:00",
   "primary_language": "TypeScript",
-  "framework": "Bun runtime; Ink (TUI), Hono (web API), React 19 + Vite (SPA), Zod, Biome",
-  "version": "0.1.0",
+  "framework": "Bun runtime; Ink (TUI), Hono (web API), React 19 + Vite (SPA), VitePress (docs site), Zod, Biome",
+  "version": "0.2.0",
   "test_runner": "bun test",
   "subsystems": [
     { "slug": "core", "name": "Core Analysis Engine", "paths": ["src/core"], "has_tests": true },
-    { "slug": "cli", "name": "Command-Line Interface", "paths": ["src/cli"], "has_tests": false },
+    { "slug": "cli", "name": "Command-Line Interface", "paths": ["src/cli"], "has_tests": true },
     { "slug": "tui", "name": "Interactive Terminal UI", "paths": ["src/tui"], "has_tests": true },
     { "slug": "web-server", "name": "Web Server & API", "paths": ["src/web", "scripts"], "has_tests": true },
-    { "slug": "web-spa", "name": "Web SPA Frontend", "paths": ["web/src"], "has_tests": false }
+    { "slug": "web-spa", "name": "Web SPA Frontend", "paths": ["web/src"], "has_tests": false },
+    { "slug": "updates", "name": "Updates & Distribution", "paths": ["src/core", "site/public"], "has_tests": true },
+    { "slug": "docs-site", "name": "Docs Site", "paths": ["site"], "has_tests": false }
   ],
   "pages": [
-    { "slug": "1-repository-structure", "type": "category", "sources_hint": ["package.json", "tsconfig.json", "web/tsconfig.json", "biome.json", "scripts/embed-spa.ts", ".github/workflows/ci.yml", ".github/workflows/release.yml", "README.md"] },
-    { "slug": "2-core-analysis-engine", "type": "category", "sources_hint": ["src/core/analyze.ts", "src/core/events.ts", "src/core/discover.ts", "src/core/paths.ts"] },
-    { "slug": "2.1-session-parsing-and-events", "type": "detail", "sources_hint": ["src/core/parser.ts", "src/core/events.ts", "src/core/transcript.ts"] },
-    { "slug": "2.2-cost-and-pricing", "type": "detail", "sources_hint": ["src/core/pricing.ts", "src/core/pricing-source.ts", "src/core/bundled-pricing.json"] },
-    { "slug": "2.3-index-and-analytics", "type": "detail", "sources_hint": ["src/core/db.ts", "src/core/indexer.ts", "src/core/queries.ts", "src/core/stats.ts", "src/core/discover.ts", "src/core/paths.ts"] },
-    { "slug": "3-cli", "type": "category", "sources_hint": ["src/cli/index.ts", "src/cli/format.ts", "src/cli/render.ts"] },
-    { "slug": "4-tui", "type": "category", "sources_hint": ["src/tui/App.tsx", "src/tui/run.tsx", "src/tui/theme.ts", "src/tui/scroll.ts", "src/tui/usePageSize.ts", "src/tui/useTermSize.ts", "src/tui/useSort.ts", "src/tui/shell/AppShell.tsx", "src/tui/shell/MasterDetail.tsx", "src/tui/components/FilterableList.tsx", "src/tui/components/PortfolioLede.tsx", "src/tui/components/previews.tsx", "src/tui/components/ui.tsx", "src/tui/screens/ProjectsView.tsx", "src/tui/screens/SessionListView.tsx", "src/tui/screens/SessionDetailScreen.tsx"] },
-    { "slug": "5-web-server-and-api", "type": "category", "sources_hint": ["src/web/server.ts", "src/web/api.ts", "src/web/spa.ts", "scripts/embed-spa.ts"] },
-    { "slug": "6-web-spa-frontend", "type": "category", "sources_hint": ["web/src/App.tsx", "web/src/router.ts", "web/src/api.ts", "web/src/useAsync.ts", "web/src/format.ts", "web/src/views/Dashboard.tsx", "web/src/views/Project.tsx", "web/src/views/Session.tsx"] },
-    { "slug": "README", "type": "overview", "sources_hint": ["README.md", "package.json"] },
-    { "slug": "glossary", "type": "glossary", "sources_hint": ["src/core/analyze.ts", "src/core/pricing.ts"] }
+    { "slug": "1-repository-structure", "type": "category" },
+    { "slug": "2-core-analysis-engine", "type": "category" },
+    { "slug": "2-1-session-parsing-and-events", "type": "detail" },
+    { "slug": "2-2-cost-and-pricing", "type": "detail" },
+    { "slug": "2-3-index-and-analytics", "type": "detail" },
+    { "slug": "2-4-per-turn-steps", "type": "detail" },
+    { "slug": "3-cli", "type": "category" },
+    { "slug": "4-tui", "type": "category" },
+    { "slug": "5-web-server-and-api", "type": "category" },
+    { "slug": "6-web-spa-frontend", "type": "category" },
+    { "slug": "7-updates-and-distribution", "type": "category" },
+    { "slug": "8-docs-site", "type": "category" },
+    { "slug": "README", "type": "overview" },
+    { "slug": "glossary", "type": "glossary" }
   ]
 }

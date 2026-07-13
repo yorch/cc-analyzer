@@ -1,86 +1,80 @@
 # Web Server & API
 
-> Indexed at commit `4eeed24` on 2026-07-10 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/4eeed24)
+> Indexed at commit `bf5a4c8` on 2026-07-12 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/bf5a4c8)
 
 ## Relevant source files
 
-- [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts)
-- [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts)
-- [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts)
-- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts)
+- [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts)
+- [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts)
+- [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts)
+- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts)
 
 ## Overview
 
-The Web Server & API subsystem is the local HTTP backend launched by the `cc-analyzer serve` command. It runs a single [Hono](https://hono.dev) application that simultaneously serves a JavaScript Object Notation (JSON) API under `/api` and the compiled single-page application (SPA) for every other route, all from one [Bun](https://bun.sh) process on port `4317` by default ([src/web/server.ts:L32-L34](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L32-L34)). The API is a thin read-only layer: it opens the SQLite index, delegates aggregation to the core analytics functions, and returns their results as JSON ([src/web/api.ts:L17-L48](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L17-L48)).
+The Web Server & API subsystem is the backend for `cc-analyzer`'s local web app, launched by the `cc-analyzer serve` command. It runs a single [Hono](https://hono.dev) application on top of `Bun.serve` that serves both a JavaScript Object Notation (JSON) Application Programming Interface (API) under `/api` and, for every other path, the embedded single-page application (SPA). The server reads exclusively from the local SQLite index and the core analysis functions; it never touches the Claude Code session files directly except to parse a single session on demand.
 
-The subsystem owns three concerns: process bootstrap and lifecycle ([src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts)), route definitions ([src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts)), and the build-time mechanism that bakes the front-end HTML into the compiled binary ([scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts), [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts)). The React front end that consumes this API is documented separately on the [Web SPA Frontend](./6-web-spa-frontend.md) page.
-
-Sources: [src/web/server.ts:L1-L38](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L1-L38) [src/web/api.ts:L1-L49](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L1-L49)
+The subsystem has three runtime modules plus one build script. [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts) owns process startup, [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts) declares the routes, and [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts) is a generated module holding the compiled front-end HTML. The build script [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts) bakes the Vite build output into `spa.ts` so that `bun build --compile` produces a self-contained binary with no external assets.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Browser[Browser] --> App["Hono app.fetch"]
-    App --> ApiRoutes["/api/* routes"]
-    App --> Catchall["app.get('*')"]
-
-    ApiRoutes -.reads.-> DB[("SQLite index")]
-    ApiRoutes -.calls.-> Core["core stats / analyze / transcript"]
-    Core -.reads.-> DB
-    Core -.parses.-> Files[("~/.claude session files")]
-
-    Catchall --> Spa["spaHtml (embedded)"]
+    Browser[Browser] --> Serve[runServe / Bun.serve]
+    Serve --> App[Hono app]
+    App --> Api[createApi routes]
+    App --> Static[GET * -> spaHtml]
+    Api --> Queries[(SQLite index)]
+    Api --> Core[analyze / transcript]
+    Static -.embedded.-> Spa[(spa.ts spaHtml)]
+    Embed[embed-spa.ts] -.writes.-> Spa
 ```
 
-`runServe` wires one Hono instance that branches two ways: requests whose path starts with `/api` match the route handlers registered by `createApi`, while all other paths fall through to a catch-all `app.get("*")` handler that returns the embedded SPA HTML ([src/web/server.ts:L21-L30](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L21-L30)). The API handlers read from the SQLite index and, for per-session endpoints, re-parse the original session files on the filesystem ([src/web/api.ts:L34-L46](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L46)).
-
-Sources: [src/web/server.ts:L12-L37](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L12-L37) [src/web/api.ts:L17-L48](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L17-L48)
+`runServe` composes one Hono application from `createApi` and a catch-all route. Requests to `/api/*` resolve against the SQLite index and core analysis helpers, while all other paths return the embedded SPA HTML. The `embed-spa.ts` script populates `spa.ts` at build time, closing the loop between the front-end build and the compiled binary.
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| `runServe` | [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts) | Opens the database, builds the app, mounts the SPA catch-all, and starts `Bun.serve` |
-| `createApi` | [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts) | Defines all `/api` JSON routes over a database and pricing table |
-| `spa` | [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts) | Generated module exporting `spaHtml` and `hasSpa` |
-| `embed-spa` | [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts) | Build script that writes the Vite output into `spa.ts` |
+| `runServe` | [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts) | Open the index, mount the API and SPA routes, start `Bun.serve` |
+| `createApi` | [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts) | Declare the JSON API routes over the database and pricing table |
+| `spa` | [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts) | Export `spaHtml` and `hasSpa` for the static route |
+| `embed-spa` | [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts) | Write the Vite build into `spa.ts` at build time |
 
-Sources: [src/web/server.ts:L1-L38](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L1-L38) [src/web/api.ts:L1-L49](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L1-L49) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts#L1-L22)
+Sources: [src/web/server.ts:L1-L38](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L1-L38) [src/web/api.ts:L1-L62](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L1-L62) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L1-L22)
 
 ## Key Components
 
-### Server bootstrap: `runServe`
+### Server startup (`runServe`)
 
-`runServe` is the entry point invoked by the `serve` command. It opens the SQLite database with `openDb` and immediately guards against an unindexed environment: if `isIndexEmpty` returns true it prints an instruction to run `cc-analyzer index` first, closes the database, and returns without starting a server ([src/web/server.ts:L12-L18](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L12-L18)). It then loads the pricing table via `loadPricing` and hands both the database and the pricing `table` to `createApi` ([src/web/server.ts:L20-L21](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L20-L21)).
+`runServe` accepts a `ServeOptions` object with an optional `port` and blocks until the process is killed ([src/web/server.ts#L12](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L12)). It opens the SQLite index with `openDb` and short-circuits when the index is empty, printing a message that directs the user to run `cc-analyzer index` first ([src/web/server.ts:L13-L18](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L13-L18)). The empty check is delegated to `isIndexEmpty` from the core query layer ([src/core/queries.ts#L146](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L146)).
 
-After registering the SPA catch-all, `runServe` starts the listener with `Bun.serve({ port, fetch: app.fetch })`, defaulting `port` to `4317`, and logs the resolved URL ([src/web/server.ts:L32-L34](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L32-L34)). The function then awaits a `Promise` that never resolves, keeping the process alive until it is killed with Ctrl-C ([src/web/server.ts:L36-L37](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L36-L37)).
+After loading the pricing table via `loadPricing`, it builds the Hono app with `createApi(db, table)` and registers a catch-all `GET *` route ([src/web/server.ts:L20-L30](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L20-L30)). The server binds to port `4317` by default and starts with `Bun.serve({ port, fetch: app.fetch })`, then awaits a never-resolving promise to keep the process alive ([src/web/server.ts:L32-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L32-L37)). The command is wired into the Command-Line Interface (CLI) dispatcher, which lazily imports `runServe` for the `serve` case ([src/cli/index.ts:L199-L203](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L199-L203)).
 
-Sources: [src/web/server.ts:L12-L37](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L12-L37)
+Sources: [src/web/server.ts:L7-L38](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L7-L38) [src/cli/index.ts:L199-L203](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L199-L203)
 
-### The API surface: `createApi`
+### JSON API (`createApi`)
 
-`createApi(db, pricing)` builds and returns a Hono instance with five JSON routes, taking its database and `PricingTable` as explicit inputs so it is pure over those dependencies ([src/web/api.ts:L16-L18](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L16-L18)). The `/api/stats` route returns the full portfolio dashboard payload in one response, composing `portfolioSummary`, `spendByMonth`, `spendByProject` (capped at 50), `spendByModel`, and `topSessions` (capped at 20) ([src/web/api.ts:L20-L28](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L20-L28)).
+`createApi` is pure over its `Database` and `PricingTable` inputs, returning a fresh `Hono` instance with all routes mounted under `/api` ([src/web/api.ts:L22-L61](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L22-L61)). The `/api/stats` route aggregates the portfolio view in a single JSON payload, combining `portfolioSummary`, `spendByMonth`, `spendByProject` (capped at 50 projects), `spendByModel`, and the top 20 sessions from `topSessions` ([src/web/api.ts:L25-L33](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L25-L33)). These read-only aggregates come from the core stats module ([src/core/stats.ts:L54-L149](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/stats.ts#L54-L149)).
 
-Two routes provide the project drill-down navigation. `/api/projects` returns the indexed project list via `listIndexedProjects`, and `/api/projects/:id/sessions` returns the sessions belonging to a project via `listIndexedSessions`, keyed by the `id` path parameter ([src/web/api.ts:L30-L32](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L30-L32)). All three aggregate routes read exclusively from the SQLite index, so they respond without touching the original session files.
+Project drill-down uses two routes: `/api/projects` lists every indexed project via `listIndexedProjects`, and `/api/projects/:id/sessions` lists the sessions for one project via `listIndexedSessions` using the `id` path parameter ([src/web/api.ts:L35-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L35-L37)). Both delegate to the core query layer ([src/core/queries.ts:L59-L78](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L59-L78)).
 
-Sources: [src/web/api.ts:L17-L32](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L17-L32)
+Sources: [src/web/api.ts:L22-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L22-L45) [src/core/stats.ts:L54-L149](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/stats.ts#L54-L149) [src/core/queries.ts:L59-L78](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L59-L78)
 
-### Per-session endpoints
+### Search and session routes
 
-The two session-scoped routes re-parse the source file rather than reading precomputed values, giving full fidelity for a single session. Both first resolve the on-disk path with `sessionPathById`, returning a `404` JSON body when the identifier is unknown ([src/web/api.ts:L34-L36](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L36)). `/api/sessions/:id` then calls `parseSessionFile` and passes the events plus the pricing table to `analyzeSession`, returning the full analysis ([src/web/api.ts:L34-L39](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L39)).
+`/api/sessions/search` reads the `q` query parameter and an optional `limit` (defaulting to 100 and guarded with `Number.isFinite`), returning `searchSessions` results or an empty array when the trimmed query is blank ([src/web/api.ts:L40-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L40-L45)). This route is registered before `/api/sessions/:id` on purpose, so the literal segment `search` is not captured as a session id ([src/web/api.ts:L39-L40](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L39-L40)).
 
-`/api/sessions/:id/transcript` follows the same path-resolution and parse steps but returns the output of `buildTranscript`, a message-by-message rendering of the conversation ([src/web/api.ts:L41-L46](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L41-L46)). Both handlers are `async` because parsing reads from the filesystem. These routes bridge into the [Core Analysis Engine](./2-core-analysis-engine.md), whose `analyzeSession`, `parseSessionFile`, and `buildTranscript` functions do the actual work ([src/web/api.ts:L3-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L3-L14)).
+The two per-session routes both resolve a filesystem path with `sessionPathById` and return a 404 JSON error when the id is unknown ([src/web/api.ts:L47-L59](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L47-L59)). `/api/sessions/:id` parses the session file and returns `analyzeSession(events, pricing)`, the full per-session analysis including cost ([src/web/api.ts:L47-L52](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L47-L52)). `/api/sessions/:id/transcript` parses the same file and returns `buildTranscript(events)`, the ordered transcript items the front-end renders ([src/web/api.ts:L54-L59](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L54-L59)). Both parse on demand via `parseSessionFile` rather than caching parsed events ([src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts) · [src/core/transcript.ts#L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L55)).
 
-Sources: [src/web/api.ts:L34-L46](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L46) [src/web/api.ts:L1-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L1-L14)
+Sources: [src/web/api.ts:L39-L61](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L39-L61) [src/core/queries.ts:L134-L152](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/queries.ts#L134-L152) [src/core/analyze.ts#L181](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L181) [src/core/transcript.ts#L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L55)
 
-### SPA catch-all and the embed mechanism
+### SPA embedding
 
-The SPA is served by a catch-all route registered after the API routes so it only matches non-API paths. When `hasSpa` is true it returns `spaHtml` via `c.html`; otherwise it returns a plain-text message instructing the user to run `bun run build:web` or use a release build ([src/web/server.ts:L23-L30](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L23-L30)). Both `spaHtml` and `hasSpa` are imported from the generated [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts) module ([src/web/server.ts:L5](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L5)).
+The static route in `runServe` returns `c.html(spaHtml)` when `hasSpa` is true, and otherwise returns a plain-text message telling the user to run `bun run build:web` or use a release build ([src/web/server.ts:L23-L30](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L23-L30)). The committed [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts) is a placeholder: `spaHtml` is an empty string and `hasSpa` is `false`, which lets the server compile before the front-end is ever built ([src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts#L1-L5)). The file is listed in `.gitignore` and force-added as this placeholder so a fresh checkout still typechecks.
 
-`spa.ts` is a generated, git-ignored file. The committed version is a force-added placeholder that exports an empty `spaHtml` and `hasSpa = false`, letting the server compile before the front end is ever built ([src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts#L1-L5)). The build script [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts) reads the single-file Vite build output at `web/dist/index.html`, exits with an error if that file is absent, and rewrites `spa.ts` with the HTML serialized through `JSON.stringify` and `hasSpa = true` ([scripts/embed-spa.ts:L7-L22](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts#L7-L22)). Because the entire UI is a JavaScript string constant, `bun build --compile` bakes the whole front end into the standalone binary with no external asset files.
+`embed-spa.ts` regenerates `spa.ts` from the Vite single-file build at `web/dist/index.html` ([scripts/embed-spa.ts:L5-L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L5-L14)). It reads the built HTML, `JSON.stringify`s it into a `spaHtml` export, sets `hasSpa` to `true`, and writes the module with a "GENERATED — do not edit by hand" header ([scripts/embed-spa.ts:L16-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L16-L22)). The script exits with an error if the build output is absent ([scripts/embed-spa.ts:L11-L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L11-L14)). Because the whole UI lives inside a string constant, `bun build --compile` bakes it into the binary with no external asset files.
 
-Sources: [src/web/server.ts:L5-L30](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L5-L30) [src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts#L1-L5) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts#L1-L22)
+Sources: [src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/spa.ts#L1-L5) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L1-L22) [src/web/server.ts:L23-L30](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L23-L30)
 
 ## Data Flow
 
@@ -88,39 +82,36 @@ Sources: [src/web/server.ts:L5-L30](https://github.com/yorch/cc-analyzer/blob/4e
 sequenceDiagram
     participant Browser
     participant Hono as Hono app
-    participant Route as /api/sessions/:id
-    participant Core as core (parser + analyze)
-    participant DB as SQLite index
-
+    participant Core as core / SQLite
     Browser->>Hono: GET /api/sessions/:id
-    Hono->>Route: dispatch
-    Route->>DB: sessionPathById(id)
-    DB-->>Route: file path (or null → 404)
-    Route->>Core: parseSessionFile(path)
-    Core-->>Route: events
-    Route->>Core: analyzeSession(events, pricing)
-    Core-->>Route: analysis
-    Route-->>Browser: 200 JSON
+    Hono->>Core: sessionPathById(db, id)
+    Core-->>Hono: file path or undefined
+    Hono->>Core: parseSessionFile + analyzeSession
+    Core-->>Hono: SessionAnalysis
+    Hono-->>Browser: 200 JSON
+    Browser->>Hono: GET /dashboard
+    Hono-->>Browser: 200 spaHtml
 ```
 
-A per-session request resolves the file path from the index, parses the source session file, runs the analysis with the loaded pricing table, and returns JSON. A missing identifier short-circuits to a `404` before any parsing occurs ([src/web/api.ts:L34-L39](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L39)).
+An API request first resolves the session id to a path through the query layer, then parses and analyzes the file before returning JSON, while any non-API path falls through the catch-all route and receives the embedded SPA HTML. Unknown session ids short-circuit to a 404 before any parsing occurs ([src/web/api.ts:L47-L52](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L47-L52)).
 
-Sources: [src/web/api.ts:L34-L46](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L34-L46)
+Sources: [src/web/api.ts:L47-L59](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L47-L59) [src/web/server.ts:L23-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L23-L37)
 
 ## Configuration & Extension Points
 
 | Setting | Type | Default | Purpose |
 | ------- | ---- | ------- | ------- |
-| `port` | `number` | `4317` | Listen port for the HTTP server ([src/web/server.ts:L7-L9](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L7-L9), [src/web/server.ts:L32](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L32)) |
-| `hasSpa` | `boolean` | `false` (placeholder) | Whether an embedded SPA is available to serve ([src/web/spa.ts:L5](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts#L5)) |
+| `port` | `number` | `4317` | Listen port passed via `ServeOptions` and the `--port` CLI flag |
+| `q` | query string | `""` | Search query for `/api/sessions/search` |
+| `limit` | query string | `100` | Result cap for `/api/sessions/search` |
 
-The `port` is the sole runtime option, passed through `ServeOptions` from the `serve` command ([src/web/server.ts:L7-L12](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L7-L12)). Adding an API route means registering another handler inside `createApi`; each handler follows the same pattern of reading from the database or delegating to a core function and returning `c.json` ([src/web/api.ts:L20-L46](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/api.ts#L20-L46)).
+The `port` flows from the CLI `serve` command into `ServeOptions` and finally into `Bun.serve` ([src/web/server.ts:L7-L33](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L7-L33) · [src/cli/index.ts:L199-L203](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L199-L203)). The search parameters are parsed directly from the request query in `createApi` ([src/web/api.ts:L40-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L40-L45)).
 
-Sources: [src/web/server.ts:L7-L34](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/server.ts#L7-L34) [src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/4eeed24/src/web/spa.ts#L1-L5)
+Sources: [src/web/server.ts:L7-L33](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts#L7-L33) [src/web/api.ts:L40-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/api.ts#L40-L45)
 
 ## Related Pages
 
-- Core analytics consumed by the API: [Core Analysis Engine](./2-core-analysis-engine.md)
-- The command that launches the server: [CLI](./3-cli.md)
-- The React front end served by this backend: [Web SPA Frontend](./6-web-spa-frontend.md)
-- Alternative interactive view: [TUI](./4-tui.md)
+- Front-end consumer: [Web SPA Frontend](./6-web-spa-frontend.md)
+- Data source: [Core Analysis Engine](./2-core-analysis-engine.md)
+- Launching command: [CLI](./3-cli.md)
+- Sibling interface: [TUI](./4-tui.md)
