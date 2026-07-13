@@ -16,17 +16,41 @@ $Version = if ($env:CC_ANALYZER_VERSION) { $env:CC_ANALYZER_VERSION } else { 'la
 $asset = "$Bin-windows-x64.exe"
 
 if ($Version -eq 'latest') {
-  $url = "https://github.com/$Repo/releases/latest/download/$asset"
+  $base = "https://github.com/$Repo/releases/latest/download"
 } else {
-  $url = "https://github.com/$Repo/releases/download/$Version/$asset"
+  $base = "https://github.com/$Repo/releases/download/$Version"
 }
+$url = "$base/$asset"
+$sumsUrl = "$base/SHA256SUMS"
 
 Write-Host "cc-analyzer ($Version) . windows/x64"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $target = Join-Path $InstallDir "$Bin.exe"
+$tmp = Join-Path $InstallDir ".cc-analyzer.download.tmp"
 
 Write-Host "downloading $asset..."
-Invoke-WebRequest -Uri $url -OutFile $target -UseBasicParsing
+Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+
+# Verify checksum (best-effort; enforced once SHA256SUMS is published).
+try {
+  $sums = (Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing).Content
+  $line = ($sums -split "`n") | Where-Object { ($_ -replace '\*', '') -match "\s$([regex]::Escape($asset))\s*$" } | Select-Object -First 1
+  if ($line) {
+    $expected = (($line -split '\s+')[0]).ToLower()
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
+    if ($actual -ne $expected) {
+      Remove-Item -Force $tmp
+      throw "checksum mismatch for $asset (expected $expected, got $actual)"
+    }
+    Write-Host "checksum verified"
+  } else {
+    Write-Host "no checksum listed for $asset; skipping verification"
+  }
+} catch [System.Net.WebException] {
+  Write-Host "no SHA256SUMS for this release; skipping checksum verification"
+}
+
+Move-Item -Force $tmp $target
 Write-Host "installed to $target"
 
 # PATH guidance (per-user; new terminals pick it up)
