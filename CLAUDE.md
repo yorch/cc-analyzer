@@ -130,6 +130,24 @@ force-added to git once; regenerated content stays untracked.
 
 CI (`.github/workflows/ci.yml`) runs lint, both typechecks, tests, and a full build on
 every push/PR. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which
-cross-compiles binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64)
-and attaches them to a GitHub release. Keep `package.json` `version` in sync with the
-tag.
+cross-compiles binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64),
+generates a `SHA256SUMS` manifest, and publishes a GitHub release with auto-generated
+notes.
+
+**Cutting a release.** The compiled binary embeds `package.json`'s version (via
+`version.ts`, bundled by `bun --compile`), so the version bump must land on `main`
+*before* the tag — tag a commit whose `package.json` still says the old version and the
+release binaries report the wrong version.
+
+1. Make sure `main` is green.
+2. Bump `package.json` `version` to `X.Y.Z` in a `chore(release): prepare vX.Y.Z` PR and
+   merge it.
+3. Tag that merge commit and push the tag — this is what triggers the release workflow:
+
+   ```bash
+   git checkout main && git pull
+   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+   ```
+
+4. Verify: `release.yml` attaches the five binaries + `SHA256SUMS` to the `vX.Y.Z`
+   GitHub release, and `cc-analyzer --version` reports `X.Y.Z`.

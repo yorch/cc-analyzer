@@ -221,12 +221,24 @@ UI. `bun run build:web` builds and embeds only the SPA (used by the full build).
 Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
 (`.github/workflows/ci.yml`). Pushing a `v*` tag triggers
 `.github/workflows/release.yml`, which cross-compiles binaries for
-Linux (x64/arm64), macOS (x64/arm64), and Windows (x64) and attaches them to a
-GitHub release:
+Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a `SHA256SUMS`
+manifest, and publishes a GitHub release with auto-generated notes.
 
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+**To cut a release** — the compiled binary embeds `package.json`'s version, so the
+bump must land on `main` before the tag:
+
+1. Bump `package.json` `version` to the new `X.Y.Z` in a `chore(release): prepare
+   vX.Y.Z` pull request, and merge it.
+2. Tag the merge commit and push the tag (this is what builds and publishes the
+   release):
+
+   ```bash
+   git checkout main && git pull
+   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+   ```
+
+The release workflow then attaches the five platform binaries and `SHA256SUMS` to the
+`vX.Y.Z` release.
 
 ## Roadmap
 
