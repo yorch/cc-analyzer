@@ -475,6 +475,107 @@ th.num {
   color: var(--red);
   border-color: var(--red);
 }
+
+/* trends view */
+.trend-panel {
+  margin: 22px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  padding: 16px 18px;
+}
+.trend-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.trend-head h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.seg-group {
+  font-size: 12px;
+  color: var(--muted);
+}
+.seg-gap {
+  display: inline-block;
+  width: 14px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0 4px;
+  vertical-align: middle;
+}
+.seg button {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.seg button.active {
+  background: var(--signal);
+  color: var(--bg);
+}
+.seg button:hover:not(.active) {
+  color: var(--ink);
+}
+.burnchart {
+  width: 100%;
+  height: 200px;
+  display: block;
+  margin-top: 6px;
+}
+.burn-area {
+  fill: var(--signal);
+  opacity: 0.16;
+}
+.burn-line {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.heatmap {
+  font-size: 11px;
+  margin-top: 6px;
+}
+.heat-row {
+  display: flex;
+  align-items: center;
+}
+.heat-label {
+  flex: 0 0 34px;
+  color: var(--muted);
+}
+.heat-cell {
+  flex: 1 1 0;
+  height: 15px;
+  margin: 1px;
+  min-width: 6px;
+  background: var(--signal);
+  border-radius: 1px;
+}
+.heat-axis .heat-hour {
+  flex: 1 1 0;
+  min-width: 6px;
+  color: var(--muted);
+}
 .est {
   color: var(--signal);
 }
