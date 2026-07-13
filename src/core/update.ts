@@ -37,10 +37,107 @@ export function swapBinary(targetPath: string, tmpPath: string): void {
   renameSync(tmpPath, targetPath);
 }
 
-async function downloadTo(url: string, dest: string): Promise<void> {
-  const res = await fetch(url, { redirect: "follow" });
+export interface DownloadProgress {
+  /** Bytes written so far. */
+  received: number;
+  /** Total bytes from Content-Length, or undefined if the server omitted it. */
+  total?: number;
+}
+
+/** Reject if `p` doesn't settle within `ms`, naming the failure a stall. */
+function withStall<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`download stalled (no data for ${Math.round(ms / 1000)}s)`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Pump a byte stream into `write`, reporting progress per chunk and aborting if
+ * no chunk arrives within `stallMs` (reset on every chunk, so a slow-but-moving
+ * download is never killed — only a true stall). Pure over its inputs (stream +
+ * callbacks), so it's unit-testable without a network or filesystem. Returns the
+ * total bytes pumped.
+ */
+export async function pumpStream(
+  stream: ReadableStream<Uint8Array>,
+  write: (chunk: Uint8Array) => void | Promise<void>,
+  opts: { stallMs: number; total?: number; onProgress?: (p: DownloadProgress) => void },
+): Promise<number> {
+  const reader = stream.getReader();
+  let received = 0;
+  try {
+    while (true) {
+      let step: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        step = await withStall(reader.read(), opts.stallMs);
+      } catch (err) {
+        await reader.cancel().catch(() => {});
+        throw err;
+      }
+      if (step.done) break;
+      await write(step.value);
+      received += step.value.length;
+      opts.onProgress?.({ received, total: opts.total });
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released (e.g. after cancel)
+    }
+  }
+  return received;
+}
+
+/** No data for this long mid-download → treat as a stall and abort. */
+const DOWNLOAD_STALL_MS = 30_000;
+/** Cap on establishing the connection and receiving response headers. */
+const CONNECT_TIMEOUT_MS = 30_000;
+
+async function downloadTo(
+  url: string,
+  dest: string,
+  onProgress?: (p: DownloadProgress) => void,
+): Promise<void> {
+  // Bound only the connect/headers phase with the signal; the body is guarded by
+  // pumpStream's per-chunk stall timer so a slow-but-progressing download lives.
+  const ctrl = new AbortController();
+  const connectTimer = setTimeout(() => ctrl.abort(), CONNECT_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { redirect: "follow", signal: ctrl.signal });
+  } finally {
+    clearTimeout(connectTimer);
+  }
   if (!res.ok) throw new Error(`download failed (HTTP ${res.status}) for ${url}`);
-  await Bun.write(dest, res);
+  if (!res.body) {
+    await Bun.write(dest, res);
+    return;
+  }
+  const total = Number(res.headers.get("content-length")) || undefined;
+  const sink = Bun.file(dest).writer();
+  try {
+    await pumpStream(res.body, (chunk) => void sink.write(chunk), {
+      stallMs: DOWNLOAD_STALL_MS,
+      total,
+      onProgress,
+    });
+  } finally {
+    await sink.end();
+  }
 }
 
 /**
@@ -52,7 +149,10 @@ async function downloadTo(url: string, dest: string): Promise<void> {
 async function verifyChecksum(file: string, version: string, asset: string): Promise<void> {
   let manifest: string;
   try {
-    const res = await fetch(checksumsUrl(version), { redirect: "follow" });
+    const res = await fetch(checksumsUrl(version), {
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
     if (!res.ok) return;
     manifest = await res.text();
   } catch {
@@ -66,8 +166,11 @@ async function verifyChecksum(file: string, version: string, asset: string): Pro
   }
 }
 
-/** Download the latest release binary and replace the running one in place. */
-export async function performUpdate(): Promise<UpdateResult> {
+/** Download the latest release binary and replace the running one in place.
+ * `onProgress` is invoked per chunk during the download for a progress display. */
+export async function performUpdate(
+  onProgress?: (p: DownloadProgress) => void,
+): Promise<UpdateResult> {
   const current = VERSION;
   const latest = await fetchLatestVersion();
 
@@ -110,7 +213,7 @@ export async function performUpdate(): Promise<UpdateResult> {
   const target = process.execPath;
   const tmp = join(dirname(target), `.cc-analyzer.update.${process.pid}`);
   try {
-    await downloadTo(assetDownloadUrl(latest, asset), tmp);
+    await downloadTo(assetDownloadUrl(latest, asset), tmp, onProgress);
     await verifyChecksum(tmp, latest, asset);
     swapBinary(target, tmp);
   } catch (err) {

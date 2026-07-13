@@ -13,7 +13,7 @@ import {
   spendByProject,
   topSessions,
 } from "../core/stats.ts";
-import { performUpdate } from "../core/update.ts";
+import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
@@ -155,6 +155,16 @@ async function cmdPricingUpdate(): Promise<number> {
   return loaded.source === "remote" ? 0 : 1;
 }
 
+/** Live download progress on stderr (TTY only, so piped output stays clean). */
+function renderDownloadProgress(p: DownloadProgress): void {
+  if (!process.stderr.isTTY) return;
+  const mb = (n: number) => (n / 1_000_000).toFixed(1);
+  const status = p.total
+    ? `${Math.floor((p.received / p.total) * 100)}% (${mb(p.received)}/${mb(p.total)} MB)`
+    : `${mb(p.received)} MB`;
+  process.stderr.write(`\rDownloading update… ${status}   `);
+}
+
 async function cmdUpdate(checkOnly: boolean): Promise<number> {
   try {
     if (checkOnly) {
@@ -169,7 +179,8 @@ async function cmdUpdate(checkOnly: boolean): Promise<number> {
       }
       return 0;
     }
-    const result = await performUpdate();
+    const result = await performUpdate(renderDownloadProgress);
+    if (result.status === "updated" && process.stderr.isTTY) process.stderr.write("\n");
     console.log(result.message);
     return result.status === "unsupported" ? 1 : 0;
   } catch (err) {
