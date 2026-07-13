@@ -1,6 +1,13 @@
 import { chmodSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { assetDownloadUrl, assetName, compareVersions, fetchLatestVersion } from "./release.ts";
+import { expectedHash, fileSha256, parseChecksums } from "./checksum.ts";
+import {
+  assetDownloadUrl,
+  assetName,
+  checksumsUrl,
+  compareVersions,
+  fetchLatestVersion,
+} from "./release.ts";
 import { VERSION } from "./version.ts";
 
 /**
@@ -34,6 +41,29 @@ async function downloadTo(url: string, dest: string): Promise<void> {
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`download failed (HTTP ${res.status}) for ${url}`);
   await Bun.write(dest, res);
+}
+
+/**
+ * Verify a downloaded file against the release's SHA256SUMS. Best-effort:
+ * silently returns when the manifest is absent (pre-checksum releases), the
+ * asset is unlisted, or the manifest can't be fetched — but throws on a real
+ * hash mismatch so a corrupted or tampered download is never installed.
+ */
+async function verifyChecksum(file: string, version: string, asset: string): Promise<void> {
+  let manifest: string;
+  try {
+    const res = await fetch(checksumsUrl(version), { redirect: "follow" });
+    if (!res.ok) return;
+    manifest = await res.text();
+  } catch {
+    return;
+  }
+  const expected = expectedHash(parseChecksums(manifest), asset);
+  if (!expected) return;
+  const actual = await fileSha256(file);
+  if (actual !== expected) {
+    throw new Error(`checksum mismatch for ${asset} (expected ${expected}, got ${actual})`);
+  }
 }
 
 /** Download the latest release binary and replace the running one in place. */
@@ -81,6 +111,7 @@ export async function performUpdate(): Promise<UpdateResult> {
   const tmp = join(dirname(target), `.cc-analyzer.update.${process.pid}`);
   try {
     await downloadTo(assetDownloadUrl(latest, asset), tmp);
+    await verifyChecksum(tmp, latest, asset);
     swapBinary(target, tmp);
   } catch (err) {
     try {

@@ -42,10 +42,12 @@ asset="${BIN}-${os}-${arch}"
 # GitHub redirects /releases/latest/download/<asset> to the newest release, so
 # no API token or tag lookup is needed for the common case.
 if [ "$VERSION" = latest ]; then
-  url="https://github.com/${REPO}/releases/latest/download/${asset}"
+  base="https://github.com/${REPO}/releases/latest/download"
 else
-  url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
+  base="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
+url="${base}/${asset}"
+sums_url="${base}/SHA256SUMS"
 
 # --- download --------------------------------------------------------------
 info "cc-analyzer (${VERSION}) · ${os}/${arch}"
@@ -54,6 +56,29 @@ tmp=$(mktemp) || err "could not create a temporary file"
 trap 'rm -f "$tmp"' EXIT INT TERM
 curl -fSL --progress-bar "$url" -o "$tmp" ||
   err "download failed — is ${asset} published for ${VERSION}? (${url})"
+
+# --- verify checksum -------------------------------------------------------
+# Best-effort: enforced when SHA256SUMS is published; skipped (with a note) for
+# older releases that predate it, or when no sha256 tool is available.
+verify_checksum() {
+  sums=$(curl -fsSL "$sums_url" 2>/dev/null) ||
+    { info "no SHA256SUMS for this release; skipping checksum verification"; return 0; }
+  expected=$(printf '%s\n' "$sums" | awk -v a="$asset" '{f=$2; sub(/^\*/,"",f); if (f==a) print $1}' | head -1)
+  [ -n "$expected" ] ||
+    { info "no checksum listed for ${asset}; skipping verification"; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$tmp" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$tmp" | awk '{print $1}')
+  else
+    info "no sha256 tool found; skipping checksum verification"
+    return 0
+  fi
+  [ "$actual" = "$expected" ] ||
+    err "checksum mismatch for ${asset} (expected ${expected}, got ${actual})"
+  info "checksum verified"
+}
+verify_checksum
 
 # --- install ---------------------------------------------------------------
 mkdir -p "$INSTALL_DIR" || err "could not create ${INSTALL_DIR}"

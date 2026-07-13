@@ -42,6 +42,11 @@ export function assetDownloadUrl(version: string, asset: string): string {
   return `https://github.com/${REPO}/releases/download/v${normalizeVersion(version)}/${asset}`;
 }
 
+/** URL of the SHA256SUMS manifest for a release. */
+export function checksumsUrl(version: string): string {
+  return assetDownloadUrl(version, "SHA256SUMS");
+}
+
 /**
  * Resolve the latest published version (e.g. "0.3.0") by following the
  * releases/latest redirect. Throws on network error, timeout, or an

@@ -89,6 +89,12 @@ curl.exe -fL -o cc-analyzer.exe `
 `…/releases/latest/download/…` always resolves to the newest release; pin a
 version by swapping `latest/download` for `download/v0.1.0`.
 
+Each release publishes a `SHA256SUMS` manifest. The install scripts and
+`cc-analyzer update` verify the downloaded binary against it before installing
+(skipped gracefully for older releases that predate the manifest). This guards
+against corrupted or tampered downloads; it is not a substitute for signing,
+since the manifest is served from the same release.
+
 ### From source
 
 Requires [Bun](https://bun.sh) ≥ 1.3.

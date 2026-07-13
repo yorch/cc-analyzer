@@ -43,6 +43,12 @@ jobs:
           done
           ls -lh dist
 
+      - name: Generate checksums
+        run: |
+          # Run inside dist/ so manifest entries are basenames, not dist/… paths.
+          cd dist && sha256sum cc-analyzer-* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,4 +57,4 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes \
-            dist/cc-analyzer-*
+            dist/cc-analyzer-* dist/SHA256SUMS
