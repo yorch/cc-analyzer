@@ -3,6 +3,7 @@ import { Dashboard } from "./views/Dashboard.tsx";
 import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
 import { Session } from "./views/Session.tsx";
+import { Tools } from "./views/Tools.tsx";
 import { Trends } from "./views/Trends.tsx";
 
 export function App() {
@@ -25,6 +26,9 @@ export function App() {
           <a className={route.name === "trends" ? "active" : ""} href={link.trends()}>
             Trends
           </a>
+          <a className={route.name === "tools" ? "active" : ""} href={link.tools()}>
+            Tools
+          </a>
         </nav>
         <span className="masthead-tag">Claude Code · Session Ledger</span>
         <span className="masthead-rule" />
@@ -34,6 +38,7 @@ export function App() {
       {route.name === "insights" && <Insights />}
       {route.name === "insightsProject" && <InsightsProject id={route.id} />}
       {route.name === "trends" && <Trends />}
+      {route.name === "tools" && <Tools />}
       {route.name === "project" && <Project id={route.id} />}
       {route.name === "session" && <Session id={route.id} />}
     </div>

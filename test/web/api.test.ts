@@ -129,4 +129,19 @@ describe("web API", () => {
     expect(body.heatmap.length).toBeGreaterThan(0);
     expect(body.heatmap[0]?.sessions).toBeGreaterThan(0);
   });
+
+  test("GET /api/analytics returns tool/skill/subagent usage", async () => {
+    const res = await api.request("/api/analytics");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tools: { tool: string; uses: number; errors: number; errorRate: number }[];
+      skills: unknown[];
+      subagents: unknown[];
+    };
+    expect(body.tools.length).toBeGreaterThan(0);
+    expect(typeof body.tools[0]?.tool).toBe("string");
+    expect(body.tools[0]?.uses).toBeGreaterThan(0);
+    expect(Array.isArray(body.skills)).toBe(true);
+    expect(Array.isArray(body.subagents)).toBe(true);
+  });
 });

@@ -15,10 +15,13 @@ import {
   cacheWasteByProject,
   cacheWasteBySession,
   portfolioSummary,
+  skillUsage,
   spendByDay,
   spendByModel,
   spendByMonth,
   spendByProject,
+  subagentUsage,
+  toolUsage,
   topSessions,
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
@@ -52,6 +55,11 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // Time-series for the trends view: raw daily spend series + weekday×hour
   // activity heatmap. Bucketing/metric selection happens client-side.
   api.get("/api/trends", (c) => c.json({ daily: spendByDay(db), heatmap: activityHeatmap(db) }));
+
+  // Tool/skill/subagent usage analytics.
+  api.get("/api/analytics", (c) =>
+    c.json({ tools: toolUsage(db), skills: skillUsage(db), subagents: subagentUsage(db) }),
+  );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
 

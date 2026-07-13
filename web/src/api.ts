@@ -122,6 +122,23 @@ export interface TrendsResponse {
   heatmap: HeatCell[];
 }
 
+export interface ToolUsageRow {
+  tool: string;
+  uses: number;
+  errors: number;
+  errorRate: number;
+  sessions: number;
+}
+export interface NameUsageRow {
+  name: string;
+  sessions: number;
+}
+export interface AnalyticsResponse {
+  tools: ToolUsageRow[];
+  skills: NameUsageRow[];
+  subagents: NameUsageRow[];
+}
+
 export type CacheVerdict = "efficient" | "ok" | "leaky";
 /** Mirror of core stats.cacheVerdict, for the web insights view. */
 export function cacheVerdict(ratio: number): CacheVerdict {
@@ -237,4 +254,5 @@ export const api = {
   insightsSessions: (projectId: string) =>
     get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
   trends: () => get<TrendsResponse>("/api/trends"),
+  analytics: () => get<AnalyticsResponse>("/api/analytics"),
 };
