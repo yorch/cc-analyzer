@@ -123,6 +123,40 @@ via `cc-analyzer update --check`. On Windows, re-run the installer one-liner.
 `cc-analyzer` also prints a passive, once-a-day notice when a newer version is
 available; silence it with `CC_ANALYZER_NO_UPDATE_CHECK=1`.
 
+## Telemetry & privacy
+
+`cc-analyzer` reports **anonymous, cookieless** usage stats to a self-hosted
+[Plausible](https://plausible.io) instance, so its author can see which features
+are actually used. It is built to respect the tool's read-only, privacy-first
+nature:
+
+- **Never sent:** session content, prompts, file paths, project names, tokens,
+  costs, or anything identifying. Each CLI event carries only the command name
+  (`stats`, `index`, …), the cc-analyzer version, your OS/arch, and a coarse
+  session-count bucket (e.g. `11-100`).
+- **Where:** the CLI and TUI send server-side events; the local web app
+  (`serve`) and this docs site load Plausible's cookieless script. Telemetry
+  state lives only under `~/.config/cc-analyzer/` — **never** in `~/.claude`.
+- **On by default, easy to opt out.** The first run prints a one-time notice.
+
+Opt out in any of these ways — any one is enough:
+
+```sh
+cc-analyzer telemetry off        # persisted setting
+export CC_ANALYZER_TELEMETRY=0   # per-shell / per-run
+export DO_NOT_TRACK=1            # honored globally
+```
+
+Telemetry is also **automatically disabled in CI** (when `CI` is set). Check the
+current state any time:
+
+```sh
+cc-analyzer telemetry status
+```
+
+In the web app and this docs site, Do-Not-Track and
+`localStorage.plausible_ignore = "true"` are both honored.
+
 ## Run from source
 
 With [Bun](https://bun.sh) ≥ 1.3:
