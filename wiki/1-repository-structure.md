@@ -1,128 +1,132 @@
 # Repository Structure
 
-> Indexed at commit `4eeed24` on 2026-07-10 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/4eeed24)
+> Indexed at commit `bf5a4c8` on 2026-07-12 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/bf5a4c8)
 
 ## Relevant source files
 
-- [package.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json)
-- [tsconfig.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/tsconfig.json)
-- [web/tsconfig.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/web/tsconfig.json)
-- [biome.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json)
-- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts)
-- [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml)
-- [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml)
-- [README.md](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md)
-- [.gitignore](https://github.com/yorch/cc-analyzer/blob/4eeed24/.gitignore)
+- [package.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json)
+- [tsconfig.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json)
+- [web/tsconfig.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/tsconfig.json)
+- [biome.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json)
+- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts)
+- [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/ci.yml)
+- [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml)
+- [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/deploy-site.yml)
+- [README.md](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md)
+- [CLAUDE.md](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md)
+- [.gitignore](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.gitignore)
 
 ## Overview
 
-`cc-analyzer` is a read-only TypeScript command-line tool that browses and analyzes [Claude Code](https://claude.com/claude-code) sessions stored under `~/.claude`, reporting tokens, cost, tools, skills, models, and a per-turn breakdown ([README.md#L5-L7](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L5-L7)). It runs on [Bun](https://bun.sh) ≥ 1.3 and ships as a single compiled binary that bundles the CLI, terminal UI, HTTP API, and web UI together ([README.md#L27](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L27) [README.md#L117-L119](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L117-L119)).
+`cc-analyzer` is a read-only Command-Line Interface (CLI) that browses and analyzes Claude Code sessions stored under `~/.claude`, and ships as a single self-contained binary. The runtime is Bun ≥ 1.3 and the language is TypeScript, declared in [package.json#L7](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L7) and [README.md#L100](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md#L100). The repository follows a "one core, three frontends" layout: all parsing, analysis, pricing, and indexing lives in `src/core/`, while thin presentation layers in `src/cli/`, `src/tui/`, and `src/web/` consume it, as documented in [CLAUDE.md#L36-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L36-L45).
 
-The repository is a single-package project — not a workspace monorepo — declared by [package.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json). Source lives in `src/`, split into four modules (`core`, `cli`, `tui`, `web`), while the browser React Single-Page Application (SPA) has its own source tree under `web/`. A build step in `scripts/` embeds the compiled SPA into the binary. This page documents that layout, the dual TypeScript configuration, the Biome lint/format setup, the SPA-embed build pipeline, and the GitHub Actions that gate and release the project.
+Beyond the application source, the repository contains a separate browser-targeted React Single-Page Application (SPA) under `web/`, a VitePress documentation and landing site under `site/`, a `scripts/` directory holding the SPA embedding step, and a `test/` tree that mirrors `src/`. The build pipeline stitches these together: Vite bundles the SPA into one Hypertext Markup Language (HTML) file, [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts) writes it into `src/web/spa.ts`, and `bun build --compile` bakes everything into `dist/cc-analyzer`, per [package.json#L17-L19](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L17-L19).
 
-Sources: [README.md:L1-L52](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L1-L52) [package.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L1-L20)
+Sources: [CLAUDE.md#L1-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L1-L45) [package.json#L1-L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L1-L20) [README.md#L1-L15](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md#L1-L15)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph srcTree["src/ (Bun runtime)"]
-        core[core]
-        cli[cli]
-        tui[tui]
-        webmod[web]
+    subgraph app["Application source (src/)"]
+        Core[src/core engine]
+        CLI[src/cli]
+        TUI[src/tui Ink UI]
+        WebSrv[src/web Hono API]
     end
-    subgraph webTree["web/ (browser SPA)"]
-        websrc[web/src]
-    end
-    cli --> core
-    tui --> core
-    webmod --> core
-    cli -.entrypoint.-> tui
-    cli -.entrypoint.-> webmod
-    websrc -.vite build.-> spa["src/web/spa.ts (generated)"]
-    webmod --> spa
+
+    SPA[web/ React SPA] -->|vite build| DistHtml[web/dist/index.html]
+    DistHtml -->|embed-spa.ts| SpaTs[src/web/spa.ts]
+    SpaTs -.imported by.-> WebSrv
+
+    CLI --> Core
+    TUI --> Core
+    WebSrv --> Core
+
+    CLI -->|bun build --compile| Binary[dist/cc-analyzer]
+    Site[site/ VitePress docs] -.publishes.-> Pages[GitHub Pages]
 ```
 
-The four `src/` modules run under Bun and are typechecked against Bun types, while `web/src` is a separate browser target compiled by Vite. `src/cli/index.ts` is the sole binary entrypoint declared in the `bin` field ([package.json#L6-L8](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L6-L8)); it delegates to the TUI and web modules, all of which depend on `core`. The Vite build converts `web/src` into a single HTML file that is embedded as `src/web/spa.ts` and served by the web module.
+The four application modules share `src/core/` as their single engine, while the `web/` SPA is a distinct browser codebase compiled into `src/web/spa.ts` before the binary is built. The `site/` tree is an independent VitePress project deployed separately to GitHub Pages. This separation is why the repository maintains two TypeScript configurations and three CI/CD workflows, described below.
+
+Sources: [CLAUDE.md#L36-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L36-L55) [package.json#L17-L19](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L17-L19) [scripts/embed-spa.ts#L1-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L1-L22)
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| Core analysis engine | `src/core/` | Session discovery, JSONL parsing, cost/token analysis, SQLite index, pricing |
-| CLI | `src/cli/` | Argument parsing, command dispatch, human/JSON rendering; binary entrypoint |
-| TUI | `src/tui/` | Interactive Ink terminal UI (projects → sessions → detail) |
-| Web server & API | `src/web/` | Hono HTTP API plus the embedded SPA served by `serve` |
-| Web SPA source | `web/src/` | React browser application built by Vite into a single HTML file |
-| SPA embed script | `scripts/embed-spa.ts` | Writes the Vite output into `src/web/spa.ts` as a string |
-| Tests | `test/` | Mirrors `src/` — `core`, `tui`, `web` suites plus `fixtures` |
+| Core engine | `src/core/` | Parsing, analysis, pricing, indexing, self-update — consumed by every frontend |
+| CLI | `src/cli/` | Scriptable commands; `index.ts` is the entrypoint and argument router |
+| TUI | `src/tui/` | Interactive terminal UI built with Ink + React |
+| Web server | `src/web/` | `cc-analyzer serve`: a Hono Application Programming Interface (API) plus embedded SPA |
+| Web SPA | `web/` | Browser React SPA source, bundled by Vite into one HTML file |
+| Docs site | `site/` | VitePress landing page and documentation |
+| Build scripts | `scripts/` | `embed-spa.ts`, which bakes the SPA HTML into `src/web/spa.ts` |
+| Tests | `test/` | Bun test suite mirroring `src/` (`cli/`, `core/`, `tui/`, `web/`, `fixtures/`) |
 
-The `src/core/` directory holds the domain logic: `analyze.ts`, `parser.ts`, `discover.ts`, `indexer.ts`, `db.ts`, `queries.ts`, `stats.ts`, `pricing.ts`, `pricing-source.ts`, `transcript.ts`, `events.ts`, and `paths.ts`, alongside a `bundled-pricing.json` fallback table. `src/cli/` contains `index.ts`, `format.ts`, and `render.ts`. `src/tui/` uses `.tsx` files (`App.tsx`, `run.tsx`) with `components/` and `screens/` subdirectories. `src/web/` contains `api.ts`, `server.ts`, and the generated `spa.ts`. The `test/` tree mirrors these source modules with `core/`, `tui/`, `web/`, and a shared `fixtures/` directory.
+The `bin` field points the `cc-analyzer` executable at [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L6-L8), which is both the development entrypoint (`bun start`) and the compile target for the binary, per [package.json#L6-L19](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L6-L19). Runtime dependencies are minimal: `hono` for the API server, `ink` and `react`/`react-dom` for the TUI and SPA, `zod` for schema validation, and two font packages, listed in [package.json#L21-L30](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L21-L30).
 
-Sources: [package.json:L6-L19](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L6-L19) [README.md:L42-L110](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L42-L110)
+Sources: [package.json#L6-L41](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L6-L41) [CLAUDE.md#L36-L45](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L36-L45)
 
 ## Key Components
 
 ### Package manifest and scripts
 
-[package.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json) defines the project as an ES module (`"type": "module"`) at version `0.1.0` with a single binary named `cc-analyzer` pointing at `./src/cli/index.ts` ([package.json#L2-L8](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L2-L8)). The `scripts` block wires the whole workflow: `start` runs the CLI, `test` invokes `bun test`, and `lint`/`format`/`check` drive Biome ([package.json#L9-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L9-L14)). Runtime dependencies include `hono`, `ink`, `react`, `react-dom`, and `zod`; dev dependencies include `@biomejs/biome`, `typescript`, `vite`, `@vitejs/plugin-react`, and `vite-plugin-singlefile` ([package.json#L21-L41](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L21-L41)).
+[package.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json) defines the version (`0.2.0`), the module type (`module`), the executable binding, and every npm-style script the project uses. The scripts block at [package.json#L9-L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L9-L20) encodes the whole developer workflow: `start` runs the CLI through Bun, `test` invokes Bun's built-in runner, `lint`/`format`/`check` drive Biome, and the two typecheck scripts (`typecheck` and `typecheck:web`) run `tsc --noEmit` against the two separate configurations. `build:web` and `build` compose the release pipeline described below.
 
-Sources: [package.json:L1-L42](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L1-L42)
+Sources: [package.json#L1-L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L1-L20) [CLAUDE.md#L10-L28](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L10-L28)
 
 ### Dual TypeScript configuration
 
-The project uses two separate TypeScript configs because two different runtimes are involved. The root [tsconfig.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/tsconfig.json) targets Bun: it sets `"types": ["bun"]`, includes only `src` and `test`, and uses a plain `ESNext` lib without DOM types ([tsconfig.json#L3-L19](https://github.com/yorch/cc-analyzer/blob/4eeed24/tsconfig.json#L3-L19)). The browser config [web/tsconfig.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/web/tsconfig.json) adds `"DOM"` and `"DOM.Iterable"` to `lib`, sets `"types": ["vite/client"]`, and includes `src` and `vite.config.ts` relative to the `web/` directory ([web/tsconfig.json#L3-L16](https://github.com/yorch/cc-analyzer/blob/4eeed24/web/tsconfig.json#L3-L16)).
+The repository carries two `tsconfig.json` files with intentionally incompatible settings. The root [tsconfig.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json) targets Bun: it sets `"types": ["bun"]` at [tsconfig.json#L18](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json#L18) and includes both `src` and `test` at [tsconfig.json#L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json#L20). The browser config [web/tsconfig.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/tsconfig.json) instead pulls in the Document Object Model (DOM) libraries at [web/tsconfig.json#L3](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/tsconfig.json#L3) and uses `"types": ["vite/client"]` at [web/tsconfig.json#L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/tsconfig.json#L14). Because Bun globals and DOM globals cannot coexist cleanly in one project, Continuous Integration (CI) runs both typechecks and contributors must run both before claiming types pass, per [CLAUDE.md#L29-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L29-L31).
 
-Both configs share strict settings — `strict`, `noUncheckedIndexedAccess`, `allowImportingTsExtensions`, `verbatimModuleSyntax`, and `jsx: "react-jsx"` ([tsconfig.json#L8-L18](https://github.com/yorch/cc-analyzer/blob/4eeed24/tsconfig.json#L8-L18) [web/tsconfig.json#L6-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/web/tsconfig.json#L6-L14)). Because the type environments differ, they are typechecked by two commands: `typecheck` runs `tsc --noEmit` against the root config, and `typecheck:web` runs `tsc --noEmit -p web/tsconfig.json` ([package.json#L15-L16](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L15-L16)).
+Both configurations share strict settings including `strict`, `noUncheckedIndexedAccess`, and `verbatimModuleSyntax`, and both enable `allowImportingTsExtensions` so imports carry explicit `.ts`/`.tsx` extensions. The root config additionally enables `resolveJsonModule` at [tsconfig.json#L10](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json#L10), which lets `src/core/version.ts` import `package.json` directly so the compiled binary knows its own version, as noted in [CLAUDE.md#L88-L94](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L88-L94).
 
-Sources: [tsconfig.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/4eeed24/tsconfig.json#L1-L20) [web/tsconfig.json:L1-L17](https://github.com/yorch/cc-analyzer/blob/4eeed24/web/tsconfig.json#L1-L17) [package.json:L15-L16](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L15-L16)
+Sources: [tsconfig.json#L1-L21](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/tsconfig.json#L1-L21) [web/tsconfig.json#L1-L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/tsconfig.json#L1-L17) [CLAUDE.md#L116-L122](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L116-L122)
 
-### Biome lint and format
+### Biome tooling
 
-Linting and formatting are handled by [Biome](https://biomejs.dev), configured in [biome.json](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json) pinned to schema version `2.5.3`. It enables Git-aware ignoring via `useIgnoreFile` and scopes files to `src/**`, `test/**`, `web/**`, and `*.json`, while explicitly excluding `web/dist` and the generated `src/web/spa.ts` ([biome.json#L3-L10](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L3-L10)). The formatter uses 2-space indentation and a 100-character line width, with double quotes, always-on semicolons, and trailing commas for JavaScript ([biome.json#L11-L29](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L11-L29)).
+Formatting and linting are handled by Biome, configured in [biome.json](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json). The formatter uses two-space indentation and a line width of 100, per [biome.json#L11-L16](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L11-L16), with double quotes, always-on semicolons, and trailing commas at [biome.json#L23-L29](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L23-L29). The `includes` glob at [biome.json#L9](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L9) covers `src`, `test`, and `web` but explicitly excludes `web/dist` and the generated `src/web/spa.ts`. Biome also reads the Git ignore file and organizes imports as an assist action, defined at [biome.json#L3-L7](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L3-L7) and [biome.json#L30-L36](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L30-L36).
 
-The linter runs Biome's `recommended` preset, and the assist block enables automatic import organization ([biome.json#L17-L36](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L17-L36)). The `check` script applies fixes in place while `lint` only reports, matching the CI usage described below ([package.json#L12-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L12-L14)).
+Sources: [biome.json#L1-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/biome.json#L1-L37)
 
-Sources: [biome.json:L1-L37](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L1-L37) [package.json:L12-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L12-L14)
+### The generated SPA artifact
 
-### Generated SPA artifact
+`src/web/spa.ts` is a generated, Git-ignored artifact and must not be edited by hand. [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts) reads the single-file Vite build at `web/dist/index.html`, exits with an error if it is missing at [scripts/embed-spa.ts#L10-L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L10-L14), then writes a module exporting `spaHtml` (the JSON-escaped HTML string) and `hasSpa` at [scripts/embed-spa.ts#L16-L21](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L16-L21). The `.gitignore` keeps regenerated content untracked at [.gitignore#L12-L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.gitignore#L12-L14); a placeholder version is force-added to Git once so the module resolves, as explained in [CLAUDE.md#L107-L114](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L107-L114). The `.gitignore` also excludes `node_modules/`, `dist/`, `web/dist/`, and build artifacts like `*.tsbuildinfo`, per [.gitignore#L1-L14](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.gitignore#L1-L14).
 
-The file `src/web/spa.ts` is a build output, not hand-written source. [.gitignore](https://github.com/yorch/cc-analyzer/blob/4eeed24/.gitignore) excludes it from version control alongside `node_modules/`, `dist/`, `web/dist/`, and `*.bun-build`, noting that a placeholder is force-added once and regenerated content stays out of Git ([.gitignore#L1-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/.gitignore#L1-L14)). This is why Biome also excludes it from linting ([biome.json#L9](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L9)).
+Sources: [scripts/embed-spa.ts#L1-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L1-L22) [.gitignore#L1-L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.gitignore#L1-L17) [CLAUDE.md#L107-L114](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/CLAUDE.md#L107-L114)
 
-Sources: [.gitignore:L1-L14](https://github.com/yorch/cc-analyzer/blob/4eeed24/.gitignore#L1-L14) [biome.json:L9](https://github.com/yorch/cc-analyzer/blob/4eeed24/biome.json#L9)
-
-## Data Flow
+## Build Pipeline
 
 ```mermaid
 flowchart TD
-    websrc["web/src (React SPA)"] --> vite["vite build --config web/vite.config.ts"]
-    vite --> html["web/dist/index.html (single file)"]
-    html --> embed["scripts/embed-spa.ts"]
-    embed --> spa["src/web/spa.ts (spaHtml string)"]
-    spa --> compile["bun build --compile"]
-    entry["src/cli/index.ts"] --> compile
-    compile --> binary["dist/cc-analyzer"]
+    Start[bun run build] --> BuildWeb[build:web]
+    BuildWeb --> Vite[vite build — bundles SPA to web/dist/index.html]
+    Vite --> Embed[scripts/embed-spa.ts writes src/web/spa.ts]
+    Embed --> Compile[bun build --compile src/cli/index.ts]
+    Compile --> Binary[dist/cc-analyzer single binary]
 ```
 
-The build pipeline turns two source trees into one executable. The `build:web` script first runs `vite build` against `web/vite.config.ts`, then invokes the embed script ([package.json#L17](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L17)). Vite, together with `vite-plugin-singlefile`, produces a self-contained `web/dist/index.html` with all assets inlined ([package.json#L40](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L40) [README.md#L107-L110](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L107-L110)).
+The `build` script chains `build:web` and the compile step at [package.json#L19](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L19). `build:web` first runs `vite build` against `web/vite.config.ts`, which uses `vite-plugin-singlefile` to inline all assets into one HTML file, then runs `scripts/embed-spa.ts` to write that HTML into `src/web/spa.ts`, per [package.json#L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L17). Finally, `bun build --compile --outfile dist/cc-analyzer src/cli/index.ts` produces a single executable containing the CLI, TUI, API, and web UI, described in [README.md#L196-L202](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md#L196-L202). Because the SPA is embedded, the release binary serves the whole interface with no external assets.
 
-[scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts) reads that HTML file, exits with an error if it is missing, then writes `src/web/spa.ts` exporting `spaHtml` as a `JSON.stringify`-escaped string plus a `hasSpa` flag ([scripts/embed-spa.ts#L7-L22](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts#L7-L22)). The top-level `build` script then chains `build:web` with `bun build --compile --outfile dist/cc-analyzer src/cli/index.ts`, baking the CLI, TUI, API, and embedded web UI into a single executable ([package.json#L19](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L19) [README.md#L112-L119](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L112-L119)).
+Sources: [package.json#L17-L19](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/package.json#L17-L19) [scripts/embed-spa.ts#L1-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/scripts/embed-spa.ts#L1-L22) [README.md#L182-L202](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md#L182-L202)
 
-Sources: [package.json:L17-L19](https://github.com/yorch/cc-analyzer/blob/4eeed24/package.json#L17-L19) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/4eeed24/scripts/embed-spa.ts#L1-L22) [README.md:L102-L119](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L102-L119)
+## Continuous Integration and Delivery
 
-## Continuous Integration and Release
+The repository runs three GitHub Actions workflows. The CI workflow [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/ci.yml) triggers on pushes to `main` and on every pull request, per [.github/workflows/ci.yml#L3-L6](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/ci.yml#L3-L6). It installs dependencies with a frozen lockfile, then runs lint, the two typechecks, the test suite, and a full build in sequence at [.github/workflows/ci.yml#L25-L38](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/ci.yml#L25-L38), pinning Bun to `1.3.14`.
 
-Two GitHub Actions workflows gate and ship the project. [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml) runs on every push to `main` and on all pull requests, with in-progress runs cancelled per ref ([.github/workflows/ci.yml#L3-L11](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml#L3-L11)). Its single `check` job sets up Bun `1.3.14`, installs with a frozen lockfile, then runs the lint step, both typechecks, the test suite, and the full build — exactly mirroring the local development scripts ([.github/workflows/ci.yml#L13-L38](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml#L13-L38)). The two separate typecheck steps reflect the dual-tsconfig design ([.github/workflows/ci.yml#L28-L32](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml#L28-L32)).
+The release workflow [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml) triggers on `v*` tags at [.github/workflows/release.yml#L3-L5](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml#L3-L5). It embeds the web UI, then cross-compiles five platform binaries — Linux x64/arm64, macOS x64/arm64, and Windows x64 — in a loop over Bun compile targets at [.github/workflows/release.yml#L26-L44](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml#L26-L44). It then generates a `SHA256SUMS` manifest from the binaries at [.github/workflows/release.yml#L46-L50](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml#L46-L50) and publishes a GitHub release attaching every binary plus the manifest at [.github/workflows/release.yml#L52-L60](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml#L52-L60). The install scripts and `cc-analyzer update` verify downloads against this manifest, per [README.md#L92-L96](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/README.md#L92-L96).
 
-[.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml) triggers on `v*` tags and requests `contents: write` permission to publish releases ([.github/workflows/release.yml#L3-L9](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml#L3-L9)). It runs `build:web` once to embed the SPA, then loops over five Bun cross-compilation targets — Linux x64/arm64, macOS x64/arm64, and Windows x64 — compiling a minified binary for each with `bun build --compile --minify --target` ([.github/workflows/release.yml#L23-L44](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml#L23-L44)). Finally it publishes a GitHub release with auto-generated notes and attaches every `dist/cc-analyzer-*` artifact via the `gh` CLI ([.github/workflows/release.yml#L46-L54](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml#L46-L54)).
+The site deploy workflow [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/deploy-site.yml) deploys the VitePress site to GitHub Pages. It triggers on pushes to `main` that touch `site/**` or `wiki/**`, or manually, per [.github/workflows/deploy-site.yml#L3-L10](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/deploy-site.yml#L3-L10). Its build job runs `docs:build` inside `site/` — which syncs the `wiki/` directory before running the VitePress build — uploads the Pages artifact, and a dependent `deploy` job publishes it at [.github/workflows/deploy-site.yml#L22-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/deploy-site.yml#L22-L55).
 
-Sources: [.github/workflows/ci.yml:L1-L38](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/ci.yml#L1-L38) [.github/workflows/release.yml:L1-L54](https://github.com/yorch/cc-analyzer/blob/4eeed24/.github/workflows/release.yml#L1-L54) [README.md:L121-L131](https://github.com/yorch/cc-analyzer/blob/4eeed24/README.md#L121-L131)
+Sources: [.github/workflows/ci.yml#L1-L38](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/ci.yml#L1-L38) [.github/workflows/release.yml#L1-L60](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/release.yml#L1-L60) [.github/workflows/deploy-site.yml#L1-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/.github/workflows/deploy-site.yml#L1-L55)
 
 ## Related Pages
 
 - Core analysis engine: [Core Analysis Engine](./2-core-analysis-engine.md)
-- CLI: [CLI](./3-cli.md)
-- TUI: [TUI](./4-tui.md)
+- CLI frontend: [CLI](./3-cli.md)
+- Terminal UI: [TUI](./4-tui.md)
 - Web server and API: [Web Server and API](./5-web-server-and-api.md)
-- Web SPA frontend: [Web SPA Frontend](./6-web-spa-frontend.md)
+- Web SPA: [Web SPA Frontend](./6-web-spa-frontend.md)
+- Self-update and distribution: [Updates and Distribution](./7-updates-and-distribution.md)
+- Documentation site: [Docs Site](./8-docs-site.md)
