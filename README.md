@@ -197,10 +197,12 @@ falls back to a hint about the scriptable commands.
 ### Web app
 
 `cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
-with a portfolio dashboard, project drill-down, a per-session view, and an
+with a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions). Projects
+into the leakiest sessions) — and a **Trends** page mirroring the TUI's
+time-series view (an SVG spend burn chart with metric/granularity toggles and a
+weekday × hour activity heatmap). Projects
 and sessions can be **filtered** by name; the **Turns** tab expands each turn
 into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,
