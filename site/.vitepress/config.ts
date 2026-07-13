@@ -40,6 +40,7 @@ export default withMermaid({
   themeConfig: {
     nav: [
       { text: "Home", link: "/" },
+      { text: "Install", link: "/install" },
       { text: "Docs", link: "/docs/" },
     ],
 
