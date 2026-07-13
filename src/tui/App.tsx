@@ -18,6 +18,7 @@ import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
 import { SessionListView } from "./screens/SessionListView.tsx";
+import { ToolsView } from "./screens/ToolsView.tsx";
 import { TrendsView } from "./screens/TrendsView.tsx";
 import { AppShell, type NavEntry } from "./shell/AppShell.tsx";
 import { role } from "./theme.ts";
@@ -28,14 +29,15 @@ interface Props {
   pricing: PricingTable;
 }
 
-type View = "portfolio" | "projects" | "sessions" | "insights" | "trends";
-const VIEW_KEYS: View[] = ["portfolio", "projects", "sessions", "insights", "trends"];
+type View = "portfolio" | "projects" | "sessions" | "insights" | "trends" | "tools";
+const VIEW_KEYS: View[] = ["portfolio", "projects", "sessions", "insights", "trends", "tools"];
 const RAIL: NavEntry[] = [
   { key: "portfolio", label: "portfolio", icon: "▤" },
   { key: "projects", label: "projects", icon: "▸" },
   { key: "sessions", label: "sessions", icon: "≡" },
   { key: "insights", label: "insights", icon: "◈" },
   { key: "trends", label: "trends", icon: "∿" },
+  { key: "tools", label: "tools", icon: "⚒" },
 ];
 
 export function App({ db, pricing }: Props) {
@@ -65,7 +67,7 @@ export function App({ db, pricing }: Props) {
       if (key.upArrow) return moveView(-1);
       if (key.downArrow) return moveView(1);
       if (key.return || key.rightArrow || key.escape || key.leftArrow) return setFocus("body");
-      const n = "12345".indexOf(input);
+      const n = "123456".indexOf(input);
       if (n >= 0) {
         setView(VIEW_KEYS[n] as View);
         setFocus("body");
@@ -137,12 +139,14 @@ export function App({ db, pricing }: Props) {
 
   const keyHints =
     focus === "rail"
-      ? "↑↓ switch view · ↵ focus list · 1-5 jump"
+      ? "↑↓ switch view · ↵ focus list · 1-6 jump"
       : drill
         ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
         : view === "trends"
           ? "tab/1·2 panel · m metric · g granularity · esc menu"
-          : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
+          : view === "tools"
+            ? "tab/1·2·3 panel · s sort · ↑↓ scroll · esc menu"
+            : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
 
   let body: React.ReactNode;
   if (drill) {
@@ -190,9 +194,13 @@ export function App({ db, pricing }: Props) {
         onBack={focusRail}
       />
     );
-  } else {
+  } else if (view === "trends") {
     body = (
       <TrendsView db={db} columns={columns} rows={rows} isActive={bodyActive} onBack={focusRail} />
+    );
+  } else {
+    body = (
+      <ToolsView db={db} columns={columns} rows={rows} isActive={bodyActive} onBack={focusRail} />
     );
   }
 
