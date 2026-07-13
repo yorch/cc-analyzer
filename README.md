@@ -166,12 +166,16 @@ files (by size + mtime) are re-parsed — and the cache is disposable (delete an
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
 month/project/model, and the most expensive sessions.
 
+The index carries a schema version; when it changes (e.g. new columns for the
+tools analytics), the next run rebuilds the cache from scratch — just re-run
+`cc-analyzer index` after upgrading.
+
 ### Interactive TUI
 
 Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink)
 with an **amber-phosphor** retro-terminal look. It's a persistent shell — a
-title bar, a **nav rail** (portfolio · projects · sessions · insights · trends),
-and a **two-pane master-detail** body: a list on the left drives a
+title bar, a **nav rail** (portfolio · projects · sessions · insights · trends ·
+tools), and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
@@ -179,7 +183,10 @@ drills into the leakiest sessions. The **trends** view is a two-panel
 time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
 time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
-hour (`m` toggles to cost). Opening a session zooms to
+hour (`m` toggles to cost). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
+**tools** by invocations with an error count and error rate (`s` sorts), and your
+**skills** and **subagents** by how many sessions used each. Opening a session
+zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and
 **summary** modes (`t` / `s`). It reads from the index, so run `cc-analyzer
@@ -200,9 +207,10 @@ falls back to a hint about the scriptable commands.
 with a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions) — and a **Trends** page mirroring the TUI's
+into the leakiest sessions) — a **Trends** page mirroring the TUI's
 time-series view (an SVG spend burn chart with metric/granularity toggles and a
-weekday × hour activity heatmap). Projects
+weekday × hour activity heatmap) — and a **Tools** page ranking tools (by
+invocations, with error rate), skills, and subagents (by sessions). Projects
 and sessions can be **filtered** by name; the **Turns** tab expands each turn
 into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,

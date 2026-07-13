@@ -75,6 +75,14 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "Tools",
+    keys: [
+      ["tab / 1 / 2 / 3", "tools / skills / subagents"],
+      ["s", "cycle sort (tools)"],
+      ["↑/↓", "scroll"],
+    ],
+  },
+  {
     title: "Session detail",
     keys: [
       ["1-3 / tab", "summary / turns / transcript"],
