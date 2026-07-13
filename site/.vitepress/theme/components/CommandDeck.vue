@@ -29,7 +29,7 @@ const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
           Windows — or run it from source with <code>bun</code>. The index is a
           disposable local cache; delete and rebuild it any time.
         </p>
-        <a class="cc-deck__link" :href="'https://github.com/yorch/cc-analyzer#install'">
+        <a class="cc-deck__link" href="/cc-analyzer/install">
           Full install guide ▸
         </a>
       </div>
