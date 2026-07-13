@@ -19,13 +19,14 @@ const SORT_FIELDS: SortField<IndexedProject>[] = [
 interface Props {
   projects: IndexedProject[];
   columns: number;
+  pageSize?: number;
   isActive: boolean;
   onOpen: (project: IndexedProject) => void;
   onBack: () => void;
 }
 
 /** Projects list (master) driving a live project preview (detail). */
-export function ProjectsView({ projects, columns, isActive, onOpen, onBack }: Props) {
+export function ProjectsView({ projects, columns, pageSize, isActive, onOpen, onBack }: Props) {
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
@@ -39,6 +40,7 @@ export function ProjectsView({ projects, columns, isActive, onOpen, onBack }: Pr
         <FilterableList
           items={rows}
           isActive={isActive}
+          pageSize={pageSize}
           onSelect={onOpen}
           onBack={onBack}
           onHighlight={setHighlighted}

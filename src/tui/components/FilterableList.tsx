@@ -123,7 +123,7 @@ export function FilterableList<T>({
         </Text>
         {sortLabel && (
           <Text color={role.muted}>
-            {"  "}· sort: <Text color={palette.amberDim}>{sortLabel}</Text> (tab)
+            {"  "}· <Text color={palette.amberDim}>{sortLabel}</Text>
           </Text>
         )}
       </Box>

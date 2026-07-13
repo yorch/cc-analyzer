@@ -26,6 +26,7 @@ interface Props {
   pricing: PricingTable;
   isActive: boolean;
   columns: number;
+  rows: number;
   onBack: () => void;
 }
 
@@ -36,7 +37,7 @@ interface Loaded {
   transcript: TranscriptItem[];
 }
 
-export function SessionDetailScreen({ session, pricing, isActive, columns, onBack }: Props) {
+export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [mode, setMode] = useState<Mode>("turns");
 
@@ -71,7 +72,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, onBac
   const { analysis } = data;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={Math.max(1, rows - 2)} overflow="hidden">
       <Text bold color={role.heading}>
         {truncate(analysis.title ?? session.sessionId ?? "(untitled)", 70)}
       </Text>
@@ -84,7 +85,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, onBac
           </Text>
         ))}
       </Box>
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexGrow={1} flexDirection="column" overflow="hidden">
         {mode === "turns" && (
           <TurnsPane a={analysis} columns={columns} isActive={isActive} onBack={onBack} />
         )}

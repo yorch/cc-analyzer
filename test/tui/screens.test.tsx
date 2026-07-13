@@ -67,13 +67,13 @@ describe("TUI list views (smoke render)", () => {
       <ProjectsView projects={projects} columns={120} isActive onOpen={noop} onBack={noop} />,
     );
     const wait = () => new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("sort: recent ↓"); // default
+    expect(lastFrame() ?? "").toContain("· recent ↓"); // default sort indicator
     stdin.write("\t"); // Tab → next field
     await wait();
-    expect(lastFrame() ?? "").toContain("sort: cost ↓");
+    expect(lastFrame() ?? "").toContain("· cost ↓");
     stdin.write("[Z"); // shift-Tab → flip direction
     await wait();
-    expect(lastFrame() ?? "").toContain("sort: cost ↑");
+    expect(lastFrame() ?? "").toContain("· cost ↑");
     unmount();
   });
 

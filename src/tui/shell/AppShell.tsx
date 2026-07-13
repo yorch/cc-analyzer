@@ -20,6 +20,8 @@ interface Props {
   /** Context-specific key hints; `? help · ctrl-c quit` is appended. */
   keyHints: string;
   columns: number;
+  /** Terminal height; the shell is pinned to it so it never overflows the viewport. */
+  rows: number;
   /** Whether the nav rail (vs. the body) currently has input focus. */
   railFocused?: boolean;
   /** Optional band under the title bar (e.g. the portfolio lede). */
@@ -27,27 +29,37 @@ interface Props {
   children: ReactNode;
 }
 
-/** The persistent app chrome: title bar · breadcrumb · nav rail · key bar. */
+/**
+ * The persistent app chrome: title bar · breadcrumb · nav rail · key bar.
+ *
+ * The whole shell is pinned to the terminal height and the body between the
+ * title/lede and the key bar flex-grows and clips its overflow. This keeps the
+ * title bar and key bar always on screen and stops the frame from ever growing
+ * taller than the viewport (which would make the terminal scroll the header
+ * off the top). The caller sizes the scrollable list via `pageSize` so content
+ * fits without relying on the clip.
+ */
 export function AppShell({
   breadcrumb,
   entries,
   active,
   keyHints,
   columns,
+  rows,
   railFocused = false,
   lede,
   children,
 }: Props) {
   const mode = layoutMode(columns);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={Math.max(1, rows - 2)} overflow="hidden">
       <TitleBar breadcrumb={breadcrumb} />
       {lede}
-      <Box marginTop={1}>
+      <Box marginTop={1} flexGrow={1} overflow="hidden">
         {mode !== "narrow" && (
           <NavRail entries={entries} active={active} mode={mode} focused={railFocused} />
         )}
-        <Box flexDirection="column" flexGrow={1}>
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
           {children}
         </Box>
       </Box>

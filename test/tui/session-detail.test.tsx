@@ -40,6 +40,7 @@ describe("SessionDetailScreen (smoke)", () => {
         pricing={pricing}
         isActive
         columns={120}
+        rows={40}
         onBack={() => {}}
       />,
     );
@@ -60,6 +61,7 @@ describe("SessionDetailScreen (smoke)", () => {
         pricing={pricing}
         isActive
         columns={120}
+        rows={40}
         onBack={() => {}}
       />,
     );
@@ -77,6 +79,7 @@ describe("SessionDetailScreen (smoke)", () => {
         pricing={pricing}
         isActive
         columns={120}
+        rows={40}
         onBack={() => {}}
       />,
     );
@@ -99,6 +102,7 @@ describe("SessionDetailScreen (smoke)", () => {
         pricing={pricing}
         isActive
         columns={120}
+        rows={40}
         onBack={() => {}}
       />,
     );
@@ -118,6 +122,7 @@ describe("SessionDetailScreen (smoke)", () => {
         pricing={pricing}
         isActive
         columns={120}
+        rows={40}
         onBack={() => {}}
       />,
     );

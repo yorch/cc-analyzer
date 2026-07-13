@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { render } from "ink-testing-library";
 import { AppShell, type NavEntry } from "../../src/tui/shell/AppShell.tsx";
 import { MasterDetail } from "../../src/tui/shell/MasterDetail.tsx";
@@ -51,6 +51,7 @@ describe("AppShell", () => {
         active="projects"
         keyHints="↑↓ move"
         columns={120}
+        rows={40}
       >
         <Text>BODY</Text>
       </AppShell>,
@@ -63,6 +64,27 @@ describe("AppShell", () => {
     expect(frame).toContain("? help"); // key bar suffix
   });
 
+  test("pins to the viewport height and clips a too-tall body", () => {
+    const tall = Array.from({ length: 60 }, (_, i) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: static synthetic rows
+      <Text key={i}>row-{i}</Text>
+    ));
+    const { lastFrame } = render(
+      <AppShell
+        breadcrumb="portfolio"
+        entries={ENTRIES}
+        active="portfolio"
+        keyHints="↑↓ move"
+        columns={120}
+        rows={10}
+      >
+        <Box flexDirection="column">{tall}</Box>
+      </AppShell>,
+    );
+    const lines = (lastFrame() ?? "").split("\n").length;
+    expect(lines).toBeLessThanOrEqual(8); // rows − 2, never the 60 rows of content
+  });
+
   test("hides the rail labels on narrow terminals", () => {
     const { lastFrame } = render(
       <AppShell
@@ -71,6 +93,7 @@ describe("AppShell", () => {
         active="portfolio"
         keyHints="↑↓ move"
         columns={70}
+        rows={40}
       >
         <Text>BODY</Text>
       </AppShell>,

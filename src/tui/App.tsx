@@ -40,7 +40,7 @@ export function App({ db, pricing }: Props) {
   const allSessions = useMemo(() => listAllSessions(db), [db]);
   const summary = useMemo(() => portfolioSummary(db), [db]);
   const months = useMemo(() => spendByMonth(db), [db]);
-  const { columns } = useTermSize();
+  const { columns, rows } = useTermSize();
 
   const [view, setView] = useState<View>("portfolio");
   const [focus, setFocus] = useState<"rail" | "body">("body");
@@ -99,6 +99,7 @@ export function App({ db, pricing }: Props) {
           pricing={pricing}
           isActive
           columns={columns}
+          rows={rows}
           onBack={() => setOpenSession(null)}
         />
       </Box>
@@ -116,6 +117,12 @@ export function App({ db, pricing }: Props) {
     setDrill(null);
     setDrillSessions([]);
   };
+
+  const showLede = view === "portfolio" && !drill;
+  // Rows the master list may render: terminal height minus the fixed shell
+  // chrome (title/lede/margins/key bar) and the list's own header + scroll
+  // indicator. Keeps content within the pinned viewport so it never overflows.
+  const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0));
 
   const breadcrumb = drill
     ? `projects ▸ ${truncate(drill.projectPath ?? drill.projectId, 40)}`
@@ -136,6 +143,7 @@ export function App({ db, pricing }: Props) {
       <SessionListView
         sessions={drillSessions}
         columns={columns}
+        pageSize={listPageSize}
         isActive={bodyActive}
         onOpen={setOpenSession}
         onBack={popDrill}
@@ -146,6 +154,7 @@ export function App({ db, pricing }: Props) {
       <ProjectsView
         projects={projects}
         columns={columns}
+        pageSize={listPageSize}
         isActive={bodyActive}
         onOpen={openProject}
         onBack={focusRail}
@@ -156,6 +165,7 @@ export function App({ db, pricing }: Props) {
       <SessionListView
         sessions={allSessions}
         columns={columns}
+        pageSize={listPageSize}
         isActive={bodyActive}
         showProject
         onOpen={setOpenSession}
@@ -174,12 +184,9 @@ export function App({ db, pricing }: Props) {
         active={view}
         keyHints={keyHints}
         columns={columns}
+        rows={rows}
         railFocused={focus === "rail"}
-        lede={
-          view === "portfolio" && !drill ? (
-            <PortfolioLede summary={summary} months={months} />
-          ) : undefined
-        }
+        lede={showLede ? <PortfolioLede summary={summary} months={months} /> : undefined}
       >
         {body}
       </AppShell>

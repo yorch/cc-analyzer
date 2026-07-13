@@ -18,6 +18,7 @@ const SORT_FIELDS: SortField<IndexedSession>[] = [
 interface Props<T extends IndexedSession> {
   sessions: T[];
   columns: number;
+  pageSize?: number;
   isActive: boolean;
   onOpen: (session: T) => void;
   onBack: () => void;
@@ -30,6 +31,7 @@ interface Props<T extends IndexedSession> {
 export function SessionListView<T extends IndexedSession>({
   sessions,
   columns,
+  pageSize,
   isActive,
   onOpen,
   onBack,
@@ -51,6 +53,7 @@ export function SessionListView<T extends IndexedSession>({
         <FilterableList
           items={rows}
           isActive={isActive}
+          pageSize={pageSize}
           onSelect={onOpen}
           onBack={onBack}
           onHighlight={setHighlighted}
