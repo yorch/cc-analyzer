@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keep workflow actions current; review these PRs before merging since the
+  # release workflow has contents: write.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

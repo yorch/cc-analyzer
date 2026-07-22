@@ -125,8 +125,12 @@ function isUser(e: SessionEvent): e is UserEvent {
 /**
  * A user event starts a new turn only if it is a genuine prompt. User events
  * that merely carry `tool_result` blocks are loop continuations, not turns.
+ * NOTE: duplicated in transcript.ts — keep the two copies in sync.
  */
 function isRealPrompt(e: UserEvent): boolean {
+  // Sidechain (subagent) chains open with a synthetic user event carrying the
+  // task prompt; it belongs to the enclosing turn, not a new one.
+  if (e.isSidechain === true) return false;
   // System-injected user messages (caveats, command stdout, reminders) are not
   // genuine prompts. Note: promptId is present on tool_result carriers too, so
   // it cannot be used as a discriminator.
@@ -204,7 +208,22 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   let webSearches = 0;
   let webFetches = 0;
   let toolCallCount = 0;
+  let apiCallCount = 0;
+  let totalTokens = zeroTokens();
+  let totalCost = zeroCost();
   let current: Turn | undefined;
+
+  // Streamed responses are logged as one `assistant` line per content block,
+  // each repeating the same message id and full usage — count usage once per
+  // API call and merge continuation lines into the originating ApiCall.
+  const seenUsage = new Set<string>();
+  let lastCall: ApiCall | undefined;
+  let lastCallKey: string | undefined;
+  const usageKey = (e: AssistantEvent): string | undefined => {
+    const mid = e.message.id;
+    if (mid && e.requestId) return `${mid}:${e.requestId}`;
+    return mid ?? e.requestId;
+  };
 
   const touchTime = (ts?: string) => {
     if (!ts) return;
@@ -251,11 +270,17 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
 
     if (isAssistant(event)) {
       touchTime(event.timestamp);
-      const usage = event.message.usage;
-      webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
-      webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
+      const key = usageKey(event);
+      const isContinuation = key !== undefined && seenUsage.has(key);
+      if (key !== undefined) seenUsage.add(key);
 
-      const tokens = usageToTokens(usage);
+      const usage = event.message.usage;
+      if (!isContinuation) {
+        webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
+        webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
+      }
+
+      const tokens = isContinuation ? zeroTokens() : usageToTokens(usage);
       const model = event.message.model;
       const resolved = model ? resolveModel(pricing, model) : undefined;
       const cost = computeCost(tokens, resolved?.pricing);
@@ -332,6 +357,13 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         });
       }
 
+      // A continuation line of an already-counted API call: keep its steps on
+      // the originating ApiCall, but never re-count its usage.
+      if (isContinuation && lastCall && lastCallKey === key) {
+        lastCall.steps.push(...steps);
+        continue;
+      }
+
       const apiCall: ApiCall = {
         uuid: event.uuid,
         model,
@@ -341,16 +373,23 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         cost,
         steps,
       };
+      lastCall = apiCall;
+      lastCallKey = key;
 
-      if (model) {
-        let mu = models[model];
-        if (!mu) {
-          mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
-          models[model] = mu;
+      if (!isContinuation) {
+        apiCallCount += 1;
+        totalTokens = addTokens(totalTokens, tokens);
+        totalCost = addCost(totalCost, cost);
+        if (model) {
+          let mu = models[model];
+          if (!mu) {
+            mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
+            models[model] = mu;
+          }
+          mu.apiCalls += 1;
+          mu.tokens = addTokens(mu.tokens, tokens);
+          mu.cost = addCost(mu.cost, cost);
         }
-        mu.apiCalls += 1;
-        mu.tokens = addTokens(mu.tokens, tokens);
-        mu.cost = addCost(mu.cost, cost);
       }
 
       if (current) {
@@ -365,20 +404,17 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     touchTime((event as { timestamp?: string }).timestamp);
   }
 
+  // Totals are accumulated over every API call — including calls that arrive
+  // before the first genuine prompt — so they always agree with `models`.
   const totals: SessionTotals = {
     turns: turns.length,
-    apiCalls: 0,
+    apiCalls: apiCallCount,
     toolCalls: toolCallCount,
-    tokens: zeroTokens(),
-    cost: zeroCost(),
+    tokens: totalTokens,
+    cost: totalCost,
     webSearches,
     webFetches,
   };
-  for (const turn of turns) {
-    totals.apiCalls += turn.apiCalls.length;
-    totals.tokens = addTokens(totals.tokens, turn.tokens);
-    totals.cost = addCost(totals.cost, turn.cost);
-  }
 
   return {
     sessionId,

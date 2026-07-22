@@ -41,7 +41,9 @@ function contentToText(content: unknown): string {
   return "";
 }
 
+// NOTE: duplicated in analyze.ts — keep the two copies in sync.
 function isRealPrompt(e: UserEvent): boolean {
+  if (e.isSidechain === true) return false;
   if (e.isMeta === true) return false;
   const content = e.message.content;
   if (typeof content === "string") return true;

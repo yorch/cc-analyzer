@@ -73,3 +73,35 @@ describe("resolveModel", () => {
     expect(resolveModel(table, "gpt-5")).toBeUndefined();
   });
 });
+
+describe("resolveModel · family fallback choice", () => {
+  const mk = (input: number): ModelPricing => ({
+    inputCostPerToken: input,
+    outputCostPerToken: input * 5,
+    cacheWrite5mCostPerToken: input * 1.25,
+    cacheWrite1hCostPerToken: input * 2,
+    cacheReadCostPerToken: input * 0.1,
+  });
+
+  test("prefers the newest bare anthropic id over table order", () => {
+    const oldOpus = mk(0.000015);
+    const currentOpus = mk(0.000005);
+    const bedrockOpus = mk(0.000099);
+    const table: PricingTable = {
+      "bedrock/anthropic.claude-3-opus-20240229-v1:0": bedrockOpus,
+      "claude-3-opus-20240229": oldOpus,
+      "claude-opus-4-1": currentOpus,
+    };
+    const r = resolveModel(table, "claude-opus-9-9");
+    expect(r?.exact).toBe(false);
+    expect(r?.pricing).toBe(currentOpus);
+  });
+
+  test("falls back to any family match when no bare claude id exists", () => {
+    const only = mk(0.000003);
+    const table: PricingTable = { "vertex/claude-3-5-sonnet": only };
+    const r = resolveModel(table, "claude-sonnet-4-5");
+    expect(r?.exact).toBe(false);
+    expect(r?.pricing).toBe(only);
+  });
+});

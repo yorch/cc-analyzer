@@ -1,6 +1,6 @@
 # cc-analyzer installer for Windows (PowerShell).
 #
-#   irm https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.ps1 | iex
+#   irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
 #
 # Environment overrides:
 #   $env:CC_ANALYZER_VERSION      release tag to install (e.g. v0.2.0); default: latest
@@ -26,31 +26,41 @@ $sumsUrl = "$base/SHA256SUMS"
 Write-Host "cc-analyzer ($Version) . windows/x64"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $target = Join-Path $InstallDir "$Bin.exe"
-$tmp = Join-Path $InstallDir ".cc-analyzer.download.tmp"
+# Unique per-run temp name so concurrent installs never collide.
+$tmp = Join-Path $InstallDir ".cc-analyzer.download.$PID.$(Get-Random).tmp"
 
-Write-Host "downloading $asset..."
-Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
-
-# Verify checksum (best-effort; enforced once SHA256SUMS is published).
 try {
-  $sums = (Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing).Content
-  $line = ($sums -split "`n") | Where-Object { ($_ -replace '\*', '') -match "\s$([regex]::Escape($asset))\s*$" } | Select-Object -First 1
-  if ($line) {
-    $expected = (($line -split '\s+')[0]).ToLower()
-    $actual = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
-    if ($actual -ne $expected) {
-      Remove-Item -Force $tmp
-      throw "checksum mismatch for $asset (expected $expected, got $actual)"
-    }
-    Write-Host "checksum verified"
-  } else {
-    Write-Host "no checksum listed for $asset; skipping verification"
-  }
-} catch [System.Net.WebException] {
-  Write-Host "no SHA256SUMS for this release; skipping checksum verification"
-}
+  Write-Host "downloading $asset..."
+  Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
 
-Move-Item -Force $tmp $target
+  # Verify checksum. Only the SHA256SUMS *fetch* may fail gracefully (releases
+  # predating the manifest); a hash mismatch always aborts. The fetch catch is
+  # generic because PowerShell 7 throws HttpResponseException, not WebException.
+  $sums = $null
+  try {
+    $sums = (Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing).Content
+  } catch {
+    Write-Host "no SHA256SUMS for this release; skipping checksum verification"
+  }
+  if ($sums) {
+    $line = ($sums -split "`n") | Where-Object { ($_ -replace '\*', '') -match "\s$([regex]::Escape($asset))\s*$" } | Select-Object -First 1
+    if ($line) {
+      $expected = (($line -split '\s+')[0]).ToLower()
+      $actual = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
+      if ($actual -ne $expected) {
+        throw "checksum mismatch for $asset (expected $expected, got $actual)"
+      }
+      Write-Host "checksum verified"
+    } else {
+      Write-Host "no checksum listed for $asset; skipping verification"
+    }
+  }
+
+  Move-Item -Force $tmp $target
+} finally {
+  # Clean the temp file on any failure path (download error, mismatch, move failure).
+  if (Test-Path $tmp) { Remove-Item -Force -ErrorAction SilentlyContinue $tmp }
+}
 Write-Host "installed to $target"
 
 # PATH guidance (per-user; new terminals pick it up)

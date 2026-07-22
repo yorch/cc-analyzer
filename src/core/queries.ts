@@ -130,13 +130,16 @@ export function listAllSessions(db: Database): SessionWithProject[] {
   return rows.map(toSessionWithProject);
 }
 
+/** Escape LIKE wildcards so user input matches literally (used with ESCAPE '\'). */
+const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
 /** Sessions across all projects matching a query on title / session id / project path. */
 export function searchSessions(db: Database, q: string, limit = 100): SessionWithProject[] {
-  const like = `%${q}%`;
+  const like = `%${escapeLike(q)}%`;
   const rows = db
     .query(
       `SELECT ${SESSION_COLUMNS} FROM sessions
-      WHERE title LIKE ? OR session_id LIKE ? OR project_path LIKE ?
+      WHERE title LIKE ? ESCAPE '\\' OR session_id LIKE ? ESCAPE '\\' OR project_path LIKE ? ESCAPE '\\'
       ORDER BY mtime_ms DESC LIMIT ?`,
     )
     .all(like, like, like, limit) as RawSessionWithProject[];
@@ -151,7 +154,7 @@ export function isIndexEmpty(db: Database): boolean {
 /** Look up a session's file path from the index by session id. */
 export function sessionPathById(db: Database, id: string): string | undefined {
   const row = db
-    .query("SELECT path FROM sessions WHERE session_id = ? OR path LIKE ? LIMIT 1")
-    .get(id, `%/${id}.jsonl`) as { path: string } | undefined;
+    .query("SELECT path FROM sessions WHERE session_id = ? OR path LIKE ? ESCAPE '\\' LIMIT 1")
+    .get(id, `%/${escapeLike(id)}.jsonl`) as { path: string } | undefined;
   return row?.path;
 }

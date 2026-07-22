@@ -151,3 +151,19 @@ describe("web API", () => {
     expect(Array.isArray(body.subagents)).toBe(true);
   });
 });
+
+describe("web API · stale index", () => {
+  test("a session whose file was deleted after indexing 404s with a hint", async () => {
+    const stalePath = join(tmpDir, "projects", "proj-a", "sess-stale.jsonl");
+    writeFileSync(stalePath, await Bun.file(fixture).text());
+    await reindex(db, { pricing });
+    rmSync(stalePath, { force: true });
+    // Not reindexed: the index still points at the deleted file.
+    const res = await api.request("/api/sessions/sess-stale");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("re-run");
+    // Clean the stale row so it doesn't leak into other tests.
+    await reindex(db, { pricing });
+  });
+});

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb } from "../../src/core/db.ts";
+import { openDb, SCHEMA_VERSION } from "../../src/core/db.ts";
 import { skillAnalytics, subagentUsage, toolUsage } from "../../src/core/stats.ts";
 
 interface Seed {
@@ -157,7 +157,7 @@ describe("schema migration", () => {
           value: string;
         }
       ).value,
-    ).toBe("3");
+    ).toBe(SCHEMA_VERSION);
     migrated.close();
   });
 });

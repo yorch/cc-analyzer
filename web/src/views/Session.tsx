@@ -8,8 +8,14 @@ type Tab = "summary" | "turns" | "transcript";
 
 export function Session({ id }: { id: string }) {
   const [tab, setTab] = useState<Tab>("summary");
+  // Sticky once the transcript tab has been opened, so switching tabs doesn't
+  // refetch — but the (potentially huge) transcript is never fetched eagerly.
+  const [transcriptWanted, setTranscriptWanted] = useState(false);
   const analysis = useAsync(() => api.session(id), [id]);
-  const transcript = useAsync(() => api.transcript(id), [id]);
+  const transcript = useAsync(
+    () => (transcriptWanted ? api.transcript(id) : Promise.resolve(null)),
+    [id, transcriptWanted],
+  );
 
   if (analysis.loading) return <div className="loading">Loading session…</div>;
   if (analysis.error) return <div className="loading err">Error: {analysis.error}</div>;
@@ -42,7 +48,10 @@ export function Session({ id }: { id: string }) {
             type="button"
             key={t}
             className={t === tab ? "active" : ""}
-            onClick={() => setTab(t)}
+            onClick={() => {
+              setTab(t);
+              if (t === "transcript") setTranscriptWanted(true);
+            }}
           >
             {t}
           </button>
@@ -52,7 +61,11 @@ export function Session({ id }: { id: string }) {
       {tab === "summary" && <Summary a={a} />}
       {tab === "turns" && <Turns a={a} />}
       {tab === "transcript" && (
-        <Transcript loading={transcript.loading} items={transcript.data ?? []} />
+        <Transcript
+          loading={transcript.loading}
+          error={transcript.error}
+          items={transcript.data ?? []}
+        />
       )}
     </>
   );
@@ -125,8 +138,11 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
+const TURNS_WINDOW = 100;
+
 function Turns({ a }: { a: SessionAnalysis }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
+  const [visible, setVisible] = useState(TURNS_WINDOW);
   const toggle = (i: number) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -137,7 +153,7 @@ function Turns({ a }: { a: SessionAnalysis }) {
 
   return (
     <div>
-      {a.turns.map((t) => {
+      {a.turns.slice(0, visible).map((t) => {
         const expanded = open.has(t.index);
         return (
           <div className="item" key={t.index}>
@@ -178,6 +194,16 @@ function Turns({ a }: { a: SessionAnalysis }) {
           </div>
         );
       })}
+      {a.turns.length > visible && (
+        <div className="loadmore">
+          <button type="button" onClick={() => setVisible((v) => v + TURNS_WINDOW)}>
+            Show more
+          </button>
+          <button type="button" onClick={() => setVisible(a.turns.length)}>
+            Show all ({count(a.turns.length)})
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -244,9 +270,18 @@ const STEP_ICON: Record<string, string> = {
 
 const TRANSCRIPT_WINDOW = 200;
 
-function Transcript({ loading, items }: { loading: boolean; items: TranscriptItem[] }) {
+function Transcript({
+  loading,
+  error,
+  items,
+}: {
+  loading: boolean;
+  error: string | null;
+  items: TranscriptItem[];
+}) {
   const [visible, setVisible] = useState(TRANSCRIPT_WINDOW);
   if (loading) return <div className="loading">Loading transcript…</div>;
+  if (error) return <div className="loading err">Error loading transcript: {error}</div>;
   const shown = items.slice(0, visible);
   return (
     <section>

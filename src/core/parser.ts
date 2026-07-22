@@ -58,7 +58,17 @@ export function parseSessionText(text: string): ParseResult {
     }
 
     const fallback = unknownEventSchema.safeParse(json);
-    events.push(fallback.success ? (fallback.data as SessionEvent) : (json as SessionEvent));
+    if (fallback.success) {
+      events.push(fallback.data as SessionEvent);
+      continue;
+    }
+    // Valid JSON but not an object (`null`, a number, a string…): downstream
+    // consumers assume property access is safe, so record it as an error.
+    if (typeof json !== "object" || json === null) {
+      errors.push({ line: i + 1, raw, error: "not a JSON object" });
+      continue;
+    }
+    events.push(json as SessionEvent);
   }
 
   return { events, errors };

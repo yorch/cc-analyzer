@@ -76,3 +76,22 @@ describe("reindex + stats", () => {
     db.close();
   });
 });
+
+describe("reindex · rebuild", () => {
+  test("rebuild re-parses everything and still prunes deleted files", async () => {
+    const content = await Bun.file(fixture).text();
+    const extra = join(tmpDir, "projects", "proj-b", "sess-extra.jsonl");
+    writeFileSync(extra, content);
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    expect(portfolioSummary(db).sessions).toBe(4);
+
+    rmSync(extra, { force: true });
+    const result = await reindex(db, { pricing, rebuild: true });
+    expect(result.indexed).toBe(3);
+    expect(result.skipped).toBe(0);
+    expect(result.deleted).toBe(1);
+    expect(portfolioSummary(db).sessions).toBe(3);
+    db.close();
+  });
+});

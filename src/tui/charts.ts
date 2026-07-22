@@ -93,7 +93,9 @@ export function brailleChart(values: number[], width: number, height: number): s
     cols.push(m);
   }
   const max = Math.max(1e-9, ...cols);
-  const heights = cols.map((v) => Math.round((Math.max(0, v) / max) * dotRows));
+  // Floor nonzero values to one dot (like the sparkline) so a low-activity
+  // column is distinguishable from a truly empty one.
+  const heights = cols.map((v) => (v > 0 ? Math.max(1, Math.round((v / max) * dotRows)) : 0));
 
   const rows: string[] = [];
   for (let cy = 0; cy < H; cy++) {

@@ -89,9 +89,10 @@ curl.exe -fL -o cc-analyzer.exe `
 `…/releases/latest/download/…` always resolves to the newest release; pin a
 version by swapping `latest/download` for `download/v0.1.0`.
 
-Each release publishes a `SHA256SUMS` manifest. The install scripts and
-`cc-analyzer update` verify the downloaded binary against it before installing
-(skipped gracefully for older releases that predate the manifest). This guards
+Each release publishes a `SHA256SUMS` manifest. `cc-analyzer update` requires
+it: the downloaded binary is verified before installing, and the update aborts
+if the manifest can't be fetched. The install scripts verify too (skipping
+gracefully only for older releases that predate the manifest). This guards
 against corrupted or tampered downloads; it is not a substitute for signing,
 since the manifest is served from the same release.
 
@@ -115,7 +116,8 @@ cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer stats [--json]           # portfolio-wide analytics (needs an index)
-cc-analyzer serve [--port=4317]      # launch the local web app (needs an index)
+cc-analyzer serve [--port=4317] [--host=127.0.0.1]
+                                     # launch the local web app (needs an index)
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
@@ -207,8 +209,11 @@ falls back to a hint about the scriptable commands.
 
 ### Web app
 
-`cc-analyzer serve` starts a local web server (Hono API + an embedded React SPA)
-with a portfolio dashboard, project drill-down, a per-session view, an
+`cc-analyzer serve` starts a local web server (Hono API + an embedded React
+SPA). It listens on loopback only (`127.0.0.1`) and rejects non-local `Host`
+headers, since sessions contain full conversation transcripts; pass
+`--host=0.0.0.0` only if you deliberately want to expose it to your network.
+The UI ships a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
 into the leakiest sessions) — a **Trends** page mirroring the TUI's

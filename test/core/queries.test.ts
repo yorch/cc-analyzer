@@ -90,3 +90,12 @@ describe("queries", () => {
     expect(searchSessions(db, "dev/proj", 1)).toHaveLength(1);
   });
 });
+
+describe("searchSessions · LIKE escaping", () => {
+  test("wildcard characters in the query match literally", () => {
+    // "%" appears in no title/id/path, so it must match nothing (not everything).
+    expect(searchSessions(db, "%")).toHaveLength(0);
+    expect(searchSessions(db, "_")).toHaveLength(0);
+    expect(searchSessions(db, "proj").length).toBeGreaterThan(0);
+  });
+});

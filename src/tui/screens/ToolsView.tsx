@@ -89,7 +89,9 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
     (input, key) => {
       if (key.escape) return onBack();
       if (key.tab) return go(PANELS[(PANELS.indexOf(panel) + 1) % PANELS.length] as Panel);
-      const n = "123".indexOf(input);
+      // Guard the empty string: arrow keys arrive as input === "", and
+      // "123".indexOf("") is 0 — which would swallow every arrow press.
+      const n = input ? "123".indexOf(input) : -1;
       if (n >= 0) return go(PANELS[n] as Panel);
       if (input === "s") {
         if (panel === "tools") setToolSortIdx((i) => (i + 1) % TOOL_SORTS.length);

@@ -135,3 +135,148 @@ describe("analyzeSession", () => {
     expect(a.totals.cost.estimated).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Real-world log shapes the fixture doesn't cover: streamed multi-line API
+// responses, sidechain (subagent) chains, and pre-first-prompt API calls.
+
+import { parseSessionText } from "../../src/core/parser.ts";
+
+function analyzeLines(lines: unknown[]): ReturnType<typeof analyzeSession> {
+  const { events } = parseSessionText(lines.map((l) => JSON.stringify(l)).join("\n"));
+  return analyzeSession(events, pricing);
+}
+
+const usage = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 100 };
+
+describe("analyzeSession · streamed responses", () => {
+  test("counts usage once per API call across per-block continuation lines", () => {
+    const a = analyzeLines([
+      { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "hello" }],
+          usage,
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }],
+          usage,
+        },
+      },
+    ]);
+    expect(a.totals.apiCalls).toBe(1);
+    expect(a.totals.tokens.inputTokens).toBe(10);
+    expect(a.totals.tokens.outputTokens).toBe(20);
+    expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(1);
+    // Continuation steps merge into the originating ApiCall; tools still count.
+    expect(a.turns[0]?.apiCalls).toHaveLength(1);
+    expect(a.turns[0]?.apiCalls[0]?.steps).toHaveLength(2);
+    expect(a.totals.toolCalls).toBe(1);
+  });
+});
+
+describe("analyzeSession · sidechains", () => {
+  test("a sidechain user prompt does not open a new turn", () => {
+    const a = analyzeLines([
+      { type: "user", uuid: "u1", message: { role: "user", content: "do stuff" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "tool_use", id: "t1", name: "Task", input: { prompt: "sub work" } }],
+          usage,
+        },
+      },
+      {
+        type: "user",
+        uuid: "su1",
+        isSidechain: true,
+        message: { role: "user", content: "You are an agent. Do the sub work." },
+      },
+      {
+        type: "assistant",
+        uuid: "sa1",
+        isSidechain: true,
+        message: {
+          id: "msg_2",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "done" }],
+          usage,
+        },
+      },
+      {
+        type: "user",
+        uuid: "u2",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "sub result" }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        message: {
+          id: "msg_3",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "all done" }],
+          usage,
+        },
+      },
+    ]);
+    expect(a.totals.turns).toBe(1);
+    expect(a.turns[0]?.prompt).toBe("do stuff");
+    // The sidechain's API call is attributed to the enclosing turn.
+    expect(a.turns[0]?.apiCalls).toHaveLength(3);
+    expect(a.turns[0]?.apiCalls[1]?.isSidechain).toBe(true);
+    expect(a.totals.apiCalls).toBe(3);
+  });
+});
+
+describe("analyzeSession · totals vs models", () => {
+  test("API calls before the first prompt land in totals and models alike", () => {
+    const a = analyzeLines([
+      {
+        type: "assistant",
+        uuid: "a0",
+        message: {
+          id: "msg_0",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "resumed" }],
+          usage: { input_tokens: 5, output_tokens: 7 },
+        },
+      },
+      { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "hello" }],
+          usage: { input_tokens: 1, output_tokens: 2 },
+        },
+      },
+    ]);
+    expect(a.totals.turns).toBe(1);
+    expect(a.totals.apiCalls).toBe(2);
+    expect(a.totals.tokens.inputTokens).toBe(6);
+    expect(a.totals.tokens.outputTokens).toBe(9);
+    expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(2);
+    // totals must always agree with the per-model rollup.
+    expect(a.totals.cost.total).toBeCloseTo(a.models["claude-opus-4-7"]?.cost.total ?? -1, 12);
+  });
+});

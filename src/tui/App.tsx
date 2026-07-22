@@ -67,13 +67,17 @@ export function App({ db, pricing }: Props) {
       if (key.upArrow) return moveView(-1);
       if (key.downArrow) return moveView(1);
       if (key.return || key.rightArrow || key.escape || key.leftArrow) return setFocus("body");
-      const n = "123456".indexOf(input);
+      // Guard the empty string: non-character keys (backspace, home, F-keys…)
+      // arrive as input === "", and "…".indexOf("") is 0, not -1.
+      const n = input ? "123456".indexOf(input) : -1;
       if (n >= 0) {
         setView(VIEW_KEYS[n] as View);
         setFocus("body");
       }
     },
-    { isActive: !help && !openSession },
+    // Active even while a session is open so `?` still opens help there; the
+    // rail keys are unreachable in that state (focus is "body").
+    { isActive: !help },
   );
 
   if (projects.length === 0) {

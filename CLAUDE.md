@@ -98,10 +98,12 @@ the `$bunfs` marker in `import.meta.url`, with an `execPath`-basename fallback);
 it downloads the asset (streamed via `pumpStream` to a `Bun.FileSink` with a
 live progress line and a per-chunk **stall timeout**, so the multi-MB download
 shows progress instead of looking hung and a true stall aborts rather than
-hangs forever), verifies it against the release `SHA256SUMS`
-(`checksum.ts`, best-effort/graceful), then atomically `rename()`s over
-`process.execPath`. Windows delegates to the PowerShell installer; running from
-source refuses. `update-check.ts` prints a passive, once-a-day cached "update
+hangs forever, and a short Content-Length download fails instead of installing
+truncated), verifies it against the release `SHA256SUMS` (`checksum.ts`;
+**required** — an unfetchable manifest aborts the update rather than failing
+open), then atomically `rename()`s over `process.execPath`. On Windows it
+prints the PowerShell installer one-liner instead of self-updating; running
+from source refuses. `update-check.ts` prints a passive, once-a-day cached "update
 available" notice — gated off in CI, non-TTY, `--json`, and via
 `CC_ANALYZER_NO_UPDATE_CHECK`; it never affects exit codes. The same install
 scripts live in `site/public/install.{sh,ps1}` and do the equivalent checksum
