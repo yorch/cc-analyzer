@@ -1,44 +1,64 @@
-// Typed client for the cc-analyzer JSON API. Shapes mirror the server's
-// core/stats, core/queries, core/analyze and core/transcript outputs.
+// Typed client for the cc-analyzer JSON API. Row, summary, and session shapes
+// come straight from core via bun-free type-only imports (erased at build
+// time), so server and client cannot drift. Only the response envelopes and
+// the indexed listing shapes (whose core home, queries.ts, is bun-typed) live
+// here.
 
-export interface PortfolioSummary {
-  sessions: number;
-  projects: number;
-  cost: number;
-  estimatedShare: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheWriteTokens: number;
-  cacheReadTokens: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
+import type { SessionAnalysis } from "../../src/core/analyze.ts";
+import type {
+  BashCommandRow,
+  BranchRow,
+  CacheSummary,
+  CacheTtlSplit,
+  ConcurrencySummary,
+  CostDistribution,
+  DayRow,
+  DurationSummary,
+  ErrorWeekRow,
+  EstimatedShareRow,
+  HeatCell,
+  HotFileRow,
+  IdleCacheBucket,
+  ModelDayRow,
+  ModelRow,
+  MonthRow,
+  NameUsageRow,
+  PermissionModeRow,
+  PortfolioSummary,
+  ProjectCacheRow,
+  ProjectRow,
+  RetryStats,
+  RunRate,
+  ScatterSession,
+  SessionCacheRow,
+  SessionRankRow,
+  SidechainDayRow,
+  SidechainProjectRow,
+  SidechainSummary,
+  SkillUsageRow,
+  StopReasonRow,
+  StreakSummary,
+  TestRunSummary,
+  ToolUsageRow,
+  TurnDepthStats,
+  VersionRow,
+  WebToolsProjectRow,
+  WebToolsSummary,
+} from "../../src/core/stats-types.ts";
+import type { TranscriptItem } from "../../src/core/transcript.ts";
+
+export type { ApiCall, SessionAnalysis, SessionTotals, Turn } from "../../src/core/analyze.ts";
+export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
+export * from "../../src/core/stats-types.ts";
+export type { StepKind, TurnStep } from "../../src/core/steps.ts";
+export type { TranscriptItem } from "../../src/core/transcript.ts";
+
+/** Back-compat alias: the insights views call the cache summary a "row". */
+export type CacheSummaryRow = CacheSummary;
+
 export interface TokenSplit {
   ioTokens: number;
   cacheTokens: number;
-}
-export interface MonthRow extends TokenSplit {
-  month: string;
-  cost: number;
-  sessions: number;
-}
-export interface ProjectRow extends TokenSplit {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sessions: number;
-}
-export interface ModelRow extends TokenSplit {
-  model: string;
-  calls: number;
-  cost: number;
-}
-export interface SessionRankRow extends TokenSplit {
-  sessionId: string | null;
-  projectPath: string | null;
-  title: string | null;
-  cost: number;
-  startTime: string | null;
 }
 export interface StatsResponse {
   summary: PortfolioSummary;
@@ -46,6 +66,12 @@ export interface StatsResponse {
   byProject: ProjectRow[];
   byModel: ModelRow[];
   top: SessionRankRow[];
+  duration: DurationSummary;
+  distribution: CostDistribution;
+  streaks: StreakSummary;
+  runRate: RunRate;
+  sidechain: SidechainSummary;
+  estimatedByProject: EstimatedShareRow[];
 }
 
 export interface IndexedProject extends TokenSplit {
@@ -72,184 +98,36 @@ export interface SessionWithProject extends IndexedSession {
   projectPath: string | null;
 }
 
-export interface CacheMetrics {
-  writeTokens: number;
-  readTokens: number;
-  writeCost: number;
-  readCost: number;
-  inputCost: number;
-  outputCost: number;
-  totalCost: number;
-  ratio: number;
-  waste: number;
-}
-export interface ProjectCacheRow extends CacheMetrics {
-  projectId: string;
-  projectPath: string | null;
-  sessions: number;
-}
-export interface SessionCacheRow extends CacheMetrics {
-  sessionId: string | null;
-  title: string | null;
-  startTime: string | null;
-  projectPath: string | null;
-}
-export interface CacheSummaryRow {
-  writeCost: number;
-  readCost: number;
-  waste: number;
-  totalCost: number;
-}
 export interface InsightsResponse {
   summary: CacheSummaryRow;
   projects: ProjectCacheRow[];
-}
-export interface DayRow {
-  day: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-export interface HeatCell {
-  weekday: number; // 0=Sunday … 6=Saturday
-  hour: number; // 0…23, local
-  sessions: number;
-  cost: number;
+  ttl: CacheTtlSplit;
+  idleBuckets: IdleCacheBucket[];
 }
 export interface TrendsResponse {
   daily: DayRow[];
   heatmap: HeatCell[];
+  modelMix: ModelDayRow[];
+  concurrency: ConcurrencySummary;
+  errorWeekly: ErrorWeekRow[];
+  sidechainDaily: SidechainDayRow[];
+  scatter: ScatterSession[];
 }
 
-export interface ToolUsageRow {
-  tool: string;
-  uses: number;
-  errors: number;
-  errorRate: number;
-  sessions: number;
-}
-export interface NameUsageRow {
-  name: string;
-  sessions: number;
-}
-export interface SkillDayCount {
-  day: string;
-  count: number;
-}
-/** Mirror of core stats.SkillUsageRow. Cost is session-scoped (correlational). */
-export interface SkillUsageRow {
-  name: string;
-  invocations: number;
-  sessions: number;
-  projects: number;
-  errors: number;
-  errorRate: number;
-  firstUsed: string | null;
-  lastUsed: string | null;
-  totalCost: number;
-  avgCostPerSession: number;
-  daily: SkillDayCount[];
-}
 export interface AnalyticsResponse {
   tools: ToolUsageRow[];
   skills: SkillUsageRow[];
   subagents: NameUsageRow[];
-}
-
-export type CacheVerdict = "efficient" | "ok" | "leaky";
-/** Mirror of core stats.cacheVerdict, for the web insights view. */
-export function cacheVerdict(ratio: number): CacheVerdict {
-  if (ratio >= 2) return "efficient";
-  if (ratio >= 1) return "ok";
-  return "leaky";
-}
-
-export interface CostBreakdown {
-  input: number;
-  output: number;
-  cacheWrite: number;
-  cacheRead: number;
-  total: number;
-  estimated: boolean;
-}
-export interface TokenCounts {
-  inputTokens: number;
-  outputTokens: number;
-  cacheWrite5mTokens: number;
-  cacheWrite1hTokens: number;
-  cacheReadTokens: number;
-}
-export type StepKind =
-  | "note"
-  | "thinking"
-  | "run"
-  | "read"
-  | "edit"
-  | "search"
-  | "skill"
-  | "subagent"
-  | "web"
-  | "task"
-  | "ask"
-  | "tool";
-
-export interface TurnStep {
-  kind: StepKind;
-  tool?: string;
-  label: string;
-  summary: string;
-  status?: "ok" | "error";
-  resultHint?: string;
-  toolUseId?: string;
-  detail?: { input?: string; result?: string; truncated?: boolean };
-}
-
-export interface ApiCall {
-  model?: string;
-  cost: CostBreakdown;
-  tokens: TokenCounts;
-  steps: TurnStep[];
-}
-export interface Turn {
-  index: number;
-  prompt: string;
-  cost: CostBreakdown;
-  tokens: TokenCounts;
-  apiCalls: ApiCall[];
-  toolCounts: Record<string, number>;
-}
-export interface SessionAnalysis {
-  sessionId?: string;
-  title?: string;
-  projectPath?: string;
-  gitBranches: string[];
-  versions: string[];
-  durationMs?: number;
-  totals: {
-    turns: number;
-    apiCalls: number;
-    toolCalls: number;
-    cost: CostBreakdown;
-    tokens: TokenCounts;
-    webSearches: number;
-    webFetches: number;
-  };
-  turns: Turn[];
-  models: Record<string, { apiCalls: number; cost: CostBreakdown; tokens: TokenCounts }>;
-  tools: Record<string, number>;
-  skills: Record<string, number>;
-  subagents: string[];
-  filesTouched: string[];
-}
-export interface TranscriptItem {
-  index: number;
-  turnIndex: number;
-  role: string;
-  kind: string;
-  label: string;
-  body: string;
-  isError?: boolean;
+  bash: BashCommandRow[];
+  tests: TestRunSummary;
+  retries: RetryStats;
+  webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
+  permissionModes: PermissionModeRow[];
+  stopReasons: StopReasonRow[];
+  turnDepth: TurnDepthStats;
+  versions: VersionRow[];
+  branches: BranchRow[];
+  sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
 }
 
 async function get<T>(url: string): Promise<T> {
@@ -263,6 +141,8 @@ export const api = {
   projects: () => get<IndexedProject[]>("/api/projects"),
   sessions: (projectId: string) =>
     get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
+  projectFiles: (projectId: string) =>
+    get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`),
   session: (id: string) => get<SessionAnalysis>(`/api/sessions/${encodeURIComponent(id)}`),
   transcript: (id: string) =>
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),

@@ -1,115 +1,49 @@
 import type { Database } from "bun:sqlite";
+import type {
+  BashCommandRow,
+  BranchRow,
+  CacheSummary,
+  CacheTtlSplit,
+  ConcurrencySummary,
+  CostBucket,
+  CostDistribution,
+  DayRow,
+  DepthBucket,
+  DurationSummary,
+  ErrorWeekRow,
+  EstimatedShareRow,
+  HeatCell,
+  HotFileRow,
+  IdleCacheBucket,
+  ModelDayRow,
+  ModelRow,
+  MonthRow,
+  NameUsageRow,
+  PermissionModeRow,
+  PortfolioSummary,
+  ProjectCacheRow,
+  ProjectRow,
+  RetryStats,
+  RunRate,
+  ScatterSession,
+  SessionCacheRow,
+  SessionRankRow,
+  SidechainDayRow,
+  SidechainProjectRow,
+  SidechainSummary,
+  SkillUsageRow,
+  StopReasonRow,
+  StreakSummary,
+  TestRunSummary,
+  ToolUsageRow,
+  TurnDepthStats,
+  VersionRow,
+  WebToolsProjectRow,
+  WebToolsSummary,
+} from "./stats-types.ts";
+import { localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
 
-export interface PortfolioSummary {
-  sessions: number;
-  projects: number;
-  cost: number;
-  estimatedShare: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheWriteTokens: number;
-  cacheReadTokens: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
-
-export interface MonthRow {
-  month: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** One day of the spend burn series (day is the stored YYYY-MM-DD column). */
-export interface DayRow {
-  day: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** One weekday×hour cell of the activity heatmap (local time). */
-export interface HeatCell {
-  /** 0=Sunday … 6=Saturday, from strftime('%w'). */
-  weekday: number;
-  /** 0…23, local hour. */
-  hour: number;
-  sessions: number;
-  cost: number;
-}
-
-export interface ProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-export interface SessionRankRow {
-  sessionId: string | null;
-  projectPath: string | null;
-  title: string | null;
-  cost: number;
-  ioTokens: number;
-  cacheTokens: number;
-  startTime: string | null;
-}
-
-export interface ModelRow {
-  model: string;
-  calls: number;
-  cost: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** Cache-efficiency metrics shared by the project and session insight rows. */
-export interface CacheMetrics {
-  writeTokens: number;
-  readTokens: number;
-  writeCost: number;
-  readCost: number;
-  inputCost: number;
-  outputCost: number;
-  totalCost: number;
-  /** readTokens / writeTokens; 0 when nothing was written. */
-  ratio: number;
-  /** Cache-write $ that was not read back: Σ writeCost × max(0, 1 − min(1, read/write)). */
-  waste: number;
-}
-
-export interface ProjectCacheRow extends CacheMetrics {
-  projectId: string;
-  projectPath: string | null;
-  sessions: number;
-}
-
-export interface SessionCacheRow extends CacheMetrics {
-  sessionId: string | null;
-  title: string | null;
-  startTime: string | null;
-  projectPath: string | null;
-}
-
-export interface CacheSummary {
-  writeCost: number;
-  readCost: number;
-  waste: number;
-  totalCost: number;
-}
-
-export type CacheVerdict = "efficient" | "ok" | "leaky";
-
-/** Classify cache amortization from the read:write token ratio. */
-export function cacheVerdict(ratio: number): CacheVerdict {
-  if (ratio >= 2) return "efficient";
-  if (ratio >= 1) return "ok";
-  return "leaky";
-}
+export * from "./stats-types.ts";
 
 const IO_TOKENS = "input_tokens + output_tokens";
 const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
@@ -354,53 +288,6 @@ export function activityHeatmap(db: Database): HeatCell[] {
     .all() as HeatCell[];
 }
 
-/** Aggregate tool usage across all sessions, with error counts and rate. */
-export interface ToolUsageRow {
-  tool: string;
-  uses: number;
-  errors: number;
-  /** errors / uses, in [0, 1]. */
-  errorRate: number;
-  sessions: number;
-}
-
-/** A name (subagent) and how many sessions used it. */
-export interface NameUsageRow {
-  name: string;
-  sessions: number;
-}
-
-/** A day and how many times a skill was invoked on it (adoption sparkline). */
-export interface SkillDayCount {
-  day: string;
-  count: number;
-}
-
-/** Rich per-skill analytics: invocation depth, reach, reliability, adoption, and
- * (session-scoped, correlational) cost. */
-export interface SkillUsageRow {
-  name: string;
-  /** Total `Skill` invocations across all sessions. */
-  invocations: number;
-  /** Sessions that invoked the skill at least once. */
-  sessions: number;
-  /** Distinct projects that invoked the skill. */
-  projects: number;
-  /** Invocations whose result was an error. */
-  errors: number;
-  /** errors / invocations, in [0, 1]. */
-  errorRate: number;
-  /** Earliest / latest day (YYYY-MM-DD) the skill was used, or null if undated. */
-  firstUsed: string | null;
-  lastUsed: string | null;
-  /** Σ cost_total over sessions that used the skill. Correlational, not causal:
-   * a session using N skills counts its full cost toward each of them. */
-  totalCost: number;
-  avgCostPerSession: number;
-  /** Per-day invocation counts, oldest first, for the adoption sparkline. */
-  daily: SkillDayCount[];
-}
-
 function parseJson<T>(s: string | null | undefined, fallback: T): T {
   if (!s) return fallback;
   try {
@@ -538,4 +425,705 @@ export function skillAnalytics(db: Database): SkillUsageRow[] {
         .sort((x, y) => (x.day < y.day ? -1 : 1)),
     }))
     .sort((a, b) => b.invocations - a.invocations);
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Duration, distribution, cadence
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** Linear-interpolated percentile of an ascending-sorted array (p in [0,1]). */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const a = sorted[lo] ?? 0;
+  const b = sorted[hi] ?? a;
+  return a + (b - a) * (idx - lo);
+}
+
+/** Portfolio-wide session-duration and active-time rollup. */
+export function durationSummary(db: Database): DurationSummary {
+  const rows = db
+    .query(
+      `SELECT duration_ms AS d, COALESCE(active_ms, 0) AS a
+      FROM sessions WHERE duration_ms IS NOT NULL AND duration_ms > 0`,
+    )
+    .all() as { d: number; a: number }[];
+  const durations = rows.map((r) => r.d).sort((x, y) => x - y);
+  const totalMs = durations.reduce((s, v) => s + v, 0);
+  const totalActiveMs = rows.reduce((s, r) => s + r.a, 0);
+  return {
+    sessions: rows.length,
+    totalMs,
+    avgMs: rows.length ? totalMs / rows.length : 0,
+    medianMs: percentile(durations, 0.5),
+    p90Ms: percentile(durations, 0.9),
+    totalActiveMs,
+    activeShare: totalMs > 0 ? totalActiveMs / totalMs : 0,
+  };
+}
+
+/** Per-session points for the cost/duration and prompt-length/cost scatters. */
+export function sessionScatter(db: Database, limit = 1000): ScatterSession[] {
+  return db
+    .query(
+      `SELECT session_id AS sessionId,
+        title,
+        project_path AS projectPath,
+        cost_total AS cost,
+        duration_ms AS durationMs,
+        COALESCE(active_ms, 0) AS activeMs,
+        turns,
+        COALESCE(prompt_chars, 0) AS promptChars
+      FROM sessions
+      WHERE duration_ms IS NOT NULL AND duration_ms > 0
+      ORDER BY cost_total DESC LIMIT ?`,
+    )
+    .all(limit) as ScatterSession[];
+}
+
+/** Buckets are ascending with an Infinity-capped tail, so every value lands. */
+function bucketIndex(value: number, buckets: { max: number }[]): number {
+  const i = buckets.findIndex((b) => value < b.max);
+  return i === -1 ? buckets.length - 1 : i;
+}
+
+const COST_BUCKETS: { label: string; max: number }[] = [
+  { label: "<1¢", max: 0.01 },
+  { label: "1–10¢", max: 0.1 },
+  { label: "10¢–$1", max: 1 },
+  { label: "$1–10", max: 10 },
+  { label: "$10–100", max: 100 },
+  { label: "$100+", max: Number.POSITIVE_INFINITY },
+];
+
+/** Distribution of per-session cost: percentiles, histogram, spend concentration. */
+export function costDistribution(db: Database): CostDistribution {
+  const rows = db
+    .query("SELECT cost_total AS c FROM sessions WHERE cost_total > 0 ORDER BY cost_total ASC")
+    .all() as { c: number }[];
+  const costs = rows.map((r) => r.c);
+  const total = costs.reduce((s, v) => s + v, 0);
+  const buckets = COST_BUCKETS.map((b) => ({ label: b.label, count: 0 }));
+  for (const c of costs) {
+    (buckets[bucketIndex(c, COST_BUCKETS)] as CostBucket).count += 1;
+  }
+  // A "top 10%" cohort only exists with ≥10 sessions; below that the slice
+  // would just be the single most expensive session, mislabeled — null.
+  const topDecileShare =
+    costs.length >= 10 && total > 0
+      ? costs.slice(Math.floor(costs.length * 0.9)).reduce((s, v) => s + v, 0) / total
+      : null;
+  return {
+    sessions: costs.length,
+    mean: costs.length ? total / costs.length : 0,
+    p50: percentile(costs, 0.5),
+    p90: percentile(costs, 0.9),
+    p99: percentile(costs, 0.99),
+    max: costs[costs.length - 1] ?? 0,
+    topDecileShare,
+    buckets,
+  };
+}
+
+/** Active-day streaks. `today` is the caller's local YYYY-MM-DD. */
+export function streaks(db: Database, today: string): StreakSummary {
+  const rows = db
+    .query("SELECT DISTINCT day FROM sessions WHERE day IS NOT NULL ORDER BY day")
+    .all() as { day: string }[];
+  const days = rows.map((r) => r.day);
+  const daySet = new Set(days);
+
+  let longest = 0;
+  let run = 0;
+  let prev: string | undefined;
+  for (const day of days) {
+    run = prev !== undefined && shiftDay(prev, 1) === day ? run + 1 : 1;
+    if (run > longest) longest = run;
+    prev = day;
+  }
+
+  // The streak is alive if the last active day is today or yesterday.
+  let current = 0;
+  let cursor = daySet.has(today)
+    ? today
+    : daySet.has(shiftDay(today, -1))
+      ? shiftDay(today, -1)
+      : "";
+  while (cursor && daySet.has(cursor)) {
+    current += 1;
+    cursor = shiftDay(cursor, -1);
+  }
+
+  const windowStart = shiftDay(today, -29);
+  const last30 = days.filter((d) => d >= windowStart && d <= today).length;
+
+  return {
+    activeDays: days.length,
+    longestStreak: longest,
+    currentStreak: current,
+    last30ActiveDays: last30,
+  };
+}
+
+/** Month-to-date spend vs last month, plus a run-rate projection. */
+export function runRate(db: Database, today: string): RunRate {
+  const month = today.slice(0, 7);
+  const dayOfMonth = Number(today.slice(8, 10));
+  const [y, m] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
+  const prev = new Date(Date.UTC(y, m - 2, 1));
+  const prevMonth = prev.toISOString().slice(0, 7);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const prevSamePointEnd = `${prevMonth}-${String(Math.min(dayOfMonth, new Date(Date.UTC(y, m - 1, 0)).getUTCDate())).padStart(2, "0")}`;
+
+  const sum = (from: string, to: string): number =>
+    (
+      db
+        .query("SELECT COALESCE(SUM(cost_total), 0) AS c FROM sessions WHERE day >= ? AND day <= ?")
+        .get(from, to) as { c: number }
+    ).c;
+
+  const monthToDate = sum(`${month}-01`, today);
+  const prevMonthSamePoint = sum(`${prevMonth}-01`, prevSamePointEnd);
+  const prevMonthTotal = sum(`${prevMonth}-01`, `${prevMonth}-31`);
+  return {
+    month,
+    monthToDate,
+    prevMonth,
+    prevMonthSamePoint,
+    prevMonthTotal,
+    // dayOfMonth ≥ 1 for any YYYY-MM-DD input.
+    projected: (monthToDate / dayOfMonth) * daysInMonth,
+  };
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Cache TTL split, web tools, estimated share, sidechain
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** How cache writes split between the 5-minute and 1-hour (2× priced) TTLs. */
+export function cacheTtlSplit(db: Database): CacheTtlSplit {
+  return db
+    .query(
+      `SELECT COALESCE(SUM(cache_write_5m), 0) AS write5mTokens,
+        COALESCE(SUM(cache_write_1h), 0) AS write1hTokens,
+        COALESCE(SUM(cost_cache_write), 0) AS writeCost
+      FROM sessions`,
+    )
+    .get() as CacheTtlSplit;
+}
+
+/** Server-side web search/fetch usage: portfolio summary + top projects. */
+export function webToolUsage(
+  db: Database,
+  limit = 20,
+): { summary: WebToolsSummary; byProject: WebToolsProjectRow[] } {
+  const summary = db
+    .query(
+      `SELECT COALESCE(SUM(web_searches), 0) AS searches,
+        COALESCE(SUM(web_fetches), 0) AS fetches,
+        COALESCE(SUM(web_searches + web_fetches > 0), 0) AS sessions
+      FROM sessions`,
+    )
+    .get() as WebToolsSummary;
+  const byProject = db
+    .query(
+      `SELECT project_id AS projectId,
+        MAX(project_path) AS projectPath,
+        SUM(web_searches) AS searches,
+        SUM(web_fetches) AS fetches
+      FROM sessions
+      GROUP BY project_id
+      HAVING SUM(web_searches + web_fetches) > 0
+      ORDER BY SUM(web_searches + web_fetches) DESC LIMIT ?`,
+    )
+    .all(limit) as WebToolsProjectRow[];
+  return { summary, byProject };
+}
+
+/** Projects whose totals lean on heuristic (non-exact) pricing. */
+export function estimatedShareByProject(db: Database, limit = 20): EstimatedShareRow[] {
+  return db
+    .query(
+      `SELECT project_id AS projectId,
+        MAX(project_path) AS projectPath,
+        SUM(cost_total) AS cost,
+        SUM(cost_total * cost_estimated) AS estimatedCost,
+        CASE WHEN SUM(cost_total) > 0
+          THEN SUM(cost_total * cost_estimated) / SUM(cost_total) ELSE 0 END AS share
+      FROM sessions
+      GROUP BY project_id
+      HAVING SUM(cost_total * cost_estimated) > 0
+      ORDER BY estimatedCost DESC LIMIT ?`,
+    )
+    .all(limit) as EstimatedShareRow[];
+}
+
+/** How much of the portfolio's spend ran on sidechains (subagents). */
+export function sidechainSummary(db: Database): SidechainSummary {
+  const r = db
+    .query(
+      `SELECT COALESCE(SUM(sidechain_cost), 0) AS cost,
+        COALESCE(SUM(sidechain_calls), 0) AS calls,
+        COALESCE(SUM(cost_total), 0) AS totalCost,
+        COALESCE(SUM(api_calls), 0) AS totalCalls
+      FROM sessions`,
+    )
+    .get() as Omit<SidechainSummary, "share">;
+  return { ...r, share: r.totalCost > 0 ? r.cost / r.totalCost : 0 };
+}
+
+/** Daily sidechain vs total spend, oldest first (delegation trend). */
+export function sidechainByDay(db: Database): SidechainDayRow[] {
+  return db
+    .query(
+      `SELECT day,
+        COALESCE(SUM(sidechain_cost), 0) AS sidechainCost,
+        SUM(cost_total) AS totalCost
+      FROM sessions WHERE day IS NOT NULL
+      GROUP BY day ORDER BY day`,
+    )
+    .all() as SidechainDayRow[];
+}
+
+/** Projects ranked by sidechain (subagent) spend. */
+export function sidechainByProject(db: Database, limit = 20): SidechainProjectRow[] {
+  return db
+    .query(
+      `SELECT project_id AS projectId,
+        MAX(project_path) AS projectPath,
+        SUM(cost_total) AS cost,
+        COALESCE(SUM(sidechain_cost), 0) AS sidechainCost,
+        CASE WHEN SUM(cost_total) > 0
+          THEN COALESCE(SUM(sidechain_cost), 0) / SUM(cost_total) ELSE 0 END AS share
+      FROM sessions
+      GROUP BY project_id
+      HAVING COALESCE(SUM(sidechain_cost), 0) > 0
+      ORDER BY sidechainCost DESC LIMIT ?`,
+    )
+    .all(limit) as SidechainProjectRow[];
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * JSON-blob rollups: files, model mix, modes, stop reasons, depth, bash, …
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** Files Claude keeps coming back to, across sessions (optionally one project). */
+export function hotFiles(db: Database, projectId?: string, limit = 30): HotFileRow[] {
+  const rows = (
+    projectId
+      ? db.query("SELECT files_json AS j, day FROM sessions WHERE project_id = ?").all(projectId)
+      : db.query("SELECT files_json AS j, day FROM sessions").all()
+  ) as { j: string | null; day: string | null }[];
+  const acc = new Map<string, { sessions: number; lastDay: string | null }>();
+  for (const r of rows) {
+    for (const file of new Set(parseJson<string[]>(r.j, []))) {
+      const a = acc.get(file) ?? { sessions: 0, lastDay: null };
+      a.sessions += 1;
+      if (r.day && (a.lastDay === null || r.day > a.lastDay)) a.lastDay = r.day;
+      acc.set(file, a);
+    }
+  }
+  return [...acc.entries()]
+    .map(([file, a]) => ({ file, sessions: a.sessions, lastDay: a.lastDay }))
+    .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
+    .slice(0, limit);
+}
+
+/**
+ * Daily spend per model (top `topN` models by total cost; the rest fold into
+ * "other"), for the model-mix stacked chart. Attribution is by session day.
+ */
+export function modelMixByDay(db: Database, topN = 6): ModelDayRow[] {
+  const rows = db
+    .query("SELECT day, models_json AS j FROM sessions WHERE day IS NOT NULL")
+    .all() as { day: string; j: string | null }[];
+  const perDay = new Map<string, Map<string, number>>();
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    const models = parseJson<Record<string, { cost?: { total?: number } }>>(r.j, {});
+    for (const [model, usage] of Object.entries(models)) {
+      const cost = usage.cost?.total ?? 0;
+      if (cost <= 0) continue;
+      let day = perDay.get(r.day);
+      if (!day) {
+        day = new Map();
+        perDay.set(r.day, day);
+      }
+      day.set(model, (day.get(model) ?? 0) + cost);
+      totals.set(model, (totals.get(model) ?? 0) + cost);
+    }
+  }
+  const top = new Set(
+    [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, topN)
+      .map(([m]) => m),
+  );
+  const out: ModelDayRow[] = [];
+  for (const [day, models] of [...perDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    let other = 0;
+    for (const [model, cost] of models) {
+      if (top.has(model)) out.push({ day, model, cost });
+      else other += cost;
+    }
+    if (other > 0) out.push({ day, model: "other", cost: other });
+  }
+  return out;
+}
+
+/** Permission-mode mix across all turns/sessions. */
+export function permissionModeUsage(db: Database): PermissionModeRow[] {
+  const rows = db
+    .query("SELECT permission_modes_json AS j, cost_total AS cost FROM sessions")
+    .all() as { j: string | null; cost: number | null }[];
+  const acc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
+  for (const r of rows) {
+    for (const [mode, turns] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
+      const a = acc.get(mode) ?? { turns: 0, sessions: 0, totalCost: 0 };
+      a.turns += turns;
+      a.sessions += 1;
+      a.totalCost += r.cost ?? 0;
+      acc.set(mode, a);
+    }
+  }
+  return [...acc.entries()]
+    .map(([mode, a]) => ({
+      mode,
+      turns: a.turns,
+      sessions: a.sessions,
+      totalCost: a.totalCost,
+      avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
+    }))
+    .sort((a, b) => b.turns - a.turns);
+}
+
+/** stop_reason mix across all API calls (max_tokens = truncated responses). */
+export function stopReasonUsage(db: Database): StopReasonRow[] {
+  const rows = db.query("SELECT stop_reasons_json AS j FROM sessions").all() as {
+    j: string | null;
+  }[];
+  const acc = new Map<string, { count: number; sessions: number }>();
+  for (const r of rows) {
+    for (const [reason, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
+      const a = acc.get(reason) ?? { count: 0, sessions: 0 };
+      a.count += n;
+      a.sessions += 1;
+      acc.set(reason, a);
+    }
+  }
+  return [...acc.entries()]
+    .map(([reason, a]) => ({ reason, count: a.count, sessions: a.sessions }))
+    .sort((a, b) => b.count - a.count);
+}
+
+const DEPTH_BUCKETS: { label: string; max: number }[] = [
+  { label: "1", max: 2 },
+  { label: "2–3", max: 4 },
+  { label: "4–7", max: 8 },
+  { label: "8–15", max: 16 },
+  { label: "16+", max: Number.POSITIVE_INFINITY },
+];
+
+/** How agentic turns are: distribution of API calls per turn. */
+export function turnDepthStats(db: Database): TurnDepthStats {
+  const rows = db.query("SELECT turn_depths_json AS j, month FROM sessions").all() as {
+    j: string | null;
+    month: string | null;
+  }[];
+  const buckets = DEPTH_BUCKETS.map((b) => ({ label: b.label, turns: 0 }));
+  const byMonth = new Map<string, { sum: number; turns: number }>();
+  let turns = 0;
+  let sum = 0;
+  let maxDepth = 0;
+  for (const r of rows) {
+    for (const depth of parseJson<number[]>(r.j, [])) {
+      if (depth <= 0) continue;
+      turns += 1;
+      sum += depth;
+      if (depth > maxDepth) maxDepth = depth;
+      (buckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
+      if (r.month) {
+        const m = byMonth.get(r.month) ?? { sum: 0, turns: 0 };
+        m.sum += depth;
+        m.turns += 1;
+        byMonth.set(r.month, m);
+      }
+    }
+  }
+  return {
+    turns,
+    avgDepth: turns > 0 ? sum / turns : 0,
+    maxDepth,
+    buckets,
+    byMonth: [...byMonth.entries()]
+      .map(([month, m]) => ({ month, avgDepth: m.sum / m.turns, turns: m.turns }))
+      .sort((a, b) => (a.month < b.month ? -1 : 1)),
+  };
+}
+
+/** Claude Code version adoption (per-session deduped), newest last-seen first. */
+export function versionAdoption(db: Database): VersionRow[] {
+  const rows = db.query("SELECT versions_json AS j, day FROM sessions").all() as {
+    j: string | null;
+    day: string | null;
+  }[];
+  const acc = new Map<
+    string,
+    { sessions: number; firstDay: string | null; lastDay: string | null }
+  >();
+  for (const r of rows) {
+    for (const v of new Set(parseJson<string[]>(r.j, []))) {
+      const a = acc.get(v) ?? { sessions: 0, firstDay: null, lastDay: null };
+      a.sessions += 1;
+      if (r.day) {
+        if (a.firstDay === null || r.day < a.firstDay) a.firstDay = r.day;
+        if (a.lastDay === null || r.day > a.lastDay) a.lastDay = r.day;
+      }
+      acc.set(v, a);
+    }
+  }
+  return [...acc.entries()]
+    .map(([version, a]) => ({ version, ...a }))
+    .sort((a, b) => ((b.lastDay ?? "") < (a.lastDay ?? "") ? -1 : 1));
+}
+
+/** Git branches ranked by session count (cost is session-scoped, correlational). */
+export function branchUsage(db: Database, projectId?: string, limit = 30): BranchRow[] {
+  const rows = (
+    projectId
+      ? db
+          .query("SELECT branches_json AS j, cost_total AS cost FROM sessions WHERE project_id = ?")
+          .all(projectId)
+      : db.query("SELECT branches_json AS j, cost_total AS cost FROM sessions").all()
+  ) as { j: string | null; cost: number | null }[];
+  const acc = new Map<string, { sessions: number; cost: number }>();
+  for (const r of rows) {
+    for (const b of new Set(parseJson<string[]>(r.j, []))) {
+      if (!b) continue;
+      const a = acc.get(b) ?? { sessions: 0, cost: 0 };
+      a.sessions += 1;
+      a.cost += r.cost ?? 0;
+      acc.set(b, a);
+    }
+  }
+  return [...acc.entries()]
+    .map(([branch, a]) => ({ branch, ...a }))
+    .sort((a, b) => b.sessions - a.sessions || b.cost - a.cost)
+    .slice(0, limit);
+}
+
+/** Shell command families ranked by use, with error rates. */
+export function bashCommandUsage(db: Database, limit = 30): BashCommandRow[] {
+  const rows = db.query("SELECT bash_json AS j, bash_errors_json AS e FROM sessions").all() as {
+    j: string | null;
+    e: string | null;
+  }[];
+  const uses = new Map<string, number>();
+  const errors = new Map<string, number>();
+  const sessions = new Map<string, number>();
+  for (const r of rows) {
+    for (const [cmd, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
+      uses.set(cmd, (uses.get(cmd) ?? 0) + n);
+      sessions.set(cmd, (sessions.get(cmd) ?? 0) + 1);
+    }
+    for (const [cmd, n] of Object.entries(parseJson<Record<string, number>>(r.e, {}))) {
+      errors.set(cmd, (errors.get(cmd) ?? 0) + n);
+    }
+  }
+  return [...uses.entries()]
+    .map(([command, u]) => {
+      const e = errors.get(command) ?? 0;
+      return {
+        command,
+        uses: u,
+        errors: e,
+        errorRate: u > 0 ? e / u : 0,
+        sessions: sessions.get(command) ?? 0,
+      };
+    })
+    .sort((a, b) => b.uses - a.uses)
+    .slice(0, limit);
+}
+
+/** How often sessions run the test suite, and how often those runs fail. */
+export function testRunSummary(db: Database): TestRunSummary {
+  const r = db
+    .query(
+      `SELECT COALESCE(SUM(test_runs), 0) AS runs,
+        COALESCE(SUM(test_failures), 0) AS failures,
+        COALESCE(SUM(test_runs > 0), 0) AS sessions
+      FROM sessions`,
+    )
+    .get() as Omit<TestRunSummary, "failureRate">;
+  return { ...r, failureRate: r.runs > 0 ? r.failures / r.runs : 0 };
+}
+
+/** Churn: repeated identical tool calls, portfolio-wide and per tool. */
+export function retryStats(db: Database): RetryStats {
+  const rows = db
+    .query("SELECT retries_json AS j, COALESCE(retries, 0) AS n FROM sessions")
+    .all() as { j: string | null; n: number }[];
+  const acc = new Map<string, { retries: number; sessions: number }>();
+  let total = 0;
+  let sessions = 0;
+  for (const r of rows) {
+    total += r.n;
+    if (r.n > 0) sessions += 1;
+    for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
+      const a = acc.get(tool) ?? { retries: 0, sessions: 0 };
+      a.retries += n;
+      a.sessions += 1;
+      acc.set(tool, a);
+    }
+  }
+  return {
+    total,
+    sessions,
+    byTool: [...acc.entries()]
+      .map(([tool, a]) => ({ tool, ...a }))
+      .sort((a, b) => b.retries - a.retries),
+  };
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Concurrency and cross-insights
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** Sanity cap on one session's wall-clock span: a garbage-but-parseable
+ * end_time must not make the day walk crawl to the year 3000. */
+const MAX_SESSION_SPAN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How many sessions overlap in time — parallel-Claude usage, per day. */
+export function concurrency(db: Database): ConcurrencySummary {
+  const rows = db
+    .query(
+      `SELECT start_time AS s, end_time AS e FROM sessions
+      WHERE start_time IS NOT NULL AND end_time IS NOT NULL`,
+    )
+    .all() as { s: string; e: string }[];
+  interface Edge {
+    ms: number;
+    delta: 1 | -1;
+  }
+  const edges: Edge[] = [];
+  for (const r of rows) {
+    const start = Date.parse(r.s);
+    const end = Date.parse(r.e);
+    if (Number.isNaN(start) || Number.isNaN(end) || end < start) continue;
+    // A zero-duration session still counts: give it a 1ms floor so its start
+    // edge isn't cancelled before it is observed.
+    const clampedEnd = Math.min(Math.max(end, start + 1), start + MAX_SESSION_SPAN_MS);
+    edges.push({ ms: start, delta: 1 }, { ms: clampedEnd, delta: -1 });
+  }
+  // Ends sort before starts at the same instant so touching sessions don't
+  // count as overlapping.
+  edges.sort((a, b) => a.ms - b.ms || a.delta - b.delta);
+  const perDay = new Map<string, number>();
+  let open = 0;
+  let peak = 0;
+  // Rolling local-day cursor: consecutive edges almost always share a day, so
+  // recompute the day string only on rollover instead of per edge.
+  let dayStr = "";
+  let dayEndMs = Number.NEGATIVE_INFINITY;
+  const dayAt = (ms: number): string => {
+    if (ms >= dayEndMs || dayStr === "") {
+      dayStr = localDayOfMs(ms);
+      const next = new Date(ms);
+      next.setHours(24, 0, 0, 0);
+      dayEndMs = next.getTime();
+    }
+    return dayStr;
+  };
+  for (let i = 0; i < edges.length; i++) {
+    open += (edges[i] as Edge).delta;
+    if (open <= 0) continue;
+    if (open > peak) peak = open;
+    // `open` holds until the next edge; credit every local day that span
+    // touches, so a session pair overlapping across midnight still marks the
+    // morning side (a start-edge-only walk would skip days where the overlap
+    // merely persists).
+    const spanEnd = edges[i + 1]?.ms ?? (edges[i] as Edge).ms;
+    for (let ms = (edges[i] as Edge).ms; ; ) {
+      const day = dayAt(ms);
+      if (open > (perDay.get(day) ?? 0)) perDay.set(day, open);
+      if (dayEndMs >= spanEnd) break;
+      ms = dayEndMs;
+    }
+  }
+  const days = [...perDay.entries()]
+    .map(([day, maxConcurrent]) => ({ day, maxConcurrent }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
+  const parallel = days.filter((d) => d.maxConcurrent >= 2).length;
+  return {
+    peak,
+    parallelDayShare: days.length > 0 ? parallel / days.length : 0,
+    days,
+  };
+}
+
+const IDLE_BUCKETS: { label: string; max: number }[] = [
+  { label: "<25% idle", max: 0.25 },
+  { label: "25–50% idle", max: 0.5 },
+  { label: "50–75% idle", max: 0.75 },
+  { label: "75%+ idle", max: Number.POSITIVE_INFINITY },
+];
+
+/**
+ * Cross-insight: does cache waste concentrate in sessions that sat idle
+ * (cache TTL expiring between turns)? Sessions bucketed by idle share.
+ */
+export function idleVsCache(db: Database): IdleCacheBucket[] {
+  const rows = db
+    .query(
+      `SELECT duration_ms AS d,
+        COALESCE(active_ms, 0) AS a,
+        (${CACHE_WRITE}) AS w,
+        cache_read AS r,
+        cost_cache_write AS wc,
+        (${WASTE_EXPR}) AS waste
+      FROM sessions
+      WHERE duration_ms > 0 AND (${CACHE_WRITE}) > 0`,
+    )
+    .all() as { d: number; a: number; w: number; r: number; wc: number; waste: number }[];
+  const acc = IDLE_BUCKETS.map(() => ({ sessions: 0, w: 0, r: 0, wc: 0, waste: 0 }));
+  for (const row of rows) {
+    const idle = Math.max(0, Math.min(1, 1 - row.a / row.d));
+    const a = acc[bucketIndex(idle, IDLE_BUCKETS)] as (typeof acc)[number];
+    a.sessions += 1;
+    a.w += row.w;
+    a.r += row.r;
+    a.wc += row.wc;
+    a.waste += row.waste;
+  }
+  return acc.map((a, i) => ({
+    bucket: IDLE_BUCKETS[i]?.label ?? "?",
+    sessions: a.sessions,
+    ratio: a.w > 0 ? a.r / a.w : 0,
+    wasteShare: a.wc > 0 ? a.waste / a.wc : 0,
+  }));
+}
+
+/** Tool-error rate per ISO week (attributed to each session's day). */
+export function errorRateByWeek(db: Database): ErrorWeekRow[] {
+  const rows = db
+    .query("SELECT day, tools_json AS t, tool_errors_json AS e FROM sessions WHERE day IS NOT NULL")
+    .all() as { day: string; t: string | null; e: string | null }[];
+  const acc = new Map<string, { calls: number; errors: number }>();
+  for (const r of rows) {
+    const week = weekOf(r.day);
+    const a = acc.get(week) ?? { calls: 0, errors: 0 };
+    for (const n of Object.values(parseJson<Record<string, number>>(r.t, {}))) a.calls += n;
+    for (const n of Object.values(parseJson<Record<string, number>>(r.e, {}))) a.errors += n;
+    acc.set(week, a);
+  }
+  return [...acc.entries()]
+    .map(([week, a]) => ({
+      week,
+      toolCalls: a.calls,
+      errors: a.errors,
+      errorRate: a.calls > 0 ? a.errors / a.calls : 0,
+    }))
+    .sort((a, b) => (a.week < b.week ? -1 : 1));
 }

@@ -7,10 +7,21 @@ import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import {
+  bashCommandUsage,
+  cacheTtlSplit,
+  concurrency,
+  costDistribution,
+  durationSummary,
+  localDayOfMs,
   portfolioSummary,
+  retryStats,
+  runRate,
+  sidechainSummary,
   spendByModel,
   spendByMonth,
   spendByProject,
+  streaks,
+  testRunSummary,
   topSessions,
 } from "../core/stats.ts";
 import { type DownloadProgress, performUpdate } from "../core/update.ts";
@@ -137,12 +148,25 @@ async function cmdStats(json: boolean): Promise<number> {
     console.error("Index is empty. Run `cc-analyzer index` first.");
     return 1;
   }
+  const today = localDayOfMs(Date.now());
+  // The CLI reports only the concurrency headline, not the per-day series.
+  const { peak, parallelDayShare } = concurrency(db);
   const view = {
     summary,
     byMonth: spendByMonth(db),
     byProject: spendByProject(db),
     byModel: spendByModel(db),
     top: topSessions(db),
+    duration: durationSummary(db),
+    distribution: costDistribution(db),
+    streaks: streaks(db, today),
+    runRate: runRate(db, today),
+    sidechain: sidechainSummary(db),
+    ttl: cacheTtlSplit(db),
+    bash: bashCommandUsage(db, 10),
+    tests: testRunSummary(db),
+    retries: retryStats(db),
+    concurrency: { peak, parallelDayShare },
   };
   db.close();
   console.log(json ? JSON.stringify(view, null, 2) : renderStats(view));

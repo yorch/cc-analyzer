@@ -4,6 +4,7 @@
  */
 
 import type { DayRow, HeatCell } from "../core/stats.ts";
+import { calendarWeeks, weekOf } from "../core/stats.ts";
 
 export interface SeriesPoint {
   label: string;
@@ -15,14 +16,6 @@ export interface SeriesPoint {
 
 export type Granularity = "day" | "week" | "month";
 export type BurnMetric = "cost" | "tokens" | "sessions";
-
-/** Monday (UTC) of the ISO week containing `day` (YYYY-MM-DD), as YYYY-MM-DD. */
-function weekKey(day: string): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  const mondayOffset = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
-  d.setUTCDate(d.getUTCDate() - mondayOffset);
-  return d.toISOString().slice(0, 10);
-}
 
 /**
  * Regroup the daily series into day / week / month buckets, summing each metric.
@@ -42,7 +35,7 @@ export function bucketSeries(daily: DayRow[], granularity: Granularity): SeriesP
   const out: SeriesPoint[] = [];
   let curKey = "";
   for (const d of daily) {
-    const key = granularity === "month" ? d.day.slice(0, 7) : weekKey(d.day);
+    const key = granularity === "month" ? d.day.slice(0, 7) : weekOf(d.day);
     let p = out[out.length - 1];
     if (!p || key !== curKey) {
       p = { label: key, cost: 0, sessions: 0, ioTokens: 0, cacheTokens: 0 };
@@ -139,13 +132,13 @@ export function sparkline(values: number[], width = 24): string {
 
 /**
  * Dense weekly invocation totals across a skill's active span (gap weeks count as
- * 0), oldest first — the series behind the adoption sparkline. Reuses `weekKey` so
+ * 0), oldest first — the series behind the adoption sparkline. Reuses core `weekOf` so
  * each bucket is an ISO week (Monday-anchored).
  */
 export function weeklySkillSeries(daily: { day: string; count: number }[]): number[] {
   if (daily.length === 0) return [];
   const byWeek = new Map<string, number>();
-  for (const d of daily) byWeek.set(weekKey(d.day), (byWeek.get(weekKey(d.day)) ?? 0) + d.count);
+  for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
   const keys = [...byWeek.keys()].sort();
   const first = keys[0];
   const last = keys[keys.length - 1];
@@ -160,10 +153,40 @@ export function weeklySkillSeries(daily: { day: string; count: number }[]): numb
   return out;
 }
 
-const RAMP = " ·░▒▓█";
+/** Shade ramp shared by every TUI density grid (and their legends). */
+export const RAMP = " ·░▒▓█";
 /** strftime %w weekday for each display row, Monday first. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+/** Shade a value against the busiest cell using the RAMP characters. */
+function rampChar(v: number, max: number): string {
+  const last = RAMP.length - 1;
+  return v <= 0 ? (RAMP[0] as string) : (RAMP[Math.max(1, Math.round((v / max) * last))] as string);
+}
+
+/**
+ * Render a GitHub-style contribution calendar: 7 rows (Mon…Sun) of ramp-shaded
+ * chars, one column per week, ending at the newest day in `daily`. The grid
+ * math lives in core `calendarWeeks` (shared with the web calendar); this only
+ * turns its cells into ramp characters — days past the newest stay blank.
+ */
+export function calendarGrid(
+  daily: DayRow[],
+  metric: "sessions" | "cost",
+  weeks = 26,
+): { rows: string[]; max: number; firstDay: string; lastDay: string } {
+  const grid = calendarWeeks(
+    daily.map((d) => ({ day: d.day, v: metric === "cost" ? d.cost : d.sessions })),
+    weeks,
+  );
+  if (grid.weeks.length === 0) return { rows: [], max: 0, firstDay: "", lastDay: "" };
+  const max = Math.max(1e-9, grid.max);
+  const rows = Array.from({ length: 7 }, (_, r) =>
+    grid.weeks.map((col) => (col[r] ? rampChar((col[r] as { v: number }).v, max) : " ")).join(""),
+  );
+  return { rows, max: grid.max, firstDay: grid.firstDay, lastDay: grid.lastDay };
+}
 
 /**
  * Render the activity heatmap as 7 rows (Mon…Sun) of 24 ramp-shaded chars,
@@ -181,9 +204,6 @@ export function heatGrid(
     if (row) row[c.hour] = metric === "cost" ? c.cost : c.sessions;
   }
   const max = Math.max(1e-9, ...grid.flat());
-  const last = RAMP.length - 1;
-  const rows = grid.map((row) =>
-    row.map((v) => (v <= 0 ? RAMP[0] : RAMP[Math.max(1, Math.round((v / max) * last))])).join(""),
-  );
+  const rows = grid.map((row) => row.map((v) => rampChar(v, max)).join(""));
   return { rows, max };
 }

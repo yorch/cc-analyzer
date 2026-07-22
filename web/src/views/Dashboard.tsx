@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  type CostDistribution,
   type ModelRow,
   type MonthRow,
   type ProjectRow,
   type SessionRankRow,
   type SessionWithProject,
+  type StatsResponse,
 } from "../api.ts";
-import { count, tokens, usd } from "../format.ts";
+import { Card } from "../Card.tsx";
+import { count, duration, shortPath, tokens, usd } from "../format.ts";
+import { Histogram } from "../Histogram.tsx";
 import { link } from "../router.ts";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
@@ -103,7 +107,14 @@ export function Dashboard() {
         </dl>
       </section>
 
+      <StatCards data={data} />
+
       <GlobalSearch />
+
+      <section>
+        <h2>Session cost distribution</h2>
+        <Distribution dist={data.distribution} />
+      </section>
 
       <section>
         <h2>Spend by month</h2>
@@ -229,6 +240,106 @@ export function Dashboard() {
           </table>
         </div>
       </section>
+
+      {data.estimatedByProject.length > 0 && (
+        <section>
+          <h2>Heuristically priced spend</h2>
+          <p className="muted">
+            Projects whose totals lean on family-heuristic pricing (unknown model ids) — treat these
+            numbers as soft.
+          </p>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th className="num">Estimated $</th>
+                  <th className="num">Share</th>
+                  <th className="num">Total $</th>
+                  <th>Project</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.estimatedByProject.map((r) => (
+                  <tr key={r.projectId}>
+                    <td className="num">{usd(r.estimatedCost)}</td>
+                    <td className="num">{(r.share * 100).toFixed(0)}%</td>
+                    <td className="num">{usd(r.cost)}</td>
+                    <td>
+                      <a href={link.project(r.projectId)}>
+                        {shortPath(r.projectPath, r.projectId)}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+/** The tier-1 headline metrics: time, percentiles, cadence, forecast, subagents. */
+function StatCards({ data }: { data: StatsResponse }) {
+  const d = data.duration;
+  const dist = data.distribution;
+  const st = data.streaks;
+  const rr = data.runRate;
+  const sc = data.sidechain;
+  return (
+    <div className="cards">
+      <Card
+        label="Time with Claude"
+        value={duration(d.totalMs)}
+        sub={`${duration(d.totalActiveMs)} active (${(d.activeShare * 100).toFixed(0)}%)`}
+      />
+      <Card
+        label="Session length"
+        value={duration(d.medianMs)}
+        sub={`median · p90 ${duration(d.p90Ms)}`}
+      />
+      <Card
+        label="Session cost"
+        value={usd(dist.p50)}
+        sub={`median · p90 ${usd(dist.p90)} · p99 ${usd(dist.p99)}`}
+      />
+      <Card
+        label="Streak"
+        value={`${st.currentStreak}d`}
+        sub={`longest ${st.longestStreak}d · ${st.last30ActiveDays}/30 days active`}
+      />
+      <Card
+        label={`Projected ${rr.month}`}
+        value={usd(rr.projected)}
+        sub={`${usd(rr.monthToDate)} so far · ${rr.prevMonth} was ${usd(rr.prevMonthTotal)}`}
+      />
+      <Card
+        label="Subagent spend"
+        value={usd(sc.cost)}
+        sub={
+          sc.cost > 0 ? `${(sc.share * 100).toFixed(0)}% of total · ${count(sc.calls)} calls` : "—"
+        }
+      />
+    </div>
+  );
+}
+
+/** Histogram of per-session cost plus the spend-concentration headline. */
+function Distribution({ dist }: { dist: CostDistribution }) {
+  return (
+    <>
+      <p className="muted">
+        {count(dist.sessions)} costed sessions · mean {usd(dist.mean)}
+        {dist.topDecileShare !== null && (
+          <>
+            {" "}
+            · the top 10% of sessions carry{" "}
+            <strong>{(dist.topDecileShare * 100).toFixed(0)}%</strong> of all spend
+          </>
+        )}
+      </p>
+      <Histogram rows={dist.buckets.map((b) => ({ label: b.label, count: b.count }))} />
     </>
   );
 }

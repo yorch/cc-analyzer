@@ -1,12 +1,17 @@
 import { useState } from "react";
 import {
+  type AnalyticsResponse,
   api,
+  type BashCommandRow,
   type NameUsageRow,
   type SkillDayCount,
   type SkillUsageRow,
   type ToolUsageRow,
+  type TurnDepthStats,
+  weekOf,
 } from "../api.ts";
-import { count, usd } from "../format.ts";
+import { count, shortPath, usd } from "../format.ts";
+import { Histogram } from "../Histogram.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
@@ -33,18 +38,11 @@ const NAME_SORT: Accessors<NameUsageRow> = {
 
 const rateClass = (r: number): string => (r >= 0.05 ? "rate-hi" : r >= 0.01 ? "rate-mid" : "muted");
 
-/** Monday (UTC) of the ISO week containing `day` (YYYY-MM-DD), as YYYY-MM-DD. */
-function weekKey(day: string): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
-}
-
 /** Dense weekly invocation totals across the skill's active span (gap weeks = 0). */
 function weeklySeries(daily: SkillDayCount[]): number[] {
   if (daily.length === 0) return [];
   const byWeek = new Map<string, number>();
-  for (const d of daily) byWeek.set(weekKey(d.day), (byWeek.get(weekKey(d.day)) ?? 0) + d.count);
+  for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
   const keys = [...byWeek.keys()].sort();
   const first = keys[0];
   const last = keys[keys.length - 1];
@@ -203,11 +201,136 @@ function NameTable({ label, rows }: { label: string; rows: NameUsageRow[] }) {
   );
 }
 
+const BASH_SORT: Accessors<BashCommandRow> = {
+  command: (b) => b.command,
+  uses: (b) => b.uses,
+  errors: (b) => b.errors,
+  errorRate: (b) => b.errorRate,
+  sessions: (b) => b.sessions,
+};
+
+function BashTable({ rows }: { rows: BashCommandRow[] }) {
+  const sort = useSort(rows, BASH_SORT, "uses");
+  return (
+    <div className="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <SortTh label="Command" col="command" sort={sort} />
+            <SortTh label="Uses" col="uses" sort={sort} className="num" />
+            <SortTh label="Errors" col="errors" sort={sort} className="num" />
+            <SortTh label="Err %" col="errorRate" sort={sort} className="num" />
+            <SortTh label="Sessions" col="sessions" sort={sort} className="num" />
+          </tr>
+        </thead>
+        <tbody>
+          {sort.sorted.map((b) => (
+            <tr key={b.command}>
+              <td>{b.command}</td>
+              <td className="num">{count(b.uses)}</td>
+              <td className="num">{count(b.errors)}</td>
+              <td className={`num ${rateClass(b.errorRate)}`}>{(b.errorRate * 100).toFixed(1)}%</td>
+              <td className="num">{count(b.sessions)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Distribution of main-chain API calls per turn — how agentic the turns are. */
+function DepthPanel({ depth }: { depth: TurnDepthStats }) {
+  if (depth.turns === 0) return <p className="muted">No turns in the index.</p>;
+  const trend = depth.byMonth;
+  return (
+    <>
+      <p className="muted">
+        {count(depth.turns)} turns · avg {depth.avgDepth.toFixed(1)} API calls/turn · deepest{" "}
+        {depth.maxDepth}
+        {trend.length >= 2 &&
+          ` · ${trend[0]?.avgDepth.toFixed(1)} → ${trend[trend.length - 1]?.avgDepth.toFixed(1)} avg over ${trend.length} months`}
+      </p>
+      <Histogram rows={depth.buckets.map((b) => ({ label: `${b.label} calls`, count: b.turns }))} />
+    </>
+  );
+}
+
+/** Two-column facts table for small rollups (modes, stop reasons, versions…). */
+function FactsTable({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
+  return (
+    <div className="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th key={h} className={i === 0 ? undefined : "num"}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={String(r[0])}>
+              {r.map((c, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: fixed small column count
+                <td key={i} className={i === 0 ? undefined : "num"}>
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Reliability({ data }: { data: AnalyticsResponse }) {
+  const t = data.tests;
+  const r = data.retries;
+  return (
+    <>
+      <p className="muted">
+        Test runs:{" "}
+        {t.runs > 0 ? (
+          <>
+            <strong>{count(t.runs)}</strong> across {count(t.sessions)} sessions ·{" "}
+            {(t.failureRate * 100).toFixed(0)}% failed
+          </>
+        ) : (
+          "none detected"
+        )}
+        {" · "}Tool-call churn:{" "}
+        {r.total > 0 ? (
+          <>
+            <strong>{count(r.total)}</strong> repeated identical calls in {count(r.sessions)}{" "}
+            sessions
+          </>
+        ) : (
+          "none"
+        )}
+      </p>
+      {r.byTool.length > 0 && (
+        <FactsTable
+          head={["Tool", "Retries", "Sessions"]}
+          rows={r.byTool
+            .slice(0, 10)
+            .map((row) => [row.tool, count(row.retries), count(row.sessions)])}
+        />
+      )}
+    </>
+  );
+}
+
 export function Tools() {
   const { data, error, loading } = useAsync(() => api.analytics(), []);
   if (loading) return <div className="loading">Loading analytics…</div>;
   if (error) return <div className="loading err">Error: {error}</div>;
   if (!data) return null;
+  const wt = data.webTools;
+  const sc = data.sidechain;
   return (
     <>
       <header className="top">
@@ -218,11 +341,96 @@ export function Tools() {
       <h2 className="section-h">Tools · by invocations, with error rate</h2>
       <ToolsTable tools={data.tools} />
 
+      <h2 className="section-h">Shell commands · what Bash actually runs</h2>
+      <BashTable rows={data.bash} />
+
+      <h2 className="section-h">Reliability · test runs &amp; churn</h2>
+      <Reliability data={data} />
+
+      <h2 className="section-h">Turn depth · API calls per turn</h2>
+      <DepthPanel depth={data.turnDepth} />
+
       <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
       <SkillsTable skills={data.skills} />
 
       <h2 className="section-h">Subagents · by sessions</h2>
       <NameTable label="Subagent" rows={data.subagents} />
+      {sc.summary.cost > 0 && (
+        <>
+          <p className="muted">
+            Sidechain (subagent) spend: <strong>{usd(sc.summary.cost)}</strong> ·{" "}
+            {(sc.summary.share * 100).toFixed(0)}% of total · {count(sc.summary.calls)} API calls
+          </p>
+          <FactsTable
+            head={["Project", "Subagent $", "Share", "Total $"]}
+            rows={sc.byProject.map((p) => [
+              shortPath(p.projectPath, p.projectId),
+              usd(p.sidechainCost),
+              `${(p.share * 100).toFixed(0)}%`,
+              usd(p.cost),
+            ])}
+          />
+        </>
+      )}
+
+      <h2 className="section-h">Web search &amp; fetch</h2>
+      {wt.summary.searches + wt.summary.fetches === 0 ? (
+        <p className="muted">No server-side web tool use recorded.</p>
+      ) : (
+        <>
+          <p className="muted">
+            {count(wt.summary.searches)} searches · {count(wt.summary.fetches)} fetches ·{" "}
+            {count(wt.summary.sessions)} sessions
+          </p>
+          <FactsTable
+            head={["Project", "Searches", "Fetches"]}
+            rows={wt.byProject.map((p) => [
+              shortPath(p.projectPath, p.projectId),
+              count(p.searches),
+              count(p.fetches),
+            ])}
+          />
+        </>
+      )}
+
+      <h2 className="section-h">Permission modes · how turns run</h2>
+      <FactsTable
+        head={["Mode", "Turns", "Sessions", "Avg $/session"]}
+        rows={data.permissionModes.map((m) => [
+          m.mode,
+          count(m.turns),
+          count(m.sessions),
+          usd(m.avgCostPerSession),
+        ])}
+      />
+      <p className="muted spark-cap">
+        Avg cost is session-scoped (a session using several modes counts toward each) —
+        correlational, not causal.
+      </p>
+
+      <h2 className="section-h">Stop reasons · how API calls end</h2>
+      <FactsTable
+        head={["Reason", "Calls", "Sessions"]}
+        rows={data.stopReasons.map((r) => [r.reason, count(r.count), count(r.sessions)])}
+      />
+
+      <h2 className="section-h">Claude Code versions</h2>
+      <FactsTable
+        head={["Version", "Sessions", "First seen", "Last seen"]}
+        rows={data.versions
+          .slice(0, 15)
+          .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
+      />
+
+      <h2 className="section-h">Git branches · by sessions</h2>
+      <FactsTable
+        head={["Branch", "Sessions", "Session $"]}
+        rows={data.branches.slice(0, 15).map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
+      />
+      <p className="muted spark-cap">
+        Session $ is session-scoped: a session touching several branches counts its full cost toward
+        each — correlational, not causal.
+      </p>
     </>
   );
 }

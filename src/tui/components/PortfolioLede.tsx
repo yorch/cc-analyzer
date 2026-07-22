@@ -1,16 +1,29 @@
 import { Box, Text } from "ink";
-import { formatCount, formatTokens, formatUSD } from "../../cli/format.ts";
-import type { MonthRow, PortfolioSummary } from "../../core/stats.ts";
+import { formatCount, formatDuration, formatTokens, formatUSD } from "../../cli/format.ts";
+import type {
+  CostDistribution,
+  DurationSummary,
+  MonthRow,
+  PortfolioSummary,
+  StreakSummary,
+} from "../../core/stats.ts";
 import { palette, role, sparkline } from "../theme.ts";
 
 /** The full-width portfolio band under the title bar: big total + a months
- * spend sparkline. Rendered in the shell's `lede` slot on the portfolio view. */
+ * spend sparkline, plus the time/percentile/streak vitals. Rendered in the
+ * shell's `lede` slot on the portfolio view. */
 export function PortfolioLede({
   summary,
   months,
+  duration,
+  distribution,
+  streaks,
 }: {
   summary: PortfolioSummary;
   months: MonthRow[];
+  duration: DurationSummary;
+  distribution: CostDistribution;
+  streaks: StreakSummary;
 }) {
   const io = summary.inputTokens + summary.outputTokens;
   const cache = summary.cacheWriteTokens + summary.cacheReadTokens;
@@ -34,6 +47,15 @@ export function PortfolioLede({
             <Text color={palette.amberDim}>{spark}</Text> {months.length}mo
           </Text>
         ) : null}
+      </Text>
+      <Text color={role.muted}>
+        {formatDuration(duration.totalMs)} with claude ({(duration.activeShare * 100).toFixed(0)}%
+        active) · median {formatUSD(distribution.p50)} / p90 {formatUSD(distribution.p90)} per
+        session
+        {distribution.topDecileShare !== null
+          ? ` · top 10% = ${(distribution.topDecileShare * 100).toFixed(0)}% of spend`
+          : ""}{" "}
+        · streak {streaks.currentStreak}d (best {streaks.longestStreak}d)
       </Text>
     </Box>
   );

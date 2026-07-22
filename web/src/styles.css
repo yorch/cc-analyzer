@@ -963,3 +963,165 @@ p.muted {
     animation: none !important;
   }
 }
+
+/* ------------------------------------------------- analytics additions */
+
+.hist {
+  display: grid;
+  gap: 6px;
+  max-width: 560px;
+}
+.hist-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 48px;
+  align-items: center;
+  gap: 10px;
+}
+.hist-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+.hist-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin-top: 8px;
+}
+.cal-cell {
+  fill: var(--border);
+}
+.cal-cell.on {
+  fill: var(--signal);
+}
+
+.mix-band {
+  opacity: 0.85;
+}
+.mix-0 {
+  fill: var(--signal);
+}
+.mix-1 {
+  fill: var(--teal);
+}
+.mix-2 {
+  fill: #8f7ff0;
+}
+.mix-3 {
+  fill: var(--red);
+}
+.mix-4 {
+  fill: #5c8fb6;
+}
+.mix-5 {
+  fill: #b6785c;
+}
+.mix-6 {
+  fill: var(--faint);
+}
+.legend-swatch.mix-0 {
+  background: var(--signal);
+}
+.legend-swatch.mix-1 {
+  background: var(--teal);
+}
+.legend-swatch.mix-2 {
+  background: #8f7ff0;
+}
+.legend-swatch.mix-3 {
+  background: var(--red);
+}
+.legend-swatch.mix-4 {
+  background: #5c8fb6;
+}
+.legend-swatch.mix-5 {
+  background: #b6785c;
+}
+.legend-swatch.mix-6 {
+  background: var(--faint);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.dot {
+  fill: var(--signal);
+  opacity: 0.7;
+}
+.scatter {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin-top: 8px;
+}
+.scatter .dot {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.scatter .dot:hover {
+  opacity: 1;
+}
+
+.timelinewrap {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--panel);
+}
+.timeline {
+  width: 100%;
+  display: block;
+}
+.tl-turn {
+  fill: var(--border-strong);
+}
+.tl-call {
+  fill: var(--signal);
+}
+.tl-call.side {
+  fill: var(--teal);
+}
+.tl-call.err {
+  stroke: var(--red);
+  stroke-width: 1.5;
+}
+
+.idle-panel {
+  margin: 14px 0;
+  color: var(--ink);
+}
+.idle-panel summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
