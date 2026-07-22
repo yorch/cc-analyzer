@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssistantEvent, UserEvent } from "../../src/core/events.ts";
-import { parseSessionFile, parseSessionText } from "../../src/core/parser.ts";
+import {
+  type ParseError,
+  parseSessionFile,
+  parseSessionText,
+  streamSessionEvents,
+} from "../../src/core/parser.ts";
 
 const fixturePath = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 
@@ -135,6 +140,54 @@ describe("parseSessionFile · streaming", () => {
       expect(errors).toHaveLength(1);
       expect(errors[0]?.error).toBe("not a JSON object");
       expect(errors[0]?.line).toBe(1);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+});
+
+describe("streamSessionEvents", () => {
+  const write = (name: string, content: string): string => {
+    const p = join(tmpdir(), `cc-analyzer-stream-${process.pid}-${name}`);
+    writeFileSync(p, content);
+    return p;
+  };
+
+  async function collect(path: string, onError?: (e: ParseError) => void) {
+    const events = [];
+    for await (const e of streamSessionEvents(path, onError)) events.push(e);
+    return events;
+  }
+
+  test("yields the same events as parseSessionFile (no array materialized)", async () => {
+    const streamed = await collect(fixturePath);
+    const { events } = await parseSessionFile(fixturePath);
+    expect(streamed).toEqual(events);
+  });
+
+  test("reports parse errors through the onError sink and still yields valid events", async () => {
+    const p = write(
+      "mixed.jsonl",
+      '{"type":"ai-title","sessionId":"s","aiTitle":"a"}\nnot json\nnull\n{"type":"ai-title","sessionId":"s","aiTitle":"b"}\n',
+    );
+    try {
+      const errors: ParseError[] = [];
+      const events = await collect(p, (e) => errors.push(e));
+      expect(events).toHaveLength(2); // the two valid ai-title lines
+      expect(errors.map((e) => e.line)).toEqual([2, 3]); // 1-based, in order
+      expect(errors[1]?.error).toBe("not a JSON object");
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("streams a record spanning many chunks without loading the whole file", async () => {
+    const big = JSON.stringify({ type: "ai-title", sessionId: "s", aiTitle: "q".repeat(200_000) });
+    const p = write("big.jsonl", `${big}\n{"type":"ai-title","sessionId":"s","aiTitle":"z"}\n`);
+    try {
+      const events = await collect(p);
+      expect(events).toHaveLength(2);
+      expect((events[0] as { aiTitle: string }).aiTitle).toHaveLength(200_000);
     } finally {
       rmSync(p, { force: true });
     }

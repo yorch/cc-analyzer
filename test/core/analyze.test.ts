@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { analyzeSession } from "../../src/core/analyze.ts";
+import { analyzeSession, analyzeSessionStream } from "../../src/core/analyze.ts";
+import type { SessionEvent } from "../../src/core/events.ts";
 import { parseSessionFile } from "../../src/core/parser.ts";
 import { flatPricing as flat, samplePricing as pricing } from "../helpers/pricing.ts";
+
+/** Turn an array into an async iterable, to drive analyzeSessionStream. */
+async function* iterate(events: SessionEvent[]): AsyncGenerator<SessionEvent> {
+  for (const e of events) yield e;
+}
 
 const fixturePath = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 
@@ -316,5 +322,40 @@ describe("analyzeSession · totals vs models", () => {
     expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(2);
     // totals must always agree with the per-model rollup.
     expect(a.totals.cost.total).toBeCloseTo(a.models["claude-opus-4-7"]?.cost.total ?? -1, 12);
+  });
+});
+
+describe("analyzeSessionStream", () => {
+  test("detail mode is identical to analyzeSession over the same events", async () => {
+    const { events } = await parseSessionFile(fixturePath);
+    const fromArray = analyzeSession(events, pricing);
+    const fromStream = await analyzeSessionStream(iterate(events), pricing, { detail: true });
+    expect(fromStream).toEqual(fromArray);
+  });
+
+  test("aggregate mode drops the per-turn timeline but keeps every aggregate", async () => {
+    const { events } = await parseSessionFile(fixturePath);
+    const full = analyzeSession(events, pricing);
+    const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+
+    // The heavy per-turn timeline is skipped...
+    expect(agg.turns).toEqual([]);
+    // ...but everything else — every field the indexer reads, including the
+    // turn-derived promptChars/turnDepths — is identical to the full analysis.
+    expect({ ...agg, turns: [] }).toEqual({ ...full, turns: [] });
+    // Sanity: the turn-derived aggregates survived (indexer depends on them).
+    expect(agg.turnDepths).toEqual(full.turns.map((t) => t.mainApiCalls));
+    expect(agg.promptChars).toBe(full.turns.reduce((s, t) => s + t.prompt.length, 0));
+  });
+
+  test("aggregate mode attributes tool errors without building steps", async () => {
+    // The fixture's Bash result is an error; error attribution must survive the
+    // single streaming pass (no per-step timeline to hang the status on).
+    const { events } = await parseSessionFile(fixturePath);
+    const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+    expect(agg.toolErrors).toEqual({ Bash: 1 });
+    expect(agg.tools).toEqual({ Write: 1, Bash: 1 });
+    expect(agg.turns).toEqual([]);
+    expect(agg.totals.turns).toBe(2); // turn count still tracked
   });
 });
