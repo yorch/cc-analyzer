@@ -1,10 +1,11 @@
-import type {
-  AssistantEvent,
-  ContentBlock,
-  SessionEvent,
-  ToolUseBlock,
-  Usage,
-  UserEvent,
+import {
+  type AssistantEvent,
+  type ContentBlock,
+  isRealPrompt,
+  type SessionEvent,
+  type ToolUseBlock,
+  type Usage,
+  type UserEvent,
 } from "./events.ts";
 import {
   addCost,
@@ -122,24 +123,6 @@ function isUser(e: SessionEvent): e is UserEvent {
   return (e as { type?: string }).type === "user";
 }
 
-/**
- * A user event starts a new turn only if it is a genuine prompt. User events
- * that merely carry `tool_result` blocks are loop continuations, not turns.
- * NOTE: duplicated in transcript.ts — keep the two copies in sync.
- */
-function isRealPrompt(e: UserEvent): boolean {
-  // Sidechain (subagent) chains open with a synthetic user event carrying the
-  // task prompt; it belongs to the enclosing turn, not a new one.
-  if (e.isSidechain === true) return false;
-  // System-injected user messages (caveats, command stdout, reminders) are not
-  // genuine prompts. Note: promptId is present on tool_result carriers too, so
-  // it cannot be used as a discriminator.
-  if (e.isMeta === true) return false;
-  const content = e.message.content;
-  if (typeof content === "string") return true;
-  return content.some((b) => (b as ContentBlock).type !== "tool_result");
-}
-
 function promptPreview(content: UserEvent["message"]["content"]): string {
   if (typeof content === "string") return content;
   const text = content
@@ -214,11 +197,11 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   let current: Turn | undefined;
 
   // Streamed responses are logged as one `assistant` line per content block,
-  // each repeating the same message id and full usage — count usage once per
-  // API call and merge continuation lines into the originating ApiCall.
-  const seenUsage = new Set<string>();
-  let lastCall: ApiCall | undefined;
-  let lastCallKey: string | undefined;
+  // each repeating the same message id and full usage. Merge those lines into a
+  // single ApiCall keyed by (message id / requestId), counting usage once —
+  // keyed rather than adjacency-based so interleaved main-chain and sidechain
+  // streams still merge to the right call.
+  const callsByKey = new Map<string, ApiCall>();
   const usageKey = (e: AssistantEvent): string | undefined => {
     const mid = e.message.id;
     if (mid && e.requestId) return `${mid}:${e.requestId}`;
@@ -271,21 +254,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     if (isAssistant(event)) {
       touchTime(event.timestamp);
       const key = usageKey(event);
-      const isContinuation = key !== undefined && seenUsage.has(key);
-      if (key !== undefined) seenUsage.add(key);
-
-      const usage = event.message.usage;
-      if (!isContinuation) {
-        webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
-        webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
-      }
-
-      const tokens = isContinuation ? zeroTokens() : usageToTokens(usage);
-      const model = event.message.model;
-      const resolved = model ? resolveModel(pricing, model) : undefined;
-      const cost = computeCost(tokens, resolved?.pricing);
-      // A family-heuristic match (non-exact) is still an estimate.
-      if (resolved && !resolved.exact) cost.estimated = true;
+      const existing = key !== undefined ? callsByKey.get(key) : undefined;
 
       const steps: TurnStep[] = [];
       for (const block of event.message.content) {
@@ -358,11 +327,23 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       }
 
       // A continuation line of an already-counted API call: keep its steps on
-      // the originating ApiCall, but never re-count its usage.
-      if (isContinuation && lastCall && lastCallKey === key) {
-        lastCall.steps.push(...steps);
+      // the originating ApiCall, but never re-count its usage or re-price it.
+      if (existing) {
+        existing.steps.push(...steps);
         continue;
       }
+
+      // First (or only) line of this API call: count and price its usage once.
+      const usage = event.message.usage;
+      webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
+      webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
+
+      const tokens = usageToTokens(usage);
+      const model = event.message.model;
+      const resolved = model ? resolveModel(pricing, model) : undefined;
+      const cost = computeCost(tokens, resolved?.pricing);
+      // A family-heuristic match (non-exact) is still an estimate.
+      if (resolved && !resolved.exact) cost.estimated = true;
 
       const apiCall: ApiCall = {
         uuid: event.uuid,
@@ -373,23 +354,20 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         cost,
         steps,
       };
-      lastCall = apiCall;
-      lastCallKey = key;
+      if (key !== undefined) callsByKey.set(key, apiCall);
 
-      if (!isContinuation) {
-        apiCallCount += 1;
-        totalTokens = addTokens(totalTokens, tokens);
-        totalCost = addCost(totalCost, cost);
-        if (model) {
-          let mu = models[model];
-          if (!mu) {
-            mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
-            models[model] = mu;
-          }
-          mu.apiCalls += 1;
-          mu.tokens = addTokens(mu.tokens, tokens);
-          mu.cost = addCost(mu.cost, cost);
+      apiCallCount += 1;
+      totalTokens = addTokens(totalTokens, tokens);
+      totalCost = addCost(totalCost, cost);
+      if (model) {
+        let mu = models[model];
+        if (!mu) {
+          mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
+          models[model] = mu;
         }
+        mu.apiCalls += 1;
+        mu.tokens = addTokens(mu.tokens, tokens);
+        mu.cost = addCost(mu.cost, cost);
       }
 
       if (current) {

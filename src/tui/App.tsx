@@ -14,6 +14,7 @@ import {
 import { portfolioSummary, spendByMonth } from "../core/stats.ts";
 import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
+import { keyIndex } from "./keys.ts";
 import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
@@ -67,9 +68,7 @@ export function App({ db, pricing }: Props) {
       if (key.upArrow) return moveView(-1);
       if (key.downArrow) return moveView(1);
       if (key.return || key.rightArrow || key.escape || key.leftArrow) return setFocus("body");
-      // Guard the empty string: non-character keys (backspace, home, F-keys…)
-      // arrive as input === "", and "…".indexOf("") is 0, not -1.
-      const n = input ? "123456".indexOf(input) : -1;
+      const n = keyIndex("123456", input);
       if (n >= 0) {
         setView(VIEW_KEYS[n] as View);
         setFocus("body");

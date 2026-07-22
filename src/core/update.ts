@@ -233,8 +233,9 @@ export async function performUpdate(
   }
 
   const target = process.execPath;
-  const rand = Math.random().toString(36).slice(2, 10);
-  const tmp = join(dirname(target), `.cc-analyzer.update.${process.pid}.${rand}`);
+  // pid uniquely identifies the single writer (one update per process); the
+  // catch block below removes this file on any failure.
+  const tmp = join(dirname(target), `.cc-analyzer.update.${process.pid}`);
   try {
     await downloadTo(assetDownloadUrl(latest, asset), tmp, onProgress);
     await verifyChecksum(tmp, latest, asset);

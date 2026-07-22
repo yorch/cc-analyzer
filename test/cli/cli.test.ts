@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../../src/core/version.ts";
+import { samplePricing } from "../helpers/pricing.ts";
 
 const cliPath = fileURLToPath(new URL("../../src/cli/index.ts", import.meta.url));
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
@@ -17,19 +18,9 @@ beforeAll(async () => {
     await Bun.file(fixture).text(),
   );
   // Seed a fresh pricing cache so no spawned CLI ever touches the network.
-  const flat = {
-    inputCostPerToken: 0.00001,
-    outputCostPerToken: 0.00002,
-    cacheWrite5mCostPerToken: 0.0000125,
-    cacheWrite1hCostPerToken: 0.00002,
-    cacheReadCostPerToken: 0.000001,
-  };
   writeFileSync(
     join(tmpDir, "state", "pricing.json"),
-    JSON.stringify({
-      fetchedAt: Date.now(),
-      table: { "claude-opus-4-7": flat, "claude-sonnet-4-5": flat },
-    }),
+    JSON.stringify({ fetchedAt: Date.now(), table: samplePricing }),
   );
 });
 

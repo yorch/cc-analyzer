@@ -43,16 +43,18 @@ asset="${BIN}-${os}-${arch}"
 
 # --- resolve download URL --------------------------------------------------
 # Resolve "latest" to a concrete tag once (via the /releases/latest redirect),
-# so the binary and its SHA256SUMS always come from the same release even if a
-# new one is published mid-install.
+# so the binary and its SHA256SUMS come from the same release even if a new one
+# is published mid-install. If that HEAD request is blocked (some proxies), fall
+# back to the latest/download alias — a tiny asset/manifest race, but it installs.
 if [ "$VERSION" = latest ]; then
   resolved=$($CURL -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null | sed 's|.*/||') || resolved=""
   case "$resolved" in
-    v[0-9]*) VERSION="$resolved" ;;
-    *) err "could not resolve the latest release tag" ;;
+    v[0-9]*) base="https://github.com/${REPO}/releases/download/${resolved}" ;;
+    *) base="https://github.com/${REPO}/releases/latest/download" ;;
   esac
+else
+  base="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
-base="https://github.com/${REPO}/releases/download/${VERSION}"
 url="${base}/${asset}"
 sums_url="${base}/SHA256SUMS"
 

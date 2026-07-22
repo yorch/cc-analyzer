@@ -110,11 +110,32 @@ export interface ResolvedPricing {
 const familyCache = new WeakMap<PricingTable, Map<string, ModelPricing | undefined>>();
 
 /**
+ * Version key for ordering ids within a family: the numeric segments of the id,
+ * excluding date stamps (runs of 6+ digits like `20250514`). So
+ * `claude-opus-4-1` → [4, 1] beats `claude-opus-4` → [4], and a trailing release
+ * date doesn't inflate the comparison. Compared element-wise, longer-wins on a
+ * shared prefix.
+ */
+function versionKey(id: string): number[] {
+  return (id.match(/\d+/g) ?? []).filter((s) => s.length < 6).map(Number);
+}
+
+function compareVersionKeys(a: number[], b: number[]): number {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? -1;
+    const y = b[i] ?? -1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
  * Best pricing entry for a model family. Prefers bare Anthropic ids
  * (`claude-…` / `anthropic/claude-…`) over provider variants (Bedrock, Vertex)
- * and picks the lexicographically greatest id, which biases toward the newest
- * generation (`claude-opus-4-…` sorts after `claude-3-opus-…`) instead of
- * whatever entry happens to come first in table order.
+ * and, among those, the newest by version segments (see `versionKey`) — so an
+ * unknown `claude-opus-4-9` prices off the latest opus rather than a stale
+ * `claude-3-opus` or whatever entry happens to come first in table order.
  */
 function familyPricing(table: PricingTable, family: string): ModelPricing | undefined {
   let cache = familyCache.get(table);
@@ -124,7 +145,7 @@ function familyPricing(table: PricingTable, family: string): ModelPricing | unde
   }
   if (cache.has(family)) return cache.get(family);
 
-  let bestKey: string | undefined;
+  let bestVer: number[] | undefined;
   let best: ModelPricing | undefined;
   let fallback: ModelPricing | undefined;
   for (const [key, pricing] of Object.entries(table)) {
@@ -137,8 +158,9 @@ function familyPricing(table: PricingTable, family: string): ModelPricing | unde
         ? k.slice("anthropic/".length)
         : undefined;
     if (!bare) continue;
-    if (!bestKey || bare > bestKey) {
-      bestKey = bare;
+    const ver = versionKey(bare);
+    if (!bestVer || compareVersionKeys(ver, bestVer) > 0) {
+      bestVer = ver;
       best = pricing;
     }
   }

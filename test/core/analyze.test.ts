@@ -2,21 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { analyzeSession } from "../../src/core/analyze.ts";
 import { parseSessionFile } from "../../src/core/parser.ts";
-import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
+import { flatPricing as flat, samplePricing as pricing } from "../helpers/pricing.ts";
 
 const fixturePath = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
-
-const flat: ModelPricing = {
-  inputCostPerToken: 0.00001,
-  outputCostPerToken: 0.00002,
-  cacheWrite5mCostPerToken: 0.0000125,
-  cacheWrite1hCostPerToken: 0.00002,
-  cacheReadCostPerToken: 0.000001,
-};
-const pricing: PricingTable = {
-  "claude-opus-4-7": flat,
-  "claude-sonnet-4-5": flat,
-};
 
 async function analyzeFixture() {
   const { events } = await parseSessionFile(fixturePath);
@@ -184,6 +172,56 @@ describe("analyzeSession · streamed responses", () => {
     expect(a.turns[0]?.apiCalls).toHaveLength(1);
     expect(a.turns[0]?.apiCalls[0]?.steps).toHaveLength(2);
     expect(a.totals.toolCalls).toBe(1);
+  });
+
+  test("merges continuation lines that are not immediately adjacent (interleaved streams)", () => {
+    // A sidechain assistant line lands between the two lines of one main-chain
+    // response; keyed dedup must still merge them (not fabricate a ghost call).
+    const a = analyzeLines([
+      { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "x" }],
+          usage,
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "sa1",
+        isSidechain: true,
+        requestId: "req_2",
+        message: {
+          id: "msg_2",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "sub" }],
+          usage,
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }],
+          usage,
+        },
+      },
+    ]);
+    // Two distinct API calls (msg_1 once, msg_2 once) — no phantom third.
+    expect(a.totals.apiCalls).toBe(2);
+    expect(a.turns[0]?.apiCalls).toHaveLength(2);
+    // Turn rows agree with the total (no zero-token ghost inflating the array).
+    expect(a.turns[0]?.apiCalls.length).toBe(a.totals.apiCalls);
+    // msg_1's two content blocks merged onto one call.
+    const mainCall = a.turns[0]?.apiCalls.find((ca) => !ca.isSidechain);
+    expect(mainCall?.steps).toHaveLength(2);
   });
 });
 

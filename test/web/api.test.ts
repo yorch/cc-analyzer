@@ -5,17 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
-import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
 import { createApi } from "../../src/web/api.ts";
-
-const flat: ModelPricing = {
-  inputCostPerToken: 0.00001,
-  outputCostPerToken: 0.00002,
-  cacheWrite5mCostPerToken: 0.0000125,
-  cacheWrite1hCostPerToken: 0.00002,
-  cacheReadCostPerToken: 0.000001,
-};
-const pricing: PricingTable = { "claude-opus-4-7": flat, "claude-sonnet-4-5": flat };
+import { createApp, isLoopbackHost } from "../../src/web/server.ts";
+import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const tmpDir = join("/tmp", `cc-analyzer-api-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
@@ -165,5 +157,48 @@ describe("web API · stale index", () => {
     expect(body.error).toContain("re-run");
     // Clean the stale row so it doesn't leak into other tests.
     await reindex(db, { pricing });
+  });
+});
+
+describe("createApp · Host-header guard", () => {
+  test("loopback app 403s a non-local Host (DNS-rebinding defense)", async () => {
+    const app = createApp(db, pricing, { loopbackOnly: true });
+    const res = await app.request("/api/stats", { headers: { host: "evil.example" } });
+    expect(res.status).toBe(403);
+  });
+
+  test("loopback app allows localhost and bracketed IPv6 loopback", async () => {
+    const app = createApp(db, pricing, { loopbackOnly: true });
+    const a = await app.request("/api/stats", { headers: { host: "localhost:4317" } });
+    const b = await app.request("/api/stats", { headers: { host: "[::1]:4317" } });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+  });
+
+  test("non-loopback app skips the Host check", async () => {
+    const app = createApp(db, pricing, { loopbackOnly: false });
+    const res = await app.request("/api/stats", { headers: { host: "example.com" } });
+    expect(res.status).toBe(200);
+  });
+
+  test("unknown /api path returns JSON 404, not the SPA", async () => {
+    const app = createApp(db, pricing, { loopbackOnly: true });
+    const res = await app.request("/api/nope", { headers: { host: "localhost" } });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not found" });
+  });
+});
+
+describe("isLoopbackHost", () => {
+  test("accepts loopback spellings with or without a port", () => {
+    expect(isLoopbackHost("127.0.0.1")).toBe(true);
+    expect(isLoopbackHost("localhost:4317")).toBe(true);
+    expect(isLoopbackHost("::1")).toBe(true);
+    expect(isLoopbackHost("[::1]:9999")).toBe(true);
+  });
+  test("rejects non-loopback and garbage", () => {
+    expect(isLoopbackHost("0.0.0.0")).toBe(false);
+    expect(isLoopbackHost("example.com")).toBe(false);
+    expect(isLoopbackHost("")).toBe(false);
   });
 });

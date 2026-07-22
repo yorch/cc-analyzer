@@ -104,4 +104,17 @@ describe("resolveModel · family fallback choice", () => {
     expect(r?.exact).toBe(false);
     expect(r?.pricing).toBe(only);
   });
+
+  test("a release-dated id does not out-rank a newer generation", () => {
+    const gen4 = mk(0.00001);
+    const gen41 = mk(0.000005);
+    // Lexicographically "claude-opus-4-20250514" > "claude-opus-4-1-…" (2 > 1),
+    // but the version key ignores the date, so 4-1 wins as the newer generation.
+    const table: PricingTable = {
+      "claude-opus-4-20250514": gen4,
+      "claude-opus-4-1-20250805": gen41,
+    };
+    const r = resolveModel(table, "claude-opus-9-9");
+    expect(r?.pricing).toBe(gen41);
+  });
 });

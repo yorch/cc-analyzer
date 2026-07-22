@@ -55,11 +55,18 @@ feeds the CLI/web renderers directly, and `indexer.ts` flattens it into a SQLite
 
 ## Concepts that span multiple files (read before editing)
 
-**Turn segmentation — duplicated logic, keep in sync.** A *turn* is one genuine user
-prompt plus every assistant API call and tool loop until the next prompt. The
-discriminator `isRealPrompt()` (a user event that is not `isMeta` and carries
-something other than `tool_result` blocks) exists in **both** `analyze.ts` and
-`transcript.ts`. Changing turn-boundary rules means editing both.
+**Turn segmentation.** A *turn* is one genuine user prompt plus every assistant
+API call and tool loop until the next prompt. The discriminator `isRealPrompt()`
+lives in `events.ts` (a user event that is not a sidechain, not `isMeta`, and
+carries something other than `tool_result` blocks) and is shared by both
+`analyze.ts` and `transcript.ts`, so turn boundaries can't drift between them —
+change the rule in one place.
+
+**Streamed responses are de-duplicated.** A single API response is logged as one
+`assistant` line per content block, each repeating the same `message.id` /
+`requestId` and full `usage`. `analyzeSession` keys an `ApiCall` by that id and
+merges continuation lines into it, counting `usage` exactly once — so token and
+cost totals aren't inflated by the streaming block count.
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token
@@ -105,9 +112,10 @@ open), then atomically `rename()`s over `process.execPath`. On Windows it
 prints the PowerShell installer one-liner instead of self-updating; running
 from source refuses. `update-check.ts` prints a passive, once-a-day cached "update
 available" notice — gated off in CI, non-TTY, `--json`, and via
-`CC_ANALYZER_NO_UPDATE_CHECK`; it never affects exit codes. The same install
-scripts live in `site/public/install.{sh,ps1}` and do the equivalent checksum
-verification.
+`CC_ANALYZER_NO_UPDATE_CHECK`; it never affects exit codes. The install scripts
+in `site/public/install.{sh,ps1}` verify the same way, except they still skip
+gracefully for releases that predate the manifest (the self-updater no longer
+does — it requires the manifest).
 
 ## Build & the generated SPA
 
@@ -121,7 +129,7 @@ force-added to git once; regenerated content stays untracked.
 ## Conventions
 
 - **Dual tsconfig**: root `tsconfig.json` targets Bun (`types: ["bun"]`, includes
-  `src` + `test`); `web/tsconfig.json` targets the browser (`DOM` libs,
+  `src` + `test` + `scripts`); `web/tsconfig.json` targets the browser (`DOM` libs,
   `types: ["vite/client"]`). Web code (`src/web` server aside) that touches the DOM
   belongs to the web config.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).

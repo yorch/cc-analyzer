@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
-import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
 import {
   isIndexEmpty,
   listAllSessions,
@@ -13,15 +12,7 @@ import {
   listIndexedSessions,
   searchSessions,
 } from "../../src/core/queries.ts";
-
-const flat: ModelPricing = {
-  inputCostPerToken: 0.00001,
-  outputCostPerToken: 0.00002,
-  cacheWrite5mCostPerToken: 0.0000125,
-  cacheWrite1hCostPerToken: 0.00002,
-  cacheReadCostPerToken: 0.000001,
-};
-const pricing: PricingTable = { "claude-opus-4-7": flat, "claude-sonnet-4-5": flat };
+import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const tmpDir = join("/tmp", `cc-analyzer-q-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));

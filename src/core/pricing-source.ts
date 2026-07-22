@@ -57,8 +57,6 @@ export interface LoadPricingOptions {
 export interface LoadedPricing {
   table: PricingTable;
   source: "cache" | "remote" | "bundled";
-  /** True when a remote refresh failed and an out-of-date cache was used instead. */
-  stale?: boolean;
 }
 
 interface CacheFile {
@@ -93,7 +91,7 @@ export async function loadPricing(opts: LoadPricingOptions = {}): Promise<Loaded
     await writeCache(cachePath, { fetchedAt: Date.now(), table });
     return { table, source: "remote" };
   } catch {
-    if (cached) return { table: cached.table, source: "cache", stale: true };
+    if (cached) return { table: cached.table, source: "cache" };
     return { table: bundledPricing, source: "bundled" };
   }
 }

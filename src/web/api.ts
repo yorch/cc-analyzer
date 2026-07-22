@@ -26,6 +26,12 @@ import {
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
 
+// The dashboard/insights lists are filtered client-side, so the server must
+// return more than a top-N slice (else low-spend projects vanish from the
+// filter) — but still cap the payload so a pathological portfolio can't ship
+// unbounded JSON. Far above any realistic project count.
+const MAX_PROJECT_ROWS = 2000;
+
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
@@ -34,9 +40,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     c.json({
       summary: portfolioSummary(db),
       byMonth: spendByMonth(db),
-      // Unlimited (-1): the dashboard filters this list client-side, and a
-      // truncated list silently hides low-spend projects from the filter.
-      byProject: spendByProject(db, -1),
+      byProject: spendByProject(db, MAX_PROJECT_ROWS),
       byModel: spendByModel(db),
       top: topSessions(db, 20),
     }),
@@ -47,7 +51,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // Cache-efficiency insights: projects ranked by un-amortized cache-write $,
   // plus a portfolio summary; drill into one project's sessions.
   api.get("/api/insights", (c) =>
-    c.json({ summary: cacheSummary(db), projects: cacheWasteByProject(db, -1) }),
+    c.json({ summary: cacheSummary(db), projects: cacheWasteByProject(db, MAX_PROJECT_ROWS) }),
   );
 
   api.get("/api/insights/:id/sessions", (c) =>

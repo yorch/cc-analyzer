@@ -2,12 +2,14 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { indexDbPath, stateDir } from "./paths.ts";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS meta (
+// The meta table holds the schema version; it must exist before the version
+// check, so it's created ahead of the rest of the schema (see openDb).
+const META_SCHEMA = `CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT
-);
+);`;
 
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   path TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -67,7 +69,7 @@ export function openDb(path: string = indexDbPath()): Database {
   db.exec("PRAGMA synchronous = NORMAL;");
   // Check the version before applying SCHEMA: creating a new index against a
   // stale sessions table (missing the indexed column) would fail.
-  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);");
+  db.exec(META_SCHEMA);
   const row = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
     | undefined;

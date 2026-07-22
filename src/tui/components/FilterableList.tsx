@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
-import { scrollOffset } from "../scroll.ts";
+import { clampWindow, scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
 import { Empty, ScrollRange } from "./ui.tsx";
@@ -52,11 +52,15 @@ export function FilterableList<T>({
 
   const q = query.toLowerCase();
   const filtered = q ? items.filter((i) => filterText(i).toLowerCase().includes(q)) : items;
-  const activeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
-  // Clamp the window too: when `items` shrinks (e.g. a drill-down reuses this
+  // Clamp cursor + window: when `items` shrinks (e.g. a drill-down reuses this
   // component instance), a stale offset would slice past the end and render
   // real rows as "(no matches)".
-  const activeOffset = Math.min(offset, Math.max(0, filtered.length - size));
+  const { cursor: activeCursor, offset: activeOffset } = clampWindow(
+    cursor,
+    offset,
+    size,
+    filtered.length,
+  );
 
   // Report the highlighted item to the parent for a live detail preview.
   const current = filtered[activeCursor];

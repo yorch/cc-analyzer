@@ -66,10 +66,11 @@ export async function fetchLatestVersion(timeoutMs = 10000): Promise<string> {
     signal: AbortSignal.timeout(timeoutMs),
   });
   const tag = res.url.split("/").pop() ?? "";
-  const version = normalizeVersion(tag);
-  // Anchored: a prerelease-style tag (0.5.0-rc.1) must not pass as a release.
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  // Take the leading X.Y.Z core so a suffixed tag GitHub marked "latest"
+  // (e.g. v0.5.1-1, a re-cut build) still resolves instead of hard-failing.
+  const match = normalizeVersion(tag).match(/^\d+\.\d+\.\d+/);
+  if (!match) {
     throw new Error(`could not parse a version from ${res.url}`);
   }
-  return version;
+  return match[0];
 }
