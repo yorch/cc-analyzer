@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { Text } from "ink";
 import { useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
@@ -18,6 +19,7 @@ const SORT_FIELDS: SortField<IndexedProject>[] = [
 
 interface Props {
   projects: IndexedProject[];
+  db: Database;
   columns: number;
   pageSize?: number;
   isActive: boolean;
@@ -26,7 +28,7 @@ interface Props {
 }
 
 /** Projects list (master) driving a live project preview (detail). */
-export function ProjectsView({ projects, columns, pageSize, isActive, onOpen, onBack }: Props) {
+export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen, onBack }: Props) {
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
@@ -56,7 +58,7 @@ export function ProjectsView({ projects, columns, pageSize, isActive, onOpen, on
           )}
         />
       }
-      detail={<ProjectPreview project={highlighted} />}
+      detail={<ProjectPreview project={highlighted} db={db} />}
     />
   );
 }

@@ -76,9 +76,10 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
   const markers: ContextMarker[] = [];
   if (points.length === 0) return { points, markers, peakTokens };
   for (const compaction of analysis.compactions) {
-    // A subagent's compaction compacts its own context window — the main
-    // chain's context doesn't drop there, so it gets no marker.
-    if (compaction.isSidechain) continue;
+    // A subagent's compaction compacts its own context window, and an
+    // inherited boundary (continuation-file start) happened before this
+    // session's first call — neither produces a drop in this chart.
+    if (compaction.isSidechain || compaction.inherited) continue;
     const cms = compaction.timestamp ? Date.parse(compaction.timestamp) : Number.NaN;
     if (Number.isNaN(cms)) continue;
     const at = points.findIndex((p) => p.ms !== undefined && p.ms >= cms);

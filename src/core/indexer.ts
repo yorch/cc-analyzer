@@ -38,6 +38,7 @@ export interface SessionRow {
   sidechain_cost: number;
   prompt_chars: number;
   retries: number;
+  compactions: number;
   models_json: string;
   tools_json: string;
   tool_errors_json: string;
@@ -53,6 +54,7 @@ export interface SessionRow {
   commands_json: string;
   command_errors_json: string;
   retries_json: string;
+  compactions_json: string;
   size_bytes: number;
   mtime_ms: number;
   indexed_at: number;
@@ -110,6 +112,8 @@ export function toSessionRow(
     sidechain_cost: analysis.totals.sidechainCost,
     prompt_chars: analysis.promptChars,
     retries: analysis.retries,
+    // Own main-chain compactions only — the countable rollup signal.
+    compactions: analysis.compactions.filter((c) => !c.isSidechain && !c.inherited).length,
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
     tool_errors_json: JSON.stringify(analysis.toolErrors),
@@ -125,6 +129,7 @@ export function toSessionRow(
     commands_json: JSON.stringify(analysis.commandHeads),
     command_errors_json: JSON.stringify(analysis.commandHeadErrors),
     retries_json: JSON.stringify(analysis.retriesByTool),
+    compactions_json: JSON.stringify(analysis.compactions),
     size_bytes: info.sizeBytes,
     mtime_ms: info.mtimeMs,
     indexed_at: now,
@@ -163,6 +168,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "sidechain_cost",
   "prompt_chars",
   "retries",
+  "compactions",
   "models_json",
   "tools_json",
   "tool_errors_json",
@@ -178,6 +184,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "commands_json",
   "command_errors_json",
   "retries_json",
+  "compactions_json",
   "size_bytes",
   "mtime_ms",
   "indexed_at",

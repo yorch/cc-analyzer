@@ -12,6 +12,8 @@ export interface IndexedProject {
   ioTokens: number;
   cacheTokens: number;
   lastActivityMs: number;
+  /** Own main-chain compactions across the project's sessions (schema v7). */
+  compactions: number;
 }
 
 export interface IndexedSession {
@@ -65,7 +67,8 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
         SUM(cost_total) AS cost,
         SUM(${IO_TOKENS}) AS ioTokens,
         SUM(${CACHE_TOKENS}) AS cacheTokens,
-        MAX(mtime_ms) AS lastActivityMs
+        MAX(mtime_ms) AS lastActivityMs,
+        COALESCE(SUM(compactions), 0) AS compactions
       FROM sessions
       GROUP BY project_id
       ORDER BY lastActivityMs DESC`,

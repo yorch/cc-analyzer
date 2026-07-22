@@ -1,4 +1,6 @@
+import type { Database } from "bun:sqlite";
 import { Box, Text } from "ink";
+import { useMemo } from "react";
 import {
   formatCount,
   formatRelativeTime,
@@ -7,7 +9,14 @@ import {
   truncate,
 } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
-import { type CacheMetrics, cacheVerdict } from "../../core/stats.ts";
+import {
+  type CacheMetrics,
+  cacheVerdict,
+  costDistribution,
+  spendByDay,
+  turnDepthStats,
+} from "../../core/stats.ts";
+import { bucketSeries, sparkline } from "../charts.ts";
 import { palette, role, VERDICT_COLOR } from "../theme.ts";
 
 /** A padded `label   value` line, shared by the preview panes. */
@@ -26,8 +35,37 @@ function cacheShare(io: number, cache: number): string {
   return `${Math.round((cache / total) * 100)}%`;
 }
 
-/** Detail-pane summary for a selected project. */
-export function ProjectPreview({ project }: { project: IndexedProject | undefined }) {
+const SPARK_WEEKS = 26;
+
+/** Detail-pane summary for a selected project, with per-project chart lines
+ * (weekly burn sparkline + distribution ramps) computed live from the index. */
+export function ProjectPreview({
+  project,
+  db,
+}: {
+  project: IndexedProject | undefined;
+  db: Database;
+}) {
+  const projectId = project?.projectId;
+  // Per-highlight queries are cheap (indexed by project_id); memoized so
+  // re-renders without a selection change don't re-scan.
+  const weekly = useMemo(
+    () =>
+      projectId
+        ? bucketSeries(spendByDay(db, projectId), "week")
+            .slice(-SPARK_WEEKS)
+            .map((p) => p.cost)
+        : [],
+    [db, projectId],
+  );
+  const dist = useMemo(
+    () => (projectId ? costDistribution(db, projectId) : undefined),
+    [db, projectId],
+  );
+  const depth = useMemo(
+    () => (projectId ? turnDepthStats(db, projectId) : undefined),
+    [db, projectId],
+  );
   if (!project) return <Text color={role.muted}>(no selection)</Text>;
   return (
     <Box flexDirection="column">
@@ -51,7 +89,42 @@ export function ProjectPreview({ project }: { project: IndexedProject | undefine
         <Field label="last active">
           <Text color={role.body}>{formatRelativeTime(project.lastActivityMs)}</Text>
         </Field>
+        {project.compactions > 0 && (
+          <Field label="compactions">
+            <Text color={role.body}>{formatCount(project.compactions)}</Text>
+            <Text color={role.muted}> context-window hits</Text>
+          </Field>
+        )}
       </Box>
+      {weekly.length > 1 && (
+        <Box marginTop={1} flexDirection="column">
+          <Field label="burn / week">
+            <Text color={palette.amber}>{sparkline(weekly, 28)}</Text>
+          </Field>
+          {dist && dist.sessions > 0 && (
+            <Field label="sess cost">
+              <Text color={palette.amber}>
+                {sparkline(
+                  dist.buckets.map((b) => b.count),
+                  dist.buckets.length,
+                )}
+              </Text>
+              <Text color={role.muted}> &lt;1¢→$100+ · median {formatUSD(dist.p50)}</Text>
+            </Field>
+          )}
+          {depth && depth.turns > 0 && (
+            <Field label="turn depth">
+              <Text color={palette.amber}>
+                {sparkline(
+                  depth.buckets.map((b) => b.turns),
+                  depth.buckets.length,
+                )}
+              </Text>
+              <Text color={role.muted}> 1→16+ · avg {depth.avgDepth.toFixed(1)} calls</Text>
+            </Field>
+          )}
+        </Box>
+      )}
       <Box marginTop={1}>
         <Text color={role.muted}>↵ browse this project's sessions</Text>
       </Box>

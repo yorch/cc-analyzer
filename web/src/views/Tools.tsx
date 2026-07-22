@@ -3,6 +3,7 @@ import {
   type AnalyticsResponse,
   api,
   type BashCommandRow,
+  type CompactionUsage,
   type NameUsageRow,
   type SkillDayCount,
   type SkillUsageRow,
@@ -287,6 +288,41 @@ function FactsTable({ head, rows }: { head: string[]; rows: (string | number)[][
   );
 }
 
+/** Which projects chronically hit the context ceiling. Only a session's own
+ * main-chain compactions count — subagent compactions and boundaries inherited
+ * by continuation files are split out in the summary line. */
+function Compactions({ data }: { data: CompactionUsage }) {
+  const s = data.summary;
+  if (s.compactions === 0 && s.sidechain === 0) {
+    return <p className="muted">No compactions recorded. Reindex if this seems wrong.</p>;
+  }
+  return (
+    <>
+      <p className="muted">
+        <strong>{count(s.compactions)}</strong> compactions ({count(s.auto)} auto ·{" "}
+        {count(s.manual)} manual) in {count(s.sessions)} of {count(s.totalSessions)} sessions
+        {s.sidechain > 0 && ` · ${count(s.sidechain)} in subagents`}
+        {s.inherited > 0 && ` · ${count(s.inherited)} inherited from continued sessions`}
+      </p>
+      {data.byProject.length > 0 && (
+        <FactsTable
+          head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
+          rows={data.byProject.map((p) => [
+            shortPath(p.projectPath, p.projectId),
+            count(p.compactions),
+            `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
+            `${(p.share * 100).toFixed(0)}%`,
+          ])}
+        />
+      )}
+      <p className="muted spark-cap">
+        A high share means this project's sessions chronically overflow the context window —
+        consider smaller tasks or trimming CLAUDE.md.
+      </p>
+    </>
+  );
+}
+
 function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
@@ -349,6 +385,9 @@ export function Tools() {
 
       <h2 className="section-h">Turn depth · API calls per turn</h2>
       <DepthPanel depth={data.turnDepth} />
+
+      <h2 className="section-h">Compactions · context-window pressure</h2>
+      <Compactions data={data.compactions} />
 
       <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
       <SkillsTable skills={data.skills} />

@@ -68,6 +68,65 @@ describe("reindex + stats", () => {
   });
 });
 
+describe("reindex · compactions (schema v7)", () => {
+  test("a compacted session lands its own count and full JSON in the row", async () => {
+    // A session with one own boundary+summary pair, one subagent boundary,
+    // and one inherited-looking boundary would be ideal — but own vs
+    // inherited depends on call order, so: assistant call, then boundary.
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        sessionId: "sess-compact",
+        timestamp: "2026-07-01T10:00:00.000Z",
+        message: { role: "user", content: "hi" },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a1",
+        sessionId: "sess-compact",
+        timestamp: "2026-07-01T10:00:05.000Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "ok" }],
+          usage: { input_tokens: 5, output_tokens: 5 },
+        },
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        sessionId: "sess-compact",
+        timestamp: "2026-07-01T10:00:10.000Z",
+        compactMetadata: { trigger: "auto", preTokens: 1234 },
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        isSidechain: true,
+        sessionId: "sess-compact",
+        timestamp: "2026-07-01T10:00:11.000Z",
+        compactMetadata: { trigger: "auto", preTokens: 99 },
+      }),
+    ].join("\n");
+    const file = join(tmpDir, "projects", "proj-b", "sess-compact.jsonl");
+    writeFileSync(file, lines);
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query("SELECT compactions, compactions_json FROM sessions WHERE session_id = 'sess-compact'")
+      .get() as { compactions: number; compactions_json: string };
+    // Only the main-chain boundary counts; the sidechain one is JSON-only.
+    expect(row.compactions).toBe(1);
+    const detail = JSON.parse(row.compactions_json) as { isSidechain?: boolean }[];
+    expect(detail).toHaveLength(2);
+    expect(detail.filter((c) => c.isSidechain)).toHaveLength(1);
+    db.close();
+    rmSync(file, { force: true });
+  });
+});
+
 describe("reindex · rebuild", () => {
   test("rebuild re-parses everything and still prunes deleted files", async () => {
     const content = await Bun.file(fixture).text();

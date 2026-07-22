@@ -117,7 +117,22 @@ their own context windows and are excluded), cumulative burn (main + sidechain),
 per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
 Subagents compact too (`compact_boundary` with `isSidechain`): those compactions
 are captured and counted but never marked on the main-chain context chart —
-they compacted the subagent's own window.
+they compacted the subagent's own window. Continuation files copy the parent
+session's final boundary at their start; the analyzer flags those `inherited`
+(boundary before any API call). Schema v7 flattens compactions into the index:
+the `compactions` INT column counts only a session's *own main-chain*
+compactions (sidechain + inherited excluded, so one compaction never counts in
+two rows), with full detail in `compactions_json`; `compactionUsage()` rolls up
+portfolio pressure for `/api/analytics` and the web Tools view.
+
+**Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
+`costDistribution`, `hotFiles` take an optional `projectId`; `toolUsage()` and
+`turnDepthStats()` are their standalone per-project counterparts (the portfolio
+Tools surfaces still use the single-scan `analyticsRollup`). `projectTrends()`
+bundles all of them for `/api/projects/:id/trends`, rendered by the web project
+page via the shared chart components in `web/src/trend-charts.tsx` (also used by
+the Trends page) and by the TUI project preview (weekly burn sparkline +
+distribution ramps, live per-highlight queries).
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token

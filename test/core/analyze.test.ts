@@ -390,10 +390,19 @@ describe("compaction capture", () => {
     analyzeSession(events as Parameters<typeof analyzeSession>[0], pricing);
 
   test("records a compact_boundary with trigger and preTokens", () => {
-    const a = analyze([boundary(5, "manual", 42)]);
+    const a = analyze([assistantLine(1), boundary(5, "manual", 42)]);
     expect(a.compactions).toEqual([
       { timestamp: "2026-07-01T10:00:05.000Z", trigger: "manual", preTokens: 42 },
     ]);
+  });
+
+  test("flags a boundary before any API call as inherited (continuation file)", () => {
+    // Continuation files copy the parent session's final boundary at their
+    // start — it describes the parent's compaction, not one of this session's.
+    const a = analyze([boundary(5), assistantLine(7)]);
+    expect(a.compactions[0]?.inherited).toBe(true);
+    const b = analyze([assistantLine(1), boundary(5), assistantLine(7)]);
+    expect(b.compactions[0]?.inherited).toBeUndefined();
   });
 
   test("a boundary followed by its summary prompt records one compaction", () => {
@@ -403,7 +412,7 @@ describe("compaction capture", () => {
   });
 
   test("a summary alone (older Claude Code) records a timestamp-only compaction", () => {
-    const a = analyze([summary(6), assistantLine(7)]);
+    const a = analyze([assistantLine(1), summary(6), assistantLine(7)]);
     expect(a.compactions).toEqual([{ timestamp: "2026-07-01T10:00:06.000Z" }]);
   });
 

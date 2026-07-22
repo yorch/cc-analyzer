@@ -177,6 +177,7 @@ export function App({ db, pricing }: Props) {
     body = (
       <ProjectsView
         projects={projects}
+        db={db}
         columns={columns}
         pageSize={listPageSize}
         isActive={bodyActive}

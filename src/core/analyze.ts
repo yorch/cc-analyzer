@@ -79,6 +79,11 @@ export interface Compaction {
    * transcript — it compacted that subagent's own context window, not the
    * main chain's, so it must not be marked on the main context chart. */
   isSidechain?: boolean;
+  /** True when the record precedes any API call in the file. Continuation
+   * files copy the parent session's final compact_boundary at their start, so
+   * such a record describes the *parent's* compaction — portfolio rollups
+   * must not count it again here. */
+  inherited?: boolean;
 }
 
 export interface SessionTotals {
@@ -487,6 +492,7 @@ class SessionAnalyzer {
           trigger: sys.compactMetadata?.trigger,
           preTokens: sys.compactMetadata?.preTokens,
           ...(side ? { isSidechain: true } : {}),
+          ...(this.apiCallCount === 0 ? { inherited: true } : {}),
         });
         this.pendingBoundarySidechain = side;
       }
@@ -502,6 +508,7 @@ class SessionAnalyzer {
           this.compactions.push({
             timestamp: event.timestamp,
             ...(side ? { isSidechain: true } : {}),
+            ...(this.apiCallCount === 0 ? { inherited: true } : {}),
           });
       }
       // Resolve any tool_result blocks first (a user event may carry them

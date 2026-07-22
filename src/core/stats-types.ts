@@ -479,6 +479,52 @@ export interface RetryStats {
   byTool: RetryToolRow[];
 }
 
+/** Everything the project page charts need — `/api/projects/:id/trends`. */
+export interface ProjectTrends {
+  daily: DayRow[];
+  modelMix: ModelDayRow[];
+  scatter: ScatterSession[];
+  distribution: CostDistribution;
+  turnDepth: TurnDepthStats;
+  tools: ToolUsageRow[];
+}
+
+/**
+ * Portfolio compaction pressure. "Own" compactions exclude both subagent
+ * compactions (their own context windows) and inherited boundaries (copied
+ * from the parent session at the start of a continuation file) — so one real
+ * compaction is never counted in two session rows.
+ */
+export interface CompactionSummary {
+  /** Sessions with ≥1 own main-chain compaction. */
+  sessions: number;
+  totalSessions: number;
+  /** Own main-chain compactions across the portfolio. */
+  compactions: number;
+  auto: number;
+  manual: number;
+  /** Compactions inside subagent transcripts (not counted above). */
+  sidechain: number;
+  /** Inherited boundaries at continuation-file starts (not counted above). */
+  inherited: number;
+}
+
+export interface CompactionProjectRow {
+  projectId: string;
+  projectPath: string | null;
+  sessions: number;
+  sessionsWithCompaction: number;
+  /** Own main-chain compactions. */
+  compactions: number;
+  /** sessionsWithCompaction / sessions. */
+  share: number;
+}
+
+export interface CompactionUsage {
+  summary: CompactionSummary;
+  byProject: CompactionProjectRow[];
+}
+
 export interface ConcurrencyDayRow {
   day: string;
   maxConcurrent: number;

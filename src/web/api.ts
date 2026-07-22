@@ -18,12 +18,14 @@ import {
   cacheTtlSplit,
   cacheWasteByProject,
   cacheWasteBySession,
+  compactionUsage,
   concurrency,
   errorRateByWeek,
   hotFiles,
   idleVsCache,
   localDayOfMs,
   modelMixByDay,
+  projectTrends,
   sessionScatter,
   sidechainByDay,
   sidechainByProject,
@@ -112,10 +114,18 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       ...analyticsRollup(db),
       webTools: webToolUsage(db),
       sidechain: { summary: sidechainSummary(db), byProject: sidechainByProject(db) },
+      compactions: compactionUsage(db),
     })),
   );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
+
+  // Project-scoped chart series: burn, model mix, scatter, and distributions.
+  // Memoized per project id against the same index fingerprint.
+  api.get("/api/projects/:id/trends", (c) => {
+    const id = c.req.param("id");
+    return cachedJson(c, `ptrends:${id}`, fingerprint(), () => projectTrends(db, id));
+  });
 
   // Files Claude touched across a project's sessions, hottest first.
   api.get("/api/projects/:id/files", (c) => c.json(hotFiles(db, c.req.param("id"))));

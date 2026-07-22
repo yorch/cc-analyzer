@@ -35,6 +35,7 @@ export function insertSession(
     sidechain_cost: 0,
     prompt_chars: 0,
     retries: 0,
+    compactions: 0,
   };
   const full = { ...defaults, ...row };
   const cols = Object.keys(full);
