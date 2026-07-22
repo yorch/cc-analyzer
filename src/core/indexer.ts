@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
-import { analyzeSession } from "./analyze.ts";
+import { analyzeSessionStream } from "./analyze.ts";
 import { listAllSessions, type SessionInfo } from "./discover.ts";
-import { parseSessionFile } from "./parser.ts";
+import { streamSessionEvents } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
 
@@ -110,7 +110,7 @@ export function toSessionRow(
     active_ms: analysis.totals.activeMs,
     sidechain_calls: analysis.totals.sidechainApiCalls,
     sidechain_cost: analysis.totals.sidechainCost,
-    prompt_chars: analysis.turns.reduce((sum, turn) => sum + turn.prompt.length, 0),
+    prompt_chars: analysis.promptChars,
     test_runs: analysis.testRuns,
     test_failures: analysis.testFailures,
     retries: analysis.retries,
@@ -120,7 +120,7 @@ export function toSessionRow(
     skills_json: JSON.stringify(analysis.skills),
     skill_errors_json: JSON.stringify(analysis.skillErrors),
     subagents_json: JSON.stringify(analysis.subagents),
-    turn_depths_json: JSON.stringify(analysis.turns.map((turn) => turn.mainApiCalls)),
+    turn_depths_json: JSON.stringify(analysis.turnDepths),
     permission_modes_json: JSON.stringify(analysis.permissionModes),
     stop_reasons_json: JSON.stringify(analysis.stopReasons),
     files_json: JSON.stringify(analysis.filesTouched),
@@ -263,8 +263,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   let done = 0;
   const rows = await mapPool(toIngest, concurrency, async (info) => {
     try {
-      const { events } = await parseSessionFile(info.path);
-      const analysis = analyzeSession(events, pricing);
+      // Stream events and skip the per-turn timeline: the index stores only
+      // aggregates, so a huge session never materializes as a full array.
+      const analysis = await analyzeSessionStream(streamSessionEvents(info.path), pricing, {
+        detail: false,
+      });
       return toSessionRow(analysis, info, now);
     } catch {
       return null;

@@ -90,6 +90,7 @@ export interface SessionAnalysis {
   endTime?: string;
   durationMs?: number;
   totals: SessionTotals;
+  /** Per-turn timeline. Empty when analysis ran in aggregate-only mode. */
   turns: Turn[];
   models: Record<string, ModelUsage>;
   tools: Record<string, number>;
@@ -115,6 +116,20 @@ export interface SessionAnalysis {
   /** Consecutive tool calls with identical tool + input (churn / wasted loops). */
   retries: number;
   retriesByTool: Record<string, number>;
+  /** Total characters across every turn's prompt (survives aggregate mode). */
+  promptChars: number;
+  /** Main-chain API calls per turn, in order — the turn-depth series. Available
+   * even in aggregate mode, where `turns` is empty. */
+  turnDepths: number[];
+}
+
+export interface AnalyzeOptions {
+  /**
+   * Build the per-turn timeline (turns + steps + ApiCall objects). Default true.
+   * When false, only the aggregate fields are computed — the memory win for the
+   * indexer, which never reads `turns` (it uses `promptChars`/`turnDepths`).
+   */
+  detail?: boolean;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -215,32 +230,6 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
-interface ToolResult {
-  isError: boolean;
-  text: string;
-}
-
-/** Map each tool_use_id to its result (error flag + text) from tool_result blocks. */
-function collectToolResults(events: SessionEvent[]): Map<string, ToolResult> {
-  const map = new Map<string, ToolResult>();
-  for (const e of events) {
-    if (!isUser(e)) continue;
-    const content = e.message.content;
-    if (typeof content === "string") continue;
-    for (const block of content) {
-      const b = block as ContentBlock & {
-        tool_use_id?: string;
-        is_error?: boolean;
-        content?: unknown;
-      };
-      if (b.type === "tool_result" && b.tool_use_id) {
-        map.set(b.tool_use_id, { isError: b.is_error === true, text: resultToText(b.content) });
-      }
-    }
-  }
-  return map;
-}
-
 function stringField(input: unknown, key: string): string | undefined {
   if (typeof input === "object" && input !== null && key in input) {
     const v = (input as Record<string, unknown>)[key];
@@ -249,354 +238,490 @@ function stringField(input: unknown, key: string): string | undefined {
   return undefined;
 }
 
-/** Analyze a session's events into per-turn and aggregate metrics. */
-export function analyzeSession(events: SessionEvent[], pricing: PricingTable): SessionAnalysis {
-  const toolResults = collectToolResults(events);
+/** A tool_use awaiting its (later-arriving) tool_result. */
+interface PendingTool {
+  toolName: string;
+  skillName?: string;
+  /** Bash command family, if this was a Bash call — for deferred `bashErrors`. */
+  bashFamily?: string;
+  /** Whether this Bash call looked like a test run — for deferred `testFailures`. */
+  isTest?: boolean;
+  /** The step to patch when the result arrives — only in detail mode. */
+  step?: TurnStep;
+}
 
-  const turns: Turn[] = [];
-  const gitBranches = new Set<string>();
-  const versions = new Set<string>();
-  const models: Record<string, ModelUsage> = {};
-  const tools: Record<string, number> = {};
-  const toolErrors: Record<string, number> = {};
-  const skills: Record<string, number> = {};
-  const skillErrors: Record<string, number> = {};
-  const subagents = new Set<string>();
-  const filesTouched = new Set<string>();
-  let title: string | undefined;
-  let sessionId: string | undefined;
-  let projectPath: string | undefined;
-  let startTime: string | undefined;
-  let endTime: string | undefined;
-  let webSearches = 0;
-  let webFetches = 0;
-  let toolCallCount = 0;
-  let apiCallCount = 0;
-  let totalTokens = zeroTokens();
-  let totalCost = zeroCost();
-  let current: Turn | undefined;
-  const stopReasons: Record<string, number> = {};
-  const permissionModes: Record<string, number> = {};
-  const bashCommands: Record<string, number> = {};
-  const bashErrors: Record<string, number> = {};
-  let testRuns = 0;
-  let testFailures = 0;
-  let retries = 0;
-  const retriesByTool: Record<string, number> = {};
-  // Separate cursors for the main chain and sidechains, reset at each new
-  // turn: a user-requested re-run or an interleaved subagent call must not
-  // read as churn. (Parallel sidechains still share one cursor — resolving
-  // per-chain identity would need a parentUuid walk.) Inputs are serialized
-  // lazily, only when tool names match — Write/Edit inputs can be MB-scale.
-  interface ToolCursor {
-    name: string;
-    input: unknown;
-    json?: string;
+/** Cursor tracking the previous tool call on a chain, for retry/churn detection. */
+interface ToolCursor {
+  name: string;
+  input: unknown;
+  json?: string;
+}
+
+/**
+ * Streaming accumulator behind both `analyzeSession` (array) and
+ * `analyzeSessionStream`. A single forward pass: tool_uses register in
+ * `pending` and are resolved when their `tool_result` arrives later, so error
+ * attribution and step results work without a second pass over the events.
+ */
+class SessionAnalyzer {
+  private readonly turns: Turn[] = [];
+  private readonly gitBranches = new Set<string>();
+  private readonly versions = new Set<string>();
+  private readonly models: Record<string, ModelUsage> = {};
+  private readonly tools: Record<string, number> = {};
+  private readonly toolErrors: Record<string, number> = {};
+  private readonly skills: Record<string, number> = {};
+  private readonly skillErrors: Record<string, number> = {};
+  private readonly subagents = new Set<string>();
+  private readonly filesTouched = new Set<string>();
+  private readonly stopReasons: Record<string, number> = {};
+  private readonly permissionModes: Record<string, number> = {};
+  private readonly bashCommands: Record<string, number> = {};
+  private readonly bashErrors: Record<string, number> = {};
+  private readonly retriesByTool: Record<string, number> = {};
+  private readonly turnDepths: number[] = [];
+  private title?: string;
+  private sessionId?: string;
+  private projectPath?: string;
+  private startTime?: string;
+  private endTime?: string;
+  private webSearches = 0;
+  private webFetches = 0;
+  private toolCallCount = 0;
+  private apiCallCount = 0;
+  private turnCount = 0;
+  private testRuns = 0;
+  private testFailures = 0;
+  private retries = 0;
+  private sidechainApiCalls = 0;
+  private sidechainCost = 0;
+  private promptChars = 0;
+  private totalTokens = zeroTokens();
+  private totalCost = zeroCost();
+  private current?: Turn;
+
+  // Turn depth: main-chain calls in the open turn, finalized to `turnDepths` at
+  // each turn boundary (so it works even in aggregate mode, where `turns` is
+  // never built).
+  private hasTurn = false;
+  private currentDepth = 0;
+
+  // Retry cursors: the previous tool call on the main chain and on sidechains,
+  // reset at each new turn (a user-requested re-run isn't churn). Parallel
+  // sidechains share one cursor — per-chain identity would need a parentUuid
+  // walk. Inputs are serialized lazily (only when tool names match).
+  private prevToolMain?: ToolCursor;
+  private prevToolSide?: ToolCursor;
+
+  // Every parsed event timestamp (ms); sorted once at the end for active time,
+  // so interleaved out-of-order sidechain lines can't skew the sum.
+  private readonly eventMs: number[] = [];
+
+  // Streamed responses log one `assistant` line per content block, each
+  // repeating the same message id and full usage. `seenUsage` de-dups so usage
+  // is counted once; `callsByKey` (detail only) merges continuation steps into
+  // the originating ApiCall; `stoppedKeys` records which calls already had a
+  // stop_reason counted (it can arrive on any line of the call).
+  private readonly seenUsage = new Set<string>();
+  private readonly callsByKey = new Map<string, ApiCall>();
+  private readonly stoppedKeys = new Set<string>();
+  private readonly pending = new Map<string, PendingTool>();
+
+  constructor(
+    private readonly pricing: PricingTable,
+    private readonly detail: boolean,
+  ) {}
+
+  private touchTime(ts?: string): void {
+    if (!ts) return;
+    if (!this.startTime || ts < this.startTime) this.startTime = ts;
+    if (!this.endTime || ts > this.endTime) this.endTime = ts;
+    if (this.detail && this.current) {
+      if (!this.current.startTime || ts < this.current.startTime) this.current.startTime = ts;
+      if (!this.current.endTime || ts > this.current.endTime) this.current.endTime = ts;
+    }
+    const ms = Date.parse(ts);
+    if (!Number.isNaN(ms)) this.eventMs.push(ms);
   }
-  let prevToolMain: ToolCursor | undefined;
-  let prevToolSide: ToolCursor | undefined;
-  let sidechainApiCalls = 0;
-  let sidechainCost = 0;
-  // Every parsed event timestamp; sorted once at the end for active time, so
-  // interleaved out-of-order sidechain lines can't skew the sum.
-  const eventMs: number[] = [];
 
-  // Streamed responses are logged as one `assistant` line per content block,
-  // each repeating the same message id and full usage. Merge those lines into a
-  // single ApiCall keyed by (message id / requestId), counting usage once —
-  // keyed rather than adjacency-based so interleaved main-chain and sidechain
-  // streams still merge to the right call.
-  const callsByKey = new Map<string, ApiCall>();
-  const usageKey = (e: AssistantEvent): string | undefined => {
+  private usageKey(e: AssistantEvent): string | undefined {
     const mid = e.message.id;
     if (mid && e.requestId) return `${mid}:${e.requestId}`;
     return mid ?? e.requestId;
-  };
+  }
 
-  const touchTime = (ts?: string) => {
-    if (!ts) return;
-    if (!startTime || ts < startTime) startTime = ts;
-    if (!endTime || ts > endTime) endTime = ts;
-    if (current) {
-      if (!current.startTime || ts < current.startTime) current.startTime = ts;
-      if (!current.endTime || ts > current.endTime) current.endTime = ts;
+  /** Count a call's stop_reason once — on whichever line first carries one. */
+  private countStopReason(reason: string, key: string | undefined): void {
+    if (key !== undefined) {
+      if (this.stoppedKeys.has(key)) return;
+      this.stoppedKeys.add(key);
     }
-    const ms = Date.parse(ts);
-    if (!Number.isNaN(ms)) eventMs.push(ms);
-  };
+    this.stopReasons[reason] = (this.stopReasons[reason] ?? 0) + 1;
+  }
 
-  for (const event of events) {
+  /** Attach a tool_result to its pending tool_use: count errors, patch the step. */
+  private resolveResult(id: string, isError: boolean, rawContent: unknown): void {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    if (isError) {
+      this.toolErrors[p.toolName] = (this.toolErrors[p.toolName] ?? 0) + 1;
+      if (p.skillName) this.skillErrors[p.skillName] = (this.skillErrors[p.skillName] ?? 0) + 1;
+      if (p.bashFamily) this.bashErrors[p.bashFamily] = (this.bashErrors[p.bashFamily] ?? 0) + 1;
+      if (p.isTest) this.testFailures += 1;
+    }
+    if (this.detail && p.step) {
+      const text = resultToText(rawContent);
+      const capped = capDetail(text);
+      p.step.status = isError ? "error" : "ok";
+      p.step.resultHint = makeResultHint(isError, text);
+      p.step.detail = {
+        input: p.step.detail?.input,
+        result: capped.text,
+        truncated: (p.step.detail?.truncated ?? false) || capped.truncated,
+      };
+    }
+  }
+
+  push(event: SessionEvent): void {
     const meta = event as {
       sessionId?: string;
       cwd?: string;
       gitBranch?: string;
       version?: string;
-      timestamp?: string;
       type?: string;
       aiTitle?: string;
     };
-    if (meta.sessionId && !sessionId) sessionId = meta.sessionId;
-    if (meta.cwd && !projectPath) projectPath = meta.cwd;
-    if (meta.gitBranch) gitBranches.add(meta.gitBranch);
-    if (meta.version) versions.add(meta.version);
-    if (meta.type === "ai-title" && meta.aiTitle) title = meta.aiTitle;
+    if (meta.sessionId && !this.sessionId) this.sessionId = meta.sessionId;
+    if (meta.cwd && !this.projectPath) this.projectPath = meta.cwd;
+    if (meta.gitBranch) this.gitBranches.add(meta.gitBranch);
+    if (meta.version) this.versions.add(meta.version);
+    if (meta.type === "ai-title" && meta.aiTitle) this.title = meta.aiTitle;
 
-    if (isUser(event) && isRealPrompt(event)) {
-      current = {
-        index: turns.length,
-        prompt: promptPreview(event.message.content),
-        promptId: event.promptId,
-        permissionMode: event.permissionMode,
-        models: [],
-        apiCalls: [],
-        mainApiCalls: 0,
-        tokens: zeroTokens(),
-        cost: zeroCost(),
-        toolCounts: {},
-      };
-      turns.push(current);
-      const mode = event.permissionMode ?? "default";
-      permissionModes[mode] = (permissionModes[mode] ?? 0) + 1;
-      // A new turn is a fresh start: repeating the previous turn's last call
-      // (e.g. the user asked to run it again) is not churn.
-      prevToolMain = undefined;
-      prevToolSide = undefined;
-      touchTime(event.timestamp);
-      continue;
+    if (isUser(event)) {
+      // Resolve any tool_result blocks first (a user event may carry them
+      // whether or not it is also a genuine prompt).
+      const content = event.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          const b = block as ContentBlock & {
+            tool_use_id?: string;
+            is_error?: boolean;
+            content?: unknown;
+          };
+          if (b.type === "tool_result" && b.tool_use_id) {
+            this.resolveResult(b.tool_use_id, b.is_error === true, b.content);
+          }
+        }
+      }
+      if (isRealPrompt(event)) {
+        const prompt = promptPreview(content);
+        this.promptChars += prompt.length;
+        // Finalize the previous turn's depth before opening this one.
+        if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+        this.hasTurn = true;
+        this.currentDepth = 0;
+        this.turnCount += 1;
+        const mode = event.permissionMode ?? "default";
+        this.permissionModes[mode] = (this.permissionModes[mode] ?? 0) + 1;
+        // A new turn is a fresh start: repeating the previous turn's last call
+        // (e.g. the user asked to run it again) is not churn.
+        this.prevToolMain = undefined;
+        this.prevToolSide = undefined;
+        if (this.detail) {
+          this.current = {
+            index: this.turns.length,
+            prompt,
+            promptId: event.promptId,
+            permissionMode: event.permissionMode,
+            models: [],
+            apiCalls: [],
+            mainApiCalls: 0,
+            tokens: zeroTokens(),
+            cost: zeroCost(),
+            toolCounts: {},
+          };
+          this.turns.push(this.current);
+        }
+      }
+      this.touchTime(event.timestamp);
+      return;
     }
 
     if (isAssistant(event)) {
-      touchTime(event.timestamp);
-      const key = usageKey(event);
-      const existing = key !== undefined ? callsByKey.get(key) : undefined;
+      this.pushAssistant(event);
+      return;
+    }
 
-      const steps: TurnStep[] = [];
-      for (const block of event.message.content) {
-        const b = block as ContentBlock & { text?: string; thinking?: string };
-        if (b.type === "text") {
-          const text = b.text ?? "";
-          if (text.trim() === "") continue;
-          const capped = capDetail(text);
-          steps.push({
-            kind: "note",
-            label: "Assistant",
-            summary: truncate(text, 200),
-            detail: { result: capped.text, truncated: capped.truncated },
-          });
-          continue;
+    this.touchTime((event as { timestamp?: string }).timestamp);
+  }
+
+  private pushAssistant(event: AssistantEvent): void {
+    this.touchTime(event.timestamp);
+    const key = this.usageKey(event);
+    const isContinuation = key !== undefined && this.seenUsage.has(key);
+
+    // Every content block appears on exactly one line, so tool counting +
+    // pending registration run for every assistant line (including
+    // continuations); only usage counting is gated on the first line.
+    const steps: TurnStep[] = [];
+    for (const block of event.message.content) {
+      const b = block as ContentBlock & { text?: string; thinking?: string };
+      if (b.type === "text") {
+        if (!this.detail) continue;
+        const text = b.text ?? "";
+        if (text.trim() === "") continue;
+        const capped = capDetail(text);
+        steps.push({
+          kind: "note",
+          label: "Assistant",
+          summary: truncate(text, 200),
+          detail: { result: capped.text, truncated: capped.truncated },
+        });
+        continue;
+      }
+      if (b.type === "thinking") {
+        if (!this.detail) continue;
+        const think = b.thinking ?? "";
+        const capped = capDetail(think);
+        steps.push({
+          kind: "thinking",
+          label: "thinking",
+          summary: think.trim() === "" ? "(hidden)" : truncate(think, 160),
+          detail: { result: capped.text, truncated: capped.truncated },
+        });
+        continue;
+      }
+      if (b.type !== "tool_use") continue;
+
+      const tu = block as ToolUseBlock;
+      this.toolCallCount += 1;
+      this.tools[tu.name] = (this.tools[tu.name] ?? 0) + 1;
+      if (this.detail && this.current) {
+        this.current.toolCounts[tu.name] = (this.current.toolCounts[tu.name] ?? 0) + 1;
+      }
+
+      // Churn: a tool call identical to the immediately preceding one on the
+      // same chain (same tool, same input) is a retry — the loop re-did work.
+      const onSidechain = event.isSidechain === true;
+      const prevTool = onSidechain ? this.prevToolSide : this.prevToolMain;
+      const cursor: ToolCursor = { name: tu.name, input: tu.input };
+      if (prevTool && prevTool.name === tu.name) {
+        prevTool.json ??= JSON.stringify(prevTool.input ?? null);
+        cursor.json = JSON.stringify(tu.input ?? null);
+        if (cursor.json === prevTool.json) {
+          this.retries += 1;
+          this.retriesByTool[tu.name] = (this.retriesByTool[tu.name] ?? 0) + 1;
         }
-        if (b.type === "thinking") {
-          const think = b.thinking ?? "";
-          const capped = capDetail(think);
-          steps.push({
-            kind: "thinking",
-            label: "thinking",
-            summary: think.trim() === "" ? "(hidden)" : truncate(think, 160),
-            detail: { result: capped.text, truncated: capped.truncated },
-          });
-          continue;
-        }
-        if (b.type !== "tool_use") continue;
+      }
+      if (onSidechain) this.prevToolSide = cursor;
+      else this.prevToolMain = cursor;
 
-        const tu = block as ToolUseBlock;
-        toolCallCount += 1;
-        tools[tu.name] = (tools[tu.name] ?? 0) + 1;
-        if (current) current.toolCounts[tu.name] = (current.toolCounts[tu.name] ?? 0) + 1;
+      let skillName: string | undefined;
+      if (tu.name === "Skill") {
+        skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
+        if (skillName) this.skills[skillName] = (this.skills[skillName] ?? 0) + 1;
+      } else if (tu.name === "Task" || tu.name === "Agent") {
+        const t = stringField(tu.input, "subagent_type");
+        if (t) this.subagents.add(t);
+      }
+      if (FILE_TOOLS.has(tu.name)) {
+        const fp = stringField(tu.input, "file_path");
+        if (fp) this.filesTouched.add(fp);
+      }
 
-        // Churn: a tool call identical to the immediately preceding one on
-        // the same chain (same tool, same input) is a retry — the loop re-did
-        // work it just did.
-        const onSidechain = event.isSidechain === true;
-        const prevTool = onSidechain ? prevToolSide : prevToolMain;
-        const cursor: ToolCursor = { name: tu.name, input: tu.input };
-        if (prevTool && prevTool.name === tu.name) {
-          prevTool.json ??= JSON.stringify(prevTool.input ?? null);
-          cursor.json = JSON.stringify(tu.input ?? null);
-          if (cursor.json === prevTool.json) {
-            retries += 1;
-            retriesByTool[tu.name] = (retriesByTool[tu.name] ?? 0) + 1;
+      // Bash command families + test runs (counted now; error/failure deferred
+      // to the tool_result via `pending`).
+      let bashFamily: string | undefined;
+      let isTest = false;
+      if (tu.name === "Bash") {
+        const cmd = stringField(tu.input, "command");
+        if (cmd) {
+          bashFamily = commandFamily(cmd);
+          if (bashFamily) this.bashCommands[bashFamily] = (this.bashCommands[bashFamily] ?? 0) + 1;
+          if (isTestCommand(cmd)) {
+            isTest = true;
+            this.testRuns += 1;
           }
         }
-        if (onSidechain) prevToolSide = cursor;
-        else prevToolMain = cursor;
+      }
 
-        let skillName: string | undefined;
-        if (tu.name === "Skill") {
-          skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
-          if (skillName) skills[skillName] = (skills[skillName] ?? 0) + 1;
-        } else if (tu.name === "Task" || tu.name === "Agent") {
-          const t = stringField(tu.input, "subagent_type");
-          if (t) subagents.add(t);
-        }
-        if (FILE_TOOLS.has(tu.name)) {
-          const fp = stringField(tu.input, "file_path");
-          if (fp) filesTouched.add(fp);
-        }
-
-        const result = toolResults.get(tu.id);
-        if (tu.name === "Bash") {
-          const cmd = stringField(tu.input, "command");
-          if (cmd) {
-            const family = commandFamily(cmd);
-            if (family) {
-              bashCommands[family] = (bashCommands[family] ?? 0) + 1;
-              if (result?.isError) bashErrors[family] = (bashErrors[family] ?? 0) + 1;
-            }
-            if (isTestCommand(cmd)) {
-              testRuns += 1;
-              if (result?.isError) testFailures += 1;
-            }
-          }
-        }
-        if (result?.isError) {
-          toolErrors[tu.name] = (toolErrors[tu.name] ?? 0) + 1;
-          if (skillName) skillErrors[skillName] = (skillErrors[skillName] ?? 0) + 1;
-        }
+      let step: TurnStep | undefined;
+      if (this.detail) {
         const { kind, label, summary } = summarizeToolUse(tu.name, tu.input);
         const inputCapped = capDetail(JSON.stringify(tu.input ?? null, null, 2));
-        const resultCapped = result ? capDetail(result.text) : undefined;
-        steps.push({
+        step = {
           kind,
           tool: tu.name,
           label,
           summary,
           toolUseId: tu.id,
-          status: result ? (result.isError ? "error" : "ok") : undefined,
-          resultHint: result ? makeResultHint(result.isError, result.text) : undefined,
-          detail: {
-            input: inputCapped.text,
-            result: resultCapped?.text,
-            truncated: inputCapped.truncated || resultCapped?.truncated === true,
-          },
-        });
+          detail: { input: inputCapped.text, truncated: inputCapped.truncated },
+        };
+        steps.push(step);
       }
+      this.pending.set(tu.id, { toolName: tu.name, skillName, bashFamily, isTest, step });
+    }
 
-      // A continuation line of an already-counted API call: keep its steps on
-      // the originating ApiCall, but never re-count its usage or re-price it.
-      // stop_reason arrives on whichever streamed line closed the response, so
-      // continuation lines may carry it for an already-created call — count it
-      // once, when the call's stopReason is first filled in.
-      if (existing) {
-        existing.steps.push(...steps);
-        const reason = event.message.stop_reason;
-        if (reason && !existing.stopReason) {
-          existing.stopReason = reason;
-          stopReasons[reason] = (stopReasons[reason] ?? 0) + 1;
+    // A continuation line of an already-counted API call: keep its steps on the
+    // originating ApiCall, but never re-count its usage or re-price it. Its
+    // stop_reason may still be the one that closed the response.
+    if (isContinuation) {
+      if (this.detail && key !== undefined) {
+        const call = this.callsByKey.get(key);
+        if (call) {
+          call.steps.push(...steps);
+          const reason = event.message.stop_reason;
+          if (reason && !call.stopReason) call.stopReason = reason;
         }
-        continue;
       }
+      const reason = event.message.stop_reason;
+      if (reason) this.countStopReason(reason, key);
+      return;
+    }
+    if (key !== undefined) this.seenUsage.add(key);
 
-      // First (or only) line of this API call: count and price its usage once.
-      const usage = event.message.usage;
-      webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
-      webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
+    // First (or only) line of this API call: count and price its usage once.
+    const usage = event.message.usage;
+    this.webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
+    this.webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
 
-      const tokens = usageToTokens(usage);
-      const model = event.message.model;
-      const resolved = model ? resolveModel(pricing, model) : undefined;
-      const cost = computeCost(tokens, resolved?.pricing);
-      // A family-heuristic match (non-exact) is still an estimate.
-      if (resolved && !resolved.exact) cost.estimated = true;
+    const tokens = usageToTokens(usage);
+    const model = event.message.model;
+    const resolved = model ? resolveModel(this.pricing, model) : undefined;
+    const cost = computeCost(tokens, resolved?.pricing);
+    // A family-heuristic match (non-exact) is still an estimate.
+    if (resolved && !resolved.exact) cost.estimated = true;
 
+    const stopReason = event.message.stop_reason ?? undefined;
+    if (stopReason) this.countStopReason(stopReason, key);
+
+    this.apiCallCount += 1;
+    const isSidechain = event.isSidechain === true;
+    if (isSidechain) {
+      this.sidechainApiCalls += 1;
+      this.sidechainCost += cost.total;
+    } else if (this.hasTurn) {
+      this.currentDepth += 1;
+    }
+    this.totalTokens = addTokens(this.totalTokens, tokens);
+    this.totalCost = addCost(this.totalCost, cost);
+    if (model) {
+      let mu = this.models[model];
+      if (!mu) {
+        mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
+        this.models[model] = mu;
+      }
+      mu.apiCalls += 1;
+      mu.tokens = addTokens(mu.tokens, tokens);
+      mu.cost = addCost(mu.cost, cost);
+    }
+
+    if (this.detail) {
       const apiCall: ApiCall = {
         uuid: event.uuid,
         model,
         timestamp: event.timestamp,
-        isSidechain: event.isSidechain === true,
-        stopReason: event.message.stop_reason ?? undefined,
+        isSidechain,
+        stopReason,
         tokens,
         cost,
         steps,
       };
-      if (key !== undefined) callsByKey.set(key, apiCall);
-      if (apiCall.stopReason) {
-        stopReasons[apiCall.stopReason] = (stopReasons[apiCall.stopReason] ?? 0) + 1;
+      if (key !== undefined) this.callsByKey.set(key, apiCall);
+      if (this.current) {
+        this.current.apiCalls.push(apiCall);
+        if (!isSidechain) this.current.mainApiCalls += 1;
+        this.current.tokens = addTokens(this.current.tokens, tokens);
+        this.current.cost = addCost(this.current.cost, cost);
+        if (model && !this.current.models.includes(model)) this.current.models.push(model);
       }
+    }
+  }
 
-      apiCallCount += 1;
-      if (apiCall.isSidechain) {
-        sidechainApiCalls += 1;
-        sidechainCost += cost.total;
-      }
-      totalTokens = addTokens(totalTokens, tokens);
-      totalCost = addCost(totalCost, cost);
-      if (model) {
-        let mu = models[model];
-        if (!mu) {
-          mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
-          models[model] = mu;
-        }
-        mu.apiCalls += 1;
-        mu.tokens = addTokens(mu.tokens, tokens);
-        mu.cost = addCost(mu.cost, cost);
-      }
+  finish(): SessionAnalysis {
+    // Finalize the last open turn's depth.
+    if (this.hasTurn) this.turnDepths.push(this.currentDepth);
 
-      if (current) {
-        current.apiCalls.push(apiCall);
-        if (!apiCall.isSidechain) current.mainApiCalls += 1;
-        current.tokens = addTokens(current.tokens, tokens);
-        current.cost = addCost(current.cost, cost);
-        if (model && !current.models.includes(model)) current.models.push(model);
-      }
-      continue;
+    // Active time: sum gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
+    // (longer gaps are the session sitting idle). Sorting first makes the sum
+    // exact under any event interleaving and keeps activeMs ≤ durationMs.
+    this.eventMs.sort((a, b) => a - b);
+    let activeMs = 0;
+    for (let i = 1; i < this.eventMs.length; i++) {
+      const gap = (this.eventMs[i] as number) - (this.eventMs[i - 1] as number);
+      if (gap <= ACTIVE_GAP_MS) activeMs += gap;
     }
 
-    touchTime((event as { timestamp?: string }).timestamp);
+    const totals: SessionTotals = {
+      // Counted over every API call — including calls before the first prompt —
+      // so totals always agree with `models`.
+      turns: this.turnCount,
+      apiCalls: this.apiCallCount,
+      toolCalls: this.toolCallCount,
+      tokens: this.totalTokens,
+      cost: this.totalCost,
+      webSearches: this.webSearches,
+      webFetches: this.webFetches,
+      sidechainApiCalls: this.sidechainApiCalls,
+      sidechainCost: this.sidechainCost,
+      activeMs,
+    };
+    return {
+      sessionId: this.sessionId,
+      title: this.title,
+      projectPath: this.projectPath,
+      gitBranches: [...this.gitBranches],
+      versions: [...this.versions],
+      startTime: this.startTime,
+      endTime: this.endTime,
+      durationMs:
+        this.startTime && this.endTime
+          ? new Date(this.endTime).getTime() - new Date(this.startTime).getTime()
+          : undefined,
+      totals,
+      turns: this.turns,
+      models: this.models,
+      tools: this.tools,
+      toolErrors: this.toolErrors,
+      skills: this.skills,
+      skillErrors: this.skillErrors,
+      subagents: [...this.subagents],
+      filesTouched: [...this.filesTouched],
+      stopReasons: this.stopReasons,
+      permissionModes: this.permissionModes,
+      bashCommands: this.bashCommands,
+      bashErrors: this.bashErrors,
+      testRuns: this.testRuns,
+      testFailures: this.testFailures,
+      retries: this.retries,
+      retriesByTool: this.retriesByTool,
+      promptChars: this.promptChars,
+      turnDepths: this.turnDepths,
+    };
   }
+}
 
-  // Active time: sum the gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
-  // (longer gaps are the session sitting idle). Sorting first makes the sum
-  // exact under any event interleaving and keeps activeMs ≤ durationMs.
-  eventMs.sort((a, b) => a - b);
-  let activeMs = 0;
-  for (let i = 1; i < eventMs.length; i++) {
-    const gap = (eventMs[i] as number) - (eventMs[i - 1] as number);
-    if (gap <= ACTIVE_GAP_MS) activeMs += gap;
-  }
+/** Analyze a session's events into per-turn and aggregate metrics. */
+export function analyzeSession(events: SessionEvent[], pricing: PricingTable): SessionAnalysis {
+  const analyzer = new SessionAnalyzer(pricing, true);
+  for (const event of events) analyzer.push(event);
+  return analyzer.finish();
+}
 
-  // Totals are accumulated over every API call — including calls that arrive
-  // before the first genuine prompt — so they always agree with `models`.
-  const totals: SessionTotals = {
-    turns: turns.length,
-    apiCalls: apiCallCount,
-    toolCalls: toolCallCount,
-    tokens: totalTokens,
-    cost: totalCost,
-    webSearches,
-    webFetches,
-    sidechainApiCalls,
-    sidechainCost,
-    activeMs,
-  };
-
-  return {
-    sessionId,
-    title,
-    projectPath,
-    gitBranches: [...gitBranches],
-    versions: [...versions],
-    startTime,
-    endTime,
-    durationMs:
-      startTime && endTime
-        ? new Date(endTime).getTime() - new Date(startTime).getTime()
-        : undefined,
-    totals,
-    turns,
-    models,
-    tools,
-    toolErrors,
-    skills,
-    skillErrors,
-    subagents: [...subagents],
-    filesTouched: [...filesTouched],
-    stopReasons,
-    permissionModes,
-    bashCommands,
-    bashErrors,
-    testRuns,
-    testFailures,
-    retries,
-    retriesByTool,
-  };
+/**
+ * Analyze a session from a stream of events, without materializing the full
+ * event array — the memory win for bulk consumers over large sessions. With
+ * `detail: false` the per-turn timeline is skipped entirely (aggregates only);
+ * `promptChars` and `turnDepths` still carry the turn-derived aggregates the
+ * indexer needs.
+ */
+export async function analyzeSessionStream(
+  events: AsyncIterable<SessionEvent>,
+  pricing: PricingTable,
+  opts: AnalyzeOptions = {},
+): Promise<SessionAnalysis> {
+  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
+  for await (const event of events) analyzer.push(event);
+  return analyzer.finish();
 }

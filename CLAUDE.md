@@ -53,6 +53,16 @@ The core pipeline for a single session:
 `SessionAnalysis` is the central data structure (per-turn + aggregate metrics). It
 feeds the CLI/web renderers directly, and `indexer.ts` flattens it into a SQLite row.
 
+There is also a **streaming path** for consumers that don't need the full array in
+memory: `parser.ts` exposes `streamSessionEvents(path)` (an `AsyncGenerator`), and
+`analyzeSession` is a thin wrapper over a shared `SessionAnalyzer` accumulator that
+`analyzeSessionStream(iterable, pricing, { detail })` also drives. The **indexer**
+uses `analyzeSessionStream(streamSessionEvents(path), …, { detail: false })` so a
+multi-hundred-MB session indexes without ever materializing the event array or the
+per-turn timeline (it stores only aggregates). The interactive consumers
+(CLI `analyze`, web, TUI) keep the array path — they render the full output and
+reuse the events for `buildTranscript`.
+
 ## Concepts that span multiple files (read before editing)
 
 **Turn segmentation.** A *turn* is one genuine user prompt plus every assistant
@@ -108,8 +118,16 @@ the id. Never round-trip a real path through the encoded id.
 `ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
 tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
 `parseSessionFile` streams the file line by line (sessions can be hundreds of MB);
-`parseSessionText` is the in-memory path. Both share `parseLine`, so their
-per-line behavior can't drift. (Only file I/O — e.g. a missing file — throws.)
+`parseSessionText` is the in-memory path; `streamSessionEvents` yields events one
+at a time for bulk consumers. All three share `parseLineOutcome` (per line) and
+`readLines` (byte streaming), so their behavior can't drift. (Only file I/O — e.g.
+a missing file — throws.)
+
+**Tool results resolve in one pass.** `analyzeSession`/`analyzeSessionStream` don't
+pre-scan for `tool_result`s. A `tool_use` registers in a small `pending` map and is
+resolved (error count + step patch) when its result arrives later in the stream —
+so a single forward pass suffices, which is what makes the streaming indexer path
+possible.
 
 ## Self-update subsystem
 
