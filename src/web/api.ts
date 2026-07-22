@@ -11,18 +11,43 @@ import {
 } from "../core/queries.ts";
 import {
   activityHeatmap,
+  bashCommandUsage,
+  branchUsage,
   cacheSummary,
+  cacheTtlSplit,
   cacheWasteByProject,
   cacheWasteBySession,
+  concurrency,
+  costDistribution,
+  durationSummary,
+  errorRateByWeek,
+  estimatedShareByProject,
+  hotFiles,
+  idleVsCache,
+  localDayOfMs,
+  modelMixByDay,
+  permissionModeUsage,
   portfolioSummary,
+  retryStats,
+  runRate,
+  sessionScatter,
+  sidechainByDay,
+  sidechainByProject,
+  sidechainSummary,
   skillAnalytics,
   spendByDay,
   spendByModel,
   spendByMonth,
   spendByProject,
+  stopReasonUsage,
+  streaks,
   subagentUsage,
+  testRunSummary,
   toolUsage,
   topSessions,
+  turnDepthStats,
+  versionAdoption,
+  webToolUsage,
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
 
@@ -36,38 +61,81 @@ const MAX_PROJECT_ROWS = 2000;
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
 
-  api.get("/api/stats", (c) =>
-    c.json({
+  api.get("/api/stats", (c) => {
+    const today = localDayOfMs(Date.now());
+    return c.json({
       summary: portfolioSummary(db),
       byMonth: spendByMonth(db),
       byProject: spendByProject(db, MAX_PROJECT_ROWS),
       byModel: spendByModel(db),
       top: topSessions(db, 20),
-    }),
-  );
+      duration: durationSummary(db),
+      distribution: costDistribution(db),
+      streaks: streaks(db, today),
+      runRate: runRate(db, today),
+      sidechain: sidechainSummary(db),
+      estimatedByProject: estimatedShareByProject(db),
+    });
+  });
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
 
   // Cache-efficiency insights: projects ranked by un-amortized cache-write $,
-  // plus a portfolio summary; drill into one project's sessions.
+  // plus a portfolio summary; drill into one project's sessions. The TTL split
+  // and idle-share buckets diagnose *why* writes didn't amortize.
   api.get("/api/insights", (c) =>
-    c.json({ summary: cacheSummary(db), projects: cacheWasteByProject(db, MAX_PROJECT_ROWS) }),
+    c.json({
+      summary: cacheSummary(db),
+      projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
+      ttl: cacheTtlSplit(db),
+      idleBuckets: idleVsCache(db),
+    }),
   );
 
   api.get("/api/insights/:id/sessions", (c) =>
     c.json(cacheWasteBySession(db, c.req.param("id"), 200)),
   );
 
-  // Time-series for the trends view: raw daily spend series + weekday×hour
-  // activity heatmap. Bucketing/metric selection happens client-side.
-  api.get("/api/trends", (c) => c.json({ daily: spendByDay(db), heatmap: activityHeatmap(db) }));
+  // Time-series for the trends view: raw daily spend series (also feeds the
+  // contribution calendar client-side), weekday×hour heatmap, model mix,
+  // concurrency lanes, weekly error rate, sidechain trend, and the
+  // cost/duration/prompt scatter points.
+  api.get("/api/trends", (c) =>
+    c.json({
+      daily: spendByDay(db),
+      heatmap: activityHeatmap(db),
+      modelMix: modelMixByDay(db),
+      concurrency: concurrency(db),
+      errorWeekly: errorRateByWeek(db),
+      sidechainDaily: sidechainByDay(db),
+      scatter: sessionScatter(db),
+    }),
+  );
 
-  // Tool/skill/subagent usage analytics.
+  // Tool/skill/subagent usage analytics, plus shell commands, retries, web
+  // tools, permission modes, stop reasons, turn depth, versions, branches.
   api.get("/api/analytics", (c) =>
-    c.json({ tools: toolUsage(db), skills: skillAnalytics(db), subagents: subagentUsage(db) }),
+    c.json({
+      tools: toolUsage(db),
+      skills: skillAnalytics(db),
+      subagents: subagentUsage(db),
+      bash: bashCommandUsage(db),
+      tests: testRunSummary(db),
+      retries: retryStats(db),
+      webTools: webToolUsage(db),
+      permissionModes: permissionModeUsage(db),
+      stopReasons: stopReasonUsage(db),
+      turnDepth: turnDepthStats(db),
+      versions: versionAdoption(db),
+      branches: branchUsage(db),
+      sidechain: { summary: sidechainSummary(db), byProject: sidechainByProject(db) },
+    }),
   );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
+
+  // Files Claude touched across a project's sessions, hottest first.
+  api.get("/api/projects/:id/files", (c) => c.json(hotFiles(db, c.req.param("id"))));
 
   // Registered before "/api/sessions/:id" so "search" isn't captured as an id.
   api.get("/api/sessions/search", (c) => {

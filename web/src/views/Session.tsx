@@ -4,7 +4,7 @@ import { count, duration, tokensOf, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
 
-type Tab = "summary" | "turns" | "transcript";
+type Tab = "summary" | "timeline" | "turns" | "transcript";
 
 export function Session({ id }: { id: string }) {
   const [tab, setTab] = useState<Tab>("summary");
@@ -44,11 +44,22 @@ export function Session({ id }: { id: string }) {
         <Card label="Tokens" value={tokensOf(a.totals.tokens)} />
         <Card label="Turns" value={String(a.totals.turns)} sub={`${a.totals.apiCalls} api calls`} />
         <Card label="Tool calls" value={String(a.totals.toolCalls)} />
-        <Card label="Duration" value={duration(a.durationMs)} />
+        <Card
+          label="Duration"
+          value={duration(a.durationMs)}
+          sub={`${duration(a.totals.activeMs)} active`}
+        />
+        {a.totals.sidechainCost > 0 && (
+          <Card
+            label="Subagents"
+            value={usd(a.totals.sidechainCost)}
+            sub={`${a.totals.sidechainApiCalls} sidechain calls`}
+          />
+        )}
       </div>
 
       <div className="tabs">
-        {(["summary", "turns", "transcript"] as Tab[]).map((t) => (
+        {(["summary", "timeline", "turns", "transcript"] as Tab[]).map((t) => (
           <button
             type="button"
             key={t}
@@ -61,6 +72,7 @@ export function Session({ id }: { id: string }) {
       </div>
 
       {tab === "summary" && <Summary a={a} />}
+      {tab === "timeline" && <Timeline a={a} />}
       {tab === "turns" && <Turns a={a} />}
       {tab === "transcript" && (
         <Transcript
@@ -106,6 +118,46 @@ function Summary({ a }: { a: SessionAnalysis }) {
             <Row k="Git branches" v={a.gitBranches.join(", ") || "-"} />
             <Row k="CC versions" v={a.versions.join(", ") || "-"} />
             <Row k="Files touched" v={String(a.filesTouched.length)} />
+            <Row
+              k="Active / wall time"
+              v={`${duration(a.totals.activeMs)} / ${duration(a.durationMs)}`}
+            />
+            <Row
+              k="Stop reasons"
+              v={
+                Object.entries(a.stopReasons)
+                  .sort((x, y) => y[1] - x[1])
+                  .map(([r, n]) => `${r}:${n}`)
+                  .join(", ") || "-"
+              }
+            />
+            <Row
+              k="Permission modes"
+              v={
+                Object.entries(a.permissionModes)
+                  .sort((x, y) => y[1] - x[1])
+                  .map(([m, n]) => `${m}:${n}`)
+                  .join(", ") || "-"
+              }
+            />
+            <Row
+              k="Shell commands"
+              v={
+                Object.entries(a.bashCommands)
+                  .sort((x, y) => y[1] - x[1])
+                  .slice(0, 8)
+                  .map(([cmd, n]) => `${cmd}:${n}`)
+                  .join(", ") || "-"
+              }
+            />
+            <Row
+              k="Test runs"
+              v={a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected"}
+            />
+            <Row
+              k="Tool-call churn"
+              v={a.retries > 0 ? `${a.retries} repeated identical calls` : "none"}
+            />
           </tbody>
         </table>
       </div>
@@ -137,6 +189,82 @@ function Row({ k, v }: { k: string; v: string }) {
       </td>
       <td>{v}</td>
     </tr>
+  );
+}
+
+/** Gantt: one lane per turn across the session's wall clock; dots are API
+ * calls (teal = sidechain, red ring = a tool error inside the call). */
+function Timeline({ a }: { a: SessionAnalysis }) {
+  const turns = a.turns.filter((t) => t.startTime && t.endTime);
+  if (turns.length === 0) return <p className="muted">No timed turns in this session.</p>;
+  const t0 = Math.min(...turns.map((t) => Date.parse(t.startTime as string)));
+  const t1 = Math.max(...turns.map((t) => Date.parse(t.endTime as string)));
+  const span = Math.max(t1 - t0, 1);
+  const W = 900;
+  const rowH = 16;
+  const H = turns.length * rowH + 8;
+  const x = (ms: number) => ((ms - t0) / span) * (W - 16) + 8;
+  const offset = (ms: number) => duration(ms - t0);
+  return (
+    <section>
+      <p className="muted">
+        {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn; dots are
+        API calls (teal = subagent sidechain, red ring = tool error in that call)
+      </p>
+      <div className="timelinewrap">
+        <svg
+          className="timeline"
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ height: H }}
+          preserveAspectRatio="none"
+          role="img"
+        >
+          <title>Session timeline</title>
+          {turns.map((t, i) => {
+            const y = i * rowH + 4;
+            const sx = x(Date.parse(t.startTime as string));
+            const ex = x(Date.parse(t.endTime as string));
+            return (
+              <g key={t.index}>
+                <rect
+                  className="tl-turn"
+                  x={sx}
+                  y={y + 2}
+                  width={Math.max(ex - sx, 2)}
+                  height={8}
+                  rx={2}
+                >
+                  <title>{`#${t.index + 1} +${offset(Date.parse(t.startTime as string))} · ${usd(t.cost.total)} · ${t.apiCalls.length} calls\n${t.prompt.slice(0, 160)}`}</title>
+                </rect>
+                {t.apiCalls.map((call, ci) => {
+                  if (!call.timestamp) return null;
+                  const ms = Date.parse(call.timestamp);
+                  if (Number.isNaN(ms)) return null;
+                  const hasError = call.steps.some((s) => s.status === "error");
+                  const cls = `tl-call${call.isSidechain ? " side" : ""}${hasError ? " err" : ""}`;
+                  return (
+                    <circle
+                      // biome-ignore lint/suspicious/noArrayIndexKey: calls have no stable id; order is fixed
+                      key={`${t.index}.${ci}`}
+                      className={cls}
+                      cx={x(ms)}
+                      cy={y + 6}
+                      r={3}
+                    >
+                      <title>{`+${offset(ms)} · ${call.model ?? "?"} · ${usd(call.cost.total)}${call.stopReason ? ` · ${call.stopReason}` : ""}${call.isSidechain ? " · sidechain" : ""}${hasError ? " · tool error" : ""}`}</title>
+                    </circle>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="axis">
+        <span>start</span>
+        <span>{duration(span)}</span>
+      </div>
+    </section>
   );
 }
 

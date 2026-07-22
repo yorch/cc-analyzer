@@ -11,7 +11,14 @@ import {
   listIndexedProjects,
   listIndexedSessions,
 } from "../core/queries.ts";
-import { portfolioSummary, spendByMonth } from "../core/stats.ts";
+import {
+  costDistribution,
+  durationSummary,
+  localDayOfMs,
+  portfolioSummary,
+  spendByMonth,
+  streaks,
+} from "../core/stats.ts";
 import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
 import { keyIndex } from "./keys.ts";
@@ -46,6 +53,9 @@ export function App({ db, pricing }: Props) {
   const allSessions = useMemo(() => listAllSessions(db), [db]);
   const summary = useMemo(() => portfolioSummary(db), [db]);
   const months = useMemo(() => spendByMonth(db), [db]);
+  const duration = useMemo(() => durationSummary(db), [db]);
+  const distribution = useMemo(() => costDistribution(db), [db]);
+  const streakInfo = useMemo(() => streaks(db, localDayOfMs(Date.now())), [db]);
   const { columns, rows } = useTermSize();
 
   const [view, setView] = useState<View>("portfolio");
@@ -217,7 +227,17 @@ export function App({ db, pricing }: Props) {
         columns={columns}
         rows={rows}
         railFocused={focus === "rail"}
-        lede={showLede ? <PortfolioLede summary={summary} months={months} /> : undefined}
+        lede={
+          showLede ? (
+            <PortfolioLede
+              summary={summary}
+              months={months}
+              duration={duration}
+              distribution={distribution}
+              streaks={streakInfo}
+            />
+          ) : undefined
+        }
       >
         {body}
       </AppShell>

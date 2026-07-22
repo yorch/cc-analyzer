@@ -33,12 +33,28 @@ export interface SessionRow {
   cost_estimated: number;
   web_searches: number;
   web_fetches: number;
+  active_ms: number;
+  sidechain_calls: number;
+  sidechain_cost: number;
+  prompt_chars: number;
+  test_runs: number;
+  test_failures: number;
+  retries: number;
   models_json: string;
   tools_json: string;
   tool_errors_json: string;
   skills_json: string;
   skill_errors_json: string;
   subagents_json: string;
+  turn_depths_json: string;
+  permission_modes_json: string;
+  stop_reasons_json: string;
+  files_json: string;
+  branches_json: string;
+  versions_json: string;
+  bash_json: string;
+  bash_errors_json: string;
+  retries_json: string;
   size_bytes: number;
   mtime_ms: number;
   indexed_at: number;
@@ -91,12 +107,28 @@ export function toSessionRow(
     cost_estimated: c.estimated ? 1 : 0,
     web_searches: analysis.totals.webSearches,
     web_fetches: analysis.totals.webFetches,
+    active_ms: analysis.totals.activeMs,
+    sidechain_calls: analysis.totals.sidechainApiCalls,
+    sidechain_cost: analysis.totals.sidechainCost,
+    prompt_chars: analysis.turns.reduce((sum, turn) => sum + turn.prompt.length, 0),
+    test_runs: analysis.testRuns,
+    test_failures: analysis.testFailures,
+    retries: analysis.retries,
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
     tool_errors_json: JSON.stringify(analysis.toolErrors),
     skills_json: JSON.stringify(analysis.skills),
     skill_errors_json: JSON.stringify(analysis.skillErrors),
     subagents_json: JSON.stringify(analysis.subagents),
+    turn_depths_json: JSON.stringify(analysis.turns.map((turn) => turn.apiCalls.length)),
+    permission_modes_json: JSON.stringify(analysis.permissionModes),
+    stop_reasons_json: JSON.stringify(analysis.stopReasons),
+    files_json: JSON.stringify(analysis.filesTouched),
+    branches_json: JSON.stringify(analysis.gitBranches),
+    versions_json: JSON.stringify(analysis.versions),
+    bash_json: JSON.stringify(analysis.bashCommands),
+    bash_errors_json: JSON.stringify(analysis.bashErrors),
+    retries_json: JSON.stringify(analysis.retriesByTool),
     size_bytes: info.sizeBytes,
     mtime_ms: info.mtimeMs,
     indexed_at: now,
@@ -130,12 +162,28 @@ const COLUMNS: (keyof SessionRow)[] = [
   "cost_estimated",
   "web_searches",
   "web_fetches",
+  "active_ms",
+  "sidechain_calls",
+  "sidechain_cost",
+  "prompt_chars",
+  "test_runs",
+  "test_failures",
+  "retries",
   "models_json",
   "tools_json",
   "tool_errors_json",
   "skills_json",
   "skill_errors_json",
   "subagents_json",
+  "turn_depths_json",
+  "permission_modes_json",
+  "stop_reasons_json",
+  "files_json",
+  "branches_json",
+  "versions_json",
+  "bash_json",
+  "bash_errors_json",
+  "retries_json",
   "size_bytes",
   "mtime_ms",
   "indexed_at",

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type IndexedSession } from "../api.ts";
+import { api, type HotFileRow, type IndexedSession } from "../api.ts";
 import { relTime, tokens, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { SortTh } from "../SortTh.tsx";
@@ -17,11 +17,11 @@ const SESSION_SORT: Accessors<IndexedSession> = {
 
 export function Project({ id }: { id: string }) {
   const { data, error, loading } = useAsync(
-    () => Promise.all([api.projects(), api.sessions(id)]),
+    () => Promise.all([api.projects(), api.sessions(id), api.projectFiles(id)]),
     [id],
   );
   const [query, setQuery] = useState("");
-  const [projects, allSessions] = data ?? [[], []];
+  const [projects, allSessions, hotFiles] = data ?? [[], [], []];
   const q = query.toLowerCase();
   const filtered = q
     ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
@@ -91,6 +91,40 @@ export function Project({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+
+      <HotFiles rows={hotFiles} projectPath={project?.projectPath ?? null} />
     </>
+  );
+}
+
+/** Files Claude keeps coming back to across this project's sessions. */
+function HotFiles({ rows, projectPath }: { rows: HotFileRow[]; projectPath: string | null }) {
+  if (rows.length === 0) return null;
+  const prefix = projectPath ? `${projectPath}/` : "";
+  const rel = (f: string) => (prefix && f.startsWith(prefix) ? f.slice(prefix.length) : f);
+  return (
+    <section>
+      <h2 className="section-h">Hot files · written or edited across sessions</h2>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="num">Sessions</th>
+              <th>Last touched</th>
+              <th>File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((f) => (
+              <tr key={f.file}>
+                <td className="num">{f.sessions}</td>
+                <td className="muted">{f.lastDay ?? "—"}</td>
+                <td className="mono">{rel(f.file)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

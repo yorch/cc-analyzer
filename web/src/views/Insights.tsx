@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { api, cacheVerdict, type ProjectCacheRow, type SessionCacheRow } from "../api.ts";
-import { shortPath, usd } from "../format.ts";
+import {
+  api,
+  cacheVerdict,
+  type IdleCacheBucket,
+  type ProjectCacheRow,
+  type SessionCacheRow,
+} from "../api.ts";
+import { count, shortPath, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
@@ -49,6 +55,12 @@ export function Insights() {
         Projects ranked by cache-write $ that wasn't read back — writes you paid a premium for but
         didn't reuse. A high read:write ratio means the writes amortized.
       </p>
+      <p className="muted">
+        Write TTL mix: {count(data.ttl.write5mTokens)} tokens @5m · {count(data.ttl.write1hTokens)}{" "}
+        tokens @1h (1h writes are priced ~2× input, 5m ~1.25×).
+      </p>
+
+      <IdleBuckets rows={data.idleBuckets} />
 
       <input
         className="search"
@@ -91,6 +103,43 @@ export function Insights() {
         </table>
       </div>
     </>
+  );
+}
+
+/** Cross-insight: sessions bucketed by idle share vs how their cache amortized.
+ * Waste concentrating in idle sessions ⇒ the cache expired between turns. */
+function IdleBuckets({ rows }: { rows: IdleCacheBucket[] }) {
+  if (!rows.some((r) => r.sessions > 0)) return null;
+  return (
+    <details className="idle-panel">
+      <summary>Idle time × cache waste — does waste concentrate in sessions that sat idle?</summary>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session idle share</th>
+              <th className="num">Sessions</th>
+              <th className="num">R:W ratio</th>
+              <th className="num">Write $ wasted</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.bucket}>
+                <td>{r.bucket}</td>
+                <td className="num">{count(r.sessions)}</td>
+                <td className="num">{r.ratio.toFixed(1)}×</td>
+                <td className="num">{(r.wasteShare * 100).toFixed(0)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted">
+        Idle share = 1 − active/wall time. Correlational: long idle gaps let the 5-minute cache TTL
+        lapse, so the next turn re-writes what it just paid to cache.
+      </p>
+    </details>
   );
 }
 

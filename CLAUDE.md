@@ -68,6 +68,18 @@ change the rule in one place.
 merges continuation lines into it, counting `usage` exactly once — so token and
 cost totals aren't inflated by the streaming block count.
 
+**Derived activity metrics are heuristics — keep them honest.** `analyze.ts` also
+computes: *active time* (sum of gaps between consecutive events ≤ `ACTIVE_GAP_MS`,
+5 min — longer gaps are idle); the *sidechain split* (API calls with
+`isSidechain`, i.e. subagent spend); *retries* (a tool call identical to the
+immediately preceding one — same tool, same input); Bash *command families*
+(`commandFamily()`: env-assignment/`cd`-prefix aware basename) and *test runs*
+(`isTestCommand()` regex). All of these flatten into index columns (schema v5)
+and roll up in `stats.ts`. Several rollups are **session-scoped and
+correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cache
+buckets): a session counts its full cost toward each label it carries. Keep the
+"correlational, not causal" caveat wherever they're rendered.
+
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token
 categories separately: input, output, cache-write (5m and 1h TTL), and cache-read.

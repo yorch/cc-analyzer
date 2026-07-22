@@ -32,6 +32,8 @@ export interface ApiCall {
   model?: string;
   timestamp?: string;
   isSidechain: boolean;
+  /** Why the API response ended (e.g. end_turn, tool_use, max_tokens). */
+  stopReason?: string;
   tokens: TokenCounts;
   cost: CostBreakdown;
   /** Ordered timeline of this inference: narration, thinking, tool operations. */
@@ -66,6 +68,13 @@ export interface SessionTotals {
   cost: CostBreakdown;
   webSearches: number;
   webFetches: number;
+  /** API calls made on sidechains (subagents), and their cost. */
+  sidechainApiCalls: number;
+  sidechainCost: number;
+  /** Wall-clock ms where consecutive events were ≤ ACTIVE_GAP_MS apart — the
+   * agent (or the human) was actively working, as opposed to the session
+   * sitting open. Always ≤ durationMs. */
+  activeMs: number;
 }
 
 export interface SessionAnalysis {
@@ -89,9 +98,57 @@ export interface SessionAnalysis {
   skillErrors: Record<string, number>;
   subagents: string[];
   filesTouched: string[];
+  /** Count of API calls per stop_reason (end_turn, tool_use, max_tokens, …). */
+  stopReasons: Record<string, number>;
+  /** Count of turns per permission mode ("default" when the event carries none). */
+  permissionModes: Record<string, number>;
+  /** Bash invocations per command family (git, bun, npm, …). */
+  bashCommands: Record<string, number>;
+  /** Bash invocations per command family whose result was an error. */
+  bashErrors: Record<string, number>;
+  /** Bash invocations that look like a test run, and how many of those failed. */
+  testRuns: number;
+  testFailures: number;
+  /** Consecutive tool calls with identical tool + input (churn / wasted loops). */
+  retries: number;
+  retriesByTool: Record<string, number>;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
+/** Gaps between consecutive events longer than this count as idle, not work. */
+export const ACTIVE_GAP_MS = 5 * 60_000;
+
+/**
+ * The program a shell command line resolves to: leading env assignments are
+ * skipped, a leading `cd … && real` attributes to `real`, and paths reduce to
+ * their basename (`/usr/bin/git` → `git`).
+ */
+export function commandFamily(command: string, depth = 0): string | undefined {
+  if (depth > 4) return undefined;
+  let rest = command.trimStart();
+  for (;;) {
+    const m = rest.match(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/);
+    if (!m) break;
+    rest = rest.slice(m[0].length);
+  }
+  const first = rest.split(/\s+/, 1)[0] ?? "";
+  const base = (first.split("/").pop() ?? "").toLowerCase();
+  if (!base) return undefined;
+  if (base === "cd" || base === "pushd") {
+    const after = rest.match(/(?:&&|;)([\s\S]+)$/);
+    if (after?.[1]) return commandFamily(after[1], depth + 1) ?? base;
+  }
+  return base;
+}
+
+const TEST_COMMAND =
+  /\b(?:(?:bun|npm|pnpm|yarn|deno)\s+(?:run\s+)?test\b|pytest\b|jest\b|vitest\b|go\s+test\b|cargo\s+test\b|mvn\s+test\b|gradle\s+test\b|rspec\b|phpunit\b|ctest\b)/;
+
+/** Heuristic: does this shell command run a test suite? */
+export function isTestCommand(command: string): boolean {
+  return TEST_COMMAND.test(command);
+}
 
 /** Extract the four priced token categories from a usage block. */
 export function usageToTokens(usage?: Usage): TokenCounts {
@@ -195,6 +252,20 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   let totalTokens = zeroTokens();
   let totalCost = zeroCost();
   let current: Turn | undefined;
+  const stopReasons: Record<string, number> = {};
+  const permissionModes: Record<string, number> = {};
+  const bashCommands: Record<string, number> = {};
+  const bashErrors: Record<string, number> = {};
+  let testRuns = 0;
+  let testFailures = 0;
+  let retries = 0;
+  const retriesByTool: Record<string, number> = {};
+  let prevToolKey: string | undefined;
+  let sidechainApiCalls = 0;
+  let sidechainCost = 0;
+  let activeMs = 0;
+  let prevEventMs: number | undefined;
+  const allCalls: ApiCall[] = [];
 
   // Streamed responses are logged as one `assistant` line per content block,
   // each repeating the same message id and full usage. Merge those lines into a
@@ -215,6 +286,16 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     if (current) {
       if (!current.startTime || ts < current.startTime) current.startTime = ts;
       if (!current.endTime || ts > current.endTime) current.endTime = ts;
+    }
+    // Active time: events are appended chronologically, so short gaps between
+    // consecutive events are work; long ones are the session sitting idle.
+    const ms = Date.parse(ts);
+    if (!Number.isNaN(ms)) {
+      if (prevEventMs !== undefined) {
+        const gap = ms - prevEventMs;
+        if (gap > 0 && gap <= ACTIVE_GAP_MS) activeMs += gap;
+      }
+      prevEventMs = ms;
     }
   };
 
@@ -247,6 +328,8 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         toolCounts: {},
       };
       turns.push(current);
+      const mode = event.permissionMode ?? "default";
+      permissionModes[mode] = (permissionModes[mode] ?? 0) + 1;
       touchTime(event.timestamp);
       continue;
     }
@@ -289,6 +372,15 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         tools[tu.name] = (tools[tu.name] ?? 0) + 1;
         if (current) current.toolCounts[tu.name] = (current.toolCounts[tu.name] ?? 0) + 1;
 
+        // Churn: a tool call identical to the immediately preceding one (same
+        // tool, same input) is a retry — the loop re-did work it just did.
+        const toolKey = `${tu.name} ${JSON.stringify(tu.input ?? null)}`;
+        if (toolKey === prevToolKey) {
+          retries += 1;
+          retriesByTool[tu.name] = (retriesByTool[tu.name] ?? 0) + 1;
+        }
+        prevToolKey = toolKey;
+
         let skillName: string | undefined;
         if (tu.name === "Skill") {
           skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
@@ -303,6 +395,20 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         }
 
         const result = toolResults.get(tu.id);
+        if (tu.name === "Bash") {
+          const cmd = stringField(tu.input, "command");
+          if (cmd) {
+            const family = commandFamily(cmd);
+            if (family) {
+              bashCommands[family] = (bashCommands[family] ?? 0) + 1;
+              if (result?.isError) bashErrors[family] = (bashErrors[family] ?? 0) + 1;
+            }
+            if (isTestCommand(cmd)) {
+              testRuns += 1;
+              if (result?.isError) testFailures += 1;
+            }
+          }
+        }
         if (result?.isError) {
           toolErrors[tu.name] = (toolErrors[tu.name] ?? 0) + 1;
           if (skillName) skillErrors[skillName] = (skillErrors[skillName] ?? 0) + 1;
@@ -328,8 +434,11 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
 
       // A continuation line of an already-counted API call: keep its steps on
       // the originating ApiCall, but never re-count its usage or re-price it.
+      // stop_reason arrives on whichever streamed line closed the response, so
+      // continuation lines may carry it for an already-created call.
       if (existing) {
         existing.steps.push(...steps);
+        if (event.message.stop_reason) existing.stopReason = event.message.stop_reason;
         continue;
       }
 
@@ -350,13 +459,19 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         model,
         timestamp: event.timestamp,
         isSidechain: event.isSidechain === true,
+        stopReason: event.message.stop_reason ?? undefined,
         tokens,
         cost,
         steps,
       };
       if (key !== undefined) callsByKey.set(key, apiCall);
+      allCalls.push(apiCall);
 
       apiCallCount += 1;
+      if (apiCall.isSidechain) {
+        sidechainApiCalls += 1;
+        sidechainCost += cost.total;
+      }
       totalTokens = addTokens(totalTokens, tokens);
       totalCost = addCost(totalCost, cost);
       if (model) {
@@ -382,6 +497,12 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     touchTime((event as { timestamp?: string }).timestamp);
   }
 
+  // stop_reason may land on any streamed line of a call, so it's folded here,
+  // after every continuation line has had a chance to fill it in.
+  for (const call of allCalls) {
+    if (call.stopReason) stopReasons[call.stopReason] = (stopReasons[call.stopReason] ?? 0) + 1;
+  }
+
   // Totals are accumulated over every API call — including calls that arrive
   // before the first genuine prompt — so they always agree with `models`.
   const totals: SessionTotals = {
@@ -392,6 +513,9 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     cost: totalCost,
     webSearches,
     webFetches,
+    sidechainApiCalls,
+    sidechainCost,
+    activeMs,
   };
 
   return {
@@ -415,5 +539,13 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     skillErrors,
     subagents: [...subagents],
     filesTouched: [...filesTouched],
+    stopReasons,
+    permissionModes,
+    bashCommands,
+    bashErrors,
+    testRuns,
+    testFailures,
+    retries,
+    retriesByTool,
   };
 }

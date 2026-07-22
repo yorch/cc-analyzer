@@ -7,6 +7,7 @@ import {
   type BurnMetric,
   brailleChart,
   bucketSeries,
+  calendarGrid,
   type Granularity,
   heatGrid,
   metricValue,
@@ -14,7 +15,7 @@ import {
 } from "../charts.ts";
 import { palette, role, selection } from "../theme.ts";
 
-type Panel = "burn" | "heatmap";
+type Panel = "burn" | "heatmap" | "calendar";
 type HeatMetric = "sessions" | "cost";
 const BURN_METRICS: BurnMetric[] = ["cost", "tokens", "sessions"];
 const GRANULARITIES: Granularity[] = ["day", "week", "month"];
@@ -39,18 +40,23 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
   const [burnMetric, setBurnMetric] = useState<BurnMetric>("cost");
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("sessions");
+  const [calMetric, setCalMetric] = useState<HeatMetric>("cost");
 
+  const PANELS: Panel[] = ["burn", "heatmap", "calendar"];
   useInput(
     (input, key) => {
       if (key.escape) return onBack();
-      if (key.tab) return setPanel((p) => (p === "burn" ? "heatmap" : "burn"));
+      if (key.tab) return setPanel((p) => PANELS[(PANELS.indexOf(p) + 1) % PANELS.length] as Panel);
       if (input === "1") return setPanel("burn");
       if (input === "2") return setPanel("heatmap");
+      if (input === "3") return setPanel("calendar");
       if (input === "m") {
         if (panel === "burn") {
           setBurnMetric((m) => BURN_METRICS[(BURN_METRICS.indexOf(m) + 1) % 3] as BurnMetric);
-        } else {
+        } else if (panel === "heatmap") {
           setHeatMetric((m) => (m === "sessions" ? "cost" : "sessions"));
+        } else {
+          setCalMetric((m) => (m === "sessions" ? "cost" : "sessions"));
         }
         return;
       }
@@ -64,13 +70,13 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
   return (
     <Box flexDirection="column">
       <Box>
-        {(["burn", "heatmap"] as Panel[]).map((p) => (
+        {PANELS.map((p) => (
           <Text key={p} {...(p === panel ? selection(true) : { color: role.muted })}>
             {" "}
             {p}{" "}
           </Text>
         ))}
-        <Text color={role.muted}> tab · 1/2 · esc menu</Text>
+        <Text color={role.muted}> tab · 1/2/3 · esc menu</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {panel === "burn" ? (
@@ -81,8 +87,10 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
             columns={columns}
             rows={rows}
           />
-        ) : (
+        ) : panel === "heatmap" ? (
           <HeatPanel cells={heat} metric={heatMetric} />
+        ) : (
+          <CalendarPanel daily={daily} metric={calMetric} columns={columns} />
         )}
       </Box>
     </Box>
@@ -150,6 +158,48 @@ function BurnPanel({
         )}{" "}
         {series.at(-1)?.label}
       </Text>
+    </Box>
+  );
+}
+
+function CalendarPanel({
+  daily,
+  metric,
+  columns,
+}: {
+  daily: ReturnType<typeof spendByDay>;
+  metric: HeatMetric;
+  columns: number;
+}) {
+  const weeks = Math.max(8, Math.min(52, columns - 8));
+  const {
+    rows: grid,
+    max,
+    firstDay,
+    lastDay,
+  } = useMemo(() => calendarGrid(daily, metric, weeks), [daily, metric, weeks]);
+  if (grid.length === 0) {
+    return <Text color={role.muted}>No dated sessions in the index.</Text>;
+  }
+  return (
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        calendar · <Text color={role.accent}>{metric}</Text> · one column per week{"   "}m metric
+      </Text>
+      <Text color={role.muted}>
+        {firstDay} → {lastDay}
+      </Text>
+      {grid.map((line, i) => (
+        <Text key={WEEKDAY_LABELS[i]}>
+          <Text color={role.muted}>{WEEKDAY_LABELS[i]} </Text>
+          <Text color={palette.amber}>{line}</Text>
+        </Text>
+      ))}
+      <Box marginTop={1}>
+        <Text color={role.muted}>
+          less <Text color={palette.amber}> ·░▒▓█</Text> more · busiest day {fmt(metric, max)}
+        </Text>
+      </Box>
     </Box>
   );
 }

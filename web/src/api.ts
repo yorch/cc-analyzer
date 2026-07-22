@@ -40,12 +40,69 @@ export interface SessionRankRow extends TokenSplit {
   cost: number;
   startTime: string | null;
 }
+export interface DurationSummary {
+  sessions: number;
+  totalMs: number;
+  avgMs: number;
+  medianMs: number;
+  p90Ms: number;
+  totalActiveMs: number;
+  activeShare: number;
+}
+export interface CostBucket {
+  label: string;
+  count: number;
+}
+export interface CostDistribution {
+  sessions: number;
+  mean: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  max: number;
+  topDecileShare: number;
+  buckets: CostBucket[];
+}
+export interface StreakSummary {
+  activeDays: number;
+  longestStreak: number;
+  currentStreak: number;
+  last30ActiveDays: number;
+}
+export interface RunRate {
+  month: string;
+  monthToDate: number;
+  prevMonth: string;
+  prevMonthSamePoint: number;
+  prevMonthTotal: number;
+  projected: number;
+}
+export interface SidechainSummary {
+  cost: number;
+  calls: number;
+  totalCost: number;
+  totalCalls: number;
+  share: number;
+}
+export interface EstimatedShareRow {
+  projectId: string;
+  projectPath: string | null;
+  cost: number;
+  estimatedCost: number;
+  share: number;
+}
 export interface StatsResponse {
   summary: PortfolioSummary;
   byMonth: MonthRow[];
   byProject: ProjectRow[];
   byModel: ModelRow[];
   top: SessionRankRow[];
+  duration: DurationSummary;
+  distribution: CostDistribution;
+  streaks: StreakSummary;
+  runRate: RunRate;
+  sidechain: SidechainSummary;
+  estimatedByProject: EstimatedShareRow[];
 }
 
 export interface IndexedProject extends TokenSplit {
@@ -100,9 +157,22 @@ export interface CacheSummaryRow {
   waste: number;
   totalCost: number;
 }
+export interface CacheTtlSplit {
+  write5mTokens: number;
+  write1hTokens: number;
+  writeCost: number;
+}
+export interface IdleCacheBucket {
+  bucket: string;
+  sessions: number;
+  ratio: number;
+  wasteShare: number;
+}
 export interface InsightsResponse {
   summary: CacheSummaryRow;
   projects: ProjectCacheRow[];
+  ttl: CacheTtlSplit;
+  idleBuckets: IdleCacheBucket[];
 }
 export interface DayRow {
   day: string;
@@ -117,9 +187,49 @@ export interface HeatCell {
   sessions: number;
   cost: number;
 }
+export interface ModelDayRow {
+  day: string;
+  model: string;
+  cost: number;
+}
+export interface ConcurrencyDayRow {
+  day: string;
+  maxConcurrent: number;
+}
+export interface ConcurrencySummary {
+  peak: number;
+  parallelDayShare: number;
+  days: ConcurrencyDayRow[];
+}
+export interface ErrorWeekRow {
+  week: string;
+  toolCalls: number;
+  errors: number;
+  errorRate: number;
+}
+export interface SidechainDayRow {
+  day: string;
+  sidechainCost: number;
+  totalCost: number;
+}
+export interface ScatterSession {
+  sessionId: string | null;
+  title: string | null;
+  projectPath: string | null;
+  cost: number;
+  durationMs: number;
+  activeMs: number;
+  turns: number;
+  promptChars: number;
+}
 export interface TrendsResponse {
   daily: DayRow[];
   heatmap: HeatCell[];
+  modelMix: ModelDayRow[];
+  concurrency: ConcurrencySummary;
+  errorWeekly: ErrorWeekRow[];
+  sidechainDaily: SidechainDayRow[];
+  scatter: ScatterSession[];
 }
 
 export interface ToolUsageRow {
@@ -151,10 +261,100 @@ export interface SkillUsageRow {
   avgCostPerSession: number;
   daily: SkillDayCount[];
 }
+export interface BashCommandRow {
+  command: string;
+  uses: number;
+  errors: number;
+  errorRate: number;
+  sessions: number;
+}
+export interface TestRunSummary {
+  runs: number;
+  failures: number;
+  sessions: number;
+  failureRate: number;
+}
+export interface RetryToolRow {
+  tool: string;
+  retries: number;
+  sessions: number;
+}
+export interface RetryStats {
+  total: number;
+  sessions: number;
+  byTool: RetryToolRow[];
+}
+export interface WebToolsSummary {
+  searches: number;
+  fetches: number;
+  sessions: number;
+}
+export interface WebToolsProjectRow {
+  projectId: string;
+  projectPath: string | null;
+  searches: number;
+  fetches: number;
+}
+export interface PermissionModeRow {
+  mode: string;
+  turns: number;
+  sessions: number;
+  totalCost: number;
+  avgCostPerSession: number;
+}
+export interface StopReasonRow {
+  reason: string;
+  count: number;
+  sessions: number;
+}
+export interface DepthBucket {
+  label: string;
+  turns: number;
+}
+export interface TurnDepthStats {
+  turns: number;
+  avgDepth: number;
+  maxDepth: number;
+  buckets: DepthBucket[];
+  byMonth: { month: string; avgDepth: number; turns: number }[];
+}
+export interface VersionRow {
+  version: string;
+  sessions: number;
+  firstDay: string | null;
+  lastDay: string | null;
+}
+export interface BranchRow {
+  branch: string;
+  sessions: number;
+  cost: number;
+}
+export interface SidechainProjectRow {
+  projectId: string;
+  projectPath: string | null;
+  cost: number;
+  sidechainCost: number;
+  share: number;
+}
+export interface HotFileRow {
+  file: string;
+  sessions: number;
+  lastDay: string | null;
+}
 export interface AnalyticsResponse {
   tools: ToolUsageRow[];
   skills: SkillUsageRow[];
   subagents: NameUsageRow[];
+  bash: BashCommandRow[];
+  tests: TestRunSummary;
+  retries: RetryStats;
+  webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
+  permissionModes: PermissionModeRow[];
+  stopReasons: StopReasonRow[];
+  turnDepth: TurnDepthStats;
+  versions: VersionRow[];
+  branches: BranchRow[];
+  sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
 }
 
 export type CacheVerdict = "efficient" | "ok" | "leaky";
@@ -207,6 +407,9 @@ export interface TurnStep {
 
 export interface ApiCall {
   model?: string;
+  timestamp?: string;
+  isSidechain?: boolean;
+  stopReason?: string;
   cost: CostBreakdown;
   tokens: TokenCounts;
   steps: TurnStep[];
@@ -214,6 +417,9 @@ export interface ApiCall {
 export interface Turn {
   index: number;
   prompt: string;
+  startTime?: string;
+  endTime?: string;
+  permissionMode?: string;
   cost: CostBreakdown;
   tokens: TokenCounts;
   apiCalls: ApiCall[];
@@ -225,6 +431,8 @@ export interface SessionAnalysis {
   projectPath?: string;
   gitBranches: string[];
   versions: string[];
+  startTime?: string;
+  endTime?: string;
   durationMs?: number;
   totals: {
     turns: number;
@@ -234,6 +442,9 @@ export interface SessionAnalysis {
     tokens: TokenCounts;
     webSearches: number;
     webFetches: number;
+    sidechainApiCalls: number;
+    sidechainCost: number;
+    activeMs: number;
   };
   turns: Turn[];
   models: Record<string, { apiCalls: number; cost: CostBreakdown; tokens: TokenCounts }>;
@@ -241,6 +452,14 @@ export interface SessionAnalysis {
   skills: Record<string, number>;
   subagents: string[];
   filesTouched: string[];
+  stopReasons: Record<string, number>;
+  permissionModes: Record<string, number>;
+  bashCommands: Record<string, number>;
+  bashErrors: Record<string, number>;
+  testRuns: number;
+  testFailures: number;
+  retries: number;
+  retriesByTool: Record<string, number>;
 }
 export interface TranscriptItem {
   index: number;
@@ -263,6 +482,8 @@ export const api = {
   projects: () => get<IndexedProject[]>("/api/projects"),
   sessions: (projectId: string) =>
     get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
+  projectFiles: (projectId: string) =>
+    get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`),
   session: (id: string) => get<SessionAnalysis>(`/api/sessions/${encodeURIComponent(id)}`),
   transcript: (id: string) =>
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),

@@ -166,6 +166,44 @@ const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 /**
+ * Render a GitHub-style contribution calendar: 7 rows (Mon…Sun) of ramp-shaded
+ * chars, one column per week, ending at the newest day in `daily`. Values are
+ * cost or sessions per day, normalized to the busiest day.
+ */
+export function calendarGrid(
+  daily: DayRow[],
+  metric: "sessions" | "cost",
+  weeks = 26,
+): { rows: string[]; max: number; firstDay: string; lastDay: string } {
+  const last = daily[daily.length - 1]?.day;
+  if (!last) return { rows: [], max: 0, firstDay: "", lastDay: "" };
+  const byDay = new Map(daily.map((d) => [d.day, metric === "cost" ? d.cost : d.sessions]));
+  const end = new Date(`${last}T00:00:00Z`);
+  // Pad the final column out to its Sunday so the last week renders whole.
+  end.setUTCDate(end.getUTCDate() + ((7 - ((end.getUTCDay() + 6) % 7) - 1) % 7));
+  const grid: number[][] = Array.from({ length: 7 }, () => new Array<number>(weeks).fill(0));
+  let firstDay = "";
+  for (let w = 0; w < weeks; w++) {
+    for (let r = 0; r < 7; r++) {
+      const d = new Date(end);
+      d.setUTCDate(d.getUTCDate() - (weeks - 1 - w) * 7 - (6 - r));
+      const day = d.toISOString().slice(0, 10);
+      if (w === 0 && r === 0) firstDay = day;
+      const row = grid[r];
+      if (row) row[w] = byDay.get(day) ?? 0;
+    }
+  }
+  const max = Math.max(1e-9, ...grid.flat());
+  const lastChar = RAMP.length - 1;
+  const rows = grid.map((row) =>
+    row
+      .map((v) => (v <= 0 ? RAMP[0] : RAMP[Math.max(1, Math.round((v / max) * lastChar))]))
+      .join(""),
+  );
+  return { rows, max, firstDay, lastDay: last };
+}
+
+/**
  * Render the activity heatmap as 7 rows (Mon…Sun) of 24 ramp-shaded chars,
  * normalized to the busiest cell. Returns the rows plus that max (for a legend).
  */

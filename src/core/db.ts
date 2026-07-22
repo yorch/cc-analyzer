@@ -37,12 +37,28 @@ CREATE TABLE IF NOT EXISTS sessions (
   cost_estimated INTEGER,
   web_searches INTEGER,
   web_fetches INTEGER,
+  active_ms INTEGER,
+  sidechain_calls INTEGER,
+  sidechain_cost REAL,
+  prompt_chars INTEGER,
+  test_runs INTEGER,
+  test_failures INTEGER,
+  retries INTEGER,
   models_json TEXT,
   tools_json TEXT,
   tool_errors_json TEXT,
   skills_json TEXT,
   skill_errors_json TEXT,
   subagents_json TEXT,
+  turn_depths_json TEXT,
+  permission_modes_json TEXT,
+  stop_reasons_json TEXT,
+  files_json TEXT,
+  branches_json TEXT,
+  versions_json TEXT,
+  bash_json TEXT,
+  bash_errors_json TEXT,
+  retries_json TEXT,
   size_bytes INTEGER,
   mtime_ms REAL,
   indexed_at REAL
@@ -54,9 +70,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 `;
 
-// v4: usage dedup + sidechain turn fix + local-time day/month change what rows
-// contain, so stale indexes must be dropped and rebuilt.
-export const SCHEMA_VERSION = "4";
+// v5: adds the activity/efficiency columns (active_ms, sidechain split, prompt
+// chars, test runs, retries) and the per-session JSON rollups (turn depths,
+// permission modes, stop reasons, files, branches, versions, bash commands),
+// so stale indexes must be dropped and rebuilt.
+export const SCHEMA_VERSION = "5";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
