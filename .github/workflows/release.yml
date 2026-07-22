@@ -70,7 +70,7 @@ jobs:
       # Signed provenance for each binary, verifiable with:
       #   gh attestation verify <binary> --repo yorch/cc-analyzer
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/cc-analyzer-*
 
