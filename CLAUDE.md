@@ -144,8 +144,9 @@ force-added to git once; regenerated content stays untracked.
 CI (`.github/workflows/ci.yml`) runs lint, both typechecks, tests, and a full build on
 every push/PR. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which
 cross-compiles binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64),
-generates a `SHA256SUMS` manifest, and publishes a GitHub release with auto-generated
-notes.
+generates a `SHA256SUMS` manifest, signs a build-provenance attestation for each
+binary (`actions/attest-build-provenance`, needing `id-token`/`attestations` write),
+and publishes a GitHub release with auto-generated notes.
 
 **Cutting a release.** The compiled binary embeds `package.json`'s version (via
 `version.ts`, bundled by `bun --compile`), so the version bump must land on `main`

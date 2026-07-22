@@ -6,6 +6,11 @@ on:
 
 permissions:
   contents: write
+  # Build-provenance attestation signs the artifacts with a workflow identity
+  # (via OIDC) that code running inside the job cannot forge — unlike the
+  # same-job SHA256SUMS, which only proves integrity.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -61,6 +66,13 @@ jobs:
           # Run inside dist/ so manifest entries are basenames, not dist/… paths.
           cd dist && sha256sum cc-analyzer-* > SHA256SUMS
           cat SHA256SUMS
+
+      # Signed provenance for each binary, verifiable with:
+      #   gh attestation verify <binary> --repo yorch/cc-analyzer
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/cc-analyzer-*
 
       - name: Publish GitHub release
         env:
