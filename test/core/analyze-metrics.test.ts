@@ -3,6 +3,7 @@ import {
   ACTIVE_GAP_MS,
   analyzeSession,
   commandFamily,
+  commandHead,
   isTestCommand,
   type SessionAnalysis,
 } from "../../src/core/analyze.ts";
@@ -31,6 +32,20 @@ describe("commandFamily", () => {
   test("returns undefined for empty commands", () => {
     expect(commandFamily("")).toBeUndefined();
     expect(commandFamily("   ")).toBeUndefined();
+  });
+});
+
+describe("commandHead", () => {
+  test("keeps the first three tokens with a basenamed program", () => {
+    expect(commandHead("git commit -m 'msg' --amend")).toBe("git commit -m");
+    expect(commandHead("/usr/bin/git status")).toBe("git status");
+    expect(commandHead("bun test")).toBe("bun test");
+  });
+
+  test("skips navigation segments and empty input", () => {
+    expect(commandHead("cd /tmp")).toBeUndefined();
+    expect(commandHead("pushd /x")).toBeUndefined();
+    expect(commandHead("")).toBeUndefined();
   });
 });
 
@@ -73,6 +88,7 @@ function assistant(opts: {
   id: string;
   min: number;
   sidechain?: boolean;
+  parentId?: string;
   stopReason?: string | null;
   content?: unknown[];
   model?: string;
@@ -80,6 +96,7 @@ function assistant(opts: {
   return {
     type: "assistant",
     uuid: `a-${opts.id}`,
+    parentUuid: opts.parentId ? `a-${opts.parentId}` : undefined,
     timestamp: at(opts.min),
     isSidechain: opts.sidechain,
     requestId: `req-${opts.id}`,
@@ -199,6 +216,9 @@ describe("analyzeSession new metrics", () => {
     expect(a.bashErrors).toEqual({ bun: 1 });
     expect(a.testRuns).toBe(2);
     expect(a.testFailures).toBe(1);
+    // Raw heads for the index: the cd prefix is dropped, duplicates fold.
+    expect(a.commandHeads).toEqual({ "git status": 1, "bun test": 2 });
+    expect(a.commandHeadErrors).toEqual({ "bun test": 1 });
   });
 
   test("detects consecutive identical tool calls as retries", () => {
@@ -243,6 +263,35 @@ describe("analyzeSession new metrics", () => {
     ]);
     // The sidechain's identical read is not a retry of the main chain's; the
     // main chain's own repeat still is.
+    expect(a.retries).toBe(1);
+    expect(a.retriesByTool).toEqual({ Read: 1 });
+  });
+
+  test("parallel subagents get independent retry cursors (parentUuid chains)", () => {
+    const read = { file_path: "/x/CLAUDE.md" };
+    const a = analyze([
+      { type: "user", uuid: "u1", timestamp: at(0), message: { content: "hi" } },
+      // Two subagents, A and B, interleave in file order. Each roots its own
+      // chain (parent is main/unknown); children link via parentUuid.
+      assistant({ id: "A1", min: 1, sidechain: true, content: [toolUse("t1", "Read", read)] }),
+      assistant({ id: "B1", min: 2, sidechain: true, content: [toolUse("t2", "Read", read)] }),
+      assistant({
+        id: "A2",
+        min: 3,
+        sidechain: true,
+        parentId: "A1",
+        content: [toolUse("t3", "Read", read)],
+      }),
+      assistant({
+        id: "B2",
+        min: 4,
+        sidechain: true,
+        parentId: "B1",
+        content: [toolUse("t4", "Read", { file_path: "/y/other.ts" })],
+      }),
+    ]);
+    // B's interleaved identical read is a different chain — not a retry.
+    // A repeating its own read on its own chain is exactly one retry.
     expect(a.retries).toBe(1);
     expect(a.retriesByTool).toEqual({ Read: 1 });
   });

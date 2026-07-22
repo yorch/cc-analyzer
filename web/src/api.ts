@@ -6,42 +6,23 @@
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type {
-  BashCommandRow,
-  BranchRow,
+  AnalyticsRollup,
   CacheSummary,
   CacheTtlSplit,
   ConcurrencySummary,
-  CostDistribution,
   DayRow,
-  DurationSummary,
   ErrorWeekRow,
-  EstimatedShareRow,
   HeatCell,
   HotFileRow,
   IdleCacheBucket,
   ModelDayRow,
-  ModelRow,
-  MonthRow,
-  NameUsageRow,
-  PermissionModeRow,
-  PortfolioSummary,
+  PortfolioStats,
   ProjectCacheRow,
-  ProjectRow,
-  RetryStats,
-  RunRate,
   ScatterSession,
   SessionCacheRow,
-  SessionRankRow,
   SidechainDayRow,
   SidechainProjectRow,
   SidechainSummary,
-  SkillUsageRow,
-  StopReasonRow,
-  StreakSummary,
-  TestRunSummary,
-  ToolUsageRow,
-  TurnDepthStats,
-  VersionRow,
   WebToolsProjectRow,
   WebToolsSummary,
 } from "../../src/core/stats-types.ts";
@@ -60,19 +41,8 @@ export interface TokenSplit {
   ioTokens: number;
   cacheTokens: number;
 }
-export interface StatsResponse {
-  summary: PortfolioSummary;
-  byMonth: MonthRow[];
-  byProject: ProjectRow[];
-  byModel: ModelRow[];
-  top: SessionRankRow[];
-  duration: DurationSummary;
-  distribution: CostDistribution;
-  streaks: StreakSummary;
-  runRate: RunRate;
-  sidechain: SidechainSummary;
-  estimatedByProject: EstimatedShareRow[];
-}
+/** `/api/stats` returns the core-built portfolio shape verbatim. */
+export type StatsResponse = PortfolioStats;
 
 export interface IndexedProject extends TokenSplit {
   projectId: string;
@@ -114,19 +84,10 @@ export interface TrendsResponse {
   scatter: ScatterSession[];
 }
 
-export interface AnalyticsResponse {
-  tools: ToolUsageRow[];
-  skills: SkillUsageRow[];
-  subagents: NameUsageRow[];
-  bash: BashCommandRow[];
-  tests: TestRunSummary;
-  retries: RetryStats;
+/** `/api/analytics` is the single-scan rollup plus the web-tool and sidechain
+ * SQL aggregates. */
+export interface AnalyticsResponse extends AnalyticsRollup {
   webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
-  permissionModes: PermissionModeRow[];
-  stopReasons: StopReasonRow[];
-  turnDepth: TurnDepthStats;
-  versions: VersionRow[];
-  branches: BranchRow[];
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
 }
 

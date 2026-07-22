@@ -41,8 +41,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   sidechain_calls INTEGER,
   sidechain_cost REAL,
   prompt_chars INTEGER,
-  test_runs INTEGER,
-  test_failures INTEGER,
   retries INTEGER,
   models_json TEXT,
   tools_json TEXT,
@@ -56,8 +54,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   files_json TEXT,
   branches_json TEXT,
   versions_json TEXT,
-  bash_json TEXT,
-  bash_errors_json TEXT,
+  commands_json TEXT,
+  command_errors_json TEXT,
   retries_json TEXT,
   size_bytes INTEGER,
   mtime_ms REAL,
@@ -70,11 +68,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 `;
 
-// v5: adds the activity/efficiency columns (active_ms, sidechain split, prompt
-// chars, test runs, retries) and the per-session JSON rollups (turn depths,
-// permission modes, stop reasons, files, branches, versions, bash commands),
-// so stale indexes must be dropped and rebuilt.
-export const SCHEMA_VERSION = "5";
+// v6: replaces the classified bash/test columns (bash_json, bash_errors_json,
+// test_runs, test_failures) with raw normalized command heads
+// (commands_json/command_errors_json), so command-family and test-runner
+// heuristics classify at query time and can evolve without reindexing. Stale
+// indexes must be dropped and rebuilt.
+export const SCHEMA_VERSION = "6";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

@@ -440,6 +440,37 @@ export interface RetryToolRow {
   sessions: number;
 }
 
+/** The portfolio overview shared by `cc-analyzer stats` and `/api/stats` —
+ * assembled only by `buildPortfolioStats`, so the two surfaces cannot drift. */
+export interface PortfolioStats {
+  summary: PortfolioSummary;
+  byMonth: MonthRow[];
+  byProject: ProjectRow[];
+  byModel: ModelRow[];
+  top: SessionRankRow[];
+  duration: DurationSummary;
+  distribution: CostDistribution;
+  streaks: StreakSummary;
+  runRate: RunRate;
+  sidechain: SidechainSummary;
+  estimatedByProject: EstimatedShareRow[];
+}
+
+/** Everything `analyticsRollup` computes in its single table scan. */
+export interface AnalyticsRollup {
+  tools: ToolUsageRow[];
+  skills: SkillUsageRow[];
+  subagents: NameUsageRow[];
+  bash: BashCommandRow[];
+  tests: TestRunSummary;
+  retries: RetryStats;
+  permissionModes: PermissionModeRow[];
+  stopReasons: StopReasonRow[];
+  turnDepth: TurnDepthStats;
+  versions: VersionRow[];
+  branches: BranchRow[];
+}
+
 export interface RetryStats {
   /** Total repeated-identical tool calls across the portfolio. */
   total: number;

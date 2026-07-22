@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { isTestCommand } from "./analyze.ts";
 import type {
-  BashCommandRow,
-  BranchRow,
+  AnalyticsRollup,
   CacheSummary,
   CacheTtlSplit,
   ConcurrencySummary,
@@ -18,12 +18,10 @@ import type {
   ModelDayRow,
   ModelRow,
   MonthRow,
-  NameUsageRow,
-  PermissionModeRow,
+  PortfolioStats,
   PortfolioSummary,
   ProjectCacheRow,
   ProjectRow,
-  RetryStats,
   RunRate,
   ScatterSession,
   SessionCacheRow,
@@ -31,13 +29,7 @@ import type {
   SidechainDayRow,
   SidechainProjectRow,
   SidechainSummary,
-  SkillUsageRow,
-  StopReasonRow,
   StreakSummary,
-  TestRunSummary,
-  ToolUsageRow,
-  TurnDepthStats,
-  VersionRow,
   WebToolsProjectRow,
   WebToolsSummary,
 } from "./stats-types.ts";
@@ -295,136 +287,6 @@ function parseJson<T>(s: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-/** Tools ranked by total invocations, folding the per-session count and error
- * JSON blobs. `sessions` is how many sessions used the tool at least once. */
-export function toolUsage(db: Database): ToolUsageRow[] {
-  const rows = db.query("SELECT tools_json, tool_errors_json FROM sessions").all() as {
-    tools_json: string | null;
-    tool_errors_json: string | null;
-  }[];
-  const uses = new Map<string, number>();
-  const errors = new Map<string, number>();
-  const sessions = new Map<string, number>();
-  for (const r of rows) {
-    const tools = parseJson<Record<string, number>>(r.tools_json, {});
-    const errs = parseJson<Record<string, number>>(r.tool_errors_json, {});
-    for (const [t, n] of Object.entries(tools)) {
-      uses.set(t, (uses.get(t) ?? 0) + n);
-      sessions.set(t, (sessions.get(t) ?? 0) + 1);
-    }
-    for (const [t, n] of Object.entries(errs)) errors.set(t, (errors.get(t) ?? 0) + n);
-  }
-  return [...uses.entries()]
-    .map(([tool, u]) => {
-      const e = errors.get(tool) ?? 0;
-      return {
-        tool,
-        uses: u,
-        errors: e,
-        errorRate: u > 0 ? e / u : 0,
-        sessions: sessions.get(tool) ?? 0,
-      };
-    })
-    .sort((a, b) => b.uses - a.uses);
-}
-
-/** Subagent names ranked by how many sessions used each (the JSON column holds a
- * per-session deduped list). */
-function nameFrequency(db: Database, column: "subagents_json"): NameUsageRow[] {
-  const rows = db.query(`SELECT ${column} AS j FROM sessions`).all() as { j: string | null }[];
-  const freq = new Map<string, number>();
-  for (const r of rows) {
-    for (const name of new Set(parseJson<string[]>(r.j, []))) {
-      freq.set(name, (freq.get(name) ?? 0) + 1);
-    }
-  }
-  return [...freq.entries()]
-    .map(([name, sessions]) => ({ name, sessions }))
-    .sort((a, b) => b.sessions - a.sessions);
-}
-
-export const subagentUsage = (db: Database): NameUsageRow[] => nameFrequency(db, "subagents_json");
-
-/** Rich per-skill analytics, folding the per-session skill count/error blobs with
- * the project, day, and cost columns already on each row. Ranked by invocations. */
-export function skillAnalytics(db: Database): SkillUsageRow[] {
-  const rows = db
-    .query("SELECT skills_json, skill_errors_json, project_id, day, cost_total FROM sessions")
-    .all() as {
-    skills_json: string | null;
-    skill_errors_json: string | null;
-    project_id: string;
-    day: string | null;
-    cost_total: number | null;
-  }[];
-
-  interface Acc {
-    invocations: number;
-    sessions: number;
-    errors: number;
-    projects: Set<string>;
-    firstUsed: string | null;
-    lastUsed: string | null;
-    totalCost: number;
-    daily: Map<string, number>;
-  }
-  const acc = new Map<string, Acc>();
-  const get = (name: string): Acc => {
-    let a = acc.get(name);
-    if (!a) {
-      a = {
-        invocations: 0,
-        sessions: 0,
-        errors: 0,
-        projects: new Set(),
-        firstUsed: null,
-        lastUsed: null,
-        totalCost: 0,
-        daily: new Map(),
-      };
-      acc.set(name, a);
-    }
-    return a;
-  };
-
-  for (const r of rows) {
-    const skills = parseJson<Record<string, number>>(r.skills_json, {});
-    const errs = parseJson<Record<string, number>>(r.skill_errors_json, {});
-    const cost = r.cost_total ?? 0;
-    for (const [name, n] of Object.entries(skills)) {
-      const a = get(name);
-      a.invocations += n;
-      a.sessions += 1;
-      a.projects.add(r.project_id);
-      a.totalCost += cost;
-      if (r.day) {
-        if (a.firstUsed === null || r.day < a.firstUsed) a.firstUsed = r.day;
-        if (a.lastUsed === null || r.day > a.lastUsed) a.lastUsed = r.day;
-        a.daily.set(r.day, (a.daily.get(r.day) ?? 0) + n);
-      }
-    }
-    for (const [name, n] of Object.entries(errs)) get(name).errors += n;
-  }
-
-  return [...acc.entries()]
-    .map(([name, a]) => ({
-      name,
-      invocations: a.invocations,
-      sessions: a.sessions,
-      projects: a.projects.size,
-      errors: a.errors,
-      errorRate: a.invocations > 0 ? a.errors / a.invocations : 0,
-      firstUsed: a.firstUsed,
-      lastUsed: a.lastUsed,
-      totalCost: a.totalCost,
-      avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
-      daily: [...a.daily.entries()]
-        .map(([day, count]) => ({ day, count }))
-        .sort((x, y) => (x.day < y.day ? -1 : 1)),
-    }))
-    .sort((a, b) => b.invocations - a.invocations);
 }
 
 /* ————————————————————————————————————————————————————————————————————————
@@ -773,51 +635,6 @@ export function modelMixByDay(db: Database, topN = 6): ModelDayRow[] {
   return out;
 }
 
-/** Permission-mode mix across all turns/sessions. */
-export function permissionModeUsage(db: Database): PermissionModeRow[] {
-  const rows = db
-    .query("SELECT permission_modes_json AS j, cost_total AS cost FROM sessions")
-    .all() as { j: string | null; cost: number | null }[];
-  const acc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
-  for (const r of rows) {
-    for (const [mode, turns] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
-      const a = acc.get(mode) ?? { turns: 0, sessions: 0, totalCost: 0 };
-      a.turns += turns;
-      a.sessions += 1;
-      a.totalCost += r.cost ?? 0;
-      acc.set(mode, a);
-    }
-  }
-  return [...acc.entries()]
-    .map(([mode, a]) => ({
-      mode,
-      turns: a.turns,
-      sessions: a.sessions,
-      totalCost: a.totalCost,
-      avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
-    }))
-    .sort((a, b) => b.turns - a.turns);
-}
-
-/** stop_reason mix across all API calls (max_tokens = truncated responses). */
-export function stopReasonUsage(db: Database): StopReasonRow[] {
-  const rows = db.query("SELECT stop_reasons_json AS j FROM sessions").all() as {
-    j: string | null;
-  }[];
-  const acc = new Map<string, { count: number; sessions: number }>();
-  for (const r of rows) {
-    for (const [reason, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
-      const a = acc.get(reason) ?? { count: 0, sessions: 0 };
-      a.count += n;
-      a.sessions += 1;
-      acc.set(reason, a);
-    }
-  }
-  return [...acc.entries()]
-    .map(([reason, a]) => ({ reason, count: a.count, sessions: a.sessions }))
-    .sort((a, b) => b.count - a.count);
-}
-
 const DEPTH_BUCKETS: { label: string; max: number }[] = [
   { label: "1", max: 2 },
   { label: "2–3", max: 4 },
@@ -825,167 +642,6 @@ const DEPTH_BUCKETS: { label: string; max: number }[] = [
   { label: "8–15", max: 16 },
   { label: "16+", max: Number.POSITIVE_INFINITY },
 ];
-
-/** How agentic turns are: distribution of API calls per turn. */
-export function turnDepthStats(db: Database): TurnDepthStats {
-  const rows = db.query("SELECT turn_depths_json AS j, month FROM sessions").all() as {
-    j: string | null;
-    month: string | null;
-  }[];
-  const buckets = DEPTH_BUCKETS.map((b) => ({ label: b.label, turns: 0 }));
-  const byMonth = new Map<string, { sum: number; turns: number }>();
-  let turns = 0;
-  let sum = 0;
-  let maxDepth = 0;
-  for (const r of rows) {
-    for (const depth of parseJson<number[]>(r.j, [])) {
-      if (depth <= 0) continue;
-      turns += 1;
-      sum += depth;
-      if (depth > maxDepth) maxDepth = depth;
-      (buckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
-      if (r.month) {
-        const m = byMonth.get(r.month) ?? { sum: 0, turns: 0 };
-        m.sum += depth;
-        m.turns += 1;
-        byMonth.set(r.month, m);
-      }
-    }
-  }
-  return {
-    turns,
-    avgDepth: turns > 0 ? sum / turns : 0,
-    maxDepth,
-    buckets,
-    byMonth: [...byMonth.entries()]
-      .map(([month, m]) => ({ month, avgDepth: m.sum / m.turns, turns: m.turns }))
-      .sort((a, b) => (a.month < b.month ? -1 : 1)),
-  };
-}
-
-/** Claude Code version adoption (per-session deduped), newest last-seen first. */
-export function versionAdoption(db: Database): VersionRow[] {
-  const rows = db.query("SELECT versions_json AS j, day FROM sessions").all() as {
-    j: string | null;
-    day: string | null;
-  }[];
-  const acc = new Map<
-    string,
-    { sessions: number; firstDay: string | null; lastDay: string | null }
-  >();
-  for (const r of rows) {
-    for (const v of new Set(parseJson<string[]>(r.j, []))) {
-      const a = acc.get(v) ?? { sessions: 0, firstDay: null, lastDay: null };
-      a.sessions += 1;
-      if (r.day) {
-        if (a.firstDay === null || r.day < a.firstDay) a.firstDay = r.day;
-        if (a.lastDay === null || r.day > a.lastDay) a.lastDay = r.day;
-      }
-      acc.set(v, a);
-    }
-  }
-  return [...acc.entries()]
-    .map(([version, a]) => ({ version, ...a }))
-    .sort((a, b) => ((b.lastDay ?? "") < (a.lastDay ?? "") ? -1 : 1));
-}
-
-/** Git branches ranked by session count (cost is session-scoped, correlational). */
-export function branchUsage(db: Database, projectId?: string, limit = 30): BranchRow[] {
-  const rows = (
-    projectId
-      ? db
-          .query("SELECT branches_json AS j, cost_total AS cost FROM sessions WHERE project_id = ?")
-          .all(projectId)
-      : db.query("SELECT branches_json AS j, cost_total AS cost FROM sessions").all()
-  ) as { j: string | null; cost: number | null }[];
-  const acc = new Map<string, { sessions: number; cost: number }>();
-  for (const r of rows) {
-    for (const b of new Set(parseJson<string[]>(r.j, []))) {
-      if (!b) continue;
-      const a = acc.get(b) ?? { sessions: 0, cost: 0 };
-      a.sessions += 1;
-      a.cost += r.cost ?? 0;
-      acc.set(b, a);
-    }
-  }
-  return [...acc.entries()]
-    .map(([branch, a]) => ({ branch, ...a }))
-    .sort((a, b) => b.sessions - a.sessions || b.cost - a.cost)
-    .slice(0, limit);
-}
-
-/** Shell command families ranked by use, with error rates. */
-export function bashCommandUsage(db: Database, limit = 30): BashCommandRow[] {
-  const rows = db.query("SELECT bash_json AS j, bash_errors_json AS e FROM sessions").all() as {
-    j: string | null;
-    e: string | null;
-  }[];
-  const uses = new Map<string, number>();
-  const errors = new Map<string, number>();
-  const sessions = new Map<string, number>();
-  for (const r of rows) {
-    for (const [cmd, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
-      uses.set(cmd, (uses.get(cmd) ?? 0) + n);
-      sessions.set(cmd, (sessions.get(cmd) ?? 0) + 1);
-    }
-    for (const [cmd, n] of Object.entries(parseJson<Record<string, number>>(r.e, {}))) {
-      errors.set(cmd, (errors.get(cmd) ?? 0) + n);
-    }
-  }
-  return [...uses.entries()]
-    .map(([command, u]) => {
-      const e = errors.get(command) ?? 0;
-      return {
-        command,
-        uses: u,
-        errors: e,
-        errorRate: u > 0 ? e / u : 0,
-        sessions: sessions.get(command) ?? 0,
-      };
-    })
-    .sort((a, b) => b.uses - a.uses)
-    .slice(0, limit);
-}
-
-/** How often sessions run the test suite, and how often those runs fail. */
-export function testRunSummary(db: Database): TestRunSummary {
-  const r = db
-    .query(
-      `SELECT COALESCE(SUM(test_runs), 0) AS runs,
-        COALESCE(SUM(test_failures), 0) AS failures,
-        COALESCE(SUM(test_runs > 0), 0) AS sessions
-      FROM sessions`,
-    )
-    .get() as Omit<TestRunSummary, "failureRate">;
-  return { ...r, failureRate: r.runs > 0 ? r.failures / r.runs : 0 };
-}
-
-/** Churn: repeated identical tool calls, portfolio-wide and per tool. */
-export function retryStats(db: Database): RetryStats {
-  const rows = db
-    .query("SELECT retries_json AS j, COALESCE(retries, 0) AS n FROM sessions")
-    .all() as { j: string | null; n: number }[];
-  const acc = new Map<string, { retries: number; sessions: number }>();
-  let total = 0;
-  let sessions = 0;
-  for (const r of rows) {
-    total += r.n;
-    if (r.n > 0) sessions += 1;
-    for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.j, {}))) {
-      const a = acc.get(tool) ?? { retries: 0, sessions: 0 };
-      a.retries += n;
-      a.sessions += 1;
-      acc.set(tool, a);
-    }
-  }
-  return {
-    total,
-    sessions,
-    byTool: [...acc.entries()]
-      .map(([tool, a]) => ({ tool, ...a }))
-      .sort((a, b) => b.retries - a.retries),
-  };
-}
 
 /* ————————————————————————————————————————————————————————————————————————
  * Concurrency and cross-insights
@@ -1126,4 +782,352 @@ export function errorRateByWeek(db: Database): ErrorWeekRow[] {
       errorRate: a.calls > 0 ? a.errors / a.calls : 0,
     }))
     .sort((a, b) => (a.week < b.week ? -1 : 1));
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Single-pass analytics rollup
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/**
+ * Every per-session JSON rollup, folded in ONE table scan. The Tools surfaces
+ * (web `/api/analytics`, the TUI tools view, CLI stats) need most of these at
+ * once; scanning per metric multiplied full-table JSON parsing by the metric
+ * count. Bash families and test runs are classified here — at query time —
+ * from the raw command heads stored in the index (schema v6), so those
+ * heuristics can change without a reindex.
+ */
+export function analyticsRollup(db: Database): AnalyticsRollup {
+  interface Row {
+    project_id: string;
+    day: string | null;
+    month: string | null;
+    cost: number | null;
+    retriesN: number;
+    tools_json: string | null;
+    tool_errors_json: string | null;
+    skills_json: string | null;
+    skill_errors_json: string | null;
+    subagents_json: string | null;
+    commands_json: string | null;
+    command_errors_json: string | null;
+    retries_json: string | null;
+    permission_modes_json: string | null;
+    stop_reasons_json: string | null;
+    turn_depths_json: string | null;
+    versions_json: string | null;
+    branches_json: string | null;
+  }
+  const rows = db
+    .query(
+      `SELECT project_id, day, month, cost_total AS cost,
+        COALESCE(retries, 0) AS retriesN,
+        tools_json, tool_errors_json, skills_json, skill_errors_json,
+        subagents_json, commands_json, command_errors_json, retries_json,
+        permission_modes_json, stop_reasons_json, turn_depths_json,
+        versions_json, branches_json
+      FROM sessions`,
+    )
+    .all() as Row[];
+
+  const toolUses = new Map<string, number>();
+  const toolErrors = new Map<string, number>();
+  const toolSessions = new Map<string, number>();
+
+  interface SkillAcc {
+    invocations: number;
+    sessions: number;
+    errors: number;
+    projects: Set<string>;
+    firstUsed: string | null;
+    lastUsed: string | null;
+    totalCost: number;
+    daily: Map<string, number>;
+  }
+  const skillAcc = new Map<string, SkillAcc>();
+  const skillOf = (name: string): SkillAcc => {
+    let a = skillAcc.get(name);
+    if (!a) {
+      a = {
+        invocations: 0,
+        sessions: 0,
+        errors: 0,
+        projects: new Set(),
+        firstUsed: null,
+        lastUsed: null,
+        totalCost: 0,
+        daily: new Map(),
+      };
+      skillAcc.set(name, a);
+    }
+    return a;
+  };
+
+  const subagentFreq = new Map<string, number>();
+  const bashAcc = new Map<string, { uses: number; errors: number; sessions: number }>();
+  // Distinct heads repeat across sessions — classify each once.
+  const isTestHead = new Map<string, boolean>();
+  const testOf = (head: string): boolean => {
+    let t = isTestHead.get(head);
+    if (t === undefined) {
+      t = isTestCommand(head);
+      isTestHead.set(head, t);
+    }
+    return t;
+  };
+  let testRuns = 0;
+  let testFailures = 0;
+  let testSessions = 0;
+
+  let retryTotal = 0;
+  let retrySessions = 0;
+  const retryAcc = new Map<string, { retries: number; sessions: number }>();
+
+  const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
+  const reasonAcc = new Map<string, { count: number; sessions: number }>();
+
+  const depthBuckets = DEPTH_BUCKETS.map((b) => ({ label: b.label, turns: 0 }));
+  const depthByMonth = new Map<string, { sum: number; turns: number }>();
+  let depthTurns = 0;
+  let depthSum = 0;
+  let maxDepth = 0;
+
+  const versionAcc = new Map<
+    string,
+    { sessions: number; firstDay: string | null; lastDay: string | null }
+  >();
+  const branchAcc = new Map<string, { sessions: number; cost: number }>();
+
+  for (const r of rows) {
+    const cost = r.cost ?? 0;
+
+    for (const [t, n] of Object.entries(parseJson<Record<string, number>>(r.tools_json, {}))) {
+      toolUses.set(t, (toolUses.get(t) ?? 0) + n);
+      toolSessions.set(t, (toolSessions.get(t) ?? 0) + 1);
+    }
+    for (const [t, n] of Object.entries(
+      parseJson<Record<string, number>>(r.tool_errors_json, {}),
+    )) {
+      toolErrors.set(t, (toolErrors.get(t) ?? 0) + n);
+    }
+
+    for (const [name, n] of Object.entries(parseJson<Record<string, number>>(r.skills_json, {}))) {
+      const a = skillOf(name);
+      a.invocations += n;
+      a.sessions += 1;
+      a.projects.add(r.project_id);
+      a.totalCost += cost;
+      if (r.day) {
+        if (a.firstUsed === null || r.day < a.firstUsed) a.firstUsed = r.day;
+        if (a.lastUsed === null || r.day > a.lastUsed) a.lastUsed = r.day;
+        a.daily.set(r.day, (a.daily.get(r.day) ?? 0) + n);
+      }
+    }
+    for (const [name, n] of Object.entries(
+      parseJson<Record<string, number>>(r.skill_errors_json, {}),
+    )) {
+      skillOf(name).errors += n;
+    }
+
+    for (const name of new Set(parseJson<string[]>(r.subagents_json, []))) {
+      subagentFreq.set(name, (subagentFreq.get(name) ?? 0) + 1);
+    }
+
+    // Bash families and test runs, classified from the raw heads.
+    const heads = parseJson<Record<string, number>>(r.commands_json, {});
+    const headErrors = parseJson<Record<string, number>>(r.command_errors_json, {});
+    const familiesThisSession = new Set<string>();
+    let ranTests = false;
+    for (const [head, n] of Object.entries(heads)) {
+      const family = head.split(" ", 1)[0] as string;
+      const a = bashAcc.get(family) ?? { uses: 0, errors: 0, sessions: 0 };
+      a.uses += n;
+      if (!familiesThisSession.has(family)) {
+        a.sessions += 1;
+        familiesThisSession.add(family);
+      }
+      bashAcc.set(family, a);
+      if (testOf(head)) {
+        testRuns += n;
+        ranTests = true;
+      }
+    }
+    for (const [head, n] of Object.entries(headErrors)) {
+      const family = head.split(" ", 1)[0] as string;
+      const a = bashAcc.get(family);
+      if (a) a.errors += n;
+      if (testOf(head)) testFailures += n;
+    }
+    if (ranTests) testSessions += 1;
+
+    retryTotal += r.retriesN;
+    if (r.retriesN > 0) retrySessions += 1;
+    for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.retries_json, {}))) {
+      const a = retryAcc.get(tool) ?? { retries: 0, sessions: 0 };
+      a.retries += n;
+      a.sessions += 1;
+      retryAcc.set(tool, a);
+    }
+
+    for (const [mode, turns] of Object.entries(
+      parseJson<Record<string, number>>(r.permission_modes_json, {}),
+    )) {
+      const a = modeAcc.get(mode) ?? { turns: 0, sessions: 0, totalCost: 0 };
+      a.turns += turns;
+      a.sessions += 1;
+      a.totalCost += cost;
+      modeAcc.set(mode, a);
+    }
+
+    for (const [reason, n] of Object.entries(
+      parseJson<Record<string, number>>(r.stop_reasons_json, {}),
+    )) {
+      const a = reasonAcc.get(reason) ?? { count: 0, sessions: 0 };
+      a.count += n;
+      a.sessions += 1;
+      reasonAcc.set(reason, a);
+    }
+
+    for (const depth of parseJson<number[]>(r.turn_depths_json, [])) {
+      if (depth <= 0) continue;
+      depthTurns += 1;
+      depthSum += depth;
+      if (depth > maxDepth) maxDepth = depth;
+      (depthBuckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
+      if (r.month) {
+        const m = depthByMonth.get(r.month) ?? { sum: 0, turns: 0 };
+        m.sum += depth;
+        m.turns += 1;
+        depthByMonth.set(r.month, m);
+      }
+    }
+
+    for (const v of new Set(parseJson<string[]>(r.versions_json, []))) {
+      const a = versionAcc.get(v) ?? { sessions: 0, firstDay: null, lastDay: null };
+      a.sessions += 1;
+      if (r.day) {
+        if (a.firstDay === null || r.day < a.firstDay) a.firstDay = r.day;
+        if (a.lastDay === null || r.day > a.lastDay) a.lastDay = r.day;
+      }
+      versionAcc.set(v, a);
+    }
+
+    for (const b of new Set(parseJson<string[]>(r.branches_json, []))) {
+      if (!b) continue;
+      const a = branchAcc.get(b) ?? { sessions: 0, cost: 0 };
+      a.sessions += 1;
+      a.cost += cost;
+      branchAcc.set(b, a);
+    }
+  }
+
+  return {
+    tools: [...toolUses.entries()]
+      .map(([tool, uses]) => {
+        const errors = toolErrors.get(tool) ?? 0;
+        return {
+          tool,
+          uses,
+          errors,
+          errorRate: uses > 0 ? errors / uses : 0,
+          sessions: toolSessions.get(tool) ?? 0,
+        };
+      })
+      .sort((a, b) => b.uses - a.uses),
+    skills: [...skillAcc.entries()]
+      .map(([name, a]) => ({
+        name,
+        invocations: a.invocations,
+        sessions: a.sessions,
+        projects: a.projects.size,
+        errors: a.errors,
+        errorRate: a.invocations > 0 ? a.errors / a.invocations : 0,
+        firstUsed: a.firstUsed,
+        lastUsed: a.lastUsed,
+        totalCost: a.totalCost,
+        avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
+        daily: [...a.daily.entries()]
+          .map(([day, count]) => ({ day, count }))
+          .sort((x, y) => (x.day < y.day ? -1 : 1)),
+      }))
+      .sort((a, b) => b.invocations - a.invocations),
+    subagents: [...subagentFreq.entries()]
+      .map(([name, sessions]) => ({ name, sessions }))
+      .sort((a, b) => b.sessions - a.sessions),
+    bash: [...bashAcc.entries()]
+      .map(([command, a]) => ({
+        command,
+        uses: a.uses,
+        errors: a.errors,
+        errorRate: a.uses > 0 ? a.errors / a.uses : 0,
+        sessions: a.sessions,
+      }))
+      .sort((a, b) => b.uses - a.uses)
+      .slice(0, 30),
+    tests: {
+      runs: testRuns,
+      failures: testFailures,
+      sessions: testSessions,
+      failureRate: testRuns > 0 ? testFailures / testRuns : 0,
+    },
+    retries: {
+      total: retryTotal,
+      sessions: retrySessions,
+      byTool: [...retryAcc.entries()]
+        .map(([tool, a]) => ({ tool, ...a }))
+        .sort((a, b) => b.retries - a.retries),
+    },
+    permissionModes: [...modeAcc.entries()]
+      .map(([mode, a]) => ({
+        mode,
+        turns: a.turns,
+        sessions: a.sessions,
+        totalCost: a.totalCost,
+        avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
+      }))
+      .sort((a, b) => b.turns - a.turns),
+    stopReasons: [...reasonAcc.entries()]
+      .map(([reason, a]) => ({ reason, count: a.count, sessions: a.sessions }))
+      .sort((a, b) => b.count - a.count),
+    turnDepth: {
+      turns: depthTurns,
+      avgDepth: depthTurns > 0 ? depthSum / depthTurns : 0,
+      maxDepth,
+      buckets: depthBuckets,
+      byMonth: [...depthByMonth.entries()]
+        .map(([month, m]) => ({ month, avgDepth: m.sum / m.turns, turns: m.turns }))
+        .sort((a, b) => (a.month < b.month ? -1 : 1)),
+    },
+    versions: [...versionAcc.entries()]
+      .map(([version, a]) => ({ version, ...a }))
+      .sort((a, b) => ((b.lastDay ?? "") < (a.lastDay ?? "") ? -1 : 1)),
+    branches: [...branchAcc.entries()]
+      .map(([branch, a]) => ({ branch, ...a }))
+      .sort((a, b) => b.sessions - a.sessions || b.cost - a.cost)
+      .slice(0, 30),
+  };
+}
+
+/**
+ * The shared portfolio view behind both `cc-analyzer stats` and the web
+ * `/api/stats` route. Frontends may append extras, but the common shape is
+ * assembled in exactly one place.
+ */
+export function buildPortfolioStats(
+  db: Database,
+  today: string,
+  opts: { projectLimit?: number; topLimit?: number } = {},
+): PortfolioStats {
+  return {
+    summary: portfolioSummary(db),
+    byMonth: spendByMonth(db),
+    byProject: spendByProject(db, opts.projectLimit ?? 20),
+    byModel: spendByModel(db),
+    top: topSessions(db, opts.topLimit ?? 10),
+    duration: durationSummary(db),
+    distribution: costDistribution(db),
+    streaks: streaks(db, today),
+    runRate: runRate(db, today),
+    sidechain: sidechainSummary(db),
+    estimatedByProject: estimatedShareByProject(db),
+  };
 }

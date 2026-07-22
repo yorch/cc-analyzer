@@ -110,6 +110,11 @@ export interface SessionAnalysis {
   bashCommands: Record<string, number>;
   /** Bash invocations per command family whose result was an error. */
   bashErrors: Record<string, number>;
+  /** Raw normalized command heads per shell segment (see `commandHead`) and
+   * the subset whose result errored — what the index stores for query-time
+   * classification. */
+  commandHeads: Record<string, number>;
+  commandHeadErrors: Record<string, number>;
   /** Bash invocations that look like a test run, and how many of those failed. */
   testRuns: number;
   testFailures: number;
@@ -177,13 +182,31 @@ export function commandFamily(command: string): string | undefined {
   return fallback;
 }
 
+/**
+ * Normalized head of one shell segment: the basename+lowercased program plus
+ * up to two following tokens ("npm run test", "git commit -m"). This is the
+ * raw signal stored in the index (schema v6), so command classification —
+ * families, test-runner detection — happens at query time in `stats.ts` and
+ * can evolve without a reindex. `cd`/`pushd` segments are navigation noise
+ * and record nothing.
+ */
+export function commandHead(segment: string): string | undefined {
+  const tokens = segment.split(/\s+/, 3);
+  const first = tokens[0];
+  if (!first) return undefined;
+  const base = (first.split("/").pop() ?? "").toLowerCase();
+  if (!base || base === "cd" || base === "pushd") return undefined;
+  return [base, ...tokens.slice(1)].join(" ").slice(0, 60);
+}
+
 // Anchored at the start of a command segment so a runner name appearing in an
 // argument (`grep -rn "go test" src/`, `cat jest.config.js`) doesn't match.
 const TEST_RUNNER =
   /^(?:(?:bun|npm|pnpm|yarn|deno)\s+(?:run\s+)?test\b|pytest\b|jest\b|vitest\b|go\s+test\b|cargo\s+test\b|mvn\s+test\b|(?:\.\/)?gradlew?\s+test\b|make\s+test\b|rspec\b|phpunit\b|ctest\b)/;
 
 /** Heuristic: does this shell command run a test suite? Each segment is
- * checked at its start (after env assignments), not anywhere in the string. */
+ * checked at its start (after env assignments), not anywhere in the string.
+ * Also valid on a stored `commandHead` (a head is a single clean segment). */
 export function isTestCommand(command: string): boolean {
   return shellSegments(command).some((segment) => TEST_RUNNER.test(segment));
 }
@@ -246,6 +269,8 @@ interface PendingTool {
   bashFamily?: string;
   /** Whether this Bash call looked like a test run — for deferred `testFailures`. */
   isTest?: boolean;
+  /** Raw command heads of this Bash call — for deferred `commandHeadErrors`. */
+  heads?: string[];
   /** The step to patch when the result arrives — only in detail mode. */
   step?: TurnStep;
 }
@@ -278,6 +303,8 @@ class SessionAnalyzer {
   private readonly permissionModes: Record<string, number> = {};
   private readonly bashCommands: Record<string, number> = {};
   private readonly bashErrors: Record<string, number> = {};
+  private readonly commandHeads: Record<string, number> = {};
+  private readonly commandHeadErrors: Record<string, number> = {};
   private readonly retriesByTool: Record<string, number> = {};
   private readonly turnDepths: number[] = [];
   private title?: string;
@@ -306,12 +333,17 @@ class SessionAnalyzer {
   private hasTurn = false;
   private currentDepth = 0;
 
-  // Retry cursors: the previous tool call on the main chain and on sidechains,
-  // reset at each new turn (a user-requested re-run isn't churn). Parallel
-  // sidechains share one cursor — per-chain identity would need a parentUuid
-  // walk. Inputs are serialized lazily (only when tool names match).
-  private prevToolMain?: ToolCursor;
-  private prevToolSide?: ToolCursor;
+  // One retry cursor per chain, reset at each new turn: a user-requested
+  // re-run or an interleaved call from a *different* subagent must not read
+  // as churn, while a subagent repeating its own call must. Inputs are
+  // serialized lazily (only when tool names match) — Write/Edit inputs can be
+  // MB-scale.
+  private readonly prevToolByChain = new Map<string, ToolCursor>();
+  // Chain identity: "" is the main chain; a sidechain event belongs to its
+  // parent's chain, or roots a new one when its parent is main-chain/unknown
+  // (the spawn point). Events are appended parent-before-child, so the single
+  // forward pass resolves every chain; only sidechain uuids are stored.
+  private readonly chainOfUuid = new Map<string, string>();
 
   // Every parsed event timestamp (ms); sorted once at the end for active time,
   // so interleaved out-of-order sidechain lines can't skew the sum.
@@ -344,6 +376,15 @@ class SessionAnalyzer {
     if (!Number.isNaN(ms)) this.eventMs.push(ms);
   }
 
+  /** Resolve (and register) an event's chain id ("" = main chain). */
+  private chainOf(e: { uuid?: string; parentUuid?: string | null; isSidechain?: boolean }): string {
+    if (e.isSidechain !== true) return "";
+    const parentChain = e.parentUuid ? this.chainOfUuid.get(e.parentUuid) : undefined;
+    const chain = parentChain || e.uuid || "sidechain";
+    if (e.uuid) this.chainOfUuid.set(e.uuid, chain);
+    return chain;
+  }
+
   private usageKey(e: AssistantEvent): string | undefined {
     const mid = e.message.id;
     if (mid && e.requestId) return `${mid}:${e.requestId}`;
@@ -369,6 +410,9 @@ class SessionAnalyzer {
       if (p.skillName) this.skillErrors[p.skillName] = (this.skillErrors[p.skillName] ?? 0) + 1;
       if (p.bashFamily) this.bashErrors[p.bashFamily] = (this.bashErrors[p.bashFamily] ?? 0) + 1;
       if (p.isTest) this.testFailures += 1;
+      for (const head of p.heads ?? []) {
+        this.commandHeadErrors[head] = (this.commandHeadErrors[head] ?? 0) + 1;
+      }
     }
     if (this.detail && p.step) {
       const text = resultToText(rawContent);
@@ -392,6 +436,11 @@ class SessionAnalyzer {
       type?: string;
       aiTitle?: string;
     };
+    // Resolve (and register) every event's chain — sidechains thread through
+    // user tool_result events too, not just assistant lines.
+    const chain = this.chainOf(
+      event as { uuid?: string; parentUuid?: string | null; isSidechain?: boolean },
+    );
     if (meta.sessionId && !this.sessionId) this.sessionId = meta.sessionId;
     if (meta.cwd && !this.projectPath) this.projectPath = meta.cwd;
     if (meta.gitBranch) this.gitBranches.add(meta.gitBranch);
@@ -426,8 +475,7 @@ class SessionAnalyzer {
         this.permissionModes[mode] = (this.permissionModes[mode] ?? 0) + 1;
         // A new turn is a fresh start: repeating the previous turn's last call
         // (e.g. the user asked to run it again) is not churn.
-        this.prevToolMain = undefined;
-        this.prevToolSide = undefined;
+        this.prevToolByChain.clear();
         if (this.detail) {
           this.current = {
             index: this.turns.length,
@@ -449,14 +497,14 @@ class SessionAnalyzer {
     }
 
     if (isAssistant(event)) {
-      this.pushAssistant(event);
+      this.pushAssistant(event, chain);
       return;
     }
 
     this.touchTime((event as { timestamp?: string }).timestamp);
   }
 
-  private pushAssistant(event: AssistantEvent): void {
+  private pushAssistant(event: AssistantEvent, chain: string): void {
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
     const isContinuation = key !== undefined && this.seenUsage.has(key);
@@ -503,8 +551,7 @@ class SessionAnalyzer {
 
       // Churn: a tool call identical to the immediately preceding one on the
       // same chain (same tool, same input) is a retry — the loop re-did work.
-      const onSidechain = event.isSidechain === true;
-      const prevTool = onSidechain ? this.prevToolSide : this.prevToolMain;
+      const prevTool = this.prevToolByChain.get(chain);
       const cursor: ToolCursor = { name: tu.name, input: tu.input };
       if (prevTool && prevTool.name === tu.name) {
         prevTool.json ??= JSON.stringify(prevTool.input ?? null);
@@ -514,8 +561,7 @@ class SessionAnalyzer {
           this.retriesByTool[tu.name] = (this.retriesByTool[tu.name] ?? 0) + 1;
         }
       }
-      if (onSidechain) this.prevToolSide = cursor;
-      else this.prevToolMain = cursor;
+      this.prevToolByChain.set(chain, cursor);
 
       let skillName: string | undefined;
       if (tu.name === "Skill") {
@@ -530,10 +576,11 @@ class SessionAnalyzer {
         if (fp) this.filesTouched.add(fp);
       }
 
-      // Bash command families + test runs (counted now; error/failure deferred
-      // to the tool_result via `pending`).
+      // Bash command families + test runs + raw command heads (counted now;
+      // error/failure attribution deferred to the tool_result via `pending`).
       let bashFamily: string | undefined;
       let isTest = false;
+      let heads: string[] | undefined = [];
       if (tu.name === "Bash") {
         const cmd = stringField(tu.input, "command");
         if (cmd) {
@@ -543,8 +590,16 @@ class SessionAnalyzer {
             isTest = true;
             this.testRuns += 1;
           }
+          for (const segment of shellSegments(cmd)) {
+            const head = commandHead(segment);
+            if (!head) continue;
+            this.commandHeads[head] = (this.commandHeads[head] ?? 0) + 1;
+            heads.push(head);
+          }
         }
       }
+
+      if (heads.length === 0) heads = undefined;
 
       let step: TurnStep | undefined;
       if (this.detail) {
@@ -560,7 +615,7 @@ class SessionAnalyzer {
         };
         steps.push(step);
       }
-      this.pending.set(tu.id, { toolName: tu.name, skillName, bashFamily, isTest, step });
+      this.pending.set(tu.id, { toolName: tu.name, skillName, bashFamily, isTest, heads, step });
     }
 
     // A continuation line of an already-counted API call: keep its steps on the
@@ -692,6 +747,8 @@ class SessionAnalyzer {
       permissionModes: this.permissionModes,
       bashCommands: this.bashCommands,
       bashErrors: this.bashErrors,
+      commandHeads: this.commandHeads,
+      commandHeadErrors: this.commandHeadErrors,
       testRuns: this.testRuns,
       testFailures: this.testFailures,
       retries: this.retries,
