@@ -91,6 +91,9 @@ the id. Never round-trip a real path through the encoded id.
 **The parser never throws.** `parser.ts` is tolerant: invalid JSON → recorded
 `ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
 tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
+`parseSessionFile` streams the file line by line (sessions can be hundreds of MB);
+`parseSessionText` is the in-memory path. Both share `parseLine`, so their
+per-line behavior can't drift. (Only file I/O — e.g. a missing file — throws.)
 
 ## Self-update subsystem
 

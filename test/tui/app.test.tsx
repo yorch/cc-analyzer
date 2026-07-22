@@ -58,9 +58,10 @@ describe("App (smoke render)", () => {
     stdin.write(""); // esc on an empty filter → focus the nav rail
     await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("3"); // jump to the 3rd view (sessions)
-    await waitForFrame(lastFrame, "sessions");
-    const frame = lastFrame() ?? "";
-    expect(frame).toContain("sessions"); // breadcrumb now reads "sessions"
+    // Assert on a session row (the fixture's title), which appears only on the
+    // sessions view — not "sessions", which is always visible in the nav rail.
+    await waitForFrame(lastFrame, "Add hello function");
+    expect(lastFrame() ?? "").toContain("Add hello function");
     unmount();
   });
 

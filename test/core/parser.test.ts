@@ -107,6 +107,26 @@ describe("parseSessionFile · streaming", () => {
     }
   });
 
+  test("reassembles a single record that spans many read chunks", async () => {
+    // One JSON line larger than a stream chunk (~64KB) forces the line to be
+    // pieced back together from several chunks.
+    const big = JSON.stringify({ type: "ai-title", sessionId: "s", aiTitle: "y".repeat(300_000) });
+    const p = write("bigline.jsonl", `${big}\n{"type":"ai-title","sessionId":"s","aiTitle":"z"}\n`);
+    try {
+      const { events, errors } = await parseSessionFile(p);
+      expect(errors).toHaveLength(0);
+      expect(events).toHaveLength(2);
+      expect((events[0] as { aiTitle: string }).aiTitle).toHaveLength(300_000);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("rejects when the file does not exist (callers rely on the throw)", async () => {
+    const missing = join(tmpdir(), `cc-analyzer-parse-${process.pid}-missing.jsonl`);
+    expect(parseSessionFile(missing)).rejects.toThrow();
+  });
+
   test("a scalar line in a streamed file is recorded as an error", async () => {
     const p = write("scalar.jsonl", 'null\n{"type":"ai-title","sessionId":"s","aiTitle":"a"}\n');
     try {

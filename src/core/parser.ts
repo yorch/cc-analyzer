@@ -83,24 +83,37 @@ export async function parseSessionFile(path: string): Promise<ParseResult> {
   const events: SessionEvent[] = [];
   const errors: ParseError[] = [];
   const decoder = new TextDecoder();
-  let buf = "";
+  // Fragments of the current, not-yet-terminated line. Accumulated as an array
+  // and joined only when the line's newline arrives, so a single record that
+  // spans many chunks stays O(n) instead of re-concatenating a growing buffer.
+  let pending: string[] = [];
   let line = 0;
 
   for await (const chunk of Bun.file(path).stream()) {
-    buf += decoder.decode(chunk, { stream: true });
+    const text = decoder.decode(chunk, { stream: true });
     let start = 0;
-    let nl = buf.indexOf("\n", start);
+    let nl = text.indexOf("\n", start);
     while (nl !== -1) {
-      // A trailing "\r" on CRLF files is fine — JSON.parse ignores it.
-      parseLine(buf.slice(start, nl), ++line, events, errors);
+      // `segment` runs up to (not including) the newline; a trailing "\r" on
+      // CRLF files is fine, JSON.parse ignores it.
+      const segment = text.slice(start, nl);
+      if (pending.length === 0) {
+        // Common case: the whole line arrived in this chunk — no join needed.
+        parseLine(segment, ++line, events, errors);
+      } else {
+        pending.push(segment);
+        parseLine(pending.join(""), ++line, events, errors);
+        pending = [];
+      }
       start = nl + 1;
-      nl = buf.indexOf("\n", start);
+      nl = text.indexOf("\n", start);
     }
-    // Keep only the unfinished tail; compacted once per chunk, not per line.
-    buf = buf.slice(start);
+    if (start < text.length) pending.push(text.slice(start));
   }
-  buf += decoder.decode(); // flush any multi-byte remainder
-  if (buf.length > 0) parseLine(buf, ++line, events, errors);
+  const tail = decoder.decode(); // flush any multi-byte remainder
+  if (tail.length > 0) pending.push(tail);
+  // parseLine no-ops on a blank final fragment, so no length guard is needed.
+  if (pending.length > 0) parseLine(pending.join(""), ++line, events, errors);
 
   return { events, errors };
 }
