@@ -1,15 +1,20 @@
 /** Human-friendly formatting helpers for terminal output. */
 
 export function formatUSD(n: number): string {
-  if (n === 0) return "$0.00";
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  if (!Number.isFinite(n)) return "-";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs === 0) return "$0.00";
+  if (abs < 0.01) return `${sign}$${abs.toFixed(4)}`;
+  return `${sign}$${abs.toFixed(2)}`;
 }
 
 export function formatCount(n: number): string {
+  if (!Number.isFinite(n)) return "-";
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  // Bucket on the rounded value so 999_960 renders as "1.0M", not "1000.0k".
+  if (Math.round(n / 100) < 10_000) return `${(n / 1000).toFixed(1)}k`;
+  if (Math.round(n / 100_000) < 10_000) return `${(n / 1_000_000).toFixed(1)}M`;
   return `${(n / 1_000_000_000).toFixed(2)}B`;
 }
 

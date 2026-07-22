@@ -1,4 +1,10 @@
-import type { AssistantEvent, ContentBlock, SessionEvent, UserEvent } from "./events.ts";
+import {
+  type AssistantEvent,
+  type ContentBlock,
+  isRealPrompt,
+  type SessionEvent,
+  type UserEvent,
+} from "./events.ts";
 
 export type TranscriptRole = "user" | "assistant" | "system";
 export type TranscriptKind = "prompt" | "text" | "thinking" | "tool_use" | "tool_result";
@@ -39,13 +45,6 @@ function contentToText(content: unknown): string {
   }
   if (content && typeof content === "object") return JSON.stringify(content);
   return "";
-}
-
-function isRealPrompt(e: UserEvent): boolean {
-  if (e.isMeta === true) return false;
-  const content = e.message.content;
-  if (typeof content === "string") return true;
-  return content.some((b) => (b as ContentBlock).type !== "tool_result");
 }
 
 /**

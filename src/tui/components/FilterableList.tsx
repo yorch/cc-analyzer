@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
-import { scrollOffset } from "../scroll.ts";
+import { clampWindow, scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
 import { Empty, ScrollRange } from "./ui.tsx";
@@ -52,7 +52,15 @@ export function FilterableList<T>({
 
   const q = query.toLowerCase();
   const filtered = q ? items.filter((i) => filterText(i).toLowerCase().includes(q)) : items;
-  const activeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
+  // Clamp cursor + window: when `items` shrinks (e.g. a drill-down reuses this
+  // component instance), a stale offset would slice past the end and render
+  // real rows as "(no matches)".
+  const { cursor: activeCursor, offset: activeOffset } = clampWindow(
+    cursor,
+    offset,
+    size,
+    filtered.length,
+  );
 
   // Report the highlighted item to the parent for a live detail preview.
   const current = filtered[activeCursor];
@@ -86,7 +94,7 @@ export function FilterableList<T>({
           Math.min(activeCursor + (key.downArrow ? 1 : -1), filtered.length - 1),
         );
         setCursor(next);
-        setOffset(scrollOffset(next, offset, size));
+        setOffset(scrollOffset(next, activeOffset, size));
         return;
       }
       if (key.tab) {
@@ -95,8 +103,11 @@ export function FilterableList<T>({
         return;
       }
       if (key.backspace || key.delete) {
-        setQuery((cur) => cur.slice(0, -1));
-        reset();
+        // Don't lose the cursor position when there's no query to erase.
+        if (query) {
+          setQuery((cur) => cur.slice(0, -1));
+          reset();
+        }
         return;
       }
       if (input && input !== "?" && !key.ctrl && !key.meta && !key.tab) {
@@ -107,7 +118,7 @@ export function FilterableList<T>({
     { isActive },
   );
 
-  const visible = filtered.slice(offset, offset + size);
+  const visible = filtered.slice(activeOffset, activeOffset + size);
   return (
     <Box flexDirection="column">
       <Box>
@@ -132,14 +143,14 @@ export function FilterableList<T>({
           <Empty label="(no matches)" />
         ) : (
           visible.map((item, i) => {
-            const realIndex = offset + i;
+            const realIndex = activeOffset + i;
             return (
               <Box key={realIndex}>{renderItem(item, realIndex === activeCursor && isActive)}</Box>
             );
           })
         )}
       </Box>
-      <ScrollRange offset={offset} size={size} total={filtered.length} />
+      <ScrollRange offset={activeOffset} size={size} total={filtered.length} />
     </Box>
   );
 }

@@ -1,19 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { render } from "ink-testing-library";
-import type { ModelPricing, PricingTable } from "../../src/core/pricing.ts";
 import type { IndexedSession } from "../../src/core/queries.ts";
 import { SessionDetailScreen } from "../../src/tui/screens/SessionDetailScreen.tsx";
+import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
-const flat: ModelPricing = {
-  inputCostPerToken: 0.00001,
-  outputCostPerToken: 0.00002,
-  cacheWrite5mCostPerToken: 0.0000125,
-  cacheWrite1hCostPerToken: 0.00002,
-  cacheReadCostPerToken: 0.000001,
-};
-const pricing: PricingTable = { "claude-opus-4-7": flat, "claude-sonnet-4-5": flat };
 
 const session: IndexedSession = {
   sessionId: "sess-1",

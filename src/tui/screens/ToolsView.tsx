@@ -12,7 +12,8 @@ import {
 } from "../../core/stats.ts";
 import { sparkline, weeklySkillSeries } from "../charts.ts";
 import { ScrollRange } from "../components/ui.tsx";
-import { scrollOffset } from "../scroll.ts";
+import { keyIndex } from "../keys.ts";
+import { clampWindow, scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 
 type Panel = "tools" | "skills" | "subagents";
@@ -59,8 +60,8 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
   const subagents = useMemo(() => subagentUsage(db), [db]);
 
   const [panel, setPanel] = useState<Panel>("tools");
-  const [offset, setOffset] = useState(0);
-  const [sel, setSel] = useState(0);
+  const [offsetState, setOffset] = useState(0);
+  const [selState, setSel] = useState(0);
   const [toolSortIdx, setToolSortIdx] = useState(0);
   const [skillSortIdx, setSkillSortIdx] = useState(0);
 
@@ -79,6 +80,10 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
   const detailRows = panel === "skills" ? 4 : 0;
   const pageSize = Math.max(3, rows - 10 - detailRows);
 
+  // Clamp cursor + window: switching panel/sort or shrinking the terminal can
+  // leave `sel`/`offset` past the current list's end.
+  const { cursor: sel, offset } = clampWindow(selState, offsetState, pageSize, list.length);
+
   const go = (p: Panel) => {
     setPanel(p);
     setOffset(0);
@@ -89,7 +94,7 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
     (input, key) => {
       if (key.escape) return onBack();
       if (key.tab) return go(PANELS[(PANELS.indexOf(panel) + 1) % PANELS.length] as Panel);
-      const n = "123".indexOf(input);
+      const n = keyIndex("123", input);
       if (n >= 0) return go(PANELS[n] as Panel);
       if (input === "s") {
         if (panel === "tools") setToolSortIdx((i) => (i + 1) % TOOL_SORTS.length);

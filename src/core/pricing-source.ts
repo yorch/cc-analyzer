@@ -72,7 +72,10 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export async function loadPricing(opts: LoadPricingOptions = {}): Promise<LoadedPricing> {
   const maxAgeMs = opts.maxAgeMs ?? SEVEN_DAYS_MS;
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Bound the refresh: without a timeout, a hung network would stall every
+  // command that loads pricing (analyze, index, serve, the TUI) indefinitely.
+  const fetchImpl =
+    opts.fetchImpl ?? ((url: string) => fetch(url, { signal: AbortSignal.timeout(10_000) }));
   const cachePath = pricingCachePath();
 
   const cached = await readCache(cachePath);
@@ -93,12 +96,32 @@ export async function loadPricing(opts: LoadPricingOptions = {}): Promise<Loaded
   }
 }
 
+/** A pricing entry is usable only if every rate is a finite number. */
+function isValidEntry(e: unknown): e is ModelPricing {
+  if (typeof e !== "object" || e === null) return false;
+  const p = e as Record<string, unknown>;
+  return (
+    Number.isFinite(p.inputCostPerToken) &&
+    Number.isFinite(p.outputCostPerToken) &&
+    Number.isFinite(p.cacheWrite5mCostPerToken) &&
+    Number.isFinite(p.cacheWrite1hCostPerToken) &&
+    Number.isFinite(p.cacheReadCostPerToken)
+  );
+}
+
 async function readCache(path: string): Promise<CacheFile | null> {
   try {
     const file = Bun.file(path);
     if (!(await file.exists())) return null;
     const data = (await file.json()) as CacheFile;
-    if (typeof data.fetchedAt !== "number" || typeof data.table !== "object") return null;
+    if (typeof data.fetchedAt !== "number" || typeof data.table !== "object" || data.table === null)
+      return null;
+    // A corrupted cache (string rates, nulls) would silently yield NaN costs
+    // for every session — drop invalid entries, and reject an unusable cache.
+    for (const [key, entry] of Object.entries(data.table)) {
+      if (!isValidEntry(entry)) delete data.table[key];
+    }
+    if (Object.keys(data.table).length === 0) return null;
     return data;
   } catch {
     return null;

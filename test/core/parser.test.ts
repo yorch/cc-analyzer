@@ -46,3 +46,12 @@ describe("parseSessionText", () => {
     expect(errors[0]?.line).toBe(2);
   });
 });
+
+describe("parseSessionText · non-object lines", () => {
+  test("valid-JSON scalar lines become errors, not events", () => {
+    const { events, errors } = parseSessionText('null\n42\n"hi"');
+    expect(events).toHaveLength(0);
+    expect(errors).toHaveLength(3);
+    expect(errors.every((e) => e.error === "not a JSON object")).toBe(true);
+  });
+});

@@ -9,3 +9,20 @@ export function scrollOffset(cursor: number, offset: number, size: number): numb
   if (cursor >= offset + size) return cursor - size + 1;
   return offset;
 }
+
+/**
+ * Clamp a stored cursor + window offset to a (possibly shrunk) list length, so
+ * a stale offset can't slice past the end and render real rows as empty. Used
+ * wherever a list reuses cursor/offset state across changing data.
+ */
+export function clampWindow(
+  cursor: number,
+  offset: number,
+  size: number,
+  length: number,
+): { cursor: number; offset: number } {
+  return {
+    cursor: Math.min(cursor, Math.max(0, length - 1)),
+    offset: Math.min(offset, Math.max(0, length - size)),
+  };
+}

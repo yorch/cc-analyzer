@@ -71,6 +71,7 @@ export function InsightsView({ db, columns, pageSize, isActive, onOpenSession, o
       <Box flexDirection="column">
         {header}
         <CacheHitList
+          key={`sessions-${drilled.projectId}`}
           items={sessions}
           columns={columns}
           pageSize={listSize}
@@ -104,6 +105,7 @@ export function InsightsView({ db, columns, pageSize, isActive, onOpenSession, o
     <Box flexDirection="column">
       {header}
       <CacheHitList
+        key="projects"
         items={projects}
         columns={columns}
         pageSize={listSize}

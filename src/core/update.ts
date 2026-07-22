@@ -18,8 +18,11 @@ import { VERSION } from "./version.ts";
  */
 export function isCompiledBinary(): boolean {
   if (import.meta.url.includes("$bunfs")) return true;
+  // Fallback allowlist: only treat the process as our compiled binary when the
+  // executable actually looks like one. A denylist ("not bun/node") would let a
+  // renamed interpreter (bun-1.3, bun-profile…) be overwritten by self-update.
   const exe = basename(process.execPath).toLowerCase();
-  return exe !== "bun" && exe !== "bun.exe" && exe !== "node" && exe !== "node.exe";
+  return exe === "cc-analyzer" || exe.startsWith("cc-analyzer-") || exe === "cc-analyzer.exe";
 }
 
 export interface UpdateResult {
@@ -129,22 +132,36 @@ async function downloadTo(
   }
   const total = Number(res.headers.get("content-length")) || undefined;
   const sink = Bun.file(dest).writer();
+  let received = 0;
   try {
-    await pumpStream(res.body, (chunk) => void sink.write(chunk), {
-      stallMs: DOWNLOAD_STALL_MS,
-      total,
-      onProgress,
-    });
+    // Awaiting the sink write applies backpressure and surfaces write errors
+    // (e.g. disk full) as a clean failure instead of an unhandled rejection.
+    received = await pumpStream(
+      res.body,
+      async (chunk) => {
+        await sink.write(chunk);
+      },
+      {
+        stallMs: DOWNLOAD_STALL_MS,
+        total,
+        onProgress,
+      },
+    );
   } finally {
     await sink.end();
+  }
+  // A stream that ends cleanly but early would otherwise install a truncated binary.
+  if (total !== undefined && received !== total) {
+    throw new Error(`incomplete download: got ${received} of ${total} bytes for ${url}`);
   }
 }
 
 /**
- * Verify a downloaded file against the release's SHA256SUMS. Best-effort:
- * silently returns when the manifest is absent (pre-checksum releases), the
- * asset is unlisted, or the manifest can't be fetched — but throws on a real
- * hash mismatch so a corrupted or tampered download is never installed.
+ * Verify a downloaded file against the release's SHA256SUMS. Every release
+ * ships a manifest, so verification is required: an unreachable or incomplete
+ * manifest aborts the update rather than silently installing an unverified
+ * binary — an attacker who can tamper with the asset can usually also make the
+ * manifest fetch fail, so failing open would defeat the check entirely.
  */
 async function verifyChecksum(file: string, version: string, asset: string): Promise<void> {
   let manifest: string;
@@ -153,13 +170,18 @@ async function verifyChecksum(file: string, version: string, asset: string): Pro
       redirect: "follow",
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     manifest = await res.text();
-  } catch {
-    return;
+  } catch (err) {
+    throw new Error(
+      `could not fetch SHA256SUMS to verify the download (${String(err)}); aborting update. ` +
+        `Retry, or download the release manually from GitHub.`,
+    );
   }
   const expected = expectedHash(parseChecksums(manifest), asset);
-  if (!expected) return;
+  if (!expected) {
+    throw new Error(`SHA256SUMS for v${version} has no entry for ${asset}; aborting update.`);
+  }
   const actual = await fileSha256(file);
   if (actual !== expected) {
     throw new Error(`checksum mismatch for ${asset} (expected ${expected}, got ${actual})`);
@@ -211,6 +233,8 @@ export async function performUpdate(
   }
 
   const target = process.execPath;
+  // pid uniquely identifies the single writer (one update per process); the
+  // catch block below removes this file on any failure.
   const tmp = join(dirname(target), `.cc-analyzer.update.${process.pid}`);
   try {
     await downloadTo(assetDownloadUrl(latest, asset), tmp, onProgress);

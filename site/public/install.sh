@@ -1,7 +1,7 @@
 #!/bin/sh
 # cc-analyzer installer for macOS and Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/yorch/cc-analyzer/main/install.sh | sh
+#   curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh
 #
 # Environment overrides:
 #   CC_ANALYZER_VERSION      release tag to install (e.g. v0.2.0); default: latest
@@ -21,6 +21,9 @@ err() {
 
 command -v curl >/dev/null 2>&1 || err "curl is required to run this installer"
 
+# HTTPS only, no protocol downgrade via redirects.
+CURL="curl --proto =https --tlsv1.2"
+
 # --- detect platform -------------------------------------------------------
 os=$(uname -s)
 case "$os" in
@@ -39,10 +42,16 @@ esac
 asset="${BIN}-${os}-${arch}"
 
 # --- resolve download URL --------------------------------------------------
-# GitHub redirects /releases/latest/download/<asset> to the newest release, so
-# no API token or tag lookup is needed for the common case.
+# Resolve "latest" to a concrete tag once (via the /releases/latest redirect),
+# so the binary and its SHA256SUMS come from the same release even if a new one
+# is published mid-install. If that HEAD request is blocked (some proxies), fall
+# back to the latest/download alias — a tiny asset/manifest race, but it installs.
 if [ "$VERSION" = latest ]; then
-  base="https://github.com/${REPO}/releases/latest/download"
+  resolved=$($CURL -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null | sed 's|.*/||') || resolved=""
+  case "$resolved" in
+    v[0-9]*) base="https://github.com/${REPO}/releases/download/${resolved}" ;;
+    *) base="https://github.com/${REPO}/releases/latest/download" ;;
+  esac
 else
   base="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
@@ -54,14 +63,14 @@ info "cc-analyzer (${VERSION}) · ${os}/${arch}"
 info "downloading ${asset}..."
 tmp=$(mktemp) || err "could not create a temporary file"
 trap 'rm -f "$tmp"' EXIT INT TERM
-curl -fSL --progress-bar "$url" -o "$tmp" ||
+$CURL -fSL --progress-bar "$url" -o "$tmp" ||
   err "download failed — is ${asset} published for ${VERSION}? (${url})"
 
 # --- verify checksum -------------------------------------------------------
 # Best-effort: enforced when SHA256SUMS is published; skipped (with a note) for
 # older releases that predate it, or when no sha256 tool is available.
 verify_checksum() {
-  sums=$(curl -fsSL "$sums_url" 2>/dev/null) ||
+  sums=$($CURL -fsSL "$sums_url" 2>/dev/null) ||
     { info "no SHA256SUMS for this release; skipping checksum verification"; return 0; }
   expected=$(printf '%s\n' "$sums" | awk -v a="$asset" '{f=$2; sub(/^\*/,"",f); if (f==a) print $1}' | head -1)
   [ -n "$expected" ] ||

@@ -44,6 +44,17 @@ export interface SessionRow {
   indexed_at: number;
 }
 
+/**
+ * Local-time YYYY-MM-DD for an ISO timestamp. `day`/`month` must agree with
+ * the activity heatmap, which buckets by `strftime(..., 'localtime')`.
+ */
+function localDay(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** Flatten a session analysis + file metadata into a database row. */
 export function toSessionRow(
   analysis: SessionAnalysis,
@@ -52,6 +63,7 @@ export function toSessionRow(
 ): SessionRow {
   const t = analysis.totals.tokens;
   const c = analysis.totals.cost;
+  const day = analysis.startTime ? localDay(analysis.startTime) : null;
   return {
     path: info.path,
     project_id: info.projectId,
@@ -60,8 +72,8 @@ export function toSessionRow(
     title: analysis.title ?? null,
     start_time: analysis.startTime ?? null,
     end_time: analysis.endTime ?? null,
-    day: analysis.startTime ? analysis.startTime.slice(0, 10) : null,
-    month: analysis.startTime ? analysis.startTime.slice(0, 7) : null,
+    day,
+    month: day ? day.slice(0, 7) : null,
     duration_ms: analysis.durationMs ?? null,
     turns: analysis.totals.turns,
     api_calls: analysis.totals.apiCalls,
@@ -183,7 +195,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const currentPaths = new Set(files.map((f) => f.path));
 
   const existing = new Map<string, { mtime_ms: number; size_bytes: number }>();
-  if (!opts.rebuild) {
+  {
     const rows = db.query("SELECT path, mtime_ms, size_bytes FROM sessions").all() as {
       path: string;
       mtime_ms: number;
@@ -192,10 +204,13 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const r of rows) existing.set(r.path, { mtime_ms: r.mtime_ms, size_bytes: r.size_bytes });
   }
 
-  const toIngest = files.filter((f) => {
-    const prev = existing.get(f.path);
-    return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
-  });
+  // On rebuild, ignore existing state for skipping — but still prune below.
+  const toIngest = opts.rebuild
+    ? files
+    : files.filter((f) => {
+        const prev = existing.get(f.path);
+        return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
+      });
 
   let done = 0;
   const rows = await mapPool(toIngest, concurrency, async (info) => {
@@ -219,12 +234,10 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const row of rows) {
       if (row) upsert.run(...rowValues(row));
     }
-    if (!opts.rebuild) {
-      for (const path of existing.keys()) {
-        if (!currentPaths.has(path)) {
-          deleteStmt.run(path);
-          deleted++;
-        }
+    for (const path of existing.keys()) {
+      if (!currentPaths.has(path)) {
+        deleteStmt.run(path);
+        deleted++;
       }
     }
   });

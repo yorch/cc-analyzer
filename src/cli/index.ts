@@ -29,7 +29,8 @@ Usage:
                                        Analyze a single session
   cc-analyzer index [--rebuild]        Build/refresh the session index
   cc-analyzer stats [--json]           Portfolio-wide analytics (needs an index)
-  cc-analyzer serve [--port=4317]      Launch the local web app (needs an index)
+  cc-analyzer serve [--port=4317] [--host=127.0.0.1]
+                                       Launch the local web app (needs an index)
   cc-analyzer pricing update           Refresh the pricing cache
   cc-analyzer update [--check]         Update to the latest release (or just check)
   cc-analyzer version                  Print the version
@@ -151,8 +152,15 @@ async function cmdStats(json: boolean): Promise<number> {
 async function cmdPricingUpdate(): Promise<number> {
   const loaded = await loadPricing({ force: true });
   const count = Object.keys(loaded.table).length;
+  if (loaded.source !== "remote") {
+    console.error(
+      `error: could not refresh pricing from the remote source; ` +
+        `still using ${loaded.source} (${formatCount(count)} models).`,
+    );
+    return 1;
+  }
   console.log(`Pricing loaded from ${loaded.source}: ${formatCount(count)} models.`);
-  return loaded.source === "remote" ? 0 : 1;
+  return 0;
 }
 
 /** Live download progress on stderr (TTY only, so piped output stays clean). */
@@ -209,10 +217,20 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdStats(json);
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
-      const port = portArg ? Number(portArg.slice("--port=".length)) : undefined;
+      let port: number | undefined;
+      if (portArg) {
+        const raw = portArg.slice("--port=".length);
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+          console.error(`error: invalid --port '${raw}' (expected an integer 1-65535).`);
+          return 2;
+        }
+        port = parsed;
+      }
+      const hostArg = rest.find((a) => a.startsWith("--host="));
+      const host = hostArg ? hostArg.slice("--host=".length) : undefined;
       const { runServe } = await import("../web/server.ts");
-      await runServe({ port });
-      return 0;
+      return await runServe({ port, host });
     }
     case "pricing":
       if (positional[0] === "update") return cmdPricingUpdate();
@@ -227,8 +245,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return 0;
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
-      await runTui();
-      return 0;
+      return await runTui();
     }
     case "help":
     case "--help":

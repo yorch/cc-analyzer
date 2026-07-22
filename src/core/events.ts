@@ -163,3 +163,24 @@ export type SessionEvent =
   | AiTitleEvent
   | UnknownEvent
   | Record<string, unknown>;
+
+/**
+ * A user event starts a new turn only if it is a genuine prompt. Shared by the
+ * analyzer and the transcript builder so turn boundaries never diverge between
+ * them (a *turn* = one genuine prompt plus its assistant/tool loop).
+ *
+ * Not a genuine prompt when:
+ * - it's a sidechain (subagent) task prompt — belongs to the enclosing turn;
+ * - it's system-injected (`isMeta`: caveats, command stdout, reminders);
+ * - it carries only `tool_result` blocks (a loop continuation).
+ *
+ * Note: `promptId` is present on tool_result carriers too, so it can't be the
+ * discriminator.
+ */
+export function isRealPrompt(e: UserEvent): boolean {
+  if (e.isSidechain === true) return false;
+  if (e.isMeta === true) return false;
+  const content = e.message.content;
+  if (typeof content === "string") return true;
+  return content.some((b) => (b as ContentBlock).type !== "tool_result");
+}

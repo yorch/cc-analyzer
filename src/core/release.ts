@@ -16,8 +16,14 @@ export function normalizeVersion(v: string): string {
 
 /** Compare two dotted versions numerically. Returns -1, 0, or 1 (a vs b). */
 export function compareVersions(a: string, b: string): number {
-  const pa = normalizeVersion(a).split(".").map(Number);
-  const pb = normalizeVersion(b).split(".").map(Number);
+  // A non-numeric segment ("3-rc") parses to NaN; treat it as 0 so comparison
+  // stays symmetric instead of NaN making a prerelease sort as newest.
+  const num = (s: string): number => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) ? 0 : n;
+  };
+  const pa = normalizeVersion(a).split(".").map(num);
+  const pb = normalizeVersion(b).split(".").map(num);
   const len = Math.max(pa.length, pb.length);
   for (let i = 0; i < len; i++) {
     const x = pa[i] ?? 0;
@@ -60,9 +66,11 @@ export async function fetchLatestVersion(timeoutMs = 10000): Promise<string> {
     signal: AbortSignal.timeout(timeoutMs),
   });
   const tag = res.url.split("/").pop() ?? "";
-  const version = normalizeVersion(tag);
-  if (!/^\d+\.\d+\.\d+/.test(version)) {
+  // Take the leading X.Y.Z core so a suffixed tag GitHub marked "latest"
+  // (e.g. v0.5.1-1, a re-cut build) still resolves instead of hard-failing.
+  const match = normalizeVersion(tag).match(/^\d+\.\d+\.\d+/);
+  if (!match) {
     throw new Error(`could not parse a version from ${res.url}`);
   }
-  return version;
+  return match[0];
 }

@@ -300,10 +300,6 @@ section > h2::before {
   font-size: 12px;
   color: var(--muted);
 }
-.hero-sub .est {
-  color: var(--signal);
-}
-
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -963,6 +959,7 @@ p.muted {
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before {
+    /* biome-ignore lint/complexity/noImportantStyles: accessibility kill-switch must beat any animation rule */
     animation: none !important;
   }
 }

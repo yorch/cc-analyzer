@@ -2,12 +2,14 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { indexDbPath, stateDir } from "./paths.ts";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS meta (
+// The meta table holds the schema version; it must exist before the version
+// check, so it's created ahead of the rest of the schema (see openDb).
+const META_SCHEMA = `CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT
-);
+);`;
 
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   path TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -49,9 +51,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_month ON sessions(month);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
+CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 `;
 
-export const SCHEMA_VERSION = "3";
+// v4: usage dedup + sidechain turn fix + local-time day/month change what rows
+// contain, so stale indexes must be dropped and rebuilt.
+export const SCHEMA_VERSION = "4";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
@@ -62,7 +67,9 @@ export function openDb(path: string = indexDbPath()): Database {
   const db = new Database(path, { create: true });
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA synchronous = NORMAL;");
-  db.exec(SCHEMA);
+  // Check the version before applying SCHEMA: creating a new index against a
+  // stale sessions table (missing the indexed column) would fail.
+  db.exec(META_SCHEMA);
   const row = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
     | undefined;
@@ -70,10 +77,10 @@ export function openDb(path: string = indexDbPath()): Database {
     // The index is a disposable cache: on a schema change, drop and recreate the
     // sessions table (with the current columns) so a rebuild fills it accurately.
     db.exec("DROP TABLE IF EXISTS sessions;");
-    db.exec(SCHEMA);
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
       SCHEMA_VERSION,
     );
   }
+  db.exec(SCHEMA);
   return db;
 }

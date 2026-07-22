@@ -53,7 +53,7 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     keys: [
       ["esc", "focus the nav rail (from a list)"],
       ["↑/↓ (in rail)", "switch view"],
-      ["1-5 (in rail)", "jump to a view"],
+      ["1-6 (in rail)", "jump to a view"],
       ["↵ / → (in rail)", "focus the list"],
     ],
   },
@@ -85,7 +85,9 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Session detail",
     keys: [
-      ["1-3 / tab", "summary / turns / transcript"],
+      ["1 / 2 / 3", "turns / transcript / summary"],
+      ["u / t / s", "turns / transcript / summary"],
+      ["→ / tab", "focus steps (turns mode)"],
       ["↑/↓ · enter", "move · expand row"],
       ["g / G", "jump to top / bottom"],
     ],

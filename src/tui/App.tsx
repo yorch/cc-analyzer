@@ -14,6 +14,7 @@ import {
 import { portfolioSummary, spendByMonth } from "../core/stats.ts";
 import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
+import { keyIndex } from "./keys.ts";
 import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
 import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
@@ -67,13 +68,15 @@ export function App({ db, pricing }: Props) {
       if (key.upArrow) return moveView(-1);
       if (key.downArrow) return moveView(1);
       if (key.return || key.rightArrow || key.escape || key.leftArrow) return setFocus("body");
-      const n = "123456".indexOf(input);
+      const n = keyIndex("123456", input);
       if (n >= 0) {
         setView(VIEW_KEYS[n] as View);
         setFocus("body");
       }
     },
-    { isActive: !help && !openSession },
+    // Active even while a session is open so `?` still opens help there; the
+    // rail keys are unreachable in that state (focus is "body").
+    { isActive: !help },
   );
 
   if (projects.length === 0) {

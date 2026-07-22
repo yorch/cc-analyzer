@@ -74,7 +74,11 @@ export async function maybeNotifyUpdate(now: number = Date.now()): Promise<void>
         latest = await fetchLatestVersion(1000);
         await writeCache(path, { lastCheck: now, latest });
       } catch {
-        // offline or slow — fall back to the cached value, if any
+        // Offline or slow — keep any previously cached version (never fabricate
+        // one; an empty string means "unknown" and shows no notice) and advance
+        // lastCheck so an offline user doesn't pay the 1s timeout on every
+        // subsequent command for the rest of the day.
+        await writeCache(path, { lastCheck: now, latest: latest ?? "" });
       }
     }
 

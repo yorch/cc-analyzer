@@ -105,6 +105,70 @@ export interface ResolvedPricing {
   exact: boolean;
 }
 
+// Family lookups scan the whole table (thousands of LiteLLM entries), and the
+// analyzer resolves per assistant event — memoize per table instance.
+const familyCache = new WeakMap<PricingTable, Map<string, ModelPricing | undefined>>();
+
+/**
+ * Version key for ordering ids within a family: the numeric segments of the id,
+ * excluding date stamps (runs of 6+ digits like `20250514`). So
+ * `claude-opus-4-1` → [4, 1] beats `claude-opus-4` → [4], and a trailing release
+ * date doesn't inflate the comparison. Compared element-wise, longer-wins on a
+ * shared prefix.
+ */
+function versionKey(id: string): number[] {
+  return (id.match(/\d+/g) ?? []).filter((s) => s.length < 6).map(Number);
+}
+
+function compareVersionKeys(a: number[], b: number[]): number {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? -1;
+    const y = b[i] ?? -1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Best pricing entry for a model family. Prefers bare Anthropic ids
+ * (`claude-…` / `anthropic/claude-…`) over provider variants (Bedrock, Vertex)
+ * and, among those, the newest by version segments (see `versionKey`) — so an
+ * unknown `claude-opus-4-9` prices off the latest opus rather than a stale
+ * `claude-3-opus` or whatever entry happens to come first in table order.
+ */
+function familyPricing(table: PricingTable, family: string): ModelPricing | undefined {
+  let cache = familyCache.get(table);
+  if (!cache) {
+    cache = new Map();
+    familyCache.set(table, cache);
+  }
+  if (cache.has(family)) return cache.get(family);
+
+  let bestVer: number[] | undefined;
+  let best: ModelPricing | undefined;
+  let fallback: ModelPricing | undefined;
+  for (const [key, pricing] of Object.entries(table)) {
+    const k = key.toLowerCase();
+    if (!k.includes(family)) continue;
+    fallback ??= pricing;
+    const bare = k.startsWith("claude-")
+      ? k
+      : k.startsWith("anthropic/claude-")
+        ? k.slice("anthropic/".length)
+        : undefined;
+    if (!bare) continue;
+    const ver = versionKey(bare);
+    if (!bestVer || compareVersionKeys(ver, bestVer) > 0) {
+      bestVer = ver;
+      best = pricing;
+    }
+  }
+  const result = best ?? fallback;
+  cache.set(family, result);
+  return result;
+}
+
 /**
  * Resolve a session model id (e.g. `claude-opus-4-7`) to pricing.
  * Tries exact match, then an `anthropic/`-prefixed match, then a family
@@ -122,9 +186,8 @@ export function resolveModel(table: PricingTable, modelId: string): ResolvedPric
         ? "haiku"
         : undefined;
   if (family) {
-    for (const [key, pricing] of Object.entries(table)) {
-      if (key.toLowerCase().includes(family)) return { pricing, exact: false };
-    }
+    const pricing = familyPricing(table, family);
+    if (pricing) return { pricing, exact: false };
   }
   return undefined;
 }
