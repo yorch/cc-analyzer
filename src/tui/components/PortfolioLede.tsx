@@ -21,9 +21,9 @@ export function PortfolioLede({
 }: {
   summary: PortfolioSummary;
   months: MonthRow[];
-  duration?: DurationSummary;
-  distribution?: CostDistribution;
-  streaks?: StreakSummary;
+  duration: DurationSummary;
+  distribution: CostDistribution;
+  streaks: StreakSummary;
 }) {
   const io = summary.inputTokens + summary.outputTokens;
   const cache = summary.cacheWriteTokens + summary.cacheReadTokens;
@@ -48,17 +48,15 @@ export function PortfolioLede({
           </Text>
         ) : null}
       </Text>
-      {duration && distribution && streaks ? (
-        <Text color={role.muted}>
-          {formatDuration(duration.totalMs)} with claude ({(duration.activeShare * 100).toFixed(0)}%
-          active) · median {formatUSD(distribution.p50)} / p90 {formatUSD(distribution.p90)} per
-          session
-          {distribution.topDecileShare > 0
-            ? ` · top 10% = ${(distribution.topDecileShare * 100).toFixed(0)}% of spend`
-            : ""}{" "}
-          · streak {streaks.currentStreak}d (best {streaks.longestStreak}d)
-        </Text>
-      ) : null}
+      <Text color={role.muted}>
+        {formatDuration(duration.totalMs)} with claude ({(duration.activeShare * 100).toFixed(0)}%
+        active) · median {formatUSD(distribution.p50)} / p90 {formatUSD(distribution.p90)} per
+        session
+        {distribution.topDecileShare !== null
+          ? ` · top 10% = ${(distribution.topDecileShare * 100).toFixed(0)}% of spend`
+          : ""}{" "}
+        · streak {streaks.currentStreak}d (best {streaks.longestStreak}d)
+      </Text>
     </Box>
   );
 }

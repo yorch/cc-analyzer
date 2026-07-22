@@ -11,6 +11,7 @@ import {
   type Granularity,
   heatGrid,
   metricValue,
+  RAMP,
   WEEKDAY_LABELS,
 } from "../charts.ts";
 import { palette, role, selection } from "../theme.ts";
@@ -197,7 +198,7 @@ function CalendarPanel({
       ))}
       <Box marginTop={1}>
         <Text color={role.muted}>
-          less <Text color={palette.amber}> ·░▒▓█</Text> more · busiest day {fmt(metric, max)}
+          less <Text color={palette.amber}>{RAMP}</Text> more · busiest day {fmt(metric, max)}
         </Text>
       </Box>
     </Box>
@@ -229,7 +230,7 @@ function HeatPanel({
       ))}
       <Box marginTop={1}>
         <Text color={role.muted}>
-          less <Text color={palette.amber}> ·░▒▓█</Text> more · busiest {fmt(metric, max)}
+          less <Text color={palette.amber}>{RAMP}</Text> more · busiest {fmt(metric, max)}
         </Text>
       </Box>
     </Box>

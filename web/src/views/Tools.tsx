@@ -8,8 +8,10 @@ import {
   type SkillUsageRow,
   type ToolUsageRow,
   type TurnDepthStats,
+  weekOf,
 } from "../api.ts";
 import { count, shortPath, usd } from "../format.ts";
+import { Histogram } from "../Histogram.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
@@ -36,18 +38,11 @@ const NAME_SORT: Accessors<NameUsageRow> = {
 
 const rateClass = (r: number): string => (r >= 0.05 ? "rate-hi" : r >= 0.01 ? "rate-mid" : "muted");
 
-/** Monday (UTC) of the ISO week containing `day` (YYYY-MM-DD), as YYYY-MM-DD. */
-function weekKey(day: string): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
-}
-
 /** Dense weekly invocation totals across the skill's active span (gap weeks = 0). */
 function weeklySeries(daily: SkillDayCount[]): number[] {
   if (daily.length === 0) return [];
   const byWeek = new Map<string, number>();
-  for (const d of daily) byWeek.set(weekKey(d.day), (byWeek.get(weekKey(d.day)) ?? 0) + d.count);
+  for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
   const keys = [...byWeek.keys()].sort();
   const first = keys[0];
   const last = keys[keys.length - 1];
@@ -244,10 +239,9 @@ function BashTable({ rows }: { rows: BashCommandRow[] }) {
   );
 }
 
-/** Distribution of API calls per turn — how agentic the turns are. */
+/** Distribution of main-chain API calls per turn — how agentic the turns are. */
 function DepthPanel({ depth }: { depth: TurnDepthStats }) {
   if (depth.turns === 0) return <p className="muted">No turns in the index.</p>;
-  const max = Math.max(...depth.buckets.map((b) => b.turns), 1);
   const trend = depth.byMonth;
   return (
     <>
@@ -257,17 +251,7 @@ function DepthPanel({ depth }: { depth: TurnDepthStats }) {
         {trend.length >= 2 &&
           ` · ${trend[0]?.avgDepth.toFixed(1)} → ${trend[trend.length - 1]?.avgDepth.toFixed(1)} avg over ${trend.length} months`}
       </p>
-      <div className="hist">
-        {depth.buckets.map((b) => (
-          <div className="hist-row" key={b.label}>
-            <span className="hist-label">{b.label} calls</span>
-            <div className="bar">
-              <span style={{ width: `${(b.turns / max) * 100}%` }} />
-            </div>
-            <span className="hist-count">{count(b.turns)}</span>
-          </div>
-        ))}
-      </div>
+      <Histogram rows={depth.buckets.map((b) => ({ label: `${b.label} calls`, count: b.turns }))} />
     </>
   );
 }

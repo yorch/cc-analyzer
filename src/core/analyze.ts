@@ -49,6 +49,9 @@ export interface Turn {
   endTime?: string;
   models: string[];
   apiCalls: ApiCall[];
+  /** Main-chain API calls only — a subagent burst is one main-loop step, so
+   * turn-depth analytics count this, not apiCalls.length. */
+  mainApiCalls: number;
   tokens: TokenCounts;
   cost: CostBreakdown;
   toolCounts: Record<string, number>;
@@ -130,22 +133,33 @@ function stripEnvAssignments(command: string): string {
   return rest;
 }
 
+/** One shared (heuristic) command-line segmentation for the shell metrics:
+ * split on `&&`, `;`, pipes, and newlines, env assignments stripped. */
+function shellSegments(command: string): string[] {
+  return command
+    .split(/&&|;|\|{1,2}|\r?\n/)
+    .map((segment) => stripEnvAssignments(segment.trim()))
+    .filter((segment) => segment !== "");
+}
+
 /**
  * The program a shell command line resolves to: leading env assignments are
- * skipped, a leading `cd … && real` attributes to `real`, and paths reduce to
- * their basename (`/usr/bin/git` → `git`).
+ * skipped, leading `cd`/`pushd` segments attribute to the command that
+ * follows, and paths reduce to their basename (`/usr/bin/git` → `git`).
  */
-export function commandFamily(command: string, depth = 0): string | undefined {
-  if (depth > 4) return undefined;
-  const rest = stripEnvAssignments(command);
-  const first = rest.split(/\s+/, 1)[0] ?? "";
-  const base = (first.split("/").pop() ?? "").toLowerCase();
-  if (!base) return undefined;
-  if (base === "cd" || base === "pushd") {
-    const after = rest.match(/(?:&&|;)([\s\S]+)$/);
-    if (after?.[1]) return commandFamily(after[1], depth + 1) ?? base;
+export function commandFamily(command: string): string | undefined {
+  let fallback: string | undefined;
+  for (const segment of shellSegments(command)) {
+    const first = segment.split(/\s+/, 1)[0] ?? "";
+    const base = (first.split("/").pop() ?? "").toLowerCase();
+    if (!base) continue;
+    if (base === "cd" || base === "pushd") {
+      fallback ??= base;
+      continue;
+    }
+    return base;
   }
-  return base;
+  return fallback;
 }
 
 // Anchored at the start of a command segment so a runner name appearing in an
@@ -153,12 +167,10 @@ export function commandFamily(command: string, depth = 0): string | undefined {
 const TEST_RUNNER =
   /^(?:(?:bun|npm|pnpm|yarn|deno)\s+(?:run\s+)?test\b|pytest\b|jest\b|vitest\b|go\s+test\b|cargo\s+test\b|mvn\s+test\b|(?:\.\/)?gradlew?\s+test\b|make\s+test\b|rspec\b|phpunit\b|ctest\b)/;
 
-/** Heuristic: does this shell command run a test suite? Each `&&`/`;`/`|`
- * segment is checked at its start (after env assignments), not anywhere. */
+/** Heuristic: does this shell command run a test suite? Each segment is
+ * checked at its start (after env assignments), not anywhere in the string. */
 export function isTestCommand(command: string): boolean {
-  return command
-    .split(/&&|;|\|{1,2}/)
-    .some((segment) => TEST_RUNNER.test(stripEnvAssignments(segment.trim())));
+  return shellSegments(command).some((segment) => TEST_RUNNER.test(segment));
 }
 
 /** Extract the four priced token categories from a usage block. */
@@ -273,15 +285,21 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   const retriesByTool: Record<string, number> = {};
   // Separate cursors for the main chain and sidechains, reset at each new
   // turn: a user-requested re-run or an interleaved subagent call must not
-  // read as churn. (Parallel sidechains still share one cursor — the log
-  // carries no chain id to tell them apart.)
-  let prevToolKeyMain: string | undefined;
-  let prevToolKeySide: string | undefined;
+  // read as churn. (Parallel sidechains still share one cursor — resolving
+  // per-chain identity would need a parentUuid walk.) Inputs are serialized
+  // lazily, only when tool names match — Write/Edit inputs can be MB-scale.
+  interface ToolCursor {
+    name: string;
+    input: unknown;
+    json?: string;
+  }
+  let prevToolMain: ToolCursor | undefined;
+  let prevToolSide: ToolCursor | undefined;
   let sidechainApiCalls = 0;
   let sidechainCost = 0;
-  let activeMs = 0;
-  let prevEventMs: number | undefined;
-  const allCalls: ApiCall[] = [];
+  // Every parsed event timestamp; sorted once at the end for active time, so
+  // interleaved out-of-order sidechain lines can't skew the sum.
+  const eventMs: number[] = [];
 
   // Streamed responses are logged as one `assistant` line per content block,
   // each repeating the same message id and full usage. Merge those lines into a
@@ -303,19 +321,8 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       if (!current.startTime || ts < current.startTime) current.startTime = ts;
       if (!current.endTime || ts > current.endTime) current.endTime = ts;
     }
-    // Active time: events are appended roughly chronologically, so short gaps
-    // between consecutive events are work; long ones are the session sitting
-    // idle. The cursor only moves forward — interleaved sidechain lines can
-    // arrive out of order, and re-walking an already-covered interval would
-    // double-count it and break the activeMs ≤ durationMs invariant.
     const ms = Date.parse(ts);
-    if (!Number.isNaN(ms) && (prevEventMs === undefined || ms > prevEventMs)) {
-      if (prevEventMs !== undefined) {
-        const gap = ms - prevEventMs;
-        if (gap <= ACTIVE_GAP_MS) activeMs += gap;
-      }
-      prevEventMs = ms;
-    }
+    if (!Number.isNaN(ms)) eventMs.push(ms);
   };
 
   for (const event of events) {
@@ -342,6 +349,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         permissionMode: event.permissionMode,
         models: [],
         apiCalls: [],
+        mainApiCalls: 0,
         tokens: zeroTokens(),
         cost: zeroCost(),
         toolCounts: {},
@@ -351,8 +359,8 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       permissionModes[mode] = (permissionModes[mode] ?? 0) + 1;
       // A new turn is a fresh start: repeating the previous turn's last call
       // (e.g. the user asked to run it again) is not churn.
-      prevToolKeyMain = undefined;
-      prevToolKeySide = undefined;
+      prevToolMain = undefined;
+      prevToolSide = undefined;
       touchTime(event.timestamp);
       continue;
     }
@@ -398,14 +406,19 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         // Churn: a tool call identical to the immediately preceding one on
         // the same chain (same tool, same input) is a retry — the loop re-did
         // work it just did.
-        const toolKey = `${tu.name} ${JSON.stringify(tu.input ?? null)}`;
         const onSidechain = event.isSidechain === true;
-        if (toolKey === (onSidechain ? prevToolKeySide : prevToolKeyMain)) {
-          retries += 1;
-          retriesByTool[tu.name] = (retriesByTool[tu.name] ?? 0) + 1;
+        const prevTool = onSidechain ? prevToolSide : prevToolMain;
+        const cursor: ToolCursor = { name: tu.name, input: tu.input };
+        if (prevTool && prevTool.name === tu.name) {
+          prevTool.json ??= JSON.stringify(prevTool.input ?? null);
+          cursor.json = JSON.stringify(tu.input ?? null);
+          if (cursor.json === prevTool.json) {
+            retries += 1;
+            retriesByTool[tu.name] = (retriesByTool[tu.name] ?? 0) + 1;
+          }
         }
-        if (onSidechain) prevToolKeySide = toolKey;
-        else prevToolKeyMain = toolKey;
+        if (onSidechain) prevToolSide = cursor;
+        else prevToolMain = cursor;
 
         let skillName: string | undefined;
         if (tu.name === "Skill") {
@@ -461,10 +474,15 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       // A continuation line of an already-counted API call: keep its steps on
       // the originating ApiCall, but never re-count its usage or re-price it.
       // stop_reason arrives on whichever streamed line closed the response, so
-      // continuation lines may carry it for an already-created call.
+      // continuation lines may carry it for an already-created call — count it
+      // once, when the call's stopReason is first filled in.
       if (existing) {
         existing.steps.push(...steps);
-        if (event.message.stop_reason) existing.stopReason = event.message.stop_reason;
+        const reason = event.message.stop_reason;
+        if (reason && !existing.stopReason) {
+          existing.stopReason = reason;
+          stopReasons[reason] = (stopReasons[reason] ?? 0) + 1;
+        }
         continue;
       }
 
@@ -491,7 +509,9 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         steps,
       };
       if (key !== undefined) callsByKey.set(key, apiCall);
-      allCalls.push(apiCall);
+      if (apiCall.stopReason) {
+        stopReasons[apiCall.stopReason] = (stopReasons[apiCall.stopReason] ?? 0) + 1;
+      }
 
       apiCallCount += 1;
       if (apiCall.isSidechain) {
@@ -513,6 +533,7 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
 
       if (current) {
         current.apiCalls.push(apiCall);
+        if (!apiCall.isSidechain) current.mainApiCalls += 1;
         current.tokens = addTokens(current.tokens, tokens);
         current.cost = addCost(current.cost, cost);
         if (model && !current.models.includes(model)) current.models.push(model);
@@ -523,10 +544,14 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
     touchTime((event as { timestamp?: string }).timestamp);
   }
 
-  // stop_reason may land on any streamed line of a call, so it's folded here,
-  // after every continuation line has had a chance to fill it in.
-  for (const call of allCalls) {
-    if (call.stopReason) stopReasons[call.stopReason] = (stopReasons[call.stopReason] ?? 0) + 1;
+  // Active time: sum the gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
+  // (longer gaps are the session sitting idle). Sorting first makes the sum
+  // exact under any event interleaving and keeps activeMs ≤ durationMs.
+  eventMs.sort((a, b) => a - b);
+  let activeMs = 0;
+  for (let i = 1; i < eventMs.length; i++) {
+    const gap = (eventMs[i] as number) - (eventMs[i - 1] as number);
+    if (gap <= ACTIVE_GAP_MS) activeMs += gap;
   }
 
   // Totals are accumulated over every API call — including calls that arrive

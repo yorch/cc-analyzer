@@ -1,13 +1,14 @@
 import type { Database } from "bun:sqlite";
-
 import type {
   BashCommandRow,
   BranchRow,
   CacheSummary,
   CacheTtlSplit,
   ConcurrencySummary,
+  CostBucket,
   CostDistribution,
   DayRow,
+  DepthBucket,
   DurationSummary,
   ErrorWeekRow,
   EstimatedShareRow,
@@ -40,6 +41,7 @@ import type {
   WebToolsProjectRow,
   WebToolsSummary,
 } from "./stats-types.ts";
+import { localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
 
 export * from "./stats-types.ts";
 
@@ -463,7 +465,7 @@ export function durationSummary(db: Database): DurationSummary {
 }
 
 /** Per-session points for the cost/duration and prompt-length/cost scatters. */
-export function sessionScatter(db: Database, limit = 2000): ScatterSession[] {
+export function sessionScatter(db: Database, limit = 1000): ScatterSession[] {
   return db
     .query(
       `SELECT session_id AS sessionId,
@@ -479,6 +481,12 @@ export function sessionScatter(db: Database, limit = 2000): ScatterSession[] {
       ORDER BY cost_total DESC LIMIT ?`,
     )
     .all(limit) as ScatterSession[];
+}
+
+/** Buckets are ascending with an Infinity-capped tail, so every value lands. */
+function bucketIndex(value: number, buckets: { max: number }[]): number {
+  const i = buckets.findIndex((b) => value < b.max);
+  return i === -1 ? buckets.length - 1 : i;
 }
 
 const COST_BUCKETS: { label: string; max: number }[] = [
@@ -499,15 +507,14 @@ export function costDistribution(db: Database): CostDistribution {
   const total = costs.reduce((s, v) => s + v, 0);
   const buckets = COST_BUCKETS.map((b) => ({ label: b.label, count: 0 }));
   for (const c of costs) {
-    const i = COST_BUCKETS.findIndex((b) => c < b.max);
-    const bucket = buckets[i === -1 ? buckets.length - 1 : i];
-    if (bucket) bucket.count += 1;
+    (buckets[bucketIndex(c, COST_BUCKETS)] as CostBucket).count += 1;
   }
   // A "top 10%" cohort only exists with ≥10 sessions; below that the slice
-  // would just be the single most expensive session, mislabeled. Renderers
-  // hide the concentration figure when it is 0.
-  const decileStart = Math.floor(costs.length * 0.9);
-  const topDecile = costs.length >= 10 ? costs.slice(decileStart).reduce((s, v) => s + v, 0) : 0;
+  // would just be the single most expensive session, mislabeled — null.
+  const topDecileShare =
+    costs.length >= 10 && total > 0
+      ? costs.slice(Math.floor(costs.length * 0.9)).reduce((s, v) => s + v, 0) / total
+      : null;
   return {
     sessions: costs.length,
     mean: costs.length ? total / costs.length : 0,
@@ -515,16 +522,9 @@ export function costDistribution(db: Database): CostDistribution {
     p90: percentile(costs, 0.9),
     p99: percentile(costs, 0.99),
     max: costs[costs.length - 1] ?? 0,
-    topDecileShare: total > 0 && costs.length >= 10 ? topDecile / total : 0,
+    topDecileShare,
     buckets,
   };
-}
-
-/** Shift a local YYYY-MM-DD day string by n days. */
-function shiftDay(day: string, n: number): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
 }
 
 /** Active-day streaks. `today` is the caller's local YYYY-MM-DD. */
@@ -593,7 +593,8 @@ export function runRate(db: Database, today: string): RunRate {
     prevMonth,
     prevMonthSamePoint,
     prevMonthTotal,
-    projected: dayOfMonth > 0 ? (monthToDate / dayOfMonth) * daysInMonth : 0,
+    // dayOfMonth ≥ 1 for any YYYY-MM-DD input.
+    projected: (monthToDate / dayOfMonth) * daysInMonth,
   };
 }
 
@@ -842,9 +843,7 @@ export function turnDepthStats(db: Database): TurnDepthStats {
       turns += 1;
       sum += depth;
       if (depth > maxDepth) maxDepth = depth;
-      const i = DEPTH_BUCKETS.findIndex((b) => depth < b.max);
-      const bucket = buckets[i === -1 ? buckets.length - 1 : i];
-      if (bucket) bucket.turns += 1;
+      (buckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
       if (r.month) {
         const m = byMonth.get(r.month) ?? { sum: 0, turns: 0 };
         m.sum += depth;
@@ -992,12 +991,9 @@ export function retryStats(db: Database): RetryStats {
  * Concurrency and cross-insights
  * ———————————————————————————————————————————————————————————————————————— */
 
-/** Local-time YYYY-MM-DD of an epoch ms (must agree with the indexer's day). */
-export function localDayOfMs(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+/** Sanity cap on one session's wall-clock span: a garbage-but-parseable
+ * end_time must not make the day walk crawl to the year 3000. */
+const MAX_SESSION_SPAN_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** How many sessions overlap in time — parallel-Claude usage, per day. */
 export function concurrency(db: Database): ConcurrencySummary {
@@ -1018,7 +1014,8 @@ export function concurrency(db: Database): ConcurrencySummary {
     if (Number.isNaN(start) || Number.isNaN(end) || end < start) continue;
     // A zero-duration session still counts: give it a 1ms floor so its start
     // edge isn't cancelled before it is observed.
-    edges.push({ ms: start, delta: 1 }, { ms: Math.max(end, start + 1), delta: -1 });
+    const clampedEnd = Math.min(Math.max(end, start + 1), start + MAX_SESSION_SPAN_MS);
+    edges.push({ ms: start, delta: 1 }, { ms: clampedEnd, delta: -1 });
   }
   // Ends sort before starts at the same instant so touching sessions don't
   // count as overlapping.
@@ -1026,6 +1023,19 @@ export function concurrency(db: Database): ConcurrencySummary {
   const perDay = new Map<string, number>();
   let open = 0;
   let peak = 0;
+  // Rolling local-day cursor: consecutive edges almost always share a day, so
+  // recompute the day string only on rollover instead of per edge.
+  let dayStr = "";
+  let dayEndMs = Number.NEGATIVE_INFINITY;
+  const dayAt = (ms: number): string => {
+    if (ms >= dayEndMs || dayStr === "") {
+      dayStr = localDayOfMs(ms);
+      const next = new Date(ms);
+      next.setHours(24, 0, 0, 0);
+      dayEndMs = next.getTime();
+    }
+    return dayStr;
+  };
   for (let i = 0; i < edges.length; i++) {
     open += (edges[i] as Edge).delta;
     if (open <= 0) continue;
@@ -1034,15 +1044,12 @@ export function concurrency(db: Database): ConcurrencySummary {
     // touches, so a session pair overlapping across midnight still marks the
     // morning side (a start-edge-only walk would skip days where the overlap
     // merely persists).
-    const spanStart = (edges[i] as Edge).ms;
-    const spanEnd = edges[i + 1]?.ms ?? spanStart;
-    for (let ms = spanStart; ; ) {
-      const day = localDayOfMs(ms);
+    const spanEnd = edges[i + 1]?.ms ?? (edges[i] as Edge).ms;
+    for (let ms = (edges[i] as Edge).ms; ; ) {
+      const day = dayAt(ms);
       if (open > (perDay.get(day) ?? 0)) perDay.set(day, open);
-      const nextMidnight = new Date(ms);
-      nextMidnight.setHours(24, 0, 0, 0);
-      if (nextMidnight.getTime() >= spanEnd) break;
-      ms = nextMidnight.getTime();
+      if (dayEndMs >= spanEnd) break;
+      ms = dayEndMs;
     }
   }
   const days = [...perDay.entries()]
@@ -1083,9 +1090,7 @@ export function idleVsCache(db: Database): IdleCacheBucket[] {
   const acc = IDLE_BUCKETS.map(() => ({ sessions: 0, w: 0, r: 0, wc: 0, waste: 0 }));
   for (const row of rows) {
     const idle = Math.max(0, Math.min(1, 1 - row.a / row.d));
-    const i = IDLE_BUCKETS.findIndex((b) => idle < b.max);
-    const a = acc[i === -1 ? acc.length - 1 : i];
-    if (!a) continue;
+    const a = acc[bucketIndex(idle, IDLE_BUCKETS)] as (typeof acc)[number];
     a.sessions += 1;
     a.w += row.w;
     a.r += row.r;
@@ -1098,13 +1103,6 @@ export function idleVsCache(db: Database): IdleCacheBucket[] {
     ratio: a.w > 0 ? a.r / a.w : 0,
     wasteShare: a.wc > 0 ? a.waste / a.wc : 0,
   }));
-}
-
-/** Monday (UTC) of the ISO week containing a YYYY-MM-DD day. */
-function weekOf(day: string): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
 }
 
 /** Tool-error rate per ISO week (attributed to each session's day). */

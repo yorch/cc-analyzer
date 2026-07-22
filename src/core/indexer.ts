@@ -120,11 +120,7 @@ export function toSessionRow(
     skills_json: JSON.stringify(analysis.skills),
     skill_errors_json: JSON.stringify(analysis.skillErrors),
     subagents_json: JSON.stringify(analysis.subagents),
-    // Depth = main-chain calls only: a Task spawning 40 sidechain calls is one
-    // main-loop step, not a 40-deep turn.
-    turn_depths_json: JSON.stringify(
-      analysis.turns.map((turn) => turn.apiCalls.filter((call) => !call.isSidechain).length),
-    ),
+    turn_depths_json: JSON.stringify(analysis.turns.map((turn) => turn.mainApiCalls)),
     permission_modes_json: JSON.stringify(analysis.permissionModes),
     stop_reasons_json: JSON.stringify(analysis.stopReasons),
     files_json: JSON.stringify(analysis.filesTouched),

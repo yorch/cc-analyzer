@@ -9,7 +9,9 @@ import {
   type SessionWithProject,
   type StatsResponse,
 } from "../api.ts";
+import { Card } from "../Card.tsx";
 import { count, duration, shortPath, tokens, usd } from "../format.ts";
+import { Histogram } from "../Histogram.tsx";
 import { link } from "../router.ts";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
@@ -278,16 +280,6 @@ export function Dashboard() {
   );
 }
 
-function Card({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="card">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {sub && <div className="sub">{sub}</div>}
-    </div>
-  );
-}
-
 /** The tier-1 headline metrics: time, percentiles, cadence, forecast, subagents. */
 function StatCards({ data }: { data: StatsResponse }) {
   const d = data.duration;
@@ -335,12 +327,11 @@ function StatCards({ data }: { data: StatsResponse }) {
 
 /** Histogram of per-session cost plus the spend-concentration headline. */
 function Distribution({ dist }: { dist: CostDistribution }) {
-  const max = Math.max(...dist.buckets.map((b) => b.count), 1);
   return (
     <>
       <p className="muted">
         {count(dist.sessions)} costed sessions · mean {usd(dist.mean)}
-        {dist.topDecileShare > 0 && (
+        {dist.topDecileShare !== null && (
           <>
             {" "}
             · the top 10% of sessions carry{" "}
@@ -348,17 +339,7 @@ function Distribution({ dist }: { dist: CostDistribution }) {
           </>
         )}
       </p>
-      <div className="hist">
-        {dist.buckets.map((b) => (
-          <div className="hist-row" key={b.label}>
-            <span className="hist-label">{b.label}</span>
-            <div className="bar">
-              <span style={{ width: `${(b.count / max) * 100}%` }} />
-            </div>
-            <span className="hist-count">{count(b.count)}</span>
-          </div>
-        ))}
-      </div>
+      <Histogram rows={dist.buckets.map((b) => ({ label: b.label, count: b.count }))} />
     </>
   );
 }

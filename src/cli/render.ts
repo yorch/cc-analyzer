@@ -16,6 +16,7 @@ import type {
   StreakSummary,
   TestRunSummary,
 } from "../core/stats.ts";
+import { topEntries } from "../core/stats-types.ts";
 import { formatCount, formatDuration, formatTokens, formatUSD, table, truncate } from "./format.ts";
 
 function totalTokens(t: TokenCounts): number {
@@ -101,31 +102,15 @@ export function renderSessionSummary(a: SessionAnalysis): string {
   if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
   if (Object.keys(a.stopReasons).length) {
-    lines.push(
-      `Stop reasons: ${Object.entries(a.stopReasons)
-        .sort((x, y) => y[1] - x[1])
-        .map(([r, n]) => `${r}:${n}`)
-        .join(", ")}`,
-    );
+    lines.push(`Stop reasons: ${topEntries(a.stopReasons)}`);
   }
-  const modeEntries = Object.entries(a.permissionModes);
+  const modeCount = Object.keys(a.permissionModes).length;
   // Worth a line only when something other than plain "default" shows up.
-  if (modeEntries.length > 0 && (modeEntries.length > 1 || !a.permissionModes.default)) {
-    lines.push(
-      `Permission modes: ${modeEntries
-        .sort((x, y) => y[1] - x[1])
-        .map(([m, n]) => `${m}:${n}`)
-        .join(", ")}`,
-    );
+  if (modeCount > 1 || (modeCount === 1 && !a.permissionModes.default)) {
+    lines.push(`Permission modes: ${topEntries(a.permissionModes)}`);
   }
   if (Object.keys(a.bashCommands).length) {
-    lines.push(
-      `Shell commands: ${Object.entries(a.bashCommands)
-        .sort((x, y) => y[1] - x[1])
-        .slice(0, 8)
-        .map(([c, n]) => `${c}:${n}`)
-        .join(", ")}`,
-    );
+    lines.push(`Shell commands: ${topEntries(a.bashCommands, 8)}`);
   }
 
   lines.push("\nTurns");
@@ -202,7 +187,7 @@ export function renderStats(v: PortfolioView): string {
         ],
         [
           "spend concentration",
-          dist.topDecileShare > 0
+          dist.topDecileShare !== null
             ? `top 10% of sessions carry ${(dist.topDecileShare * 100).toFixed(0)}% of spend`
             : "n/a (fewer than 10 sessions)",
         ],

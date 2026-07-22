@@ -82,7 +82,7 @@ describe("costDistribution", () => {
     expect(d.max).toBe(500);
     expect(d.buckets.map((b) => b.count)).toEqual([1, 1, 1, 1, 1, 1]);
     // Fewer than 10 sessions: there is no "top 10%" cohort to report.
-    expect(d.topDecileShare).toBe(0);
+    expect(d.topDecileShare).toBeNull();
   });
 
   test("topDecileShare only reported with a real decile (≥10 sessions)", () => {

@@ -1,5 +1,13 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { api, type SessionAnalysis, type TranscriptItem, type TurnStep } from "../api.ts";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  api,
+  type SessionAnalysis,
+  type TranscriptItem,
+  type Turn,
+  type TurnStep,
+  topEntries,
+} from "../api.ts";
+import { Card } from "../Card.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link } from "../router.ts";
 import { useAsync } from "../useAsync.ts";
@@ -85,16 +93,6 @@ export function Session({ id }: { id: string }) {
   );
 }
 
-function Card({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="card">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {sub && <div className="sub">{sub}</div>}
-    </div>
-  );
-}
-
 function Summary({ a }: { a: SessionAnalysis }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
@@ -122,34 +120,9 @@ function Summary({ a }: { a: SessionAnalysis }) {
               k="Active / wall time"
               v={`${duration(a.totals.activeMs)} / ${duration(a.durationMs)}`}
             />
-            <Row
-              k="Stop reasons"
-              v={
-                Object.entries(a.stopReasons)
-                  .sort((x, y) => y[1] - x[1])
-                  .map(([r, n]) => `${r}:${n}`)
-                  .join(", ") || "-"
-              }
-            />
-            <Row
-              k="Permission modes"
-              v={
-                Object.entries(a.permissionModes)
-                  .sort((x, y) => y[1] - x[1])
-                  .map(([m, n]) => `${m}:${n}`)
-                  .join(", ") || "-"
-              }
-            />
-            <Row
-              k="Shell commands"
-              v={
-                Object.entries(a.bashCommands)
-                  .sort((x, y) => y[1] - x[1])
-                  .slice(0, 8)
-                  .map(([cmd, n]) => `${cmd}:${n}`)
-                  .join(", ") || "-"
-              }
-            />
+            <Row k="Stop reasons" v={topEntries(a.stopReasons) || "-"} />
+            <Row k="Permission modes" v={topEntries(a.permissionModes) || "-"} />
+            <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
             <Row
               k="Test runs"
               v={a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected"}
@@ -192,17 +165,44 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
+interface TimedTurn {
+  turn: Turn;
+  startMs: number;
+  endMs: number;
+  calls: { ms: number; hasError: boolean; ci: number }[];
+}
+
+const TIMELINE_WINDOW = 200;
+
 /** Gantt: one lane per turn across the session's wall clock; dots are API
  * calls (teal = sidechain, red ring = a tool error inside the call). */
 function Timeline({ a }: { a: SessionAnalysis }) {
-  const turns = a.turns.filter((t) => t.startTime && t.endTime);
-  if (turns.length === 0) return <p className="muted">No timed turns in this session.</p>;
-  const t0 = Math.min(...turns.map((t) => Date.parse(t.startTime as string)));
-  const t1 = Math.max(...turns.map((t) => Date.parse(t.endTime as string)));
+  // Geometry is parsed once per session — huge sessions have tens of
+  // thousands of calls, and Date.parse per render would jank every re-render.
+  const timed = useMemo<TimedTurn[]>(
+    () =>
+      a.turns.flatMap((turn) => {
+        const startMs = turn.startTime ? Date.parse(turn.startTime) : Number.NaN;
+        const endMs = turn.endTime ? Date.parse(turn.endTime) : Number.NaN;
+        if (Number.isNaN(startMs) || Number.isNaN(endMs)) return [];
+        const calls = turn.apiCalls.flatMap((call, ci) => {
+          const ms = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
+          if (Number.isNaN(ms)) return [];
+          return [{ ms, hasError: call.steps.some((s) => s.status === "error"), ci }];
+        });
+        return [{ turn, startMs, endMs, calls }];
+      }),
+    [a],
+  );
+  const { limit, more } = useWindowed(timed.length, TIMELINE_WINDOW);
+  if (timed.length === 0) return <p className="muted">No timed turns in this session.</p>;
+  const t0 = Math.min(...timed.map((t) => t.startMs));
+  const t1 = Math.max(...timed.map((t) => t.endMs));
   const span = Math.max(t1 - t0, 1);
+  const shown = timed.slice(0, limit);
   const W = 900;
   const rowH = 16;
-  const H = turns.length * rowH + 8;
+  const H = shown.length * rowH + 8;
   const x = (ms: number) => ((ms - t0) / span) * (W - 16) + 8;
   const offset = (ms: number) => duration(ms - t0);
   return (
@@ -210,6 +210,7 @@ function Timeline({ a }: { a: SessionAnalysis }) {
       <p className="muted">
         {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn; dots are
         API calls (teal = subagent sidechain, red ring = tool error in that call)
+        {timed.length > limit ? ` · showing ${limit}/${timed.length} turns` : ""}
       </p>
       <div className="timelinewrap">
         <svg
@@ -220,12 +221,12 @@ function Timeline({ a }: { a: SessionAnalysis }) {
           role="img"
         >
           <title>Session timeline</title>
-          {turns.map((t, i) => {
+          {shown.map((t, i) => {
             const y = i * rowH + 4;
-            const sx = x(Date.parse(t.startTime as string));
-            const ex = x(Date.parse(t.endTime as string));
+            const sx = x(t.startMs);
+            const ex = x(t.endMs);
             return (
-              <g key={t.index}>
+              <g key={t.turn.index}>
                 <rect
                   className="tl-turn"
                   x={sx}
@@ -234,18 +235,14 @@ function Timeline({ a }: { a: SessionAnalysis }) {
                   height={8}
                   rx={2}
                 >
-                  <title>{`#${t.index + 1} +${offset(Date.parse(t.startTime as string))} · ${usd(t.cost.total)} · ${t.apiCalls.length} calls\n${t.prompt.slice(0, 160)}`}</title>
+                  <title>{`#${t.turn.index + 1} +${offset(t.startMs)} · ${usd(t.turn.cost.total)} · ${t.turn.apiCalls.length} calls\n${t.turn.prompt.slice(0, 160)}`}</title>
                 </rect>
-                {t.apiCalls.map((call, ci) => {
-                  if (!call.timestamp) return null;
-                  const ms = Date.parse(call.timestamp);
-                  if (Number.isNaN(ms)) return null;
-                  const hasError = call.steps.some((s) => s.status === "error");
+                {t.calls.map(({ ms, hasError, ci }) => {
+                  const call = t.turn.apiCalls[ci] as Turn["apiCalls"][number];
                   const cls = `tl-call${call.isSidechain ? " side" : ""}${hasError ? " err" : ""}`;
                   return (
                     <circle
-                      // biome-ignore lint/suspicious/noArrayIndexKey: calls have no stable id; order is fixed
-                      key={`${t.index}.${ci}`}
+                      key={`${t.turn.index}.${ci}`}
                       className={cls}
                       cx={x(ms)}
                       cy={y + 6}
@@ -264,6 +261,7 @@ function Timeline({ a }: { a: SessionAnalysis }) {
         <span>start</span>
         <span>{duration(span)}</span>
       </div>
+      {more}
     </section>
   );
 }

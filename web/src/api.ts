@@ -1,12 +1,14 @@
-// Typed client for the cc-analyzer JSON API. Row/summary shapes come straight
-// from the core stats layer via the bun-free stats-types module (type-only
-// imports, erased at build time), so server and client cannot drift; only the
-// response envelopes and the shapes of non-stats endpoints live here.
+// Typed client for the cc-analyzer JSON API. Row, summary, and session shapes
+// come straight from core via bun-free type-only imports (erased at build
+// time), so server and client cannot drift. Only the response envelopes and
+// the indexed listing shapes (whose core home, queries.ts, is bun-typed) live
+// here.
 
+import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type {
   BashCommandRow,
   BranchRow,
-  CacheSummary as CacheSummaryRow,
+  CacheSummary,
   CacheTtlSplit,
   ConcurrencySummary,
   CostDistribution,
@@ -43,55 +45,16 @@ import type {
   WebToolsProjectRow,
   WebToolsSummary,
 } from "../../src/core/stats-types.ts";
+import type { TranscriptItem } from "../../src/core/transcript.ts";
 
-export type {
-  BashCommandRow,
-  BranchRow,
-  CacheMetrics,
-  CacheSummary as CacheSummaryRow,
-  CacheTtlSplit,
-  CacheVerdict,
-  ConcurrencyDayRow,
-  ConcurrencySummary,
-  CostBucket,
-  CostDistribution,
-  DayRow,
-  DepthBucket,
-  DurationSummary,
-  ErrorWeekRow,
-  EstimatedShareRow,
-  HeatCell,
-  HotFileRow,
-  IdleCacheBucket,
-  ModelDayRow,
-  ModelRow,
-  MonthRow,
-  NameUsageRow,
-  PermissionModeRow,
-  PortfolioSummary,
-  ProjectCacheRow,
-  ProjectRow,
-  RetryStats,
-  RetryToolRow,
-  RunRate,
-  ScatterSession,
-  SessionCacheRow,
-  SessionRankRow,
-  SidechainDayRow,
-  SidechainProjectRow,
-  SidechainSummary,
-  SkillDayCount,
-  SkillUsageRow,
-  StopReasonRow,
-  StreakSummary,
-  TestRunSummary,
-  ToolUsageRow,
-  TurnDepthStats,
-  VersionRow,
-  WebToolsProjectRow,
-  WebToolsSummary,
-} from "../../src/core/stats-types.ts";
-export { cacheVerdict } from "../../src/core/stats-types.ts";
+export type { ApiCall, SessionAnalysis, SessionTotals, Turn } from "../../src/core/analyze.ts";
+export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
+export * from "../../src/core/stats-types.ts";
+export type { StepKind, TurnStep } from "../../src/core/steps.ts";
+export type { TranscriptItem } from "../../src/core/transcript.ts";
+
+/** Back-compat alias: the insights views call the cache summary a "row". */
+export type CacheSummaryRow = CacheSummary;
 
 export interface TokenSplit {
   ioTokens: number;
@@ -165,112 +128,6 @@ export interface AnalyticsResponse {
   versions: VersionRow[];
   branches: BranchRow[];
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
-}
-
-export interface CostBreakdown {
-  input: number;
-  output: number;
-  cacheWrite: number;
-  cacheRead: number;
-  total: number;
-  estimated: boolean;
-}
-export interface TokenCounts {
-  inputTokens: number;
-  outputTokens: number;
-  cacheWrite5mTokens: number;
-  cacheWrite1hTokens: number;
-  cacheReadTokens: number;
-}
-export type StepKind =
-  | "note"
-  | "thinking"
-  | "run"
-  | "read"
-  | "edit"
-  | "search"
-  | "skill"
-  | "subagent"
-  | "web"
-  | "task"
-  | "ask"
-  | "tool";
-
-export interface TurnStep {
-  kind: StepKind;
-  tool?: string;
-  label: string;
-  summary: string;
-  status?: "ok" | "error";
-  resultHint?: string;
-  toolUseId?: string;
-  detail?: { input?: string; result?: string; truncated?: boolean };
-}
-
-export interface ApiCall {
-  model?: string;
-  timestamp?: string;
-  isSidechain?: boolean;
-  stopReason?: string;
-  cost: CostBreakdown;
-  tokens: TokenCounts;
-  steps: TurnStep[];
-}
-export interface Turn {
-  index: number;
-  prompt: string;
-  startTime?: string;
-  endTime?: string;
-  permissionMode?: string;
-  cost: CostBreakdown;
-  tokens: TokenCounts;
-  apiCalls: ApiCall[];
-  toolCounts: Record<string, number>;
-}
-export interface SessionAnalysis {
-  sessionId?: string;
-  title?: string;
-  projectPath?: string;
-  gitBranches: string[];
-  versions: string[];
-  startTime?: string;
-  endTime?: string;
-  durationMs?: number;
-  totals: {
-    turns: number;
-    apiCalls: number;
-    toolCalls: number;
-    cost: CostBreakdown;
-    tokens: TokenCounts;
-    webSearches: number;
-    webFetches: number;
-    sidechainApiCalls: number;
-    sidechainCost: number;
-    activeMs: number;
-  };
-  turns: Turn[];
-  models: Record<string, { apiCalls: number; cost: CostBreakdown; tokens: TokenCounts }>;
-  tools: Record<string, number>;
-  skills: Record<string, number>;
-  subagents: string[];
-  filesTouched: string[];
-  stopReasons: Record<string, number>;
-  permissionModes: Record<string, number>;
-  bashCommands: Record<string, number>;
-  bashErrors: Record<string, number>;
-  testRuns: number;
-  testFailures: number;
-  retries: number;
-  retriesByTool: Record<string, number>;
-}
-export interface TranscriptItem {
-  index: number;
-  turnIndex: number;
-  role: string;
-  kind: string;
-  label: string;
-  body: string;
-  isError?: boolean;
 }
 
 async function get<T>(url: string): Promise<T> {

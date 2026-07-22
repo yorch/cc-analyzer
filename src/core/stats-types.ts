@@ -3,6 +3,89 @@
  * layer and the web SPA. This module must stay free of bun-typed imports —
  * the browser tsconfig type-checks it too.
  */
+
+/* ——— Shared date helpers ————————————————————————————————————————————
+ * One canonical implementation of each date rule; the indexer, stats layer,
+ * TUI, and web all bucket days/weeks through these so they cannot drift. */
+
+/** Local-time YYYY-MM-DD of an epoch ms (the rule behind the `day` column). */
+export function localDayOfMs(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Shift a YYYY-MM-DD day string by n days. */
+export function shiftDay(day: string, n: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monday (UTC) of the ISO week containing a YYYY-MM-DD day. */
+export function weekOf(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Sort a counter record descending and render "k:n, k:n, …" (top `limit`). */
+export function topEntries(rec: Record<string, number>, limit = Number.POSITIVE_INFINITY): string {
+  return Object.entries(rec)
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, limit)
+    .map(([k, n]) => `${k}:${n}`)
+    .join(", ");
+}
+
+/* ——— Contribution calendar ——————————————————————————————————————————
+ * Grid math shared by the TUI (ramp chars) and web (SVG rects) calendars:
+ * one column per week ending at the newest day, Monday-first rows, padded
+ * final column clamped so future days emit no cells. */
+
+export interface CalendarCell {
+  day: string;
+  v: number;
+}
+
+export interface CalendarGrid {
+  /** Columns of up to 7 cells (Mon…Sun); future days are omitted. */
+  weeks: CalendarCell[][];
+  /** Busiest day's value (0 when there is no data). */
+  max: number;
+  firstDay: string;
+  lastDay: string;
+}
+
+/** Bucket a daily series into a contribution-calendar grid of `weeks` columns. */
+export function calendarWeeks(daily: { day: string; v: number }[], weeks: number): CalendarGrid {
+  const last = daily[daily.length - 1]?.day;
+  if (!last) return { weeks: [], max: 0, firstDay: "", lastDay: "" };
+  const byDay = new Map(daily.map((d) => [d.day, d.v]));
+  // Pad the final column out to its Sunday so the last week renders whole —
+  // but emit no cells past `last`: those days haven't happened.
+  const end = new Date(`${last}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + ((7 - ((end.getUTCDay() + 6) % 7) - 1) % 7));
+  const grid: CalendarCell[][] = [];
+  let max = 0;
+  let firstDay = "";
+  for (let w = weeks - 1; w >= 0; w--) {
+    const col: CalendarCell[] = [];
+    for (let r = 6; r >= 0; r--) {
+      const d = new Date(end);
+      d.setUTCDate(d.getUTCDate() - w * 7 - r);
+      const day = d.toISOString().slice(0, 10);
+      if (w === weeks - 1 && r === 6) firstDay = day;
+      if (day > last) continue;
+      const v = byDay.get(day) ?? 0;
+      if (v > max) max = v;
+      col.push({ day, v });
+    }
+    grid.push(col);
+  }
+  return { weeks: grid, max, firstDay, lastDay: last };
+}
+
 export interface PortfolioSummary {
   sessions: number;
   projects: number;
@@ -199,7 +282,8 @@ export interface CostDistribution {
   p99: number;
   max: number;
   /** Share of total spend carried by the most expensive 10% of sessions. */
-  topDecileShare: number;
+  /** Null when the portfolio has fewer than 10 sessions — no real decile. */
+  topDecileShare: number | null;
   /** Log-scale cost buckets, cheapest first. */
   buckets: CostBucket[];
 }

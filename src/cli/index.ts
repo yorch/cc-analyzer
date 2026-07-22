@@ -149,6 +149,8 @@ async function cmdStats(json: boolean): Promise<number> {
     return 1;
   }
   const today = localDayOfMs(Date.now());
+  // The CLI reports only the concurrency headline, not the per-day series.
+  const { peak, parallelDayShare } = concurrency(db);
   const view = {
     summary,
     byMonth: spendByMonth(db),
@@ -164,7 +166,7 @@ async function cmdStats(json: boolean): Promise<number> {
     bash: bashCommandUsage(db, 10),
     tests: testRunSummary(db),
     retries: retryStats(db),
-    concurrency: (({ peak, parallelDayShare }) => ({ peak, parallelDayShare }))(concurrency(db)),
+    concurrency: { peak, parallelDayShare },
   };
   db.close();
   console.log(json ? JSON.stringify(view, null, 2) : renderStats(view));

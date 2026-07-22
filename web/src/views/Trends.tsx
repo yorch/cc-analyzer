@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   api,
   type ConcurrencySummary,
+  calendarWeeks,
   type DayRow,
   type ErrorWeekRow,
   type HeatCell,
   type ModelDayRow,
   type ScatterSession,
   type SidechainDayRow,
+  shiftDay,
+  weekOf,
 } from "../api.ts";
 import { count, duration, usd } from "../format.ts";
 import { link } from "../router.ts";
@@ -28,18 +31,12 @@ interface Point {
   cacheTokens: number;
 }
 
-function weekKey(day: string): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // back to Monday
-  return d.toISOString().slice(0, 10);
-}
-
 function bucketSeries(daily: DayRow[], granularity: Granularity): Point[] {
   if (granularity === "day") return daily.map((d) => ({ ...d, label: d.day }));
   const out: Point[] = [];
   let curKey = "";
   for (const d of daily) {
-    const key = granularity === "month" ? d.day.slice(0, 7) : weekKey(d.day);
+    const key = granularity === "month" ? d.day.slice(0, 7) : weekOf(d.day);
     let p = out[out.length - 1];
     if (!p || key !== curKey) {
       p = { label: key, cost: 0, sessions: 0, ioTokens: 0, cacheTokens: 0 };
@@ -85,27 +82,32 @@ function Seg<T extends string>({
   );
 }
 
-function BurnChart({ series, metric }: { series: Point[]; metric: BurnMetric }) {
-  const values = series.map((p) => seriesValue(p, metric));
-  const W = 900;
-  const H = 220;
-  const pad = 6;
-  const max = Math.max(...values, 1e-9);
-  const n = values.length;
-  const x = (i: number) => (n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad);
-  const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
-  const line = values.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-  const area = `M ${x(0).toFixed(1)},${H} ${line.join(" ").replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${H} Z`;
+const BurnChart = memo(function BurnChart({
+  series,
+  metric,
+}: {
+  series: Point[];
+  metric: BurnMetric;
+}) {
   return (
-    <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
-      <title>Spend over time</title>
-      <path className="burn-area" d={area} />
-      <path className="burn-line" d={line.join(" ")} />
-    </svg>
+    <LineChart
+      values={series.map((p) => seriesValue(p, metric))}
+      labels={series.map((p) => p.label)}
+      format={(v) => fmt(metric, v)}
+      height={220}
+      area
+      title="Spend over time"
+    />
   );
-}
+});
 
-function Heatmap({ cells, metric }: { cells: HeatCell[]; metric: HeatMetric }) {
+const Heatmap = memo(function Heatmap({
+  cells,
+  metric,
+}: {
+  cells: HeatCell[];
+  metric: HeatMetric;
+}) {
   const grid = WEEKDAY_ORDER.map(() => new Array<number>(24).fill(0));
   for (const c of cells) {
     const ri = WEEKDAY_ORDER.indexOf(c.weekday);
@@ -141,100 +143,78 @@ function Heatmap({ cells, metric }: { cells: HeatCell[]; metric: HeatMetric }) {
       ))}
     </div>
   );
-}
+});
 
 /* ——— Contribution calendar ——————————————————————————————————————————— */
 
 const CAL_WEEKS = 53;
 
-function calendarGrid(daily: DayRow[], metric: HeatMetric) {
-  const byDay = new Map(daily.map((d) => [d.day, metric === "cost" ? d.cost : d.sessions]));
-  const last = daily.length ? (daily[daily.length - 1]?.day as string) : "";
-  if (!last) return { weeks: [] as { day: string; v: number }[][], max: 0, last };
-  const end = new Date(`${last}T00:00:00Z`);
-  // Pad the final column out to its Sunday, then walk back 53 whole weeks.
-  end.setUTCDate(end.getUTCDate() + ((7 - ((end.getUTCDay() + 6) % 7) - 1) % 7));
-  const weeks: { day: string; v: number }[][] = [];
-  let max = 0;
-  for (let w = CAL_WEEKS - 1; w >= 0; w--) {
-    const col: { day: string; v: number }[] = [];
-    for (let r = 6; r >= 0; r--) {
-      const d = new Date(end);
-      d.setUTCDate(d.getUTCDate() - w * 7 - r);
-      const day = d.toISOString().slice(0, 10);
-      const v = byDay.get(day) ?? 0;
-      if (v > max) max = v;
-      col.push({ day, v });
-    }
-    weeks.push(col);
-  }
-  return { weeks, max, last };
-}
-
-function Calendar({ daily, metric }: { daily: DayRow[]; metric: HeatMetric }) {
-  const { weeks, max, last } = calendarGrid(daily, metric);
-  if (weeks.length === 0) return <p className="muted">No dated sessions in the index.</p>;
+const Calendar = memo(function Calendar({
+  daily,
+  metric,
+}: {
+  daily: DayRow[];
+  metric: HeatMetric;
+}) {
+  const grid = calendarWeeks(
+    daily.map((d) => ({ day: d.day, v: metric === "cost" ? d.cost : d.sessions })),
+    CAL_WEEKS,
+  );
+  if (grid.weeks.length === 0) return <p className="muted">No dated sessions in the index.</p>;
   const cell = 11;
   const gap = 2;
-  const W = weeks.length * (cell + gap);
+  const W = grid.weeks.length * (cell + gap);
   const H = 7 * (cell + gap);
-  const first = weeks[0]?.[0]?.day;
   return (
     <>
       <svg className="calendar" viewBox={`0 0 ${W} ${H}`} role="img">
         <title>Daily activity calendar</title>
-        {weeks.map((col, wi) =>
-          col.map((c, ri) =>
-            // The final column is padded out to Sunday; days after the newest
-            // indexed day haven't happened and must not render as idle cells.
-            c.day > last ? null : (
-              <rect
-                key={c.day}
-                x={wi * (cell + gap)}
-                y={ri * (cell + gap)}
-                width={cell}
-                height={cell}
-                rx={2}
-                className={c.v > 0 ? "cal-cell on" : "cal-cell"}
-                style={c.v > 0 ? { opacity: 0.25 + 0.75 * Math.sqrt(c.v / (max || 1)) } : undefined}
-              >
-                <title>{`${c.day} — ${fmt(metric, c.v)}`}</title>
-              </rect>
-            ),
-          ),
+        {grid.weeks.map((col, wi) =>
+          col.map((c, ri) => (
+            <rect
+              key={c.day}
+              x={wi * (cell + gap)}
+              y={ri * (cell + gap)}
+              width={cell}
+              height={cell}
+              rx={2}
+              className={c.v > 0 ? "cal-cell on" : "cal-cell"}
+              style={
+                c.v > 0 ? { opacity: 0.25 + 0.75 * Math.sqrt(c.v / (grid.max || 1)) } : undefined
+              }
+            >
+              <title>{`${c.day} — ${fmt(metric, c.v)}`}</title>
+            </rect>
+          )),
         )}
       </svg>
       <div className="axis">
-        <span>{first}</span>
-        <span>{last}</span>
+        <span>{grid.firstDay}</span>
+        <span>{grid.lastDay}</span>
       </div>
     </>
   );
-}
+});
 
 /* ——— Model mix stacked area ————————————————————————————————————————— */
 
+/** Every day from `from` to `to` inclusive (rows arrive sorted ascending). */
 function fillDays(from: string, to: string): string[] {
   const out: string[] = [];
-  const cur = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`);
-  while (cur <= end) {
-    out.push(cur.toISOString().slice(0, 10));
-    cur.setUTCDate(cur.getUTCDate() + 1);
-  }
+  for (let day = from; day <= to; day = shiftDay(day, 1)) out.push(day);
   return out;
 }
 
-function ModelMix({ rows }: { rows: ModelDayRow[] }) {
-  if (rows.length === 0) return <p className="muted">No dated model spend in the index.</p>;
+const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }) {
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last) return <p className="muted">No dated model spend in the index.</p>;
   const totals = new Map<string, number>();
   for (const r of rows) totals.set(r.model, (totals.get(r.model) ?? 0) + r.cost);
   const models = [...totals.entries()]
     .sort((a, b) => b[1] - a[1] || (a[0] === "other" ? 1 : -1))
     .map(([m]) => m);
-  const first = rows[0]?.day as string;
-  const last = rows[rows.length - 1]?.day as string;
-  const days = fillDays(first < last ? first : last, first < last ? last : first);
+  const days = fillDays(first.day, last.day);
   const byDay = new Map<string, Map<string, number>>();
   for (const r of rows) {
     let m = byDay.get(r.day);
@@ -292,20 +272,27 @@ function ModelMix({ rows }: { rows: ModelDayRow[] }) {
       </div>
     </>
   );
-}
+});
 
-/* ——— Small line charts: error rate, sidechain share, concurrency ————— */
+/* ——— Line charts (burn, error rate, sidechain share, concurrency) ————— */
+
+/** Long series would drown in hover dots; past this the path stands alone. */
+const MAX_LINE_DOTS = 366;
 
 function LineChart({
   values,
   labels,
   format,
   height = 140,
+  area = false,
+  title = "Series",
 }: {
   values: number[];
   labels: string[];
-  format: (v: number) => string;
+  format?: (v: number) => string;
   height?: number;
+  area?: boolean;
+  title?: string;
 }) {
   const W = 900;
   const H = height;
@@ -315,16 +302,22 @@ function LineChart({
   const x = (i: number) => (n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad);
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
   const line = values.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  const areaPath = area
+    ? `M ${x(0).toFixed(1)},${H} ${line.join(" ").replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${H} Z`
+    : undefined;
   return (
     <>
       <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
-        <title>Series</title>
+        <title>{title}</title>
+        {areaPath && <path className="burn-area" d={areaPath} />}
         <path className="burn-line" d={line.join(" ")} />
-        {values.map((v, i) => (
-          <circle key={labels[i]} cx={x(i)} cy={y(v)} r={5} className="dot">
-            <title>{`${labels[i]} — ${format(v)}`}</title>
-          </circle>
-        ))}
+        {format &&
+          n <= MAX_LINE_DOTS &&
+          values.map((v, i) => (
+            <circle key={labels[i]} cx={x(i)} cy={y(v)} r={5} className="dot">
+              <title>{`${labels[i]} — ${format(v)}`}</title>
+            </circle>
+          ))}
       </svg>
       <div className="axis">
         <span>{labels[0]}</span>
@@ -334,7 +327,7 @@ function LineChart({
   );
 }
 
-function ErrorTrend({ rows }: { rows: ErrorWeekRow[] }) {
+const ErrorTrend = memo(function ErrorTrend({ rows }: { rows: ErrorWeekRow[] }) {
   if (rows.length === 0) return <p className="muted">No tool calls in the index.</p>;
   return (
     <LineChart
@@ -343,18 +336,16 @@ function ErrorTrend({ rows }: { rows: ErrorWeekRow[] }) {
       format={(v) => `${v.toFixed(1)}% errors`}
     />
   );
-}
+});
 
-function SidechainTrend({ rows }: { rows: SidechainDayRow[] }) {
+const SidechainTrend = memo(function SidechainTrend({ rows }: { rows: SidechainDayRow[] }) {
   const active = rows.filter((r) => r.totalCost > 0);
   if (active.length === 0 || !active.some((r) => r.sidechainCost > 0))
     return <p className="muted">No subagent (sidechain) spend recorded yet.</p>;
   // Weekly buckets keep the share line readable on long histories.
   const byWeek = new Map<string, { side: number; total: number }>();
   for (const r of active) {
-    const d = new Date(`${r.day}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-    const wk = d.toISOString().slice(0, 10);
+    const wk = weekOf(r.day);
     const a = byWeek.get(wk) ?? { side: 0, total: 0 };
     a.side += r.sidechainCost;
     a.total += r.totalCost;
@@ -368,9 +359,9 @@ function SidechainTrend({ rows }: { rows: SidechainDayRow[] }) {
       format={(v) => `${v.toFixed(1)}% of spend`}
     />
   );
-}
+});
 
-function Concurrency({ summary }: { summary: ConcurrencySummary }) {
+const Concurrency = memo(function Concurrency({ summary }: { summary: ConcurrencySummary }) {
   if (summary.days.length === 0) return <p className="muted">No timed sessions in the index.</p>;
   return (
     <>
@@ -386,7 +377,7 @@ function Concurrency({ summary }: { summary: ConcurrencySummary }) {
       />
     </>
   );
-}
+});
 
 /* ——— Cost × duration scatter (efficiency frontier) ————————————————— */
 
@@ -400,7 +391,13 @@ function ScatterDot({ p, cx, cy }: { p: ScatterSession; cx: number; cy: number }
   );
 }
 
-function Scatter({ points, xAxis }: { points: ScatterSession[]; xAxis: ScatterX }) {
+const Scatter = memo(function Scatter({
+  points,
+  xAxis,
+}: {
+  points: ScatterSession[];
+  xAxis: ScatterX;
+}) {
   const usable = points.filter((p) => p.cost > 0);
   if (usable.length === 0) return <p className="muted">No timed, costed sessions yet.</p>;
   const W = 900;
@@ -434,7 +431,7 @@ function Scatter({ points, xAxis }: { points: ScatterSession[]; xAxis: ScatterX 
       </div>
     </>
   );
-}
+});
 
 export function Trends() {
   const { data, error, loading } = useAsync(() => api.trends(), []);
@@ -484,10 +481,6 @@ export function Trends() {
               {series[peakIdx]?.label}) · {fmt(burnMetric, avg)}/{granularity} avg
             </p>
             <BurnChart series={series} metric={burnMetric} />
-            <div className="axis">
-              <span>{series[0]?.label}</span>
-              <span>{series[series.length - 1]?.label}</span>
-            </div>
           </>
         )}
       </section>
