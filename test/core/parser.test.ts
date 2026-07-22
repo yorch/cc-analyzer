@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssistantEvent, UserEvent } from "../../src/core/events.ts";
 import { parseSessionFile, parseSessionText } from "../../src/core/parser.ts";
@@ -53,5 +56,87 @@ describe("parseSessionText · non-object lines", () => {
     expect(events).toHaveLength(0);
     expect(errors).toHaveLength(3);
     expect(errors.every((e) => e.error === "not a JSON object")).toBe(true);
+  });
+});
+
+describe("parseSessionFile · streaming", () => {
+  const write = (name: string, content: string): string => {
+    const p = join(tmpdir(), `cc-analyzer-parse-${process.pid}-${name}`);
+    writeFileSync(p, content);
+    return p;
+  };
+
+  test("streamed file matches the in-memory parse of the same content", async () => {
+    const text = await Bun.file(fixturePath).text();
+    const streamed = await parseSessionFile(fixturePath);
+    const inMemory = parseSessionText(text);
+    expect(streamed.events).toHaveLength(inMemory.events.length);
+    expect(streamed.errors).toEqual(inMemory.errors);
+  });
+
+  test("splits lines correctly across chunk boundaries and keeps line numbers", async () => {
+    // Many lines with large-ish bodies so the file spans multiple read chunks;
+    // a bad line-number would then land the error on the wrong line.
+    const good = (i: number) =>
+      JSON.stringify({ type: "ai-title", sessionId: "s", aiTitle: "x".repeat(500), i });
+    const lines: string[] = [];
+    for (let i = 0; i < 5000; i++) lines.push(good(i));
+    lines[2500] = "not json"; // a malformed line mid-stream
+    const p = write("chunks.jsonl", `${lines.join("\n")}\n`);
+    try {
+      const { events, errors } = await parseSessionFile(p);
+      expect(events).toHaveLength(4999);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.line).toBe(2501); // 1-based
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("handles CRLF line endings and a missing final newline", async () => {
+    const p = write(
+      "crlf.jsonl",
+      '{"type":"ai-title","sessionId":"s","aiTitle":"a"}\r\n{"type":"ai-title","sessionId":"s","aiTitle":"b"}',
+    );
+    try {
+      const { events, errors } = await parseSessionFile(p);
+      expect(errors).toHaveLength(0);
+      expect(events).toHaveLength(2);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("reassembles a single record that spans many read chunks", async () => {
+    // One JSON line larger than a stream chunk (~64KB) forces the line to be
+    // pieced back together from several chunks.
+    const big = JSON.stringify({ type: "ai-title", sessionId: "s", aiTitle: "y".repeat(300_000) });
+    const p = write("bigline.jsonl", `${big}\n{"type":"ai-title","sessionId":"s","aiTitle":"z"}\n`);
+    try {
+      const { events, errors } = await parseSessionFile(p);
+      expect(errors).toHaveLength(0);
+      expect(events).toHaveLength(2);
+      expect((events[0] as { aiTitle: string }).aiTitle).toHaveLength(300_000);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("rejects when the file does not exist (callers rely on the throw)", async () => {
+    const missing = join(tmpdir(), `cc-analyzer-parse-${process.pid}-missing.jsonl`);
+    expect(parseSessionFile(missing)).rejects.toThrow();
+  });
+
+  test("a scalar line in a streamed file is recorded as an error", async () => {
+    const p = write("scalar.jsonl", 'null\n{"type":"ai-title","sessionId":"s","aiTitle":"a"}\n');
+    try {
+      const { events, errors } = await parseSessionFile(p);
+      expect(events).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.error).toBe("not a JSON object");
+      expect(errors[0]?.line).toBe(1);
+    } finally {
+      rmSync(p, { force: true });
+    }
   });
 });

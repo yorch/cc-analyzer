@@ -91,6 +91,9 @@ the id. Never round-trip a real path through the encoded id.
 **The parser never throws.** `parser.ts` is tolerant: invalid JSON → recorded
 `ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
 tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
+`parseSessionFile` streams the file line by line (sessions can be hundreds of MB);
+`parseSessionText` is the in-memory path. Both share `parseLine`, so their
+per-line behavior can't drift. (Only file I/O — e.g. a missing file — throws.)
 
 ## Self-update subsystem
 
@@ -144,8 +147,9 @@ force-added to git once; regenerated content stays untracked.
 CI (`.github/workflows/ci.yml`) runs lint, both typechecks, tests, and a full build on
 every push/PR. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which
 cross-compiles binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64),
-generates a `SHA256SUMS` manifest, and publishes a GitHub release with auto-generated
-notes.
+generates a `SHA256SUMS` manifest, signs a build-provenance attestation for each
+binary (`actions/attest-build-provenance`, needing `id-token`/`attestations` write),
+and publishes a GitHub release with auto-generated notes.
 
 **Cutting a release.** The compiled binary embeds `package.json`'s version (via
 `version.ts`, bundled by `bun --compile`), so the version bump must land on `main`

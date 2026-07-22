@@ -4,6 +4,7 @@ import { render } from "ink-testing-library";
 import type { IndexedSession } from "../../src/core/queries.ts";
 import { SessionDetailScreen } from "../../src/tui/screens/SessionDetailScreen.tsx";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
+import { waitForFrame, waitForFrameGone } from "../helpers/tui.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 
@@ -22,7 +23,14 @@ const session: IndexedSession = {
   mtimeMs: 0,
 };
 
-const wait = (ms = 100) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Yield one macrotask so the freshly-mounted TurnsPane `useInput` subscription
+ * has attached before we send keys. Ink registers input on the post-commit
+ * effect — one tick after the frame first paints the loaded turn — and it does
+ * not buffer input that arrives before a handler is subscribed. This is a
+ * deterministic single-tick yield, not a load-dependent sleep.
+ */
+const settleInput = () => new Promise((r) => setTimeout(r, 0));
 
 describe("SessionDetailScreen (smoke)", () => {
   test("turns mode previews the selected turn's steps in the detail pane", async () => {
@@ -36,7 +44,9 @@ describe("SessionDetailScreen (smoke)", () => {
         onBack={() => {}}
       />,
     );
-    await wait(); // allow the async parse+analyze to settle
+    // poll for post-load content: the detail-pane header appears only once the
+    // async parse+analyze has settled and the screen has rendered the turn.
+    await waitForFrame(lastFrame, "turn #1");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("#1"); // a turn row in the master pane
     expect(frame).toContain("cache"); // vitals band
@@ -57,9 +67,10 @@ describe("SessionDetailScreen (smoke)", () => {
         onBack={() => {}}
       />,
     );
-    await wait();
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
     stdin.write("j"); // next turn (has the Bash step)
-    await wait();
+    await waitForFrame(lastFrame, "Bash");
     expect(lastFrame() ?? "").toContain("Bash");
     unmount();
   });
@@ -75,12 +86,13 @@ describe("SessionDetailScreen (smoke)", () => {
         onBack={() => {}}
       />,
     );
-    await wait();
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
     stdin.write("G"); // jump to the last turn (Bash)
-    await wait();
+    await waitForFrame(lastFrame, "Bash");
     expect(lastFrame() ?? "").toContain("Bash");
     stdin.write("g"); // jump back to the first turn (Write)
-    await wait();
+    await waitForFrame(lastFrame, "Write");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Write");
     expect(frame).not.toContain("Bash");
@@ -98,11 +110,14 @@ describe("SessionDetailScreen (smoke)", () => {
         onBack={() => {}}
       />,
     );
-    await wait();
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
     stdin.write("\t"); // focus the steps pane
-    await wait();
+    // the "❯" turn-selection marker only shows while the turns pane is focused,
+    // so its disappearance confirms focus moved to the steps pane before we expand.
+    await waitForFrameGone(lastFrame, "❯");
     stdin.write("\r"); // expand the first step's detail card
-    await wait();
+    await waitForFrame(lastFrame, (f) => /input:|result:|full text:/.test(f));
     expect(lastFrame() ?? "").toMatch(/input:|result:|full text:/);
     unmount();
   });
@@ -118,12 +133,15 @@ describe("SessionDetailScreen (smoke)", () => {
         onBack={() => {}}
       />,
     );
-    await wait();
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
     stdin.write("t"); // transcript mode
-    await wait();
+    // "esc turns" is the transcript/summary-mode key hint (turns mode reads
+    // "esc back"), so it confirms the mode switched before we assert.
+    await waitForFrame(lastFrame, "esc turns");
     expect(lastFrame() ?? "").toContain("▸"); // collapsed chevron on an item with a body
     stdin.write("\r"); // expand the item under the cursor
-    await wait();
+    await waitForFrame(lastFrame, "▾");
     expect(lastFrame() ?? "").toContain("▾"); // now expanded
     unmount();
   });

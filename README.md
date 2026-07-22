@@ -93,8 +93,17 @@ Each release publishes a `SHA256SUMS` manifest. `cc-analyzer update` requires
 it: the downloaded binary is verified before installing, and the update aborts
 if the manifest can't be fetched. The install scripts verify too (skipping
 gracefully only for older releases that predate the manifest). This guards
-against corrupted or tampered downloads; it is not a substitute for signing,
-since the manifest is served from the same release.
+against corrupted or tampered downloads, but since the manifest ships from the
+same release it only proves integrity, not origin.
+
+For origin, every release binary carries a signed [build provenance
+attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations)
+tying it to the exact workflow run and commit that produced it — something code
+inside the job cannot forge. Verify a download with the GitHub CLI:
+
+```bash
+gh attestation verify cc-analyzer-linux-x64 --repo yorch/cc-analyzer
+```
 
 ### From source
 
@@ -247,7 +256,8 @@ Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
 (`.github/workflows/ci.yml`). Pushing a `v*` tag triggers
 `.github/workflows/release.yml`, which cross-compiles binaries for
 Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a `SHA256SUMS`
-manifest, and publishes a GitHub release with auto-generated notes.
+manifest, signs a build-provenance attestation for each binary, and publishes a
+GitHub release with auto-generated notes.
 
 **To cut a release** — the compiled binary embeds `package.json`'s version, so the
 bump must land on `main` before the tag:
