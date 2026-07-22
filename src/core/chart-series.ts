@@ -37,8 +37,9 @@ export interface ContextMarker {
 
 export interface ContextSeries {
   points: ContextPoint[];
-  /** Compactions with a mappable position; timestamp-less ones are counted in
-   * `analysis.compactions` but cannot be placed on the axis. */
+  /** Main-chain compactions with a mappable position; sidechain compactions
+   * and timestamp-less ones stay in `analysis.compactions` but are not
+   * placed on the axis. */
   markers: ContextMarker[];
   peakTokens: number;
 }
@@ -75,6 +76,9 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
   const markers: ContextMarker[] = [];
   if (points.length === 0) return { points, markers, peakTokens };
   for (const compaction of analysis.compactions) {
+    // A subagent's compaction compacts its own context window — the main
+    // chain's context doesn't drop there, so it gets no marker.
+    if (compaction.isSidechain) continue;
     const cms = compaction.timestamp ? Date.parse(compaction.timestamp) : Number.NaN;
     if (Number.isNaN(cms)) continue;
     const at = points.findIndex((p) => p.ms !== undefined && p.ms >= cms);

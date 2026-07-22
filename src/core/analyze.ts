@@ -75,6 +75,10 @@ export interface Compaction {
   trigger?: string;
   /** Context tokens just before the compaction, when known. */
   preTokens?: number;
+  /** True when the compaction happened inside a subagent (sidechain)
+   * transcript — it compacted that subagent's own context window, not the
+   * main chain's, so it must not be marked on the main context chart. */
+  isSidechain?: boolean;
 }
 
 export interface SessionTotals {
@@ -324,10 +328,12 @@ class SessionAnalyzer {
   private readonly retriesByTool: Record<string, number> = {};
   private readonly turnDepths: number[] = [];
   private readonly compactions: Compaction[] = [];
-  // A compact_boundary is normally followed by its summary prompt; the flag
-  // pairs them so one compaction isn't recorded twice. Cleared on the next
-  // assistant line, so a summary-only file (older versions) still records.
-  private pendingCompactBoundary = false;
+  // A compact_boundary is immediately followed by its isCompactSummary prompt;
+  // pairing them (per chain kind, since subagents compact too) keeps one
+  // compaction from being recorded twice. Cleared on the next assistant line,
+  // so a summary-only file (older versions) still records. Holds the pending
+  // boundary's sidechain-ness; undefined = no boundary pending.
+  private pendingBoundarySidechain: boolean | undefined;
   private title?: string;
   private sessionId?: string;
   private projectPath?: string;
@@ -475,12 +481,14 @@ class SessionAnalyzer {
         compactMetadata?: { trigger?: string; preTokens?: number };
       };
       if (sys.subtype === "compact_boundary") {
+        const side = (event as { isSidechain?: boolean }).isSidechain === true;
         this.compactions.push({
           timestamp: sys.timestamp,
           trigger: sys.compactMetadata?.trigger,
           preTokens: sys.compactMetadata?.preTokens,
+          ...(side ? { isSidechain: true } : {}),
         });
-        this.pendingCompactBoundary = true;
+        this.pendingBoundarySidechain = side;
       }
     }
 
@@ -488,8 +496,13 @@ class SessionAnalyzer {
       if (event.isCompactSummary === true) {
         // Only record when no boundary event announced this compaction —
         // older Claude Code versions write just the summary prompt.
-        if (this.pendingCompactBoundary) this.pendingCompactBoundary = false;
-        else this.compactions.push({ timestamp: event.timestamp });
+        const side = event.isSidechain === true;
+        if (this.pendingBoundarySidechain === side) this.pendingBoundarySidechain = undefined;
+        else
+          this.compactions.push({
+            timestamp: event.timestamp,
+            ...(side ? { isSidechain: true } : {}),
+          });
       }
       // Resolve any tool_result blocks first (a user event may carry them
       // whether or not it is also a genuine prompt).
@@ -549,7 +562,7 @@ class SessionAnalyzer {
 
   private pushAssistant(event: AssistantEvent, chain: string): void {
     // The boundary→summary pair is adjacent; an assistant line closes it.
-    this.pendingCompactBoundary = false;
+    this.pendingBoundarySidechain = undefined;
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
     const isContinuation = key !== undefined && this.seenUsage.has(key);

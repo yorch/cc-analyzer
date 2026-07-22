@@ -137,7 +137,9 @@ function Summary({ a }: { a: SessionAnalysis }) {
               k="Compactions"
               v={
                 a.compactions.length > 0
-                  ? `${a.compactions.length} (${a.compactions.map((c) => c.trigger ?? "unknown").join(", ")})`
+                  ? `${a.compactions.length} (${a.compactions
+                      .map((c) => `${c.trigger ?? "unknown"}${c.isSidechain ? " subagent" : ""}`)
+                      .join(", ")})`
                   : "none"
               }
             />

@@ -414,6 +414,19 @@ describe("compaction capture", () => {
     expect(a.compactions[1]).toEqual({ timestamp: "2026-07-01T10:00:09.000Z" });
   });
 
+  test("a subagent (sidechain) compaction is flagged and pairs on its own chain kind", () => {
+    const sideBoundary = { ...boundary(5), isSidechain: true, agentId: "a1" };
+    const sideSummary = { ...summary(6), isSidechain: true };
+    const a = analyze([sideBoundary, sideSummary, assistantLine(7)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.isSidechain).toBe(true);
+    // A main-chain summary does not consume a pending *sidechain* boundary.
+    const b = analyze([sideBoundary, summary(6), assistantLine(7)]);
+    expect(b.compactions).toHaveLength(2);
+    expect(b.compactions[0]?.isSidechain).toBe(true);
+    expect(b.compactions[1]?.isSidechain).toBeUndefined();
+  });
+
   test("survives aggregate mode (the indexer path)", async () => {
     const events = [boundary(5), summary(6)] as Parameters<typeof analyzeSession>[0];
     const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });

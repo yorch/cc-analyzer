@@ -95,6 +95,16 @@ describe("buildContextSeries", () => {
     expect(s.markers[0]?.pos).toBe(1);
   });
 
+  test("a subagent compaction is counted but never marked on the main chart", () => {
+    const withSide = {
+      ...analysis,
+      compactions: [{ timestamp: ts(12), trigger: "auto", isSidechain: true }],
+    };
+    const s = buildContextSeries(withSide);
+    expect(s.points).toHaveLength(3);
+    expect(s.markers).toEqual([]);
+  });
+
   test("empty for an aggregate-only analysis", () => {
     const s = buildContextSeries({ ...analysis, turns: [] });
     expect(s.points).toEqual([]);

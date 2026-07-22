@@ -66,7 +66,11 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
 
 function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: Compaction[] }) {
   const { points, markers, peakTokens } = ctx;
-  const totalCompactions = compactions.length;
+  // Subagent compactions compact their own context windows — counted, but
+  // never marked on the main-chain chart.
+  const mainCompactions = compactions.filter((c) => !c.isSidechain);
+  const subCompactions = compactions.length - mainCompactions.length;
+  const totalCompactions = mainCompactions.length;
   const n = points.length;
   if (n === 0) return <p className="muted">No main-chain API calls in this session.</p>;
   const H = 220;
@@ -81,7 +85,7 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
   // A marker sits between the last pre-compaction call and the first one after.
   const markerX = (pos: number) =>
     pos <= 0 ? PAD : pos >= n ? W - PAD : (x(pos - 1) + x(pos)) / 2;
-  const triggers = compactions
+  const triggers = mainCompactions
     .map((c) => c.trigger ?? "unknown")
     .reduce<Record<string, number>>((acc, t) => {
       acc[t] = (acc[t] ?? 0) + 1;
@@ -98,6 +102,8 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
               .join(" + ")
               .concat(" compaction", totalCompactions > 1 ? "s" : "")}
         {totalCompactions > markers.length ? " (some without timestamps, not placed)" : ""}
+        {subCompactions > 0 &&
+          ` · ${subCompactions} in subagents (own context windows, not marked)`}
       </p>
       <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
         <title>Context-window tokens per call</title>

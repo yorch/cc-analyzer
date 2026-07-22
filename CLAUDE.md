@@ -115,6 +115,9 @@ module (like `stats-types.ts`) the SPA imports directly, so both frontends chart
 identical numbers: context-window fill per main-chain API call (sidechains run in
 their own context windows and are excluded), cumulative burn (main + sidechain),
 per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
+Subagents compact too (`compact_boundary` with `isSidechain`): those compactions
+are captured and counted but never marked on the main-chain context chart —
+they compacted the subagent's own window.
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token

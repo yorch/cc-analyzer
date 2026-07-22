@@ -380,12 +380,15 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
     ctx.points.length,
     width,
   );
+  // Subagent compactions compact their own windows — counted, never marked.
+  const mainCompactions = a.compactions.filter((c) => !c.isSidechain);
+  const subCompactions = a.compactions.length - mainCompactions.length;
   const compactions =
-    a.compactions.length === 0
+    (mainCompactions.length === 0
       ? "no compactions"
-      : `${a.compactions.length} compaction${a.compactions.length > 1 ? "s" : ""} (${a.compactions
+      : `${mainCompactions.length} compaction${mainCompactions.length > 1 ? "s" : ""} (${mainCompactions
           .map((c) => c.trigger ?? "?")
-          .join(", ")})`;
+          .join(", ")})`) + (subCompactions > 0 ? ` · ${subCompactions} subagent` : "");
   const totalCost = burn.length > 0 ? (burn[burn.length - 1]?.cost ?? 0) : 0;
   const peakTurn = turnSeries.reduce(
     (best, t) => (t.cost > (turnSeries[best]?.cost ?? -1) ? t.index : best),
@@ -539,7 +542,9 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
       {a.compactions.length > 0 &&
         line(
           "compactions",
-          `${a.compactions.length} (${a.compactions.map((c) => c.trigger ?? "?").join(", ")})`,
+          `${a.compactions.length} (${a.compactions
+            .map((c) => `${c.trigger ?? "?"}${c.isSidechain ? " subagent" : ""}`)
+            .join(", ")})`,
         )}
       {line("files touched", String(a.filesTouched.length))}
     </Box>
