@@ -105,6 +105,17 @@ and correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cach
 buckets): a session counts its full cost toward each label it carries. Keep the
 "correlational, not causal" caveat wherever they're rendered.
 
+**Compactions and session charts.** `analyze.ts` records context compactions
+(`SessionAnalysis.compactions`) from `system`/`compact_boundary` events (trigger +
+`preTokens`), falling back to `isCompactSummary` user prompts for older Claude Code
+files; a boundary and its immediately-following summary prompt count as one
+compaction. The per-session charts — TUI `SessionDetailScreen` charts mode and the
+web session Charts tab — render series built in `chart-series.ts`, a **bun-free**
+module (like `stats-types.ts`) the SPA imports directly, so both frontends chart
+identical numbers: context-window fill per main-chain API call (sidechains run in
+their own context windows and are excluded), cumulative burn (main + sidechain),
+per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
+
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token
 categories separately: input, output, cache-write (5m and 1h TTL), and cache-read.

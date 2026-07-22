@@ -28,7 +28,16 @@ import type {
 } from "../../src/core/stats-types.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
 
-export type { ApiCall, SessionAnalysis, SessionTotals, Turn } from "../../src/core/analyze.ts";
+export type {
+  ApiCall,
+  Compaction,
+  SessionAnalysis,
+  SessionTotals,
+  Turn,
+} from "../../src/core/analyze.ts";
+// Runtime series builders are bun-free core code (see chart-series.ts), so the
+// SPA computes chart geometry from the same numbers the TUI renders.
+export * from "../../src/core/chart-series.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/stats-types.ts";
 export type { StepKind, TurnStep } from "../../src/core/steps.ts";

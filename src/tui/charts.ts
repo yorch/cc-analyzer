@@ -109,6 +109,30 @@ export function brailleChart(values: number[], width: number, height: number): s
   return rows;
 }
 
+/**
+ * A one-line marker row aligned with `brailleChart`'s column bucketing: for a
+ * series of `seriesLen` values plotted `width` cells wide, place `mark` on the
+ * cell covering each series position. Positions may equal `seriesLen` (a
+ * marker after the last point); they clamp to the final cell.
+ */
+export function markerRow(
+  positions: number[],
+  seriesLen: number,
+  width: number,
+  mark = "▼",
+): string {
+  const W = Math.max(1, Math.floor(width));
+  if (seriesLen <= 0) return " ".repeat(W);
+  const dotCols = 2 * W;
+  const cells = new Array<boolean>(W).fill(false);
+  for (const pos of positions) {
+    const p = Math.max(0, Math.min(pos, seriesLen - 1));
+    const dot = Math.min(dotCols - 1, Math.floor((p * dotCols) / seriesLen));
+    cells[Math.floor(dot / 2)] = true;
+  }
+  return cells.map((on) => (on ? mark : " ")).join("");
+}
+
 const SPARK = "▁▂▃▄▅▆▇█";
 /**
  * A one-line block-eighths sparkline of `values`, downsampled to at most `width`

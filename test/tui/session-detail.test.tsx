@@ -146,3 +146,29 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 });
+
+describe("SessionDetailScreen charts mode", () => {
+  test("c switches to the charts view with context + cost panels", async () => {
+    // ink-testing-library renders 100 columns wide regardless of props, so
+    // pass a matching width — a wider chart row would wrap and shred the frame.
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={100}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
+    stdin.write("c"); // charts mode
+    await waitForFrame(lastFrame, "context window");
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("no compactions"); // fixture has none
+    expect(frame).toContain("cost per call");
+    expect(frame).toContain("cost per turn");
+    unmount();
+  });
+});

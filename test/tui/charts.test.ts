@@ -4,6 +4,7 @@ import {
   brailleChart,
   bucketSeries,
   heatGrid,
+  markerRow,
   metricValue,
   sparkline,
   WEEKDAY_LABELS,
@@ -121,5 +122,25 @@ describe("heatGrid", () => {
     expect(rows[0]?.[9]).toBe("█"); // busiest cell → full block
     expect(rows[0]?.[0]).toBe(" "); // empty hour → space
     expect(rows[6]).toBe(" ".repeat(24)); // Sunday empty
+  });
+});
+
+describe("markerRow", () => {
+  test("blank when there is nothing to mark", () => {
+    expect(markerRow([], 10, 6)).toBe("      ");
+    expect(markerRow([1], 0, 6)).toBe("      ");
+  });
+
+  test("maps series positions to brailleChart's column buckets", () => {
+    // 4 points across 4 cells (8 dot-cols): each point owns 2 dot-cols = 1 cell.
+    expect(markerRow([0], 4, 4)).toBe("▼   ");
+    expect(markerRow([3], 4, 4)).toBe("   ▼");
+    expect(markerRow([1, 2], 4, 4)).toBe(" ▼▼ ");
+  });
+
+  test("clamps a past-the-end position to the final cell", () => {
+    // pos === seriesLen means "after the last call" — still rendered.
+    expect(markerRow([4], 4, 4)).toBe("   ▼");
+    expect(markerRow([99], 4, 4)).toBe("   ▼");
   });
 });

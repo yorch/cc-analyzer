@@ -359,3 +359,65 @@ describe("analyzeSessionStream", () => {
     expect(agg.totals.turns).toBe(2); // turn count still tracked
   });
 });
+
+describe("compaction capture", () => {
+  const boundary = (second: number, trigger = "auto", preTokens = 150_000) => ({
+    type: "system",
+    subtype: "compact_boundary",
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    compactMetadata: { trigger, preTokens },
+  });
+  const summary = (second: number) => ({
+    type: "user",
+    uuid: `cs-${second}`,
+    isCompactSummary: true,
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    message: { role: "user", content: "This session is being continued…" },
+  });
+  const assistantLine = (second: number) => ({
+    type: "assistant",
+    uuid: `a-${second}`,
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    message: {
+      id: `msg-${second}`,
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  const analyze = (events: unknown[]) =>
+    analyzeSession(events as Parameters<typeof analyzeSession>[0], pricing);
+
+  test("records a compact_boundary with trigger and preTokens", () => {
+    const a = analyze([boundary(5, "manual", 42)]);
+    expect(a.compactions).toEqual([
+      { timestamp: "2026-07-01T10:00:05.000Z", trigger: "manual", preTokens: 42 },
+    ]);
+  });
+
+  test("a boundary followed by its summary prompt records one compaction", () => {
+    const a = analyze([boundary(5), summary(6), assistantLine(7)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.trigger).toBe("auto");
+  });
+
+  test("a summary alone (older Claude Code) records a timestamp-only compaction", () => {
+    const a = analyze([summary(6), assistantLine(7)]);
+    expect(a.compactions).toEqual([{ timestamp: "2026-07-01T10:00:06.000Z" }]);
+  });
+
+  test("an assistant line closes the boundary→summary pair", () => {
+    // A later summary with no adjacent boundary is its own compaction.
+    const a = analyze([boundary(5), summary(6), assistantLine(7), summary(9)]);
+    expect(a.compactions).toHaveLength(2);
+    expect(a.compactions[1]).toEqual({ timestamp: "2026-07-01T10:00:09.000Z" });
+  });
+
+  test("survives aggregate mode (the indexer path)", async () => {
+    const events = [boundary(5), summary(6)] as Parameters<typeof analyzeSession>[0];
+    const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+    expect(agg.compactions).toHaveLength(1);
+    expect(agg.compactions[0]?.preTokens).toBe(150_000);
+  });
+});

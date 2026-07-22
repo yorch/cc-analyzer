@@ -93,6 +93,8 @@ export const userEventSchema = z.looseObject({
   promptId: z.string().optional(),
   permissionMode: z.string().optional(),
   isMeta: z.boolean().optional(),
+  /** True on the synthetic summary prompt written right after a compaction. */
+  isCompactSummary: z.boolean().optional(),
   message: z.looseObject({
     role: z.literal("user").optional(),
     content: z.union([z.string(), z.array(contentBlockSchema)]),
@@ -106,6 +108,13 @@ export const systemEventSchema = z.looseObject({
   subtype: z.string().optional(),
   level: z.string().optional(),
   toolUseID: z.string().optional(),
+  /** Present on `subtype: "compact_boundary"` events (context compaction). */
+  compactMetadata: z
+    .looseObject({
+      trigger: z.string().optional(),
+      preTokens: z.number().optional(),
+    })
+    .optional(),
 });
 export type SystemEvent = z.infer<typeof systemEventSchema>;
 

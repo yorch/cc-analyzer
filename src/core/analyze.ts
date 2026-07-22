@@ -63,6 +63,20 @@ export interface ModelUsage {
   cost: CostBreakdown;
 }
 
+/**
+ * One context compaction. Newer Claude Code versions log a
+ * `system`/`compact_boundary` event carrying trigger + pre-compaction token
+ * count; older versions only leave the synthetic summary prompt
+ * (`isCompactSummary`), which yields a timestamp-only record.
+ */
+export interface Compaction {
+  timestamp?: string;
+  /** "auto" | "manual" when known (from compactMetadata). */
+  trigger?: string;
+  /** Context tokens just before the compaction, when known. */
+  preTokens?: number;
+}
+
 export interface SessionTotals {
   turns: number;
   apiCalls: number;
@@ -126,6 +140,8 @@ export interface SessionAnalysis {
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
    * even in aggregate mode, where `turns` is empty. */
   turnDepths: number[];
+  /** Context compactions, in session order. Available in aggregate mode too. */
+  compactions: Compaction[];
 }
 
 export interface AnalyzeOptions {
@@ -307,6 +323,11 @@ class SessionAnalyzer {
   private readonly commandHeadErrors: Record<string, number> = {};
   private readonly retriesByTool: Record<string, number> = {};
   private readonly turnDepths: number[] = [];
+  private readonly compactions: Compaction[] = [];
+  // A compact_boundary is normally followed by its summary prompt; the flag
+  // pairs them so one compaction isn't recorded twice. Cleared on the next
+  // assistant line, so a summary-only file (older versions) still records.
+  private pendingCompactBoundary = false;
   private title?: string;
   private sessionId?: string;
   private projectPath?: string;
@@ -447,7 +468,29 @@ class SessionAnalyzer {
     if (meta.version) this.versions.add(meta.version);
     if (meta.type === "ai-title" && meta.aiTitle) this.title = meta.aiTitle;
 
+    if (meta.type === "system") {
+      const sys = event as {
+        subtype?: string;
+        timestamp?: string;
+        compactMetadata?: { trigger?: string; preTokens?: number };
+      };
+      if (sys.subtype === "compact_boundary") {
+        this.compactions.push({
+          timestamp: sys.timestamp,
+          trigger: sys.compactMetadata?.trigger,
+          preTokens: sys.compactMetadata?.preTokens,
+        });
+        this.pendingCompactBoundary = true;
+      }
+    }
+
     if (isUser(event)) {
+      if (event.isCompactSummary === true) {
+        // Only record when no boundary event announced this compaction —
+        // older Claude Code versions write just the summary prompt.
+        if (this.pendingCompactBoundary) this.pendingCompactBoundary = false;
+        else this.compactions.push({ timestamp: event.timestamp });
+      }
       // Resolve any tool_result blocks first (a user event may carry them
       // whether or not it is also a genuine prompt).
       const content = event.message.content;
@@ -505,6 +548,8 @@ class SessionAnalyzer {
   }
 
   private pushAssistant(event: AssistantEvent, chain: string): void {
+    // The boundary→summary pair is adjacent; an assistant line closes it.
+    this.pendingCompactBoundary = false;
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
     const isContinuation = key !== undefined && this.seenUsage.has(key);
@@ -755,6 +800,7 @@ class SessionAnalyzer {
       retriesByTool: this.retriesByTool,
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
+      compactions: this.compactions,
     };
   }
 }

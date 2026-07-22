@@ -14,6 +14,7 @@ import {
 } from "../api.ts";
 import { count, duration, usd } from "../format.ts";
 import { link } from "../router.ts";
+import { Seg } from "../Seg.tsx";
 import { useAsync } from "../useAsync.ts";
 
 type BurnMetric = "cost" | "tokens" | "sessions";
@@ -56,31 +57,6 @@ const seriesValue = (p: Point, m: BurnMetric): number =>
 
 const fmt = (m: BurnMetric | HeatMetric, v: number): string =>
   m === "cost" ? usd(v) : count(Math.round(v));
-
-function Seg<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: readonly T[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <span className="seg">
-      {options.map((o) => (
-        <button
-          type="button"
-          key={o}
-          className={o === value ? "active" : ""}
-          onClick={() => onChange(o)}
-        >
-          {o}
-        </button>
-      ))}
-    </span>
-  );
-}
 
 const BurnChart = memo(function BurnChart({
   series,

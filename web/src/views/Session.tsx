@@ -10,9 +10,10 @@ import {
 import { Card } from "../Card.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link } from "../router.ts";
+import { SessionCharts } from "../SessionCharts.tsx";
 import { useAsync } from "../useAsync.ts";
 
-type Tab = "summary" | "timeline" | "turns" | "transcript";
+type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript";
 
 export function Session({ id }: { id: string }) {
   const [tab, setTab] = useState<Tab>("summary");
@@ -67,7 +68,7 @@ export function Session({ id }: { id: string }) {
       </div>
 
       <div className="tabs">
-        {(["summary", "timeline", "turns", "transcript"] as Tab[]).map((t) => (
+        {(["summary", "charts", "timeline", "turns", "transcript"] as Tab[]).map((t) => (
           <button
             type="button"
             key={t}
@@ -80,6 +81,7 @@ export function Session({ id }: { id: string }) {
       </div>
 
       {tab === "summary" && <Summary a={a} />}
+      {tab === "charts" && <SessionCharts a={a} />}
       {tab === "timeline" && <Timeline a={a} />}
       {tab === "turns" && <Turns a={a} />}
       {tab === "transcript" && (
@@ -130,6 +132,14 @@ function Summary({ a }: { a: SessionAnalysis }) {
             <Row
               k="Tool-call churn"
               v={a.retries > 0 ? `${a.retries} repeated identical calls` : "none"}
+            />
+            <Row
+              k="Compactions"
+              v={
+                a.compactions.length > 0
+                  ? `${a.compactions.length} (${a.compactions.map((c) => c.trigger ?? "unknown").join(", ")})`
+                  : "none"
+              }
             />
           </tbody>
         </table>
