@@ -22,7 +22,7 @@ const session: IndexedSession = {
   mtimeMs: 0,
 };
 
-const wait = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms = 100) => new Promise((r) => setTimeout(r, ms));
 
 describe("SessionDetailScreen (smoke)", () => {
   test("turns mode previews the selected turn's steps in the detail pane", async () => {
