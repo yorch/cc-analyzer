@@ -38,7 +38,7 @@ jobs:
       - name: Build site (syncs /wiki, then vitepress build)
         run: bun run docs:build
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v3
         with:
