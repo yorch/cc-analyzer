@@ -151,6 +151,13 @@ generates a `SHA256SUMS` manifest, signs a build-provenance attestation for each
 binary (`actions/attest-build-provenance`, needing `id-token`/`attestations` write),
 and publishes a GitHub release with auto-generated notes.
 
+**Action pinning policy** (the release job carries `contents`/`id-token`/
+`attestations: write`, so a hijacked action is dangerous): third-party actions
+are **pinned to a commit SHA** with a `# vX.Y.Z` comment (e.g. `oven-sh/setup-bun`);
+first-party actions from trusted publishers — `actions/*` and `docker/*` — use a
+major version tag (`@v7`). Dependabot (`.github/dependabot.yml`) keeps both current.
+Follow the same split for new steps.
+
 **Cutting a release.** The compiled binary embeds `package.json`'s version (via
 `version.ts`, bundled by `bun --compile`), so the version bump must land on `main`
 *before* the tag — tag a commit whose `package.json` still says the old version and the

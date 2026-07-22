@@ -257,7 +257,9 @@ Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
 `.github/workflows/release.yml`, which cross-compiles binaries for
 Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a `SHA256SUMS`
 manifest, signs a build-provenance attestation for each binary, and publishes a
-GitHub release with auto-generated notes.
+GitHub release with auto-generated notes. Third-party actions in the workflows are
+pinned to commit SHAs (with `# vX.Y.Z` comments); first-party `actions/*` and
+`docker/*` use major version tags. Dependabot keeps both current.
 
 **To cut a release** — the compiled binary embeds `package.json`'s version, so the
 bump must land on `main` before the tag:
