@@ -81,7 +81,15 @@ describe("costDistribution", () => {
     expect(d.p50).toBeCloseTo(2.75, 5); // midpoint of 0.5 and 5
     expect(d.max).toBe(500);
     expect(d.buckets.map((b) => b.count)).toEqual([1, 1, 1, 1, 1, 1]);
-    expect(d.topDecileShare).toBeCloseTo(500 / 555.555, 2);
+    // Fewer than 10 sessions: there is no "top 10%" cohort to report.
+    expect(d.topDecileShare).toBe(0);
+  });
+
+  test("topDecileShare only reported with a real decile (≥10 sessions)", () => {
+    const db = fresh();
+    for (let i = 0; i < 9; i++) insert(db, { path: `s${i}`, cost_total: 1 });
+    insert(db, { path: "big", cost_total: 91 });
+    expect(costDistribution(db).topDecileShare).toBeCloseTo(0.91, 5);
   });
 });
 
@@ -348,6 +356,26 @@ describe("concurrency", () => {
     insert(db, { path: "a", start_time: "2026-01-05T12:00:00Z", end_time: "2026-01-05T13:00:00Z" });
     insert(db, { path: "b", start_time: "2026-01-05T13:00:00Z", end_time: "2026-01-05T14:00:00Z" });
     expect(concurrency(db).peak).toBe(1);
+  });
+
+  test("overlap persisting past midnight is credited to the morning side", () => {
+    const db = fresh();
+    // The two sessions overlap for 25 hours, so the overlap crosses at least
+    // one local midnight in every timezone — the day after the crossing must
+    // report maxConcurrent 2 even though no session *starts* on it.
+    insert(db, { path: "a", start_time: "2026-01-05T20:00:00Z", end_time: "2026-01-06T23:00:00Z" });
+    insert(db, { path: "b", start_time: "2026-01-05T21:00:00Z", end_time: "2026-01-06T22:00:00Z" });
+    const c = concurrency(db);
+    expect(c.peak).toBe(2);
+    expect(c.days.filter((d) => d.maxConcurrent === 2).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("zero-duration sessions still count toward their day", () => {
+    const db = fresh();
+    insert(db, { path: "a", start_time: "2026-01-05T12:00:00Z", end_time: "2026-01-05T12:00:00Z" });
+    const c = concurrency(db);
+    expect(c.peak).toBe(1);
+    expect(c.days).toHaveLength(1);
   });
 });
 

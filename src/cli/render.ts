@@ -108,9 +108,11 @@ export function renderSessionSummary(a: SessionAnalysis): string {
         .join(", ")}`,
     );
   }
-  if (Object.keys(a.permissionModes).length > 1 || !a.permissionModes.default) {
+  const modeEntries = Object.entries(a.permissionModes);
+  // Worth a line only when something other than plain "default" shows up.
+  if (modeEntries.length > 0 && (modeEntries.length > 1 || !a.permissionModes.default)) {
     lines.push(
-      `Permission modes: ${Object.entries(a.permissionModes)
+      `Permission modes: ${modeEntries
         .sort((x, y) => y[1] - x[1])
         .map(([m, n]) => `${m}:${n}`)
         .join(", ")}`,
@@ -200,7 +202,9 @@ export function renderStats(v: PortfolioView): string {
         ],
         [
           "spend concentration",
-          `top 10% of sessions carry ${(dist.topDecileShare * 100).toFixed(0)}% of spend`,
+          dist.topDecileShare > 0
+            ? `top 10% of sessions carry ${(dist.topDecileShare * 100).toFixed(0)}% of spend`
+            : "n/a (fewer than 10 sessions)",
         ],
         [
           "streaks",

@@ -150,7 +150,7 @@ const CAL_WEEKS = 53;
 function calendarGrid(daily: DayRow[], metric: HeatMetric) {
   const byDay = new Map(daily.map((d) => [d.day, metric === "cost" ? d.cost : d.sessions]));
   const last = daily.length ? (daily[daily.length - 1]?.day as string) : "";
-  if (!last) return { weeks: [] as { day: string; v: number }[][], max: 0 };
+  if (!last) return { weeks: [] as { day: string; v: number }[][], max: 0, last };
   const end = new Date(`${last}T00:00:00Z`);
   // Pad the final column out to its Sunday, then walk back 53 whole weeks.
   end.setUTCDate(end.getUTCDate() + ((7 - ((end.getUTCDay() + 6) % 7) - 1) % 7));
@@ -168,43 +168,45 @@ function calendarGrid(daily: DayRow[], metric: HeatMetric) {
     }
     weeks.push(col);
   }
-  return { weeks, max };
+  return { weeks, max, last };
 }
 
 function Calendar({ daily, metric }: { daily: DayRow[]; metric: HeatMetric }) {
-  const { weeks, max } = calendarGrid(daily, metric);
+  const { weeks, max, last } = calendarGrid(daily, metric);
   if (weeks.length === 0) return <p className="muted">No dated sessions in the index.</p>;
   const cell = 11;
   const gap = 2;
   const W = weeks.length * (cell + gap);
   const H = 7 * (cell + gap);
   const first = weeks[0]?.[0]?.day;
-  const lastWeek = weeks[weeks.length - 1];
-  const lastDay = lastWeek?.[lastWeek.length - 1]?.day;
   return (
     <>
       <svg className="calendar" viewBox={`0 0 ${W} ${H}`} role="img">
         <title>Daily activity calendar</title>
         {weeks.map((col, wi) =>
-          col.map((c, ri) => (
-            <rect
-              key={c.day}
-              x={wi * (cell + gap)}
-              y={ri * (cell + gap)}
-              width={cell}
-              height={cell}
-              rx={2}
-              className={c.v > 0 ? "cal-cell on" : "cal-cell"}
-              style={c.v > 0 ? { opacity: 0.25 + 0.75 * Math.sqrt(c.v / (max || 1)) } : undefined}
-            >
-              <title>{`${c.day} — ${fmt(metric, c.v)}`}</title>
-            </rect>
-          )),
+          col.map((c, ri) =>
+            // The final column is padded out to Sunday; days after the newest
+            // indexed day haven't happened and must not render as idle cells.
+            c.day > last ? null : (
+              <rect
+                key={c.day}
+                x={wi * (cell + gap)}
+                y={ri * (cell + gap)}
+                width={cell}
+                height={cell}
+                rx={2}
+                className={c.v > 0 ? "cal-cell on" : "cal-cell"}
+                style={c.v > 0 ? { opacity: 0.25 + 0.75 * Math.sqrt(c.v / (max || 1)) } : undefined}
+              >
+                <title>{`${c.day} — ${fmt(metric, c.v)}`}</title>
+              </rect>
+            ),
+          ),
         )}
       </svg>
       <div className="axis">
         <span>{first}</span>
-        <span>{lastDay}</span>
+        <span>{last}</span>
       </div>
     </>
   );

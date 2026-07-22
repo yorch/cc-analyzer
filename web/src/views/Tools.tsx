@@ -443,6 +443,10 @@ export function Tools() {
         head={["Branch", "Sessions", "Session $"]}
         rows={data.branches.slice(0, 15).map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
       />
+      <p className="muted spark-cap">
+        Session $ is session-scoped: a session touching several branches counts its full cost toward
+        each — correlational, not causal.
+      </p>
     </>
   );
 }

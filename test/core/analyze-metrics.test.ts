@@ -48,6 +48,20 @@ describe("isTestCommand", () => {
     expect(isTestCommand("git commit -m 'test'")).toBe(false);
     expect(isTestCommand("ls attest")).toBe(false);
   });
+
+  test("does not match runner names appearing in arguments", () => {
+    expect(isTestCommand("cat jest.config.js")).toBe(false);
+    expect(isTestCommand('grep -rn "go test" src/')).toBe(false);
+    expect(isTestCommand('git commit -m "make bun test pass"')).toBe(false);
+    expect(isTestCommand("echo pytest")).toBe(false);
+  });
+
+  test("matches runners after env assignments and in later segments", () => {
+    expect(isTestCommand("CI=1 bun test")).toBe(true);
+    expect(isTestCommand("npm run build && npm test")).toBe(true);
+    expect(isTestCommand("./gradlew test")).toBe(true);
+    expect(isTestCommand("make test")).toBe(true);
+  });
 });
 
 /** Minutes after a fixed origin, as an ISO timestamp. */
@@ -152,6 +166,20 @@ describe("analyzeSession new metrics", () => {
     expect(a.durationMs).toBe(61 * 60_000);
   });
 
+  test("out-of-order timestamps never push activeMs past durationMs", () => {
+    // Interleaved sidechain lines can arrive out of order; re-walking an
+    // already-covered interval must not double-count it.
+    const a = analyze([
+      { type: "user", uuid: "u1", timestamp: at(0), message: { content: "hi" } },
+      assistant({ id: "1", min: 4 }),
+      assistant({ id: "2", min: 1 }), // behind the cursor: ignored
+      assistant({ id: "3", min: 5 }),
+    ]);
+    expect(a.durationMs).toBe(5 * 60_000);
+    expect(a.totals.activeMs).toBe(5 * 60_000);
+    expect(a.totals.activeMs).toBeLessThanOrEqual(a.durationMs as number);
+  });
+
   test("classifies bash commands, errors and test runs", () => {
     const a = analyze([
       { type: "user", uuid: "u1", timestamp: at(0), message: { content: "hi" } },
@@ -190,5 +218,32 @@ describe("analyzeSession new metrics", () => {
     ]);
     expect(a.retries).toBe(1);
     expect(a.retriesByTool).toEqual({ Edit: 1 });
+  });
+
+  test("an identical call in the next turn is not a retry", () => {
+    const bash = { command: "bun test" };
+    const a = analyze([
+      { type: "user", uuid: "u1", timestamp: at(0), message: { content: "run tests" } },
+      assistant({ id: "1", min: 1, content: [toolUse("t1", "Bash", bash)] }),
+      { type: "user", uuid: "u2", timestamp: at(2), message: { content: "run them again" } },
+      assistant({ id: "2", min: 3, content: [toolUse("t2", "Bash", bash)] }),
+    ]);
+    expect(a.retries).toBe(0);
+  });
+
+  test("interleaved sidechain calls do not break or fake main-chain retries", () => {
+    const read = { file_path: "/x/CLAUDE.md" };
+    const a = analyze([
+      { type: "user", uuid: "u1", timestamp: at(0), message: { content: "hi" } },
+      // Main chain reads a file; a subagent reads the same file next in file
+      // order; then the main chain repeats its read.
+      assistant({ id: "1", min: 1, content: [toolUse("t1", "Read", read)] }),
+      assistant({ id: "2", min: 2, sidechain: true, content: [toolUse("t2", "Read", read)] }),
+      assistant({ id: "3", min: 3, content: [toolUse("t3", "Read", read)] }),
+    ]);
+    // The sidechain's identical read is not a retry of the main chain's; the
+    // main chain's own repeat still is.
+    expect(a.retries).toBe(1);
+    expect(a.retriesByTool).toEqual({ Read: 1 });
   });
 });

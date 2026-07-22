@@ -119,6 +119,17 @@ const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 /** Gaps between consecutive events longer than this count as idle, not work. */
 export const ACTIVE_GAP_MS = 5 * 60_000;
 
+/** Strip leading `FOO=bar`-style env assignments from a command line. */
+function stripEnvAssignments(command: string): string {
+  let rest = command.trimStart();
+  for (;;) {
+    const m = rest.match(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/);
+    if (!m) break;
+    rest = rest.slice(m[0].length);
+  }
+  return rest;
+}
+
 /**
  * The program a shell command line resolves to: leading env assignments are
  * skipped, a leading `cd … && real` attributes to `real`, and paths reduce to
@@ -126,12 +137,7 @@ export const ACTIVE_GAP_MS = 5 * 60_000;
  */
 export function commandFamily(command: string, depth = 0): string | undefined {
   if (depth > 4) return undefined;
-  let rest = command.trimStart();
-  for (;;) {
-    const m = rest.match(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/);
-    if (!m) break;
-    rest = rest.slice(m[0].length);
-  }
+  const rest = stripEnvAssignments(command);
   const first = rest.split(/\s+/, 1)[0] ?? "";
   const base = (first.split("/").pop() ?? "").toLowerCase();
   if (!base) return undefined;
@@ -142,12 +148,17 @@ export function commandFamily(command: string, depth = 0): string | undefined {
   return base;
 }
 
-const TEST_COMMAND =
-  /\b(?:(?:bun|npm|pnpm|yarn|deno)\s+(?:run\s+)?test\b|pytest\b|jest\b|vitest\b|go\s+test\b|cargo\s+test\b|mvn\s+test\b|gradle\s+test\b|rspec\b|phpunit\b|ctest\b)/;
+// Anchored at the start of a command segment so a runner name appearing in an
+// argument (`grep -rn "go test" src/`, `cat jest.config.js`) doesn't match.
+const TEST_RUNNER =
+  /^(?:(?:bun|npm|pnpm|yarn|deno)\s+(?:run\s+)?test\b|pytest\b|jest\b|vitest\b|go\s+test\b|cargo\s+test\b|mvn\s+test\b|(?:\.\/)?gradlew?\s+test\b|make\s+test\b|rspec\b|phpunit\b|ctest\b)/;
 
-/** Heuristic: does this shell command run a test suite? */
+/** Heuristic: does this shell command run a test suite? Each `&&`/`;`/`|`
+ * segment is checked at its start (after env assignments), not anywhere. */
 export function isTestCommand(command: string): boolean {
-  return TEST_COMMAND.test(command);
+  return command
+    .split(/&&|;|\|{1,2}/)
+    .some((segment) => TEST_RUNNER.test(stripEnvAssignments(segment.trim())));
 }
 
 /** Extract the four priced token categories from a usage block. */
@@ -260,7 +271,12 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
   let testFailures = 0;
   let retries = 0;
   const retriesByTool: Record<string, number> = {};
-  let prevToolKey: string | undefined;
+  // Separate cursors for the main chain and sidechains, reset at each new
+  // turn: a user-requested re-run or an interleaved subagent call must not
+  // read as churn. (Parallel sidechains still share one cursor — the log
+  // carries no chain id to tell them apart.)
+  let prevToolKeyMain: string | undefined;
+  let prevToolKeySide: string | undefined;
   let sidechainApiCalls = 0;
   let sidechainCost = 0;
   let activeMs = 0;
@@ -287,13 +303,16 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       if (!current.startTime || ts < current.startTime) current.startTime = ts;
       if (!current.endTime || ts > current.endTime) current.endTime = ts;
     }
-    // Active time: events are appended chronologically, so short gaps between
-    // consecutive events are work; long ones are the session sitting idle.
+    // Active time: events are appended roughly chronologically, so short gaps
+    // between consecutive events are work; long ones are the session sitting
+    // idle. The cursor only moves forward — interleaved sidechain lines can
+    // arrive out of order, and re-walking an already-covered interval would
+    // double-count it and break the activeMs ≤ durationMs invariant.
     const ms = Date.parse(ts);
-    if (!Number.isNaN(ms)) {
+    if (!Number.isNaN(ms) && (prevEventMs === undefined || ms > prevEventMs)) {
       if (prevEventMs !== undefined) {
         const gap = ms - prevEventMs;
-        if (gap > 0 && gap <= ACTIVE_GAP_MS) activeMs += gap;
+        if (gap <= ACTIVE_GAP_MS) activeMs += gap;
       }
       prevEventMs = ms;
     }
@@ -330,6 +349,10 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
       turns.push(current);
       const mode = event.permissionMode ?? "default";
       permissionModes[mode] = (permissionModes[mode] ?? 0) + 1;
+      // A new turn is a fresh start: repeating the previous turn's last call
+      // (e.g. the user asked to run it again) is not churn.
+      prevToolKeyMain = undefined;
+      prevToolKeySide = undefined;
       touchTime(event.timestamp);
       continue;
     }
@@ -372,14 +395,17 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
         tools[tu.name] = (tools[tu.name] ?? 0) + 1;
         if (current) current.toolCounts[tu.name] = (current.toolCounts[tu.name] ?? 0) + 1;
 
-        // Churn: a tool call identical to the immediately preceding one (same
-        // tool, same input) is a retry — the loop re-did work it just did.
-        const toolKey = `${tu.name} ${JSON.stringify(tu.input ?? null)}`;
-        if (toolKey === prevToolKey) {
+        // Churn: a tool call identical to the immediately preceding one on
+        // the same chain (same tool, same input) is a retry — the loop re-did
+        // work it just did.
+        const toolKey = `${tu.name} ${JSON.stringify(tu.input ?? null)}`;
+        const onSidechain = event.isSidechain === true;
+        if (toolKey === (onSidechain ? prevToolKeySide : prevToolKeyMain)) {
           retries += 1;
           retriesByTool[tu.name] = (retriesByTool[tu.name] ?? 0) + 1;
         }
-        prevToolKey = toolKey;
+        if (onSidechain) prevToolKeySide = toolKey;
+        else prevToolKeyMain = toolKey;
 
         let skillName: string | undefined;
         if (tu.name === "Skill") {

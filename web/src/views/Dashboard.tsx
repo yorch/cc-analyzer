@@ -339,8 +339,14 @@ function Distribution({ dist }: { dist: CostDistribution }) {
   return (
     <>
       <p className="muted">
-        {count(dist.sessions)} costed sessions · mean {usd(dist.mean)} · the top 10% of sessions
-        carry <strong>{(dist.topDecileShare * 100).toFixed(0)}%</strong> of all spend
+        {count(dist.sessions)} costed sessions · mean {usd(dist.mean)}
+        {dist.topDecileShare > 0 && (
+          <>
+            {" "}
+            · the top 10% of sessions carry{" "}
+            <strong>{(dist.topDecileShare * 100).toFixed(0)}%</strong> of all spend
+          </>
+        )}
       </p>
       <div className="hist">
         {dist.buckets.map((b) => (

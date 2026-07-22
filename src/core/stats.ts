@@ -1,115 +1,47 @@
 import type { Database } from "bun:sqlite";
 
-export interface PortfolioSummary {
-  sessions: number;
-  projects: number;
-  cost: number;
-  estimatedShare: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheWriteTokens: number;
-  cacheReadTokens: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
+import type {
+  BashCommandRow,
+  BranchRow,
+  CacheSummary,
+  CacheTtlSplit,
+  ConcurrencySummary,
+  CostDistribution,
+  DayRow,
+  DurationSummary,
+  ErrorWeekRow,
+  EstimatedShareRow,
+  HeatCell,
+  HotFileRow,
+  IdleCacheBucket,
+  ModelDayRow,
+  ModelRow,
+  MonthRow,
+  NameUsageRow,
+  PermissionModeRow,
+  PortfolioSummary,
+  ProjectCacheRow,
+  ProjectRow,
+  RetryStats,
+  RunRate,
+  ScatterSession,
+  SessionCacheRow,
+  SessionRankRow,
+  SidechainDayRow,
+  SidechainProjectRow,
+  SidechainSummary,
+  SkillUsageRow,
+  StopReasonRow,
+  StreakSummary,
+  TestRunSummary,
+  ToolUsageRow,
+  TurnDepthStats,
+  VersionRow,
+  WebToolsProjectRow,
+  WebToolsSummary,
+} from "./stats-types.ts";
 
-export interface MonthRow {
-  month: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** One day of the spend burn series (day is the stored YYYY-MM-DD column). */
-export interface DayRow {
-  day: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** One weekday×hour cell of the activity heatmap (local time). */
-export interface HeatCell {
-  /** 0=Sunday … 6=Saturday, from strftime('%w'). */
-  weekday: number;
-  /** 0…23, local hour. */
-  hour: number;
-  sessions: number;
-  cost: number;
-}
-
-export interface ProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-export interface SessionRankRow {
-  sessionId: string | null;
-  projectPath: string | null;
-  title: string | null;
-  cost: number;
-  ioTokens: number;
-  cacheTokens: number;
-  startTime: string | null;
-}
-
-export interface ModelRow {
-  model: string;
-  calls: number;
-  cost: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-/** Cache-efficiency metrics shared by the project and session insight rows. */
-export interface CacheMetrics {
-  writeTokens: number;
-  readTokens: number;
-  writeCost: number;
-  readCost: number;
-  inputCost: number;
-  outputCost: number;
-  totalCost: number;
-  /** readTokens / writeTokens; 0 when nothing was written. */
-  ratio: number;
-  /** Cache-write $ that was not read back: Σ writeCost × max(0, 1 − min(1, read/write)). */
-  waste: number;
-}
-
-export interface ProjectCacheRow extends CacheMetrics {
-  projectId: string;
-  projectPath: string | null;
-  sessions: number;
-}
-
-export interface SessionCacheRow extends CacheMetrics {
-  sessionId: string | null;
-  title: string | null;
-  startTime: string | null;
-  projectPath: string | null;
-}
-
-export interface CacheSummary {
-  writeCost: number;
-  readCost: number;
-  waste: number;
-  totalCost: number;
-}
-
-export type CacheVerdict = "efficient" | "ok" | "leaky";
-
-/** Classify cache amortization from the read:write token ratio. */
-export function cacheVerdict(ratio: number): CacheVerdict {
-  if (ratio >= 2) return "efficient";
-  if (ratio >= 1) return "ok";
-  return "leaky";
-}
+export * from "./stats-types.ts";
 
 const IO_TOKENS = "input_tokens + output_tokens";
 const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
@@ -354,53 +286,6 @@ export function activityHeatmap(db: Database): HeatCell[] {
     .all() as HeatCell[];
 }
 
-/** Aggregate tool usage across all sessions, with error counts and rate. */
-export interface ToolUsageRow {
-  tool: string;
-  uses: number;
-  errors: number;
-  /** errors / uses, in [0, 1]. */
-  errorRate: number;
-  sessions: number;
-}
-
-/** A name (subagent) and how many sessions used it. */
-export interface NameUsageRow {
-  name: string;
-  sessions: number;
-}
-
-/** A day and how many times a skill was invoked on it (adoption sparkline). */
-export interface SkillDayCount {
-  day: string;
-  count: number;
-}
-
-/** Rich per-skill analytics: invocation depth, reach, reliability, adoption, and
- * (session-scoped, correlational) cost. */
-export interface SkillUsageRow {
-  name: string;
-  /** Total `Skill` invocations across all sessions. */
-  invocations: number;
-  /** Sessions that invoked the skill at least once. */
-  sessions: number;
-  /** Distinct projects that invoked the skill. */
-  projects: number;
-  /** Invocations whose result was an error. */
-  errors: number;
-  /** errors / invocations, in [0, 1]. */
-  errorRate: number;
-  /** Earliest / latest day (YYYY-MM-DD) the skill was used, or null if undated. */
-  firstUsed: string | null;
-  lastUsed: string | null;
-  /** Σ cost_total over sessions that used the skill. Correlational, not causal:
-   * a session using N skills counts its full cost toward each of them. */
-  totalCost: number;
-  avgCostPerSession: number;
-  /** Per-day invocation counts, oldest first, for the adoption sparkline. */
-  daily: SkillDayCount[];
-}
-
 function parseJson<T>(s: string | null | undefined, fallback: T): T {
   if (!s) return fallback;
   try {
@@ -555,19 +440,6 @@ function percentile(sorted: number[], p: number): number {
   return a + (b - a) * (idx - lo);
 }
 
-export interface DurationSummary {
-  /** Sessions carrying a positive duration. */
-  sessions: number;
-  totalMs: number;
-  avgMs: number;
-  medianMs: number;
-  p90Ms: number;
-  /** Σ active_ms over the same sessions (event gaps ≤ 5m). */
-  totalActiveMs: number;
-  /** totalActiveMs / totalMs — how much of the open time was real work. */
-  activeShare: number;
-}
-
 /** Portfolio-wide session-duration and active-time rollup. */
 export function durationSummary(db: Database): DurationSummary {
   const rows = db
@@ -590,18 +462,6 @@ export function durationSummary(db: Database): DurationSummary {
   };
 }
 
-/** One session as a scatter point (cost vs duration/activity/prompt length). */
-export interface ScatterSession {
-  sessionId: string | null;
-  title: string | null;
-  projectPath: string | null;
-  cost: number;
-  durationMs: number;
-  activeMs: number;
-  turns: number;
-  promptChars: number;
-}
-
 /** Per-session points for the cost/duration and prompt-length/cost scatters. */
 export function sessionScatter(db: Database, limit = 2000): ScatterSession[] {
   return db
@@ -619,24 +479,6 @@ export function sessionScatter(db: Database, limit = 2000): ScatterSession[] {
       ORDER BY cost_total DESC LIMIT ?`,
     )
     .all(limit) as ScatterSession[];
-}
-
-export interface CostBucket {
-  label: string;
-  count: number;
-}
-
-export interface CostDistribution {
-  sessions: number;
-  mean: number;
-  p50: number;
-  p90: number;
-  p99: number;
-  max: number;
-  /** Share of total spend carried by the most expensive 10% of sessions. */
-  topDecileShare: number;
-  /** Log-scale cost buckets, cheapest first. */
-  buckets: CostBucket[];
 }
 
 const COST_BUCKETS: { label: string; max: number }[] = [
@@ -661,8 +503,11 @@ export function costDistribution(db: Database): CostDistribution {
     const bucket = buckets[i === -1 ? buckets.length - 1 : i];
     if (bucket) bucket.count += 1;
   }
+  // A "top 10%" cohort only exists with ≥10 sessions; below that the slice
+  // would just be the single most expensive session, mislabeled. Renderers
+  // hide the concentration figure when it is 0.
   const decileStart = Math.floor(costs.length * 0.9);
-  const topDecile = costs.slice(decileStart).reduce((s, v) => s + v, 0);
+  const topDecile = costs.length >= 10 ? costs.slice(decileStart).reduce((s, v) => s + v, 0) : 0;
   return {
     sessions: costs.length,
     mean: costs.length ? total / costs.length : 0,
@@ -670,7 +515,7 @@ export function costDistribution(db: Database): CostDistribution {
     p90: percentile(costs, 0.9),
     p99: percentile(costs, 0.99),
     max: costs[costs.length - 1] ?? 0,
-    topDecileShare: total > 0 ? topDecile / total : 0,
+    topDecileShare: total > 0 && costs.length >= 10 ? topDecile / total : 0,
     buckets,
   };
 }
@@ -680,16 +525,6 @@ function shiftDay(day: string, n: number): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
-}
-
-export interface StreakSummary {
-  /** Distinct days with at least one session. */
-  activeDays: number;
-  longestStreak: number;
-  /** Consecutive active days ending today or yesterday (0 when cold). */
-  currentStreak: number;
-  /** Active days in the 30-day window ending `today`. */
-  last30ActiveDays: number;
 }
 
 /** Active-day streaks. `today` is the caller's local YYYY-MM-DD. */
@@ -732,18 +567,6 @@ export function streaks(db: Database, today: string): StreakSummary {
   };
 }
 
-export interface RunRate {
-  /** Current month (YYYY-MM) and its spend so far. */
-  month: string;
-  monthToDate: number;
-  /** Previous month: spend through the same day-of-month, and its final total. */
-  prevMonth: string;
-  prevMonthSamePoint: number;
-  prevMonthTotal: number;
-  /** Naive month-end projection: monthToDate / dayOfMonth × daysInMonth. */
-  projected: number;
-}
-
 /** Month-to-date spend vs last month, plus a run-rate projection. */
 export function runRate(db: Database, today: string): RunRate {
   const month = today.slice(0, 7);
@@ -778,12 +601,6 @@ export function runRate(db: Database, today: string): RunRate {
  * Cache TTL split, web tools, estimated share, sidechain
  * ———————————————————————————————————————————————————————————————————————— */
 
-export interface CacheTtlSplit {
-  write5mTokens: number;
-  write1hTokens: number;
-  writeCost: number;
-}
-
 /** How cache writes split between the 5-minute and 1-hour (2× priced) TTLs. */
 export function cacheTtlSplit(db: Database): CacheTtlSplit {
   return db
@@ -794,20 +611,6 @@ export function cacheTtlSplit(db: Database): CacheTtlSplit {
       FROM sessions`,
     )
     .get() as CacheTtlSplit;
-}
-
-export interface WebToolsSummary {
-  searches: number;
-  fetches: number;
-  /** Sessions that used web search or fetch at least once. */
-  sessions: number;
-}
-
-export interface WebToolsProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  searches: number;
-  fetches: number;
 }
 
 /** Server-side web search/fetch usage: portfolio summary + top projects. */
@@ -838,15 +641,6 @@ export function webToolUsage(
   return { summary, byProject };
 }
 
-export interface EstimatedShareRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  estimatedCost: number;
-  /** estimatedCost / cost, in [0, 1]. */
-  share: number;
-}
-
 /** Projects whose totals lean on heuristic (non-exact) pricing. */
 export function estimatedShareByProject(db: Database, limit = 20): EstimatedShareRow[] {
   return db
@@ -865,15 +659,6 @@ export function estimatedShareByProject(db: Database, limit = 20): EstimatedShar
     .all(limit) as EstimatedShareRow[];
 }
 
-export interface SidechainSummary {
-  cost: number;
-  calls: number;
-  totalCost: number;
-  totalCalls: number;
-  /** cost / totalCost. */
-  share: number;
-}
-
 /** How much of the portfolio's spend ran on sidechains (subagents). */
 export function sidechainSummary(db: Database): SidechainSummary {
   const r = db
@@ -888,12 +673,6 @@ export function sidechainSummary(db: Database): SidechainSummary {
   return { ...r, share: r.totalCost > 0 ? r.cost / r.totalCost : 0 };
 }
 
-export interface SidechainDayRow {
-  day: string;
-  sidechainCost: number;
-  totalCost: number;
-}
-
 /** Daily sidechain vs total spend, oldest first (delegation trend). */
 export function sidechainByDay(db: Database): SidechainDayRow[] {
   return db
@@ -905,14 +684,6 @@ export function sidechainByDay(db: Database): SidechainDayRow[] {
       GROUP BY day ORDER BY day`,
     )
     .all() as SidechainDayRow[];
-}
-
-export interface SidechainProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sidechainCost: number;
-  share: number;
 }
 
 /** Projects ranked by sidechain (subagent) spend. */
@@ -937,13 +708,6 @@ export function sidechainByProject(db: Database, limit = 20): SidechainProjectRo
  * JSON-blob rollups: files, model mix, modes, stop reasons, depth, bash, …
  * ———————————————————————————————————————————————————————————————————————— */
 
-export interface HotFileRow {
-  file: string;
-  /** Sessions that wrote/edited the file (per-session deduped). */
-  sessions: number;
-  lastDay: string | null;
-}
-
 /** Files Claude keeps coming back to, across sessions (optionally one project). */
 export function hotFiles(db: Database, projectId?: string, limit = 30): HotFileRow[] {
   const rows = (
@@ -964,12 +728,6 @@ export function hotFiles(db: Database, projectId?: string, limit = 30): HotFileR
     .map(([file, a]) => ({ file, sessions: a.sessions, lastDay: a.lastDay }))
     .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
     .slice(0, limit);
-}
-
-export interface ModelDayRow {
-  day: string;
-  model: string;
-  cost: number;
 }
 
 /**
@@ -1014,15 +772,6 @@ export function modelMixByDay(db: Database, topN = 6): ModelDayRow[] {
   return out;
 }
 
-export interface PermissionModeRow {
-  mode: string;
-  turns: number;
-  sessions: number;
-  /** Σ cost_total of sessions using the mode — correlational, like skill cost. */
-  totalCost: number;
-  avgCostPerSession: number;
-}
-
 /** Permission-mode mix across all turns/sessions. */
 export function permissionModeUsage(db: Database): PermissionModeRow[] {
   const rows = db
@@ -1049,12 +798,6 @@ export function permissionModeUsage(db: Database): PermissionModeRow[] {
     .sort((a, b) => b.turns - a.turns);
 }
 
-export interface StopReasonRow {
-  reason: string;
-  count: number;
-  sessions: number;
-}
-
 /** stop_reason mix across all API calls (max_tokens = truncated responses). */
 export function stopReasonUsage(db: Database): StopReasonRow[] {
   const rows = db.query("SELECT stop_reasons_json AS j FROM sessions").all() as {
@@ -1072,21 +815,6 @@ export function stopReasonUsage(db: Database): StopReasonRow[] {
   return [...acc.entries()]
     .map(([reason, a]) => ({ reason, count: a.count, sessions: a.sessions }))
     .sort((a, b) => b.count - a.count);
-}
-
-export interface DepthBucket {
-  label: string;
-  turns: number;
-}
-
-export interface TurnDepthStats {
-  turns: number;
-  avgDepth: number;
-  maxDepth: number;
-  /** Turn counts bucketed by API calls per turn: 1 / 2–3 / 4–7 / 8–15 / 16+. */
-  buckets: DepthBucket[];
-  /** Average depth per month (is delegation deepening over time?). */
-  byMonth: { month: string; avgDepth: number; turns: number }[];
 }
 
 const DEPTH_BUCKETS: { label: string; max: number }[] = [
@@ -1136,13 +864,6 @@ export function turnDepthStats(db: Database): TurnDepthStats {
   };
 }
 
-export interface VersionRow {
-  version: string;
-  sessions: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
-
 /** Claude Code version adoption (per-session deduped), newest last-seen first. */
 export function versionAdoption(db: Database): VersionRow[] {
   const rows = db.query("SELECT versions_json AS j, day FROM sessions").all() as {
@@ -1169,12 +890,6 @@ export function versionAdoption(db: Database): VersionRow[] {
     .sort((a, b) => ((b.lastDay ?? "") < (a.lastDay ?? "") ? -1 : 1));
 }
 
-export interface BranchRow {
-  branch: string;
-  sessions: number;
-  cost: number;
-}
-
 /** Git branches ranked by session count (cost is session-scoped, correlational). */
 export function branchUsage(db: Database, projectId?: string, limit = 30): BranchRow[] {
   const rows = (
@@ -1198,14 +913,6 @@ export function branchUsage(db: Database, projectId?: string, limit = 30): Branc
     .map(([branch, a]) => ({ branch, ...a }))
     .sort((a, b) => b.sessions - a.sessions || b.cost - a.cost)
     .slice(0, limit);
-}
-
-export interface BashCommandRow {
-  command: string;
-  uses: number;
-  errors: number;
-  errorRate: number;
-  sessions: number;
 }
 
 /** Shell command families ranked by use, with error rates. */
@@ -1241,14 +948,6 @@ export function bashCommandUsage(db: Database, limit = 30): BashCommandRow[] {
     .slice(0, limit);
 }
 
-export interface TestRunSummary {
-  runs: number;
-  failures: number;
-  /** Sessions that ran tests at least once. */
-  sessions: number;
-  failureRate: number;
-}
-
 /** How often sessions run the test suite, and how often those runs fail. */
 export function testRunSummary(db: Database): TestRunSummary {
   const r = db
@@ -1260,20 +959,6 @@ export function testRunSummary(db: Database): TestRunSummary {
     )
     .get() as Omit<TestRunSummary, "failureRate">;
   return { ...r, failureRate: r.runs > 0 ? r.failures / r.runs : 0 };
-}
-
-export interface RetryToolRow {
-  tool: string;
-  retries: number;
-  sessions: number;
-}
-
-export interface RetryStats {
-  /** Total repeated-identical tool calls across the portfolio. */
-  total: number;
-  /** Sessions with at least one retry. */
-  sessions: number;
-  byTool: RetryToolRow[];
 }
 
 /** Churn: repeated identical tool calls, portfolio-wide and per tool. */
@@ -1314,19 +999,6 @@ export function localDayOfMs(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export interface ConcurrencyDayRow {
-  day: string;
-  maxConcurrent: number;
-}
-
-export interface ConcurrencySummary {
-  /** Highest number of sessions ever open at once. */
-  peak: number;
-  /** Share of active days with ≥2 sessions overlapping. */
-  parallelDayShare: number;
-  days: ConcurrencyDayRow[];
-}
-
 /** How many sessions overlap in time — parallel-Claude usage, per day. */
 export function concurrency(db: Database): ConcurrencySummary {
   const rows = db
@@ -1344,7 +1016,9 @@ export function concurrency(db: Database): ConcurrencySummary {
     const start = Date.parse(r.s);
     const end = Date.parse(r.e);
     if (Number.isNaN(start) || Number.isNaN(end) || end < start) continue;
-    edges.push({ ms: start, delta: 1 }, { ms: end, delta: -1 });
+    // A zero-duration session still counts: give it a 1ms floor so its start
+    // edge isn't cancelled before it is observed.
+    edges.push({ ms: start, delta: 1 }, { ms: Math.max(end, start + 1), delta: -1 });
   }
   // Ends sort before starts at the same instant so touching sessions don't
   // count as overlapping.
@@ -1352,12 +1026,23 @@ export function concurrency(db: Database): ConcurrencySummary {
   const perDay = new Map<string, number>();
   let open = 0;
   let peak = 0;
-  for (const e of edges) {
-    open += e.delta;
-    if (e.delta === 1) {
-      const day = localDayOfMs(e.ms);
+  for (let i = 0; i < edges.length; i++) {
+    open += (edges[i] as Edge).delta;
+    if (open <= 0) continue;
+    if (open > peak) peak = open;
+    // `open` holds until the next edge; credit every local day that span
+    // touches, so a session pair overlapping across midnight still marks the
+    // morning side (a start-edge-only walk would skip days where the overlap
+    // merely persists).
+    const spanStart = (edges[i] as Edge).ms;
+    const spanEnd = edges[i + 1]?.ms ?? spanStart;
+    for (let ms = spanStart; ; ) {
+      const day = localDayOfMs(ms);
       if (open > (perDay.get(day) ?? 0)) perDay.set(day, open);
-      if (open > peak) peak = open;
+      const nextMidnight = new Date(ms);
+      nextMidnight.setHours(24, 0, 0, 0);
+      if (nextMidnight.getTime() >= spanEnd) break;
+      ms = nextMidnight.getTime();
     }
   }
   const days = [...perDay.entries()]
@@ -1369,16 +1054,6 @@ export function concurrency(db: Database): ConcurrencySummary {
     parallelDayShare: days.length > 0 ? parallel / days.length : 0,
     days,
   };
-}
-
-export interface IdleCacheBucket {
-  /** Idle-share bucket label ("<25%", …): 1 − activeMs/durationMs. */
-  bucket: string;
-  sessions: number;
-  /** Aggregate cache read:write token ratio for the bucket. */
-  ratio: number;
-  /** Share of the bucket's cache-write $ that was never read back. */
-  wasteShare: number;
 }
 
 const IDLE_BUCKETS: { label: string; max: number }[] = [
@@ -1430,13 +1105,6 @@ function weekOf(day: string): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10);
-}
-
-export interface ErrorWeekRow {
-  week: string;
-  toolCalls: number;
-  errors: number;
-  errorRate: number;
 }
 
 /** Tool-error rate per ISO week (attributed to each session's day). */

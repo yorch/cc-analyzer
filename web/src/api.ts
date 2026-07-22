@@ -1,95 +1,101 @@
-// Typed client for the cc-analyzer JSON API. Shapes mirror the server's
-// core/stats, core/queries, core/analyze and core/transcript outputs.
+// Typed client for the cc-analyzer JSON API. Row/summary shapes come straight
+// from the core stats layer via the bun-free stats-types module (type-only
+// imports, erased at build time), so server and client cannot drift; only the
+// response envelopes and the shapes of non-stats endpoints live here.
 
-export interface PortfolioSummary {
-  sessions: number;
-  projects: number;
-  cost: number;
-  estimatedShare: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheWriteTokens: number;
-  cacheReadTokens: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
+import type {
+  BashCommandRow,
+  BranchRow,
+  CacheSummary as CacheSummaryRow,
+  CacheTtlSplit,
+  ConcurrencySummary,
+  CostDistribution,
+  DayRow,
+  DurationSummary,
+  ErrorWeekRow,
+  EstimatedShareRow,
+  HeatCell,
+  HotFileRow,
+  IdleCacheBucket,
+  ModelDayRow,
+  ModelRow,
+  MonthRow,
+  NameUsageRow,
+  PermissionModeRow,
+  PortfolioSummary,
+  ProjectCacheRow,
+  ProjectRow,
+  RetryStats,
+  RunRate,
+  ScatterSession,
+  SessionCacheRow,
+  SessionRankRow,
+  SidechainDayRow,
+  SidechainProjectRow,
+  SidechainSummary,
+  SkillUsageRow,
+  StopReasonRow,
+  StreakSummary,
+  TestRunSummary,
+  ToolUsageRow,
+  TurnDepthStats,
+  VersionRow,
+  WebToolsProjectRow,
+  WebToolsSummary,
+} from "../../src/core/stats-types.ts";
+
+export type {
+  BashCommandRow,
+  BranchRow,
+  CacheMetrics,
+  CacheSummary as CacheSummaryRow,
+  CacheTtlSplit,
+  CacheVerdict,
+  ConcurrencyDayRow,
+  ConcurrencySummary,
+  CostBucket,
+  CostDistribution,
+  DayRow,
+  DepthBucket,
+  DurationSummary,
+  ErrorWeekRow,
+  EstimatedShareRow,
+  HeatCell,
+  HotFileRow,
+  IdleCacheBucket,
+  ModelDayRow,
+  ModelRow,
+  MonthRow,
+  NameUsageRow,
+  PermissionModeRow,
+  PortfolioSummary,
+  ProjectCacheRow,
+  ProjectRow,
+  RetryStats,
+  RetryToolRow,
+  RunRate,
+  ScatterSession,
+  SessionCacheRow,
+  SessionRankRow,
+  SidechainDayRow,
+  SidechainProjectRow,
+  SidechainSummary,
+  SkillDayCount,
+  SkillUsageRow,
+  StopReasonRow,
+  StreakSummary,
+  TestRunSummary,
+  ToolUsageRow,
+  TurnDepthStats,
+  VersionRow,
+  WebToolsProjectRow,
+  WebToolsSummary,
+} from "../../src/core/stats-types.ts";
+export { cacheVerdict } from "../../src/core/stats-types.ts";
+
 export interface TokenSplit {
   ioTokens: number;
   cacheTokens: number;
-}
-export interface MonthRow extends TokenSplit {
-  month: string;
-  cost: number;
-  sessions: number;
-}
-export interface ProjectRow extends TokenSplit {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sessions: number;
-}
-export interface ModelRow extends TokenSplit {
-  model: string;
-  calls: number;
-  cost: number;
-}
-export interface SessionRankRow extends TokenSplit {
-  sessionId: string | null;
-  projectPath: string | null;
-  title: string | null;
-  cost: number;
-  startTime: string | null;
-}
-export interface DurationSummary {
-  sessions: number;
-  totalMs: number;
-  avgMs: number;
-  medianMs: number;
-  p90Ms: number;
-  totalActiveMs: number;
-  activeShare: number;
-}
-export interface CostBucket {
-  label: string;
-  count: number;
-}
-export interface CostDistribution {
-  sessions: number;
-  mean: number;
-  p50: number;
-  p90: number;
-  p99: number;
-  max: number;
-  topDecileShare: number;
-  buckets: CostBucket[];
-}
-export interface StreakSummary {
-  activeDays: number;
-  longestStreak: number;
-  currentStreak: number;
-  last30ActiveDays: number;
-}
-export interface RunRate {
-  month: string;
-  monthToDate: number;
-  prevMonth: string;
-  prevMonthSamePoint: number;
-  prevMonthTotal: number;
-  projected: number;
-}
-export interface SidechainSummary {
-  cost: number;
-  calls: number;
-  totalCost: number;
-  totalCalls: number;
-  share: number;
-}
-export interface EstimatedShareRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  estimatedCost: number;
-  share: number;
 }
 export interface StatsResponse {
   summary: PortfolioSummary;
@@ -129,98 +135,11 @@ export interface SessionWithProject extends IndexedSession {
   projectPath: string | null;
 }
 
-export interface CacheMetrics {
-  writeTokens: number;
-  readTokens: number;
-  writeCost: number;
-  readCost: number;
-  inputCost: number;
-  outputCost: number;
-  totalCost: number;
-  ratio: number;
-  waste: number;
-}
-export interface ProjectCacheRow extends CacheMetrics {
-  projectId: string;
-  projectPath: string | null;
-  sessions: number;
-}
-export interface SessionCacheRow extends CacheMetrics {
-  sessionId: string | null;
-  title: string | null;
-  startTime: string | null;
-  projectPath: string | null;
-}
-export interface CacheSummaryRow {
-  writeCost: number;
-  readCost: number;
-  waste: number;
-  totalCost: number;
-}
-export interface CacheTtlSplit {
-  write5mTokens: number;
-  write1hTokens: number;
-  writeCost: number;
-}
-export interface IdleCacheBucket {
-  bucket: string;
-  sessions: number;
-  ratio: number;
-  wasteShare: number;
-}
 export interface InsightsResponse {
   summary: CacheSummaryRow;
   projects: ProjectCacheRow[];
   ttl: CacheTtlSplit;
   idleBuckets: IdleCacheBucket[];
-}
-export interface DayRow {
-  day: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-export interface HeatCell {
-  weekday: number; // 0=Sunday … 6=Saturday
-  hour: number; // 0…23, local
-  sessions: number;
-  cost: number;
-}
-export interface ModelDayRow {
-  day: string;
-  model: string;
-  cost: number;
-}
-export interface ConcurrencyDayRow {
-  day: string;
-  maxConcurrent: number;
-}
-export interface ConcurrencySummary {
-  peak: number;
-  parallelDayShare: number;
-  days: ConcurrencyDayRow[];
-}
-export interface ErrorWeekRow {
-  week: string;
-  toolCalls: number;
-  errors: number;
-  errorRate: number;
-}
-export interface SidechainDayRow {
-  day: string;
-  sidechainCost: number;
-  totalCost: number;
-}
-export interface ScatterSession {
-  sessionId: string | null;
-  title: string | null;
-  projectPath: string | null;
-  cost: number;
-  durationMs: number;
-  activeMs: number;
-  turns: number;
-  promptChars: number;
 }
 export interface TrendsResponse {
   daily: DayRow[];
@@ -232,115 +151,6 @@ export interface TrendsResponse {
   scatter: ScatterSession[];
 }
 
-export interface ToolUsageRow {
-  tool: string;
-  uses: number;
-  errors: number;
-  errorRate: number;
-  sessions: number;
-}
-export interface NameUsageRow {
-  name: string;
-  sessions: number;
-}
-export interface SkillDayCount {
-  day: string;
-  count: number;
-}
-/** Mirror of core stats.SkillUsageRow. Cost is session-scoped (correlational). */
-export interface SkillUsageRow {
-  name: string;
-  invocations: number;
-  sessions: number;
-  projects: number;
-  errors: number;
-  errorRate: number;
-  firstUsed: string | null;
-  lastUsed: string | null;
-  totalCost: number;
-  avgCostPerSession: number;
-  daily: SkillDayCount[];
-}
-export interface BashCommandRow {
-  command: string;
-  uses: number;
-  errors: number;
-  errorRate: number;
-  sessions: number;
-}
-export interface TestRunSummary {
-  runs: number;
-  failures: number;
-  sessions: number;
-  failureRate: number;
-}
-export interface RetryToolRow {
-  tool: string;
-  retries: number;
-  sessions: number;
-}
-export interface RetryStats {
-  total: number;
-  sessions: number;
-  byTool: RetryToolRow[];
-}
-export interface WebToolsSummary {
-  searches: number;
-  fetches: number;
-  sessions: number;
-}
-export interface WebToolsProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  searches: number;
-  fetches: number;
-}
-export interface PermissionModeRow {
-  mode: string;
-  turns: number;
-  sessions: number;
-  totalCost: number;
-  avgCostPerSession: number;
-}
-export interface StopReasonRow {
-  reason: string;
-  count: number;
-  sessions: number;
-}
-export interface DepthBucket {
-  label: string;
-  turns: number;
-}
-export interface TurnDepthStats {
-  turns: number;
-  avgDepth: number;
-  maxDepth: number;
-  buckets: DepthBucket[];
-  byMonth: { month: string; avgDepth: number; turns: number }[];
-}
-export interface VersionRow {
-  version: string;
-  sessions: number;
-  firstDay: string | null;
-  lastDay: string | null;
-}
-export interface BranchRow {
-  branch: string;
-  sessions: number;
-  cost: number;
-}
-export interface SidechainProjectRow {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sidechainCost: number;
-  share: number;
-}
-export interface HotFileRow {
-  file: string;
-  sessions: number;
-  lastDay: string | null;
-}
 export interface AnalyticsResponse {
   tools: ToolUsageRow[];
   skills: SkillUsageRow[];
@@ -355,14 +165,6 @@ export interface AnalyticsResponse {
   versions: VersionRow[];
   branches: BranchRow[];
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
-}
-
-export type CacheVerdict = "efficient" | "ok" | "leaky";
-/** Mirror of core stats.cacheVerdict, for the web insights view. */
-export function cacheVerdict(ratio: number): CacheVerdict {
-  if (ratio >= 2) return "efficient";
-  if (ratio >= 1) return "ok";
-  return "leaky";
 }
 
 export interface CostBreakdown {
