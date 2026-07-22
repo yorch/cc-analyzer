@@ -4,76 +4,46 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, SCHEMA_VERSION } from "../../src/core/db.ts";
-import { skillAnalytics, subagentUsage, toolUsage } from "../../src/core/stats.ts";
-
-interface Seed {
-  path: string;
-  projectId?: string;
-  day?: string;
-  cost?: number;
-  tools?: Record<string, number>;
-  toolErrors?: Record<string, number>;
-  skills?: Record<string, number>;
-  skillErrors?: Record<string, number>;
-  subagents?: string[];
-}
-
-function insert(db: Database, s: Seed): void {
-  db.query(
-    `INSERT INTO sessions
-       (path, project_id, day, cost_total, tools_json, tool_errors_json,
-        skills_json, skill_errors_json, subagents_json)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    s.path,
-    s.projectId ?? "p",
-    s.day ?? null,
-    s.cost ?? 0,
-    JSON.stringify(s.tools ?? {}),
-    JSON.stringify(s.toolErrors ?? {}),
-    JSON.stringify(s.skills ?? {}),
-    JSON.stringify(s.skillErrors ?? {}),
-    JSON.stringify(s.subagents ?? []),
-  );
-}
+import { analyticsRollup } from "../../src/core/stats.ts";
+import { insertSession } from "../helpers/sessions.ts";
 
 let db: Database;
 beforeAll(() => {
   db = openDb(":memory:");
-  insert(db, {
+  insertSession(db, {
     path: "s1",
-    projectId: "p1",
+    project_id: "p1",
     day: "2026-05-01",
-    cost: 1,
-    tools: { Bash: 10, Read: 5 },
-    toolErrors: { Bash: 2 },
-    skills: { "superpowers:brainstorming": 1 },
-    subagents: ["general-purpose"],
+    cost_total: 1,
+    tools_json: '{"Bash":10,"Read":5}',
+    tool_errors_json: '{"Bash":2}',
+    skills_json: '{"superpowers:brainstorming":1}',
+    subagents_json: '["general-purpose"]',
   });
-  insert(db, {
+  insertSession(db, {
     path: "s2",
-    projectId: "p1",
+    project_id: "p1",
     day: "2026-05-08",
-    cost: 2,
-    tools: { Bash: 20, Edit: 3 },
-    toolErrors: { Edit: 1 },
-    skills: { "superpowers:brainstorming": 2, "artifact-design": 1 },
-    skillErrors: { "artifact-design": 1 },
+    cost_total: 2,
+    tools_json: '{"Bash":20,"Edit":3}',
+    tool_errors_json: '{"Edit":1}',
+    skills_json: '{"superpowers:brainstorming":2,"artifact-design":1}',
+    skill_errors_json: '{"artifact-design":1}',
   });
-  insert(db, {
+  insertSession(db, {
     path: "s3",
-    projectId: "p2",
+    project_id: "p2",
     day: "2026-06-01",
-    cost: 4,
-    tools: { Read: 7 },
-    skills: { "superpowers:brainstorming": 1 },
-    subagents: ["general-purpose"],
+    cost_total: 4,
+    tools_json: '{"Read":7}',
+    skills_json: '{"superpowers:brainstorming":1}',
+    subagents_json: '["general-purpose"]',
   });
 });
 
-describe("toolUsage", () => {
+describe("analyticsRollup tools", () => {
   test("ranks by invocations with error counts, rate, and session frequency", () => {
-    const rows = toolUsage(db);
+    const rows = analyticsRollup(db).tools;
     expect(rows.map((r) => r.tool)).toEqual(["Bash", "Read", "Edit"]);
     const bash = rows.find((r) => r.tool === "Bash");
     expect(bash).toMatchObject({ uses: 30, errors: 2, sessions: 2 });
@@ -83,9 +53,9 @@ describe("toolUsage", () => {
   });
 });
 
-describe("skillAnalytics", () => {
+describe("analyticsRollup skills", () => {
   test("folds invocations, reach, reliability, adoption, and session-scoped cost", () => {
-    const rows = skillAnalytics(db);
+    const rows = analyticsRollup(db).skills;
     expect(rows.map((r) => r.name)).toEqual(["superpowers:brainstorming", "artifact-design"]);
 
     const brain = rows.find((r) => r.name === "superpowers:brainstorming");
@@ -120,9 +90,9 @@ describe("skillAnalytics", () => {
   });
 });
 
-describe("subagentUsage", () => {
+describe("analyticsRollup subagents", () => {
   test("ranks subagent names by how many sessions used each", () => {
-    expect(subagentUsage(db)).toEqual([{ name: "general-purpose", sessions: 2 }]);
+    expect(analyticsRollup(db).subagents).toEqual([{ name: "general-purpose", sessions: 2 }]);
   });
 });
 

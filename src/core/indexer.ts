@@ -37,8 +37,6 @@ export interface SessionRow {
   sidechain_calls: number;
   sidechain_cost: number;
   prompt_chars: number;
-  test_runs: number;
-  test_failures: number;
   retries: number;
   models_json: string;
   tools_json: string;
@@ -52,8 +50,8 @@ export interface SessionRow {
   files_json: string;
   branches_json: string;
   versions_json: string;
-  bash_json: string;
-  bash_errors_json: string;
+  commands_json: string;
+  command_errors_json: string;
   retries_json: string;
   size_bytes: number;
   mtime_ms: number;
@@ -111,8 +109,6 @@ export function toSessionRow(
     sidechain_calls: analysis.totals.sidechainApiCalls,
     sidechain_cost: analysis.totals.sidechainCost,
     prompt_chars: analysis.promptChars,
-    test_runs: analysis.testRuns,
-    test_failures: analysis.testFailures,
     retries: analysis.retries,
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
@@ -126,8 +122,8 @@ export function toSessionRow(
     files_json: JSON.stringify(analysis.filesTouched),
     branches_json: JSON.stringify(analysis.gitBranches),
     versions_json: JSON.stringify(analysis.versions),
-    bash_json: JSON.stringify(analysis.bashCommands),
-    bash_errors_json: JSON.stringify(analysis.bashErrors),
+    commands_json: JSON.stringify(analysis.commandHeads),
+    command_errors_json: JSON.stringify(analysis.commandHeadErrors),
     retries_json: JSON.stringify(analysis.retriesByTool),
     size_bytes: info.sizeBytes,
     mtime_ms: info.mtimeMs,
@@ -166,8 +162,6 @@ const COLUMNS: (keyof SessionRow)[] = [
   "sidechain_calls",
   "sidechain_cost",
   "prompt_chars",
-  "test_runs",
-  "test_failures",
   "retries",
   "models_json",
   "tools_json",
@@ -181,8 +175,8 @@ const COLUMNS: (keyof SessionRow)[] = [
   "files_json",
   "branches_json",
   "versions_json",
-  "bash_json",
-  "bash_errors_json",
+  "commands_json",
+  "command_errors_json",
   "retries_json",
   "size_bytes",
   "mtime_ms",

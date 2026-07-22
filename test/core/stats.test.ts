@@ -7,6 +7,7 @@ import {
   cacheWasteByProject,
   cacheWasteBySession,
 } from "../../src/core/stats.ts";
+import { insertSession } from "../helpers/sessions.ts";
 
 interface Row {
   path: string;
@@ -18,27 +19,18 @@ interface Row {
 }
 
 function insert(db: Database, r: Row): void {
-  db.query(
-    `INSERT INTO sessions
-      (path, project_id, project_path, session_id, title,
-       cache_write_5m, cache_write_1h, cache_read,
-       cost_cache_write, cost_cache_read, cost_input, cost_output, cost_total)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    r.path,
-    r.project,
-    r.projectPath,
-    r.path,
-    r.path,
-    r.write,
-    0,
-    r.read,
-    r.costWrite,
-    0.1,
-    1,
-    1,
-    r.costWrite + 2.1,
-  );
+  insertSession(db, {
+    path: r.path,
+    project_id: r.project,
+    project_path: r.projectPath,
+    cache_write_5m: r.write,
+    cache_read: r.read,
+    cost_cache_write: r.costWrite,
+    cost_cache_read: 0.1,
+    cost_input: 1,
+    cost_output: 1,
+    cost_total: r.costWrite + 2.1,
+  });
 }
 
 let db: Database;

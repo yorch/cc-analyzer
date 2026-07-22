@@ -3,12 +3,10 @@ import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import {
+  analyticsRollup,
   type NameUsageRow,
   type SkillUsageRow,
-  skillAnalytics,
-  subagentUsage,
   type ToolUsageRow,
-  toolUsage,
 } from "../../core/stats.ts";
 import { sparkline, weeklySkillSeries } from "../charts.ts";
 import { ScrollRange } from "../components/ui.tsx";
@@ -55,9 +53,8 @@ const rateColor = (r: number): string =>
  * skills panel goes deeper: invocation/reach/reliability/cost columns plus an
  * adoption detail strip for the selected skill. */
 export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
-  const tools = useMemo(() => toolUsage(db), [db]);
-  const skills = useMemo(() => skillAnalytics(db), [db]);
-  const subagents = useMemo(() => subagentUsage(db), [db]);
+  // One table scan feeds all three panels.
+  const { tools, skills, subagents } = useMemo(() => analyticsRollup(db), [db]);
 
   const [panel, setPanel] = useState<Panel>("tools");
   const [offsetState, setOffset] = useState(0);

@@ -82,12 +82,23 @@ cost totals aren't inflated by the streaming block count.
 computes: *active time* (timestamps sorted, then gaps ≤ `ACTIVE_GAP_MS` (5 min)
 summed — longer gaps are idle, and sorting keeps it ≤ duration under sidechain
 interleaving); the *sidechain split* (API calls with `isSidechain`, i.e. subagent
-spend); *turn depth* (`Turn.mainApiCalls` — main-chain calls only, a subagent
-burst is one step); *retries* (a tool call identical to the immediately
-preceding one on the same chain, cursors reset at each new turn); Bash *command
-families* (`commandFamily()`) and *test runs* (`isTestCommand()`), both built on
-one shared segment grammar anchored at segment start. All of these flatten into
-index columns (schema v5) and roll up in `stats.ts`; the pure shapes and date
+spend); *turn depth* (main-chain calls per turn — a subagent burst is one step;
+`Turn.mainApiCalls` in detail mode, and the `turnDepths` aggregate carries the
+same series through the indexer's aggregate mode); *retries* (a tool call
+identical to the immediately
+preceding one on the same chain — chain identity resolves through `parentUuid`,
+so parallel subagents get independent cursors, and every cursor resets at each
+new turn). For shell commands the index stores a **raw signal, not a
+classification**: normalized per-segment command heads (`commandHead()`, schema
+v6). Command families and test-run detection (`isTestCommand()`) classify those
+heads **at query time** in `stats.ts`, so the heuristics can evolve without a
+reindex; `analyze.ts` still classifies live for single-session views. All of
+these flatten into index columns and roll up in `stats.ts` — the per-session
+JSON blobs fold in **one table scan** via `analyticsRollup()` (used by the web
+`/api/analytics`, the TUI tools view, and CLI stats), the portfolio overview
+shared by `cc-analyzer stats` and `/api/stats` is assembled only by
+`buildPortfolioStats()`, and `serve` memoizes aggregate responses against an
+index fingerprint (row count + newest `indexed_at`). The pure shapes and date
 helpers live in `stats-types.ts`, a bun-free module the web SPA imports directly
 so client and server types cannot drift. Several rollups are **session-scoped
 and correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cache

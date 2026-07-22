@@ -142,6 +142,20 @@ describe("web API", () => {
     }
     expect(Array.isArray(body.subagents)).toBe(true);
   });
+
+  test("aggregate responses are cached until the index fingerprint changes", async () => {
+    const first = await (await api.request("/api/analytics")).text();
+    const again = await (await api.request("/api/analytics")).text();
+    expect(again).toBe(first); // served from cache: byte-identical
+
+    // A reindex bumps indexed_at → fingerprint changes → payload rebuilt (and
+    // still equal in content for the same underlying sessions).
+    await reindex(db, { pricing, rebuild: true });
+    const rebuilt = await api.request("/api/analytics");
+    expect(rebuilt.status).toBe(200);
+    const body = (await rebuilt.json()) as { tools: unknown[] };
+    expect(body.tools.length).toBeGreaterThan(0);
+  });
 });
 
 describe("web API · stale index", () => {

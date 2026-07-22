@@ -7,22 +7,11 @@ import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import {
-  bashCommandUsage,
+  analyticsRollup,
+  buildPortfolioStats,
   cacheTtlSplit,
   concurrency,
-  costDistribution,
-  durationSummary,
   localDayOfMs,
-  portfolioSummary,
-  retryStats,
-  runRate,
-  sidechainSummary,
-  spendByModel,
-  spendByMonth,
-  spendByProject,
-  streaks,
-  testRunSummary,
-  topSessions,
 } from "../core/stats.ts";
 import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
@@ -142,30 +131,23 @@ async function cmdIndex(rebuild: boolean): Promise<number> {
 
 async function cmdStats(json: boolean): Promise<number> {
   const db = openDb();
-  const summary = portfolioSummary(db);
-  if (summary.sessions === 0) {
+  // The shared portfolio shape comes from the same builder as /api/stats;
+  // the CLI adds its terminal-only extras on top.
+  const portfolio = buildPortfolioStats(db, localDayOfMs(Date.now()));
+  if (portfolio.summary.sessions === 0) {
     db.close();
     console.error("Index is empty. Run `cc-analyzer index` first.");
     return 1;
   }
-  const today = localDayOfMs(Date.now());
+  const analytics = analyticsRollup(db);
   // The CLI reports only the concurrency headline, not the per-day series.
   const { peak, parallelDayShare } = concurrency(db);
   const view = {
-    summary,
-    byMonth: spendByMonth(db),
-    byProject: spendByProject(db),
-    byModel: spendByModel(db),
-    top: topSessions(db),
-    duration: durationSummary(db),
-    distribution: costDistribution(db),
-    streaks: streaks(db, today),
-    runRate: runRate(db, today),
-    sidechain: sidechainSummary(db),
+    ...portfolio,
     ttl: cacheTtlSplit(db),
-    bash: bashCommandUsage(db, 10),
-    tests: testRunSummary(db),
-    retries: retryStats(db),
+    bash: analytics.bash.slice(0, 10),
+    tests: analytics.tests,
+    retries: analytics.retries,
     concurrency: { peak, parallelDayShare },
   };
   db.close();

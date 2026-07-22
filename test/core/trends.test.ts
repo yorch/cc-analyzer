@@ -2,28 +2,20 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { openDb } from "../../src/core/db.ts";
 import { activityHeatmap, spendByDay } from "../../src/core/stats.ts";
+import { insertSession } from "../helpers/sessions.ts";
 
 function insert(
   db: Database,
   o: { path: string; day?: string; startTime?: string; cost?: number; io?: number; cache?: number },
 ): void {
-  db.query(
-    `INSERT INTO sessions
-      (path, project_id, day, start_time, cost_total, input_tokens, output_tokens,
-       cache_write_5m, cache_write_1h, cache_read)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    o.path,
-    "p",
-    o.day ?? null,
-    o.startTime ?? null,
-    o.cost ?? 0,
-    o.io ?? 0,
-    0,
-    0,
-    0,
-    o.cache ?? 0,
-  );
+  insertSession(db, {
+    path: o.path,
+    day: o.day ?? null,
+    start_time: o.startTime ?? null,
+    cost_total: o.cost ?? 0,
+    input_tokens: o.io ?? 0,
+    cache_read: o.cache ?? 0,
+  });
 }
 
 let db: Database;

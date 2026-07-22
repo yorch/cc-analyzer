@@ -2,8 +2,7 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { openDb } from "../../src/core/db.ts";
 import {
-  bashCommandUsage,
-  branchUsage,
+  analyticsRollup,
   cacheTtlSplit,
   concurrency,
   costDistribution,
@@ -13,57 +12,14 @@ import {
   hotFiles,
   idleVsCache,
   modelMixByDay,
-  permissionModeUsage,
-  retryStats,
   runRate,
   sessionScatter,
   sidechainByProject,
   sidechainSummary,
-  stopReasonUsage,
   streaks,
-  testRunSummary,
-  turnDepthStats,
-  versionAdoption,
   webToolUsage,
 } from "../../src/core/stats.ts";
-
-/** Insert a session row with sane defaults; override only what a test needs. */
-function insert(db: Database, row: Record<string, string | number | null> & { path: string }) {
-  const defaults: Record<string, string | number | null> = {
-    project_id: "p1",
-    project_path: "/p/one",
-    session_id: row.path,
-    title: row.path,
-    cost_total: 0,
-    cost_estimated: 0,
-    cost_input: 0,
-    cost_output: 0,
-    cost_cache_write: 0,
-    cost_cache_read: 0,
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_write_5m: 0,
-    cache_write_1h: 0,
-    cache_read: 0,
-    turns: 0,
-    api_calls: 0,
-    tool_calls: 0,
-    web_searches: 0,
-    web_fetches: 0,
-    active_ms: 0,
-    sidechain_calls: 0,
-    sidechain_cost: 0,
-    prompt_chars: 0,
-    test_runs: 0,
-    test_failures: 0,
-    retries: 0,
-  };
-  const full = { ...defaults, ...row };
-  const cols = Object.keys(full);
-  db.query(
-    `INSERT INTO sessions (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
-  ).run(...Object.values(full));
-}
+import { insertSession as insert } from "../helpers/sessions.ts";
 
 const fresh = (): Database => openDb(":memory:");
 
@@ -257,53 +213,67 @@ describe("JSON rollups", () => {
       branches_json: '["main"]',
     });
 
-    const modes = permissionModeUsage(db);
-    expect(modes[0]).toMatchObject({ mode: "plan", turns: 3, sessions: 2, totalCost: 12 });
+    const rollup = analyticsRollup(db);
+    expect(rollup.permissionModes[0]).toMatchObject({
+      mode: "plan",
+      turns: 3,
+      sessions: 2,
+      totalCost: 12,
+    });
 
-    expect(stopReasonUsage(db)).toEqual([
+    expect(rollup.stopReasons).toEqual([
       { reason: "end_turn", count: 3, sessions: 1 },
       { reason: "max_tokens", count: 1, sessions: 1 },
     ]);
 
-    const versions = versionAdoption(db);
-    expect(versions[0]?.version).toBe("1.3.0"); // most recently seen first
-    expect(versions[1]).toMatchObject({ version: "1.2.0", firstDay: "2026-01-01" });
+    expect(rollup.versions[0]?.version).toBe("1.3.0"); // most recently seen first
+    expect(rollup.versions[1]).toMatchObject({ version: "1.2.0", firstDay: "2026-01-01" });
 
-    const branches = branchUsage(db);
-    expect(branches[0]).toEqual({ branch: "main", sessions: 2, cost: 12 });
+    expect(rollup.branches[0]).toEqual({ branch: "main", sessions: 2, cost: 12 });
   });
 
-  test("bash usage, test runs and retries", () => {
+  test("bash families, test runs and retries classify from raw command heads", () => {
     const db = fresh();
     insert(db, {
       path: "a",
-      bash_json: '{"git":5,"bun":2}',
-      bash_errors_json: '{"bun":1}',
-      test_runs: 2,
-      test_failures: 1,
+      commands_json: '{"git status":3,"git commit -m":2,"bun test":2}',
+      command_errors_json: '{"bun test":1}',
       retries: 3,
       retries_json: '{"Edit":2,"Bash":1}',
     });
-    insert(db, { path: "b", bash_json: '{"git":1}' });
+    insert(db, { path: "b", commands_json: '{"git push":1}' });
 
-    const bash = bashCommandUsage(db);
-    expect(bash[0]).toEqual({ command: "git", uses: 6, errors: 0, errorRate: 0, sessions: 2 });
-    expect(bash[1]).toEqual({ command: "bun", uses: 2, errors: 1, errorRate: 0.5, sessions: 1 });
+    const rollup = analyticsRollup(db);
+    // Families fold at query time from the stored heads.
+    expect(rollup.bash[0]).toEqual({
+      command: "git",
+      uses: 6,
+      errors: 0,
+      errorRate: 0,
+      sessions: 2,
+    });
+    expect(rollup.bash[1]).toEqual({
+      command: "bun",
+      uses: 2,
+      errors: 1,
+      errorRate: 0.5,
+      sessions: 1,
+    });
 
-    expect(testRunSummary(db)).toEqual({ runs: 2, failures: 1, sessions: 1, failureRate: 0.5 });
+    // "bun test" heads classify as test runs — also at query time.
+    expect(rollup.tests).toEqual({ runs: 2, failures: 1, sessions: 1, failureRate: 0.5 });
 
-    const r = retryStats(db);
-    expect(r.total).toBe(3);
-    expect(r.sessions).toBe(1);
-    expect(r.byTool[0]).toEqual({ tool: "Edit", retries: 2, sessions: 1 });
+    expect(rollup.retries.total).toBe(3);
+    expect(rollup.retries.sessions).toBe(1);
+    expect(rollup.retries.byTool[0]).toEqual({ tool: "Edit", retries: 2, sessions: 1 });
   });
 
-  test("turnDepthStats buckets depths and averages by month", () => {
+  test("turn depth buckets and monthly averages", () => {
     const db = fresh();
     insert(db, { path: "a", month: "2026-01", turn_depths_json: "[1,2,5]" });
     insert(db, { path: "b", month: "2026-02", turn_depths_json: "[20]" });
 
-    const d = turnDepthStats(db);
+    const d = analyticsRollup(db).turnDepth;
     expect(d.turns).toBe(4);
     expect(d.avgDepth).toBeCloseTo(7, 5);
     expect(d.maxDepth).toBe(20);

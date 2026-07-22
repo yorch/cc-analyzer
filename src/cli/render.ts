@@ -3,17 +3,8 @@ import type { TokenCounts } from "../core/pricing.ts";
 import type {
   BashCommandRow,
   CacheTtlSplit,
-  CostDistribution,
-  DurationSummary,
-  ModelRow,
-  MonthRow,
-  PortfolioSummary,
-  ProjectRow,
+  PortfolioStats,
   RetryStats,
-  RunRate,
-  SessionRankRow,
-  SidechainSummary,
-  StreakSummary,
   TestRunSummary,
 } from "../core/stats.ts";
 import { topEntries } from "../core/stats-types.ts";
@@ -130,17 +121,8 @@ export function renderSessionSummary(a: SessionAnalysis): string {
   return lines.join("\n");
 }
 
-export interface PortfolioView {
-  summary: PortfolioSummary;
-  byMonth: MonthRow[];
-  byProject: ProjectRow[];
-  byModel: ModelRow[];
-  top: SessionRankRow[];
-  duration: DurationSummary;
-  distribution: CostDistribution;
-  streaks: StreakSummary;
-  runRate: RunRate;
-  sidechain: SidechainSummary;
+/** The shared portfolio shape plus the CLI's terminal-only extras. */
+export interface PortfolioView extends PortfolioStats {
   ttl: CacheTtlSplit;
   bash: BashCommandRow[];
   tests: TestRunSummary;

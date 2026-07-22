@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
 import { parseSessionFile } from "../core/parser.ts";
@@ -11,42 +12,23 @@ import {
 } from "../core/queries.ts";
 import {
   activityHeatmap,
-  bashCommandUsage,
-  branchUsage,
+  analyticsRollup,
+  buildPortfolioStats,
   cacheSummary,
   cacheTtlSplit,
   cacheWasteByProject,
   cacheWasteBySession,
   concurrency,
-  costDistribution,
-  durationSummary,
   errorRateByWeek,
-  estimatedShareByProject,
   hotFiles,
   idleVsCache,
   localDayOfMs,
   modelMixByDay,
-  permissionModeUsage,
-  portfolioSummary,
-  retryStats,
-  runRate,
   sessionScatter,
   sidechainByDay,
   sidechainByProject,
   sidechainSummary,
-  skillAnalytics,
   spendByDay,
-  spendByModel,
-  spendByMonth,
-  spendByProject,
-  stopReasonUsage,
-  streaks,
-  subagentUsage,
-  testRunSummary,
-  toolUsage,
-  topSessions,
-  turnDepthStats,
-  versionAdoption,
   webToolUsage,
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
@@ -61,21 +43,31 @@ const MAX_PROJECT_ROWS = 2000;
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
 
+  // The index only changes when `cc-analyzer index` runs, so the aggregate
+  // endpoints memoize their serialized payload against a cheap fingerprint of
+  // the sessions table (row count + newest indexed_at). A reindex — even from
+  // another process — changes the fingerprint and invalidates on next request.
+  const fingerprint = (): string => {
+    const r = db
+      .query("SELECT COUNT(*) AS n, COALESCE(MAX(indexed_at), 0) AS t FROM sessions")
+      .get() as { n: number; t: number };
+    return `${r.n}:${r.t}`;
+  };
+  const cache = new Map<string, { key: string; body: string }>();
+  const cachedJson = (c: Context, name: string, key: string, build: () => unknown) => {
+    const hit = cache.get(name);
+    if (hit?.key !== key) cache.set(name, { key, body: JSON.stringify(build()) });
+    return c.body((cache.get(name) as { body: string }).body, 200, {
+      "content-type": "application/json",
+    });
+  };
+
   api.get("/api/stats", (c) => {
     const today = localDayOfMs(Date.now());
-    return c.json({
-      summary: portfolioSummary(db),
-      byMonth: spendByMonth(db),
-      byProject: spendByProject(db, MAX_PROJECT_ROWS),
-      byModel: spendByModel(db),
-      top: topSessions(db, 20),
-      duration: durationSummary(db),
-      distribution: costDistribution(db),
-      streaks: streaks(db, today),
-      runRate: runRate(db, today),
-      sidechain: sidechainSummary(db),
-      estimatedByProject: estimatedShareByProject(db),
-    });
+    // `today` is part of the key: streaks/run-rate must roll over at midnight.
+    return cachedJson(c, "stats", `${fingerprint()}:${today}`, () =>
+      buildPortfolioStats(db, today, { projectLimit: MAX_PROJECT_ROWS, topLimit: 20 }),
+    );
   });
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
@@ -84,12 +76,12 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // plus a portfolio summary; drill into one project's sessions. The TTL split
   // and idle-share buckets diagnose *why* writes didn't amortize.
   api.get("/api/insights", (c) =>
-    c.json({
+    cachedJson(c, "insights", fingerprint(), () => ({
       summary: cacheSummary(db),
       projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
       ttl: cacheTtlSplit(db),
       idleBuckets: idleVsCache(db),
-    }),
+    })),
   );
 
   api.get("/api/insights/:id/sessions", (c) =>
@@ -101,7 +93,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // concurrency lanes, weekly error rate, sidechain trend, and the
   // cost/duration/prompt scatter points.
   api.get("/api/trends", (c) =>
-    c.json({
+    cachedJson(c, "trends", fingerprint(), () => ({
       daily: spendByDay(db),
       heatmap: activityHeatmap(db),
       modelMix: modelMixByDay(db),
@@ -109,27 +101,18 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       errorWeekly: errorRateByWeek(db),
       sidechainDaily: sidechainByDay(db),
       scatter: sessionScatter(db),
-    }),
+    })),
   );
 
-  // Tool/skill/subagent usage analytics, plus shell commands, retries, web
-  // tools, permission modes, stop reasons, turn depth, versions, branches.
+  // Tool/skill/subagent usage analytics plus shell commands, retries, web
+  // tools, permission modes, stop reasons, turn depth, versions, branches —
+  // one table scan via analyticsRollup instead of one per metric.
   api.get("/api/analytics", (c) =>
-    c.json({
-      tools: toolUsage(db),
-      skills: skillAnalytics(db),
-      subagents: subagentUsage(db),
-      bash: bashCommandUsage(db),
-      tests: testRunSummary(db),
-      retries: retryStats(db),
+    cachedJson(c, "analytics", fingerprint(), () => ({
+      ...analyticsRollup(db),
       webTools: webToolUsage(db),
-      permissionModes: permissionModeUsage(db),
-      stopReasons: stopReasonUsage(db),
-      turnDepth: turnDepthStats(db),
-      versions: versionAdoption(db),
-      branches: branchUsage(db),
       sidechain: { summary: sidechainSummary(db), byProject: sidechainByProject(db) },
-    }),
+    })),
   );
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
