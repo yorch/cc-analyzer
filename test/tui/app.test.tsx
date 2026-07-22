@@ -8,6 +8,7 @@ import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { App } from "../../src/tui/App.tsx";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
+import { waitForFrame, waitForFrameGone } from "../helpers/tui.ts";
 
 const tmpDir = join("/tmp", `cc-analyzer-app-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
@@ -31,8 +32,6 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
-
 describe("App (smoke render)", () => {
   test("opens on the portfolio home in the amber shell", () => {
     const { lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
@@ -47,7 +46,7 @@ describe("App (smoke render)", () => {
   test("enter on a project drills into its sessions (breadcrumb updates)", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write("\r"); // enter on the highlighted project row
-    await wait();
+    await waitForFrame(lastFrame, "projects ▸");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("projects ▸"); // drilled breadcrumb
     expect(frame).toContain("/Users/dev/proj");
@@ -57,9 +56,9 @@ describe("App (smoke render)", () => {
   test("esc focuses the rail, then a number key jumps to the sessions view", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write(""); // esc on an empty filter → focus the nav rail
-    await wait();
+    await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("3"); // jump to the 3rd view (sessions)
-    await wait();
+    await waitForFrame(lastFrame, "sessions");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("sessions"); // breadcrumb now reads "sessions"
     unmount();
@@ -68,9 +67,9 @@ describe("App (smoke render)", () => {
   test("insights is a live view showing the cache hit-list", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write(""); // esc → focus the nav rail
-    await wait();
+    await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("4"); // jump to the 4th view (insights)
-    await wait();
+    await waitForFrame(lastFrame, "un-amortized");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("insights"); // breadcrumb
     expect(frame).toContain("un-amortized"); // the cache summary header
@@ -80,9 +79,9 @@ describe("App (smoke render)", () => {
   test("trends is a live view with the burn/heatmap panels", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write(""); // esc → focus the nav rail
-    await wait();
+    await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("5"); // jump to the 5th view (trends)
-    await wait();
+    await waitForFrame(lastFrame, "heatmap");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("trends"); // breadcrumb
     expect(frame).toContain("heatmap"); // panel switcher (no longer a placeholder)
@@ -92,9 +91,9 @@ describe("App (smoke render)", () => {
   test("tools is a live view with the usage panels", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write(""); // esc → focus the nav rail
-    await wait();
+    await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("6"); // jump to the 6th view (tools)
-    await wait();
+    await waitForFrame(lastFrame, "subagents");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("tools"); // breadcrumb + rail
     expect(frame).toContain("subagents"); // panel switcher
@@ -104,10 +103,10 @@ describe("App (smoke render)", () => {
   test("pressing ? toggles the help overlay", async () => {
     const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
     stdin.write("?");
-    await wait();
+    await waitForFrame(lastFrame, "Keybindings");
     expect(lastFrame() ?? "").toContain("Keybindings");
     stdin.write(" "); // any key closes
-    await wait();
+    await waitForFrameGone(lastFrame, "Keybindings");
     expect(lastFrame() ?? "").not.toContain("Keybindings");
     unmount();
   });

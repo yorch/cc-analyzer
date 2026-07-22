@@ -3,6 +3,7 @@ import { render } from "ink-testing-library";
 import type { IndexedProject, IndexedSession } from "../../src/core/queries.ts";
 import { ProjectsView } from "../../src/tui/screens/ProjectsView.tsx";
 import { SessionListView } from "../../src/tui/screens/SessionListView.tsx";
+import { waitForFrame } from "../helpers/tui.ts";
 
 const projects: IndexedProject[] = [
   {
@@ -66,13 +67,12 @@ describe("TUI list views (smoke render)", () => {
     const { stdin, lastFrame, unmount } = render(
       <ProjectsView projects={projects} columns={120} isActive onOpen={noop} onBack={noop} />,
     );
-    const wait = () => new Promise((r) => setTimeout(r, 20));
     expect(lastFrame() ?? "").toContain("· recent ↓"); // default sort indicator
     stdin.write("\t"); // Tab → next field
-    await wait();
+    await waitForFrame(lastFrame, "· cost ↓");
     expect(lastFrame() ?? "").toContain("· cost ↓");
     stdin.write("[Z"); // shift-Tab → flip direction
-    await wait();
+    await waitForFrame(lastFrame, "· cost ↑");
     expect(lastFrame() ?? "").toContain("· cost ↑");
     unmount();
   });

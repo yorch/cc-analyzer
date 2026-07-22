@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { ToolsView } from "../../src/tui/screens/ToolsView.tsx";
+import { waitForFrame } from "../helpers/tui.ts";
 
 function insert(
   db: Database,
@@ -34,7 +35,6 @@ beforeAll(() => {
 });
 
 const noop = () => {};
-const wait = (ms = 25) => new Promise((r) => setTimeout(r, ms));
 
 describe("ToolsView", () => {
   test("tools panel lists tools with uses/error columns", () => {
@@ -54,17 +54,17 @@ describe("ToolsView", () => {
     );
     expect(lastFrame() ?? "").toContain("sort: uses");
     stdin.write("s"); // uses → errors
-    await wait();
+    await waitForFrame(lastFrame, "sort: errors");
     expect(lastFrame() ?? "").toContain("sort: errors");
 
     stdin.write("2"); // skills panel
-    await wait();
+    await waitForFrame(lastFrame, "SKILL");
     let frame = lastFrame() ?? "";
     expect(frame).toContain("SKILL");
     expect(frame).toContain("brainstorming");
 
     stdin.write("3"); // subagents panel
-    await wait();
+    await waitForFrame(lastFrame, "SUBAGENT");
     frame = lastFrame() ?? "";
     expect(frame).toContain("SUBAGENT");
     expect(frame).toContain("general-purpose");

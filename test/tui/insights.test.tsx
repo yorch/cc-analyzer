@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { InsightsView } from "../../src/tui/screens/InsightsView.tsx";
+import { waitForFrame } from "../helpers/tui.ts";
 
 function insert(
   db: Database,
@@ -30,7 +31,6 @@ beforeAll(() => {
 });
 
 const noop = () => {};
-const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
 describe("InsightsView", () => {
   test("ranks projects by waste and previews the leader's breakdown", () => {
@@ -62,9 +62,9 @@ describe("InsightsView", () => {
         onBack={noop}
       />,
     );
-    await wait();
+    await waitForFrame(lastFrame, "/p/leaky"); // ranked list rendered before drilling
     stdin.write("\r"); // drill into the top project (p-leaky)
-    await wait();
+    await waitForFrame(lastFrame, "leaky-1");
     expect(lastFrame() ?? "").toContain("leaky-1"); // its session now listed
     unmount();
   });
