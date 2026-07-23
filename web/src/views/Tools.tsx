@@ -18,6 +18,7 @@ import { SortTh } from "../SortTh.tsx";
 import { areaPath, linePath, xScale } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
+import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
 
 const TOOL_SORT: Accessors<ToolUsageRow> = {
   tool: (t) => t.tool,
@@ -360,7 +361,14 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
 
 export function Tools() {
   const { data, error, loading, retry } = useAsync(() => api.analytics(), []);
-  const toolViews = ["tools", "skills", "agents", "environment"] as const;
+  const toolViews = [
+    "tools",
+    "reliability",
+    "compactions",
+    "skills",
+    "agents",
+    "environment",
+  ] as const;
   type ToolView = (typeof toolViews)[number];
   const [view, setView] = useHashParam<ToolView>("view", "tools", toolViews);
   const [query, setQuery] = useHashParam<string>("q", "");
@@ -371,27 +379,26 @@ export function Tools() {
   const wt = data.webTools;
   const sc = data.sidechain;
   const q = query.trim().toLowerCase();
-  const matches = (value: unknown) => !q || JSON.stringify(value).toLowerCase().includes(q);
+  const matches = (...values: unknown[]) =>
+    !q ||
+    values.some((value) =>
+      String(value ?? "")
+        .toLowerCase()
+        .includes(q),
+    );
   return (
     <>
       <header className="top">
         <h1>Tools &amp; skills</h1>
         <span className="muted">what you use across every session — and what fails</span>
       </header>
-      <div className="view-nav" role="tablist" aria-label="Analytics Sections">
-        {toolViews.map((item) => (
-          <button
-            type="button"
-            key={item}
-            role="tab"
-            aria-selected={view === item}
-            className={view === item ? "active" : ""}
-            onClick={() => setView(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
+      <ViewTabs
+        id="analytics"
+        label="Analytics Sections"
+        items={toolViews}
+        value={view}
+        onChange={setView}
+      />
       <SearchField
         label={`Filter ${view}`}
         placeholder={`Filter ${view} data…`}
@@ -400,31 +407,41 @@ export function Tools() {
       />
 
       {view === "tools" && (
-        <>
+        <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Tools · by invocations, with error rate</h2>
-          <ToolsTable tools={data.tools.filter(matches)} />
+          <ToolsTable tools={data.tools.filter((row) => matches(row.tool))} />
           <h2 className="section-h">Shell commands · what Bash actually runs</h2>
-          <BashTable rows={data.bash.filter(matches)} />
-          <h2 className="section-h">Reliability · test runs &amp; churn</h2>
+          <BashTable rows={data.bash.filter((row) => matches(row.command))} />
+        </ViewPanel>
+      )}
+
+      {view === "reliability" && (
+        <ViewPanel id="analytics" view={view}>
+          <h2 className="section-h">Test runs &amp; tool-call churn</h2>
           <Reliability data={data} />
           <h2 className="section-h">Turn depth · API calls per turn</h2>
           <DepthPanel depth={data.turnDepth} />
-          <h2 className="section-h">Compactions · context-window pressure</h2>
+        </ViewPanel>
+      )}
+
+      {view === "compactions" && (
+        <ViewPanel id="analytics" view={view}>
+          <h2 className="section-h">Context-window pressure</h2>
           <Compactions data={data.compactions} />
-        </>
+        </ViewPanel>
       )}
 
       {view === "skills" && (
-        <>
+        <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
-          <SkillsTable skills={data.skills.filter(matches)} />
-        </>
+          <SkillsTable skills={data.skills.filter((row) => matches(row.name))} />
+        </ViewPanel>
       )}
 
       {view === "agents" && (
-        <>
+        <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Subagents · by sessions</h2>
-          <NameTable label="Subagent" rows={data.subagents.filter(matches)} />
+          <NameTable label="Subagent" rows={data.subagents.filter((row) => matches(row.name))} />
           {sc.summary.cost > 0 && (
             <>
               <p className="muted">
@@ -435,7 +452,7 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Subagent $", "Share", "Total $"]}
                 rows={sc.byProject
-                  .filter(matches)
+                  .filter((row) => matches(row.projectPath, row.projectId))
                   .map((p) => [
                     shortPath(p.projectPath, p.projectId),
                     usd(p.sidechainCost),
@@ -457,7 +474,7 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Searches", "Fetches"]}
                 rows={wt.byProject
-                  .filter(matches)
+                  .filter((row) => matches(row.projectPath, row.projectId))
                   .map((p) => [
                     shortPath(p.projectPath, p.projectId),
                     count(p.searches),
@@ -466,16 +483,16 @@ export function Tools() {
               />
             </>
           )}
-        </>
+        </ViewPanel>
       )}
 
       {view === "environment" && (
-        <>
+        <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Permission modes · how turns run</h2>
           <FactsTable
             head={["Mode", "Turns", "Sessions", "Avg $/session"]}
             rows={data.permissionModes
-              .filter(matches)
+              .filter((row) => matches(row.mode))
               .map((m) => [m.mode, count(m.turns), count(m.sessions), usd(m.avgCostPerSession)])}
           />
           <p className="muted spark-cap">
@@ -486,14 +503,14 @@ export function Tools() {
           <FactsTable
             head={["Reason", "Calls", "Sessions"]}
             rows={data.stopReasons
-              .filter(matches)
+              .filter((row) => matches(row.reason))
               .map((r) => [r.reason, count(r.count), count(r.sessions)])}
           />
           <h2 className="section-h">Claude Code versions</h2>
           <FactsTable
             head={["Version", "Sessions", "First seen", "Last seen"]}
             rows={data.versions
-              .filter(matches)
+              .filter((row) => matches(row.version))
               .slice(0, 15)
               .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
           />
@@ -501,7 +518,7 @@ export function Tools() {
           <FactsTable
             head={["Branch", "Sessions", "Session $"]}
             rows={data.branches
-              .filter(matches)
+              .filter((row) => matches(row.branch))
               .slice(0, 15)
               .map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
           />
@@ -509,7 +526,7 @@ export function Tools() {
             Session $ is session-scoped: a session touching several branches counts its full cost
             toward each — correlational, not causal.
           </p>
-        </>
+        </ViewPanel>
       )}
     </>
   );

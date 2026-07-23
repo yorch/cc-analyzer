@@ -153,7 +153,8 @@ summary {
 .wrap {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0 24px 96px;
+  padding: 0 max(24px, env(safe-area-inset-right)) max(96px, env(safe-area-inset-bottom))
+    max(24px, env(safe-area-inset-left));
 }
 
 .masthead {
@@ -465,6 +466,8 @@ td.muted {
 }
 tbody tr {
   transition: background 0.12s;
+  content-visibility: auto;
+  contain-intrinsic-size: 36px;
 }
 tbody tr:last-child td {
   border-bottom: none;
@@ -1105,8 +1108,10 @@ p.muted {
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(12px);
+  scrollbar-width: thin;
 }
 .view-nav button {
+  flex: 0 0 auto;
   padding: 7px 12px;
   border: 1px solid transparent;
   background: transparent;
@@ -1116,6 +1121,53 @@ p.muted {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.chart-data {
+  margin-top: 12px;
+  color: var(--muted);
+}
+.chart-data summary {
+  width: max-content;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.chart-data[open] summary {
+  margin-bottom: 8px;
+  color: var(--signal);
+}
+.chart-data .tablewrap {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.summary-group {
+  min-width: 0;
+  margin-bottom: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.summary-group:last-child {
+  grid-column: 1 / -1;
+}
+.analysis-intro {
+  margin-bottom: 20px;
+}
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--signal);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
 }
 .view-nav button:hover,
 .view-nav button.active {
@@ -1156,7 +1208,7 @@ p.muted {
 
 @media (max-width: 760px) {
   .wrap {
-    padding-inline: 16px;
+    padding-inline: max(16px, env(safe-area-inset-left));
   }
   .masthead {
     align-items: flex-start;
@@ -1167,6 +1219,8 @@ p.muted {
     width: 100%;
     overflow-x: auto;
     padding-block: 4px;
+    scrollbar-width: thin;
+    mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
   }
   .masthead-tag,
   .masthead-rule {
@@ -1177,6 +1231,21 @@ p.muted {
   }
   .compact-cards {
     grid-template-columns: 1fr;
+  }
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+  .summary-group:last-child {
+    grid-column: auto;
+  }
+  .view-nav,
+  .tabs {
+    mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+  }
+  .view-nav button,
+  .tabs button,
+  .seg button {
+    min-height: 44px;
   }
   .trend-panel {
     padding: 12px;

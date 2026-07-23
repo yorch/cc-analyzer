@@ -193,10 +193,17 @@ variable also governs the locally served web app; in the web app and docs site,
 ## Development
 
 ```bash
-bun test            # run the test suite
-bun run check       # Biome lint + format (autofix)
-bun run typecheck   # tsc --noEmit
+bun test               # run the test suite
+bun run check          # Biome lint + format (autofix)
+bun run typecheck      # core/CLI/TUI/server TypeScript
+bun run typecheck:web  # browser SPA TypeScript
+bun run build:web      # production single-file SPA build
 ```
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) for commit
+messages and pull request titles, such as
+`feat(web): improve analytics navigation`. Keep relevant README, wiki, site,
+architecture, examples, and help text accurate in the same change.
 
 ### Portfolio analytics
 
@@ -258,18 +265,21 @@ headers, since sessions contain full conversation transcripts; pass
 The UI ships a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions) — a **Trends** page mirroring the TUI's
-time-series view (an SVG spend burn chart with metric/granularity toggles and a
-weekday × hour activity heatmap) — and a **Tools** page ranking tools (by
-invocations, with error rate), **skills** (invocations, sessions, projects, error
-rate, and session-scoped cost — click a row for its adoption sparkline and
-first/last-used), and subagents (by sessions). Projects
-and sessions can be **filtered** by name; the **Turns** tab expands each turn
+into the leakiest sessions) — a **Trends** page with 30-day, peak-spend, and
+error-rate headlines plus burn, calendar, model-mix, activity, scatter,
+reliability, subagent, and concurrency charts — and a **Tools** page organized
+into Tools, Reliability, Compactions, Skills, Agents, and Environment views.
+Projects are organized into Overview, Sessions, Trends, and Files views. These
+section and chart controls are URL-backed, keyboard navigable, and shareable;
+each major chart includes a collapsible data table so its values remain usable
+without hover or a pointer. Projects and sessions can be **filtered** by name;
+the **Turns** tab expands each turn
 into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,
 `✗ error…`), each step click-to-expand for its full input and result; and the
 color-coded **transcript** reader is windowed ("show more") so very large
-sessions stay responsive. The SPA is built
+sessions stay responsive. Session summaries group spend/tokens, execution, and
+environment details. The SPA is built
 by Vite into a single self-contained HTML file (`bun run build:web`) and baked
 into the binary, so the release build serves the whole UI with no external
 assets.

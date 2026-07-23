@@ -133,54 +133,53 @@ function Summary({ a }: { a: SessionAnalysis }) {
   const t = a.totals.tokens;
   return (
     <section>
-      <div className="tablewrap">
-        <table>
-          <tbody>
-            <Row k="Cost (input/output)" v={`${usd(c.input)} / ${usd(c.output)}`} />
-            <Row k="Cost (cache write/read)" v={`${usd(c.cacheWrite)} / ${usd(c.cacheRead)}`} />
-            <Row
-              k="Tokens (input/output)"
-              v={`${count(t.inputTokens)} / ${count(t.outputTokens)}`}
-            />
-            <Row
-              k="Tokens (cache write/read)"
-              v={`${count(t.cacheWrite5mTokens + t.cacheWrite1hTokens)} / ${count(t.cacheReadTokens)}`}
-            />
-            <Row k="Models" v={Object.keys(a.models).join(", ") || "-"} />
-            <Row k="Web search / fetch" v={`${a.totals.webSearches} / ${a.totals.webFetches}`} />
-            <Row k="Git branches" v={a.gitBranches.join(", ") || "-"} />
-            <Row k="CC versions" v={a.versions.join(", ") || "-"} />
-            <Row k="Files touched" v={String(a.filesTouched.length)} />
-            <Row
-              k="Active / wall time"
-              v={`${duration(a.totals.activeMs)} / ${duration(a.durationMs)}`}
-            />
-            <Row k="Stop reasons" v={topEntries(a.stopReasons) || "-"} />
-            <Row k="Permission modes" v={topEntries(a.permissionModes) || "-"} />
-            <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
-            <Row
-              k="Test runs"
-              v={a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected"}
-            />
-            <Row
-              k="Tool-call churn"
-              v={a.retries > 0 ? `${a.retries} repeated identical calls` : "none"}
-            />
-            <Row
-              k="Compactions"
-              v={
-                a.compactions.length > 0
-                  ? `${a.compactions.length} (${a.compactions
-                      .map(
-                        (c) =>
-                          `${c.trigger ?? "unknown"}${c.isSidechain ? " subagent" : ""}${c.inherited ? " inherited" : ""}`,
-                      )
-                      .join(", ")})`
-                  : "none"
-              }
-            />
-          </tbody>
-        </table>
+      <div className="summary-grid">
+        <SummaryGroup title="Spend & Tokens">
+          <Row k="Cost (input/output)" v={`${usd(c.input)} / ${usd(c.output)}`} />
+          <Row k="Cost (cache write/read)" v={`${usd(c.cacheWrite)} / ${usd(c.cacheRead)}`} />
+          <Row k="Tokens (input/output)" v={`${count(t.inputTokens)} / ${count(t.outputTokens)}`} />
+          <Row
+            k="Tokens (cache write/read)"
+            v={`${count(t.cacheWrite5mTokens + t.cacheWrite1hTokens)} / ${count(t.cacheReadTokens)}`}
+          />
+          <Row
+            k="Active / wall time"
+            v={`${duration(a.totals.activeMs)} / ${duration(a.durationMs)}`}
+          />
+        </SummaryGroup>
+        <SummaryGroup title="Execution">
+          <Row k="Models" v={Object.keys(a.models).join(", ") || "-"} />
+          <Row k="Web search / fetch" v={`${a.totals.webSearches} / ${a.totals.webFetches}`} />
+          <Row k="Stop reasons" v={topEntries(a.stopReasons) || "-"} />
+          <Row k="Permission modes" v={topEntries(a.permissionModes) || "-"} />
+          <Row
+            k="Test runs"
+            v={a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected"}
+          />
+          <Row
+            k="Tool-call churn"
+            v={a.retries > 0 ? `${a.retries} repeated identical calls` : "none"}
+          />
+          <Row
+            k="Compactions"
+            v={
+              a.compactions.length > 0
+                ? `${a.compactions.length} (${a.compactions
+                    .map(
+                      (c) =>
+                        `${c.trigger ?? "unknown"}${c.isSidechain ? " subagent" : ""}${c.inherited ? " inherited" : ""}`,
+                    )
+                    .join(", ")})`
+                : "none"
+            }
+          />
+        </SummaryGroup>
+        <SummaryGroup title="Environment">
+          <Row k="Git branches" v={a.gitBranches.join(", ") || "-"} />
+          <Row k="CC versions" v={a.versions.join(", ") || "-"} />
+          <Row k="Files touched" v={String(a.filesTouched.length)} />
+          <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
+        </SummaryGroup>
       </div>
       <div style={{ marginTop: 12 }}>
         {Object.entries(a.tools).map(([t, n]) => (
@@ -198,6 +197,19 @@ function Summary({ a }: { a: SessionAnalysis }) {
         </p>
       )}
       {a.subagents.length > 0 && <p className="muted">Subagents: {a.subagents.join(", ")}</p>}
+    </section>
+  );
+}
+
+function SummaryGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="summary-group">
+      <h2>{title}</h2>
+      <div className="tablewrap">
+        <table>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
     </section>
   );
 }

@@ -65,6 +65,9 @@ export function Insights() {
         Write TTL mix: {count(data.ttl.write5mTokens)} tokens @5m · {count(data.ttl.write1hTokens)}{" "}
         tokens @1h (1h writes are priced ~2× input, 5m ~1.25×).
       </p>
+      <p className="muted">
+        R:W is the cache read-to-write ratio: efficient ≥2×, ok 1–2×, leaky &lt;1×.
+      </p>
 
       <IdleBuckets rows={data.idleBuckets} />
 

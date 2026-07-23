@@ -15,6 +15,7 @@ import { SortTh } from "../SortTh.tsx";
 import { BurnPanel, ModelMix, ScatterPanel } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
+import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
 
 const SESSION_SORT: Accessors<IndexedSession> = {
   cost: (s) => s.cost,
@@ -29,6 +30,8 @@ const HOT_FILE_SORT: Accessors<HotFileRow> = {
   day: (file) => file.lastDay ?? "",
   file: (file) => file.file,
 };
+const PROJECT_VIEWS = ["overview", "sessions", "trends", "files"] as const;
+type ProjectView = (typeof PROJECT_VIEWS)[number];
 
 export function Project({ id }: { id: string }) {
   const { data, error, loading, retry } = useAsync(
@@ -37,6 +40,7 @@ export function Project({ id }: { id: string }) {
     [id],
   );
   const [query, setQuery] = useHashParam<string>("q", "");
+  const [view, setView] = useHashParam<ProjectView>("view", "overview", PROJECT_VIEWS);
   const [projects, allSessions, hotFiles, trends] = data ?? [[], [], [], null];
   const q = query.toLowerCase();
   const filtered = q
@@ -67,66 +71,27 @@ export function Project({ id }: { id: string }) {
         </span>
       </header>
 
-      <SearchField
-        label="Filter Sessions"
-        placeholder="Filter sessions by title…"
-        value={query}
-        onChange={setQuery}
+      <ViewTabs
+        id="project"
+        label="Project Sections"
+        items={PROJECT_VIEWS}
+        value={view}
+        onChange={setView}
       />
 
-      <div className="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <SortTh label="Cost" col="cost" sort={sort} className="num" />
-              <SortTh label="Tokens" col="tokens" sort={sort} className="num" />
-              <SortTh label="Turns" col="turns" sort={sort} className="num" />
-              <SortTh label="Tools" col="tools" sort={sort} className="num" />
-              <SortTh label="Modified" col="modified" sort={sort} />
-              <SortTh label="Title" col="title" sort={sort} />
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.map((s) => (
-              <tr key={s.path}>
-                <td className="num">
-                  {usd(s.cost)}
-                  {s.costEstimated && <span className="est"> ~</span>}
-                </td>
-                <td className="num">{tokens(s.ioTokens, s.cacheTokens)}</td>
-                <td className="num">{s.turns}</td>
-                <td className="num">{s.toolCalls}</td>
-                <td className="muted">{relTime(s.mtimeMs)}</td>
-                <td>
-                  {s.sessionId ? (
-                    <a href={link.session(s.sessionId)}>{s.title ?? s.sessionId}</a>
-                  ) : (
-                    (s.title ?? "(untitled)")
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {sessions.length === 0 && <EmptyNotice>No sessions match this filter.</EmptyNotice>}
-
-      {trends && (
-        <>
-          <h2 className="page-divider">Project Analysis</h2>
-          {trends.daily.length > 0 && (
-            <section className="trend-panel">
-              <BurnPanel daily={trends.daily} />
-            </section>
-          )}
+      {view === "overview" && trends && (
+        <ViewPanel id="project" view={view}>
+          <div className="analysis-intro">
+            <p className="eyebrow">Project Analysis</p>
+            <p className="muted">Cost shape, agentic depth, and the tools this project leans on.</p>
+          </div>
           <section className="trend-panel">
             <div className="trend-head">
               <h2>Session cost distribution</h2>
-              <span className="muted">how spend spreads across this project's sessions</span>
+              <span className="muted">how spend spreads across this project’s sessions</span>
             </div>
             <CostDist d={trends.distribution} />
           </section>
-
           <section className="trend-panel">
             <div className="trend-head">
               <h2>Turn depth</h2>
@@ -134,15 +99,70 @@ export function Project({ id }: { id: string }) {
             </div>
             <DepthDist depth={trends.turnDepth} />
           </section>
-
           <section className="trend-panel">
             <div className="trend-head">
               <h2>Tool mix</h2>
-              <span className="muted">invocations across this project's sessions</span>
+              <span className="muted">invocations across this project’s sessions</span>
             </div>
             <ToolMix tools={trends.tools} />
           </section>
+        </ViewPanel>
+      )}
 
+      {view === "sessions" && (
+        <ViewPanel id="project" view={view}>
+          <SearchField
+            label="Filter Sessions"
+            placeholder="Filter sessions by title…"
+            value={query}
+            onChange={setQuery}
+          />
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <SortTh label="Cost" col="cost" sort={sort} className="num" />
+                  <SortTh label="Tokens" col="tokens" sort={sort} className="num" />
+                  <SortTh label="Turns" col="turns" sort={sort} className="num" />
+                  <SortTh label="Tools" col="tools" sort={sort} className="num" />
+                  <SortTh label="Modified" col="modified" sort={sort} />
+                  <SortTh label="Title" col="title" sort={sort} />
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => (
+                  <tr key={s.path}>
+                    <td className="num">
+                      {usd(s.cost)}
+                      {s.costEstimated && <span className="est"> ~</span>}
+                    </td>
+                    <td className="num">{tokens(s.ioTokens, s.cacheTokens)}</td>
+                    <td className="num">{s.turns}</td>
+                    <td className="num">{s.toolCalls}</td>
+                    <td className="muted">{relTime(s.mtimeMs)}</td>
+                    <td>
+                      {s.sessionId ? (
+                        <a href={link.session(s.sessionId)}>{s.title ?? s.sessionId}</a>
+                      ) : (
+                        (s.title ?? "(untitled)")
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {sessions.length === 0 && <EmptyNotice>No sessions match this filter.</EmptyNotice>}
+        </ViewPanel>
+      )}
+
+      {view === "trends" && trends && (
+        <ViewPanel id="project" view={view}>
+          {trends.daily.length > 0 && (
+            <section className="trend-panel">
+              <BurnPanel daily={trends.daily} />
+            </section>
+          )}
           {trends.modelMix.length > 0 && (
             <section className="trend-panel">
               <div className="trend-head">
@@ -156,10 +176,15 @@ export function Project({ id }: { id: string }) {
           <section className="trend-panel">
             <ScatterPanel points={trends.scatter} />
           </section>
-        </>
+        </ViewPanel>
       )}
 
-      <HotFiles rows={hotFiles} projectPath={project?.projectPath ?? null} />
+      {view === "files" && (
+        <ViewPanel id="project" view={view}>
+          <HotFiles rows={hotFiles} projectPath={project?.projectPath ?? null} />
+          {hotFiles.length === 0 && <EmptyNotice>No edited files were recorded.</EmptyNotice>}
+        </ViewPanel>
+      )}
     </>
   );
 }
