@@ -283,14 +283,16 @@ embeds it in a disposable source copy while compiling, leaving tracked source un
 ### Releases (CI)
 
 Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
-(`.github/workflows/ci.yml`). Pushing a `v*` tag triggers
-`.github/workflows/release.yml`, which cross-compiles binaries for
+(`.github/workflows/ci.yml`), across a macOS + Ubuntu matrix. Pushing a `v*` tag
+triggers `.github/workflows/release.yml`, which cross-compiles binaries for
 Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a `SHA256SUMS`
 manifest, signs a build-provenance attestation for each binary, and publishes a
 GitHub release with auto-generated notes.
 
 **To cut a release** — the compiled binary embeds `package.json`'s version, so the
-bump must land on `main` before the tag:
+bump must land on `main` before the tag. The steps below are the reference; for a
+guided, gated run, agents can invoke the `cut-release` skill
+(`.claude/skills/cut-release/`).
 
 1. Bump `package.json` `version` to the new `X.Y.Z` in a `chore(release): prepare
    vX.Y.Z` pull request, and merge it.
