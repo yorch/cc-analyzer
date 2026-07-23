@@ -26,7 +26,7 @@ and without compromising the tool's "read-only, privacy-first" identity.
 | Name | Value |
 | --- | --- |
 | Plausible instance base URL | `https://plausible.brnby.com` |
-| Docs site domain (Plausible "site" id) | `docs.cc-analyzer` |
+| Docs site domain (Plausible "site" id) | `cc-analyzer.brnby.com` |
 | Web SPA domain | `web.cc-analyzer` |
 | CLI/TUI domain | `cli.cc-analyzer` |
 
@@ -164,7 +164,7 @@ and zero user-facing latency beat guaranteed delivery for opt-out telemetry.
   ```ts
   ["script", {
     defer: "",
-    "data-domain": "docs.cc-analyzer",
+    "data-domain": "cc-analyzer.brnby.com",
     src: "https://plausible.brnby.com/js/script.js",
   }]
   ```
@@ -189,7 +189,7 @@ than SRI here.
 
 | Surface | Transport | Trigger | Domain |
 | --- | --- | --- | --- |
-| Docs site | `script.js` (browser) | pageview | `docs.cc-analyzer` |
+| Docs site | `script.js` (browser) | pageview | `cc-analyzer.brnby.com` |
 | Web SPA | `script.local.js` (browser) | pageview | `web.cc-analyzer` |
 | CLI/TUI | Events API POST (server-side) | per command run | `cli.cc-analyzer` |
 
