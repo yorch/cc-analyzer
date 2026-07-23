@@ -151,10 +151,17 @@ summary {
 /* ------------------------------------------------------------------ layout */
 
 .wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0 max(24px, env(safe-area-inset-right)) max(96px, env(safe-area-inset-bottom))
+  padding: 0 max(24px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom))
     max(24px, env(safe-area-inset-left));
+}
+
+main {
+  flex: 1;
 }
 
 .masthead {
@@ -225,6 +232,48 @@ summary {
   height: 15px;
   background: var(--signal);
   animation: blink 1.15s steps(1) infinite;
+}
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 0 2px;
+  margin-top: 72px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.site-footer-copy {
+  display: grid;
+  gap: 4px;
+}
+.site-footer-copy p {
+  margin: 0;
+  color: var(--faint);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.site-footer-label::before {
+  content: "◆";
+  margin-right: 8px;
+  color: var(--signal);
+  font-size: 8px;
+}
+.site-footer nav {
+  display: flex;
+  gap: 20px;
+}
+.site-footer a {
+  color: var(--muted);
+  border-bottom-color: transparent;
+}
+.site-footer a:hover {
+  color: var(--signal);
+  border-bottom-color: var(--signal);
 }
 
 /* page sub-header (project / session views) */
@@ -1225,6 +1274,12 @@ p.muted {
   .masthead-tag,
   .masthead-rule {
     display: none;
+  }
+  .site-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 48px;
   }
   .hero {
     grid-template-columns: 1fr;
