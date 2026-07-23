@@ -1,17 +1,25 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
 import { openDb } from "../core/db.ts";
+import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
+import { inspectIndexStatus } from "../core/index-status.ts";
+import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { isIndexEmpty } from "../core/queries.ts";
 import { injectSpaTelemetry } from "../core/telemetry.ts";
 import { createApi } from "./api.ts";
+import { openBrowser } from "./open-browser.ts";
 import { hasSpa, spaHtml } from "./spa.ts";
 
 export interface ServeOptions {
   port?: number;
   /** Bind address. Defaults to loopback; pass e.g. "0.0.0.0" to expose deliberately. */
   host?: string;
+  /** Incrementally refresh the index before serving. */
+  refresh?: boolean;
+  /** Open the local URL in the default browser after binding. */
+  open?: boolean;
 }
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -85,25 +93,61 @@ export function createApp(
  */
 export async function runServe(opts: ServeOptions = {}): Promise<number> {
   const db = openDb();
+  const { table } = await loadPricing();
+  const refreshed = await refreshIndexIfNeeded(db, {
+    refresh: opts.refresh,
+    pricing: table,
+    onProgress: (done, total) => {
+      process.stderr.write(`\rIndexing ${done}/${total}...`);
+    },
+  });
+  if (refreshed) {
+    if (refreshed.total > 0) process.stderr.write("\n");
+    console.error(
+      `Indexed ${refreshed.indexed}, skipped ${refreshed.skipped}, ` +
+        `deleted ${refreshed.deleted} (${refreshed.total} sessions).`,
+    );
+  }
   if (isIndexEmpty(db)) {
-    console.error("The index is empty. Run `cc-analyzer index` first, then `serve`.");
+    console.error("No Claude Code sessions were found; nothing to serve.");
     db.close();
     return 1;
   }
+  const indexStatus = await inspectIndexStatus(db);
+  if (indexStatus.stale) {
+    console.error(
+      `Index is behind: ${indexStatus.added} new, ${indexStatus.changed} changed, ` +
+        `${indexStatus.deleted} deleted sessions. Restart with --refresh to update it.`,
+    );
+  } else if (indexStatus.lastRefreshedAt === null) {
+    console.error("Index refresh time is unknown. Restart with --refresh to update it.");
+  } else if ((indexStatus.ageMs ?? 0) >= INDEX_AGE_WARNING_MS) {
+    console.error(
+      "Index was last refreshed over 24 hours ago. Restart with --refresh to update it.",
+    );
+  }
 
-  const { table } = await loadPricing();
   const hostname = opts.host ?? "127.0.0.1";
   const loopbackOnly = isLoopbackHost(hostname);
   const app = createApp(db, table, { loopbackOnly });
 
   const port = opts.port ?? 4317;
   const server = Bun.serve({ port, hostname, fetch: app.fetch });
-  const shownHost = hostname === "127.0.0.1" ? "localhost" : hostname;
-  console.log(`cc-analyzer web UI: http://${shownHost}:${server.port}  (Ctrl-C to stop)`);
+  const shownHost =
+    hostname === "127.0.0.1" ? "localhost" : hostname.includes(":") ? `[${hostname}]` : hostname;
+  const url = `http://${shownHost}:${server.port}`;
+  console.log(`cc-analyzer web UI: ${url}  (Ctrl-C to stop)`);
   if (!loopbackOnly) {
     console.error(
       `warning: listening on ${hostname} — session transcripts are exposed to your network.`,
     );
+  }
+  if (opts.open) {
+    if (!loopbackOnly) {
+      console.error("warning: --open ignored for a non-loopback host.");
+    } else if (!openBrowser(url)) {
+      console.error(`warning: could not open a browser; visit ${url}`);
+    }
   }
 
   // Keep the process alive; Bun.serve runs until the process is killed.

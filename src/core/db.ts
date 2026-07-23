@@ -104,6 +104,7 @@ export function openDb(path: string = indexDbPath()): Database {
     // The index is a disposable cache: on a schema change, drop and recreate the
     // sessions table (with the current columns) so a rebuild fills it accurately.
     db.exec("DROP TABLE IF EXISTS sessions;");
+    db.query("DELETE FROM meta WHERE key = 'last_scan_at'").run();
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
       SCHEMA_VERSION,
     );

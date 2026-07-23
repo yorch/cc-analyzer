@@ -162,9 +162,12 @@ describe("CLI dispatch & exit codes", () => {
     expect((await run(["index"])).code).toBe(0);
     const portfolio = JSON.parse((await run(["stats", "--json"])).stdout) as {
       scope: { type: string };
+      index: { stale: boolean; lastRefreshedAt: string | null };
       summary: { sessions: number; projects: number };
     };
     expect(portfolio.scope).toEqual({ type: "portfolio" });
+    expect(portfolio.index.stale).toBe(false);
+    expect(portfolio.index.lastRefreshedAt).not.toBeNull();
     expect(portfolio.summary).toMatchObject({ sessions: 2, projects: 2 });
 
     const projectPath = join(tmpDir, "project");
@@ -197,5 +200,18 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("No indexed Claude Code project contains");
     expect(r.stderr).toContain("cc-analyzer index");
+  });
+
+  test("index --check reports exact stale counts without refreshing", async () => {
+    expect((await run(["index", "--check"])).code).toBe(0);
+    const added = join(tmpDir, "claude", "projects", "proj-b", "new-session.jsonl");
+    writeFileSync(added, "{}\n");
+    try {
+      const stale = await run(["index", "--check"]);
+      expect(stale.code).toBe(1);
+      expect(stale.stdout).toContain("Index is stale: 1 new, 0 changed, 0 deleted sessions.");
+    } finally {
+      rmSync(added, { force: true });
+    }
   });
 });

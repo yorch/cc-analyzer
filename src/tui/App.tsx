@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import { truncate } from "../cli/format.ts";
+import type { IndexStatus } from "../core/index-status-types.ts";
+import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   type IndexedProject,
@@ -35,6 +37,7 @@ import { useTermSize } from "./useTermSize.ts";
 interface Props {
   db: Database;
   pricing: PricingTable;
+  indexStatus?: IndexStatus;
 }
 
 type View = "portfolio" | "projects" | "sessions" | "insights" | "trends" | "tools";
@@ -48,7 +51,7 @@ const RAIL: NavEntry[] = [
   { key: "tools", label: "tools", icon: "⚒" },
 ];
 
-export function App({ db, pricing }: Props) {
+export function App({ db, pricing, indexStatus }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
   const allSessions = useMemo(() => listAllSessions(db), [db]);
   const summary = useMemo(() => portfolioSummary(db), [db]);
@@ -141,10 +144,21 @@ export function App({ db, pricing }: Props) {
   };
 
   const showLede = view === "portfolio" && !drill;
+  const indexNotice = indexStatus
+    ? indexStatus.stale ||
+      indexStatus.lastRefreshedAt === null ||
+      (indexStatus.ageMs ?? 0) >= INDEX_AGE_WARNING_MS
+      ? indexStatus.stale
+        ? `Index behind: ${indexStatus.added} new · ${indexStatus.changed} changed · ${indexStatus.deleted} deleted · run cc-analyzer index`
+        : indexStatus.lastRefreshedAt === null
+          ? "Index refresh time unknown · run cc-analyzer index"
+          : "Index refresh is over 24h old · run cc-analyzer index"
+      : undefined
+    : undefined;
   // Rows the master list may render: terminal height minus the fixed shell
   // chrome (title/lede/margins/key bar) and the list's own header + scroll
   // indicator. Keeps content within the pinned viewport so it never overflows.
-  const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0));
+  const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0) - (indexNotice ? 1 : 0));
 
   const breadcrumb = drill
     ? `projects ▸ ${truncate(drill.projectPath ?? drill.projectId, 40)}`
@@ -228,6 +242,7 @@ export function App({ db, pricing }: Props) {
         columns={columns}
         rows={rows}
         railFocused={focus === "rail"}
+        notice={indexNotice}
         lede={
           showLede ? (
             <PortfolioLede

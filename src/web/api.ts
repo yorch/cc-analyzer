@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
+import { inspectIndexStatus } from "../core/index-status.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
@@ -44,6 +45,8 @@ const MAX_PROJECT_ROWS = 2000;
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
+
+  api.get("/api/index-status", async (c) => c.json(await inspectIndexStatus(db)));
 
   // The index only changes when `cc-analyzer index` runs, so the aggregate
   // endpoints memoize their serialized payload against a cheap fingerprint of

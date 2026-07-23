@@ -73,7 +73,9 @@ Sources: [src/cli/index.ts:L79-L107](https://github.com/yorch/cc-analyzer/blob/5
 
 ### `index` — build the SQLite cache
 
-`cmdIndex` opens the database with `openDb`, invokes `reindex(db, { rebuild, onProgress })`, and reports how many sessions were indexed, skipped, and deleted along with an elapsed time in seconds ([src/cli/index.ts#L109-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L109-L130)). Progress is written to `stderr` with a carriage return so it overwrites in place, throttled to every 200 sessions to avoid flooding the terminal ([src/cli/index.ts#L114-L121](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L114-L121)). The `--rebuild` flag forces a full re-scan rather than the default incremental pass. `stats`, `serve`, and the TUI all depend on the index this command produces.
+`cmdIndex` opens the database with `openDb`, invokes `reindex(db, { rebuild, onProgress })`, and reports how many sessions were indexed, skipped, and deleted along with an elapsed time in seconds ([src/cli/index.ts#L109-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L109-L130)). Progress is written to `stderr` with a carriage return so it overwrites in place, throttled to every 200 sessions to avoid flooding the terminal ([src/cli/index.ts#L114-L121](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L114-L121)). The `--rebuild` flag forces a full re-scan rather than the default incremental pass. `--check` performs a metadata-only source comparison and exits non-zero when sessions were added, changed, or deleted, without mutating the cache. Each successful scan records `last_scan_at`.
+
+`stats`, `serve`, and the TUI read this index. The interactive frontends bootstrap it automatically when empty; a populated index is not refreshed implicitly. `stats` reports its exact freshness status in both human and JSON output.
 
 Sources: [src/cli/index.ts:L109-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L109-L130)
 
@@ -85,7 +87,7 @@ Sources: [src/cli/index.ts:L132-L156](https://github.com/yorch/cc-analyzer/blob/
 
 ### `serve`, `pricing update`, and `update`
 
-The `serve` branch parses an optional `--port=` value, rejecting anything outside the integer range 1–65535 with exit code `2`, reads an optional `--host=`, then dynamically imports `runServe` from the web server module ([src/cli/index.ts#L224-L240](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L224-L240)). `pricing update` accepts only the `update` sub-token; `cmdPricingUpdate` forces a refresh with `loadPricing({ force: true })` and returns `1` when the source is not `remote`, meaning the remote fetch failed and a cached or bundled table is still in use ([src/cli/index.ts#L158-L170](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L158-L170)). `cmdUpdate` handles `--check` by comparing `fetchLatestVersion` against `VERSION`, and otherwise runs `performUpdate` with a TTY-only progress callback that writes megabyte counts to `stderr` ([src/cli/index.ts#L172-L204](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L172-L204)). The update mechanics live on the [Updates and Distribution](./8-updates-and-distribution.md) page.
+The `serve` branch parses `--port=` and `--host=`, plus `--refresh` to run an incremental index update before binding and `--open` to launch the browser after binding. Browser launch is best-effort and restricted to loopback hosts. Invalid ports return exit code `2`, and the web server is dynamically imported so web dependencies stay out of other command startup paths. `pricing update` accepts only the `update` sub-token; `cmdPricingUpdate` forces a refresh with `loadPricing({ force: true })` and returns `1` when the source is not `remote`, meaning the remote fetch failed and a cached or bundled table is still in use ([src/cli/index.ts#L158-L170](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L158-L170)). `cmdUpdate` handles `--check` by comparing `fetchLatestVersion` against `VERSION`, and otherwise runs `performUpdate` with a TTY-only progress callback that writes megabyte counts to `stderr` ([src/cli/index.ts#L172-L204](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L172-L204)). The update mechanics live on the [Updates and Distribution](./8-updates-and-distribution.md) page.
 
 Sources: [src/cli/index.ts:L158-L204](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L158-L204) [src/cli/index.ts:L224-L246](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L224-L246)
 
@@ -115,8 +117,11 @@ Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/
 | ---- | ------- | ------- |
 | `--json` | `analyze`, `stats` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
 | `--rebuild` | `index` | Force a full re-scan instead of the incremental pass |
+| `--check` | `index` | Compare source metadata with the cache without changing it; exit non-zero when stale |
 | `--port=<n>` | `serve` | Bind the web server to an integer port 1–65535; invalid values exit with code `2` |
 | `--host=<h>` | `serve` | Bind address for the web server |
+| `--refresh` | `serve` | Incrementally refresh the index before starting the server |
+| `--open` | `serve` | Open the served URL in the default browser when bound to loopback |
 | `--check` | `update` | Report whether a newer release exists without installing it |
 | `NO_COLOR` | `analyze`, `stats` | Disable ANSI styling even when stdout is an interactive terminal |
 

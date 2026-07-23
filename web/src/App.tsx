@@ -1,6 +1,9 @@
 import { useEffect } from "react";
+import { api } from "./api.ts";
+import { IndexFreshness, IndexNotice } from "./IndexNotice.tsx";
 import { link, useHashRoute } from "./router.ts";
 import { trackView } from "./telemetry.ts";
+import { useAsync } from "./useAsync.ts";
 import { Dashboard } from "./views/Dashboard.tsx";
 import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
@@ -10,6 +13,7 @@ import { Trends } from "./views/Trends.tsx";
 
 export function App() {
   const route = useHashRoute();
+  const indexStatus = useAsync(api.indexStatus, []);
   // Report a sanitized pageview whenever the route changes. Depending on the
   // complete route counts navigation between two records of the same type, but
   // only the route name is passed through so ids are never sent.
@@ -61,6 +65,7 @@ export function App() {
         <span className="masthead-rule" aria-hidden="true" />
         <span className="masthead-blink" aria-hidden="true" />
       </header>
+      <IndexNotice status={indexStatus.data} />
       <main id="main-content">
         {route.name === "dashboard" && <Dashboard />}
         {route.name === "insights" && <Insights />}
@@ -74,6 +79,7 @@ export function App() {
         <div className="site-footer-copy">
           <span className="site-footer-label">cc-analyzer · open source</span>
           <p>Data is read from your local Claude Code sessions and stays on this machine.</p>
+          <IndexFreshness status={indexStatus.data} />
         </div>
         <nav aria-label="Project links">
           <a href="https://github.com/yorch/cc-analyzer" target="_blank" rel="noreferrer">

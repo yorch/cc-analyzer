@@ -167,7 +167,10 @@ as offline fallback.
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at
 `~/.config/cc-analyzer/index.db`. It's **incremental** — files unchanged by (size,
 mtime) are skipped, deleted files are pruned — and safe to delete and rebuild. The
-TUI and `stats`/`serve` all require an existing index.
+TUI and `serve` build an empty index automatically; `serve --refresh` requests an
+incremental refresh. Every successful scan persists `last_scan_at`, while
+`index --check` and the CLI/TUI/web freshness surfaces compare source (path, size,
+mtime) metadata with indexed rows without parsing session content.
 
 **Project ids are lossy encodings.** A project's stable id is its encoded directory
 name under `~/.claude/projects/`. `decodeProjectLabel()` is best-effort display only;
