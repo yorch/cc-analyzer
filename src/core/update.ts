@@ -207,7 +207,7 @@ export async function performUpdate(
       to: latest,
       message:
         `v${latest} is available. On Windows, update by re-running the installer:\n` +
-        `  irm https://yorch.github.io/cc-analyzer/install.ps1 | iex`,
+        `  irm https://cc-analyzer.brnby.com/install.ps1 | iex`,
     };
   }
 

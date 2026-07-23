@@ -1,13 +1,13 @@
 # cc-analyzer
 
 [![CI](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/yorch/cc-analyzer/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-cc--analyzer-3451b2)](https://yorch.github.io/cc-analyzer/)
+[![Docs](https://img.shields.io/badge/docs-cc--analyzer-3451b2)](https://cc-analyzer.brnby.com/)
 
 A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-code)
 sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
 per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
 
-**Docs & landing page:** <https://yorch.github.io/cc-analyzer/>
+**Docs & landing page:** <https://cc-analyzer.brnby.com/>
 
 > Status: **Complete** — analysis core, SQLite index, portfolio analytics,
 > interactive TUI, and a local web app, all in one binary. See
@@ -32,13 +32,13 @@ The tool is **read-only**: it never writes to `~/.claude`. Its own state
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh
+curl -fsSL https://cc-analyzer.brnby.com/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
+irm https://cc-analyzer.brnby.com/install.ps1 | iex
 ```
 
 The script detects your OS and architecture, downloads the matching binary from

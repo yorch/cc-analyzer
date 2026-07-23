@@ -1,6 +1,6 @@
 # cc-analyzer installer for Windows (PowerShell).
 #
-#   irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
+#   irm https://cc-analyzer.brnby.com/install.ps1 | iex
 #
 # Environment overrides:
 #   $env:CC_ANALYZER_VERSION      release tag to install (e.g. v0.2.0); default: latest

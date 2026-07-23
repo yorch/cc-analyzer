@@ -1,7 +1,7 @@
 # cc-analyzer site
 
 The VitePress source for the project's GitHub Pages site
-(<https://yorch.github.io/cc-analyzer/>): a landing page plus the full wiki.
+(<https://cc-analyzer.brnby.com/>): a landing page plus the full wiki.
 
 This is an **isolated toolchain** — its own `package.json` and `bun.lock` — so
 VitePress's Vite 5 does not collide with the SPA's Vite 8 in the repo root.
