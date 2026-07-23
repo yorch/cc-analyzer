@@ -112,6 +112,23 @@ The per-session charts come from `chart-series.ts` and render identically in bot
 
 Sources: [src/core/chart-series.ts:L53-L165](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/chart-series.ts#L53-L165) [web/src/SessionCharts.tsx:L29-L271](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/SessionCharts.tsx#L29-L271)
 
+### Actionable session diagnostics
+
+`session-diagnostics.ts` turns detail-mode session evidence into named,
+explainable recommendations shared by the CLI, TUI, and web summary. The first
+diagnostic set covers context pressure at or above 75% of a known window, a
+single-call context increase of at least 25% of the window, cache writes following
+gaps of at least five minutes, a first post-compaction call that refills at least
+75% of recorded pre-compaction context, and one turn carrying at least half the
+cost of a session with three or more turns. Each result includes the observed
+evidence, affected turn when known, severity, and suggested next action.
+
+The thresholds are deliberately documented in code and the output remains
+heuristic: diagnostics do not produce an opaque quality score, infer account-wide
+subscription usage, or claim to know which tool payload caused a context jump.
+The module is Bun-free so all three presentation layers derive identical results
+without adding fields to the disposable aggregate index.
+
 ### Frontend chart primitives
 
 The two renderers share numbers but not drawing code. The TUI uses pure text primitives in [src/tui/charts.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L1-L19): `brailleChart` packs a filled area chart into braille dots ([src/tui/charts.ts:L37-L79](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L37-L79)), `sparkline` renders block-eighths adoption lines ([src/tui/charts.ts:L109-L123](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L109-L123)), and `calendarGrid` and `heatGrid` shade grids with ramp characters ([src/tui/charts.ts:L146-L174](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L146-L174)). It re-exports `bucketSeries` and `weeklySeries` from core so TUI callers keep one import site while the totals stay shared ([src/tui/charts.ts:L12-L19](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L12-L19)). The SPA uses SVG building blocks in [web/src/trend-charts.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/trend-charts.tsx#L1-L19): `LineChart`, the metric/granularity `BurnPanel`, the stacked `ModelMix`, and the cost×duration `Scatter` ([web/src/trend-charts.tsx:L51-L290](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/trend-charts.tsx#L51-L290)).

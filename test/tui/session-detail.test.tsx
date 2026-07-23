@@ -171,4 +171,23 @@ describe("SessionDetailScreen charts mode", () => {
     expect(frame).toContain("cost per turn");
     unmount();
   });
+
+  test("s switches to the summary with actionable diagnostics", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={100}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1");
+    await settleInput();
+    stdin.write("s");
+    await waitForFrame(lastFrame, "Actionable diagnostics");
+    expect(lastFrame() ?? "").toContain("No notable context or cost patterns");
+    unmount();
+  });
 });

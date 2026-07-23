@@ -38,10 +38,11 @@ export type {
   SessionTotals,
   Turn,
 } from "../../src/core/analyze.ts";
-// Runtime series builders are bun-free core code (see chart-series.ts), so the
-// SPA computes chart geometry from the same numbers the TUI renders.
+// Runtime chart and diagnostic builders are bun-free core code, so the SPA
+// computes the same numbers and recommendations as the CLI and TUI.
 export * from "../../src/core/chart-series.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
+export * from "../../src/core/session-diagnostics.ts";
 export * from "../../src/core/stats-types.ts";
 export type { StepKind, TurnStep } from "../../src/core/steps.ts";
 export type { TranscriptItem } from "../../src/core/transcript.ts";

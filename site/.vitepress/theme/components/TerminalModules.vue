@@ -4,20 +4,20 @@
 const modules = [
   {
     id: "cost",
-    title: "Real cost & cache accounting",
-    body: "Sessions record token counts, not cost. cc-analyzer derives it from a per-model table, pricing input, output, and cache read/write separately — where most spend hides.",
+    title: "Cost accounting that suggests a next step",
+    body: "Sessions record token counts, not cost. cc-analyzer prices every category, then flags context pressure, cache rewrites after idle gaps, weak compaction recovery, and concentrated turn spend with the evidence behind each suggestion.",
     icon: '<path d="M6 2.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4z"/><path d="M9 8h6M9 11h6M9 14h4"/>',
   },
   {
     id: "tui",
     title: "Interactive terminal UI",
-    body: "An amber-phosphor Ink TUI: a persistent nav rail and two-pane master-detail where the list drives a live preview, plus a full-screen session view with turns → steps, charts, transcript, and summary.",
+    body: "An amber-phosphor Ink TUI: a persistent nav rail and two-pane master-detail where the list drives a live preview, plus a full-screen session view with turns → steps, charts, transcript, and an evidence-backed diagnostic summary.",
     icon: '<rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M7 9.5l3 2.5-3 2.5M13 15h4"/>',
   },
   {
     id: "web",
     title: "Local web app",
-    body: "cc-analyzer serve launches a Hono API and an embedded React dashboard: portfolio overview, project drill-down, and a windowed transcript reader.",
+    body: "cc-analyzer serve launches a Hono API and an embedded React dashboard: portfolio overview, project drill-down, a windowed transcript reader, and the same actionable session diagnostics as the CLI and TUI.",
     icon: '<rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M2.5 8.5h19"/><circle cx="5.8" cy="6.25" r=".7" fill="currentColor" stroke="none"/><circle cx="8.3" cy="6.25" r=".7" fill="currentColor" stroke="none"/>',
   },
   {

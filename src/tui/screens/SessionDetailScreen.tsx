@@ -19,6 +19,7 @@ import {
 import { parseSessionFile } from "../../core/parser.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
+import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
 import { brailleChart, markerRow, sparkline } from "../charts.ts";
@@ -515,6 +516,7 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
 function SummaryView({ a }: { a: SessionAnalysis }) {
   const c = a.totals.cost;
   const est = c.estimated ? " (estimated)" : "";
+  const diagnostics = buildSessionDiagnostics(a);
   const line = (k: string, v: string) => (
     <Text>
       <Text color={role.muted}>{k.padEnd(16)}</Text>
@@ -564,6 +566,25 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
             .join(", ")})`,
         )}
       {line("files touched", String(a.filesTouched.length))}
+      <Box marginTop={1} flexDirection="column">
+        <Text color={role.heading}>Actionable diagnostics</Text>
+        {diagnostics.length === 0 ? (
+          <Text color={role.muted}>
+            No notable context or cost patterns crossed the thresholds.
+          </Text>
+        ) : (
+          diagnostics.map((diagnostic) => (
+            <Box key={diagnostic.code} flexDirection="column" marginBottom={1}>
+              <Text color={diagnostic.severity === "warning" ? palette.red : palette.blue}>
+                {diagnostic.severity === "warning" ? "! " : "· "}
+                {diagnostic.title}
+              </Text>
+              <Text color={role.body}>{diagnostic.evidence}</Text>
+              <Text color={role.muted}>Next: {diagnostic.action}</Text>
+            </Box>
+          ))
+        )}
+      </Box>
     </Box>
   );
 }

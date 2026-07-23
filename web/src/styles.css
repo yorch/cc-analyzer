@@ -1246,6 +1246,41 @@ p.muted {
   border: 1px solid var(--border);
   background: var(--panel);
 }
+
+.session-diagnostics {
+  margin-bottom: 18px;
+}
+
+.diagnostic-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.diagnostic {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--teal);
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+.diagnostic-warning {
+  border-left-color: var(--red);
+}
+
+.diagnostic h3,
+.diagnostic p {
+  margin: 0;
+}
+
+.diagnostic h3 {
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.diagnostic p + p {
+  margin-top: 5px;
+}
 .summary-group:last-child {
   grid-column: 1 / -1;
 }
