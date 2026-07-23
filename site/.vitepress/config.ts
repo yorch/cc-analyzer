@@ -1,53 +1,74 @@
-import { withMermaid } from "vitepress-plugin-mermaid";
+import { defineConfig } from "vitepress";
+
+const siteUrl = "https://cc-analyzer.brnby.com";
 
 // https://vitepress.dev/reference/site-config
-export default withMermaid({
+export default defineConfig({
   title: "cc-analyzer",
   description:
     "Read-only CLI to browse and analyze Claude Code sessions in ~/.claude — cost, tokens, tools, skills, models, and per-turn breakdowns.",
   base: "/",
+  lang: "en-US",
   lastUpdated: true,
   cleanUrls: true,
+  srcExclude: ["README.md", "GOTCHAS.md"],
+  sitemap: { hostname: siteUrl },
   // The whole aesthetic is an amber-phosphor CRT; dark is the intended default,
   // with the light "print-out" theme still one toggle away.
   appearance: "dark",
 
   head: [
     ["link", { rel: "icon", href: "/favicon.svg" }],
-    // Privacy-respecting, cookieless analytics via a self-hosted Plausible
-    // instance. The standard script auto-ignores localhost, so local previews
-    // don't pollute stats. Opt out with Do-Not-Track or
-    // `localStorage.plausible_ignore = "true"`.
-    [
-      "script",
-      {
-        defer: "",
-        "data-domain": "cc-analyzer.brnby.com",
-        src: "https://plausible.brnby.com/js/script.js",
-      },
-    ],
+    ["meta", { name: "theme-color", content: "#0b0c0a" }],
+    ["meta", { name: "robots", content: "index, follow" }],
+    // The site owns complete light/dark palettes. Prevent color-rewriting
+    // extensions from turning Mermaid node fills light while labels stay light.
+    ["meta", { name: "darkreader-lock" }],
+    ["meta", { property: "og:site_name", content: "cc-analyzer" }],
+    ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:image", content: `${siteUrl}/screenshots/dashboard.webp` }],
+    ["meta", { property: "og:image:width", content: "1600" }],
+    ["meta", { property: "og:image:height", content: "2327" }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    // Local loader checks browser DNT and Plausible's localStorage opt-out before
+    // requesting the self-hosted, cookieless analytics script.
+    ["script", { defer: "", src: "/analytics.js" }],
   ],
 
-  // Light-mode ("print-out") diagram palette: warm-cream nodes, amber-ink
-  // borders, monospace labels. Dark mode uses mermaid's built-in dark theme
-  // (forced by the plugin); the light-tuned vars below leak into it, so the
-  // dark plate + amber node/edge tints are repainted in the site's custom CSS.
-  mermaid: {
-    theme: "base",
-    themeVariables: {
-      fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: "14px",
-      primaryColor: "#f7efdc",
-      primaryBorderColor: "#9a5f12",
-      primaryTextColor: "#3a2c14",
-      secondaryColor: "#efe4c9",
-      secondaryBorderColor: "#8a5410",
-      tertiaryColor: "#f3ead4",
-      tertiaryBorderColor: "rgba(120,84,24,0.4)",
-      lineColor: "#927a49",
-      clusterBkg: "#f3ead4",
-      clusterBorder: "rgba(120,84,24,0.4)",
-      edgeLabelBackground: "#f3ead4",
+  markdown: {
+    config(md) {
+      const fallback = md.renderer.rules.fence?.bind(md.renderer.rules);
+      md.renderer.rules.fence = (tokens, index, options, env, self) => {
+        const token = tokens[index];
+        if (token.info.trim() === "mermaid") {
+          return `<LazyMermaid id="mermaid-${index}" graph="${encodeURIComponent(token.content)}" />`;
+        }
+        return fallback?.(tokens, index, options, env, self) ?? "";
+      };
+    },
+  },
+
+  transformHead({ pageData, title, description }) {
+    const route =
+      pageData.relativePath === "index.md"
+        ? "/"
+        : `/${pageData.relativePath.replace(/(?:index)?\.md$/, "")}`;
+    const canonical = new URL(route, siteUrl).toString();
+    return [
+      ["link", { rel: "canonical", href: canonical }],
+      ["meta", { property: "og:title", content: title }],
+      ["meta", { property: "og:description", content: description }],
+      ["meta", { property: "og:url", content: canonical }],
+      ["meta", { name: "twitter:title", content: title }],
+      ["meta", { name: "twitter:description", content: description }],
+    ];
+  },
+
+  vite: {
+    build: {
+      // Mermaid is loaded only when a diagram mounts. Its parser remains a
+      // large isolated async chunk, not part of the initial page payload.
+      chunkSizeWarningLimit: 700,
     },
   },
 
@@ -100,8 +121,20 @@ export default withMermaid({
     socialLinks: [{ icon: "github", link: "https://github.com/yorch/cc-analyzer" }],
 
     editLink: {
-      pattern: "https://github.com/yorch/cc-analyzer/edit/main/wiki/:path",
-      text: "Edit the source wiki page",
+      pattern: ({ filePath }) => {
+        let sourcePath = filePath;
+        if (filePath === "install.md") {
+          sourcePath = "site/install.md";
+        } else if (filePath.startsWith("docs/")) {
+          const name = filePath.slice("docs/".length);
+          sourcePath =
+            name === "index.md"
+              ? "wiki/README.md"
+              : `wiki/${name.replace(/^(\d+)-(\d+)-/, "$1.$2-")}`;
+        }
+        return `https://github.com/yorch/cc-analyzer/edit/main/${sourcePath}`;
+      },
+      text: "Edit this page on GitHub",
     },
 
     footer: {

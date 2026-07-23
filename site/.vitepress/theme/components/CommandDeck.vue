@@ -59,9 +59,13 @@ const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
 }
 .cc-deck__grid {
   display: grid;
-  grid-template-columns: 0.85fr 1.15fr;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   gap: clamp(2rem, 5vw, 3.5rem);
   align-items: center;
+}
+.cc-deck__intro,
+.cc-term {
+  min-width: 0;
 }
 @media (max-width: 860px) {
   .cc-deck__grid { grid-template-columns: 1fr; }

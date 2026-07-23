@@ -173,23 +173,19 @@ sanitize the URL.
 
 ## Component 4 — Docs site (`site/.vitepress/config.ts`)
 
-- Add to the `head` array:
-  ```ts
-  ["script", {
-    defer: "",
-    "data-domain": "cc-analyzer.brnby.com",
-    src: "https://plausible.brnby.com/js/script.js",
-  }]
-  ```
-- Standard `script.js` auto-ignores localhost, so `vitepress dev` / local previews do
-  not pollute production stats.
-- Opt-out: Plausible honors Do-Not-Track and the `localStorage.plausible_ignore=true`
-  flag; documented in the site/README rather than shown as a banner (cookieless, no
-  consent UI legally required for this data).
+- Load the local `/analytics.js` helper from the `head` array. The helper checks
+  browser Do-Not-Track and `localStorage.plausible_ignore` before dynamically
+  initializing Plausible and requesting the site-specific tracker at
+  `https://plausible.brnby.com/js/pa-ngd1ppRBUHfoOrHRCjEei.js`.
+- The generated `pa-*` tracker is the installation snippet assigned to
+  `cc-analyzer.brnby.com`; keep the opaque id synchronized with the Plausible
+  site settings if its tracker configuration is regenerated.
+- Opt-out is enforced by the local loader rather than assumed of the upstream
+  script; it is documented in the site and install guide.
 
 ## Security note: Subresource Integrity (SRI)
 
-The two browser `<script>` tags intentionally omit `integrity="sha384-..."`. SRI pins a
+The browser script tags intentionally omit `integrity="sha384-..."`. SRI pins a
 script to a fixed hash; Plausible ships a self-updating script and does not publish
 stable SRI hashes, so pinning would break analytics on every instance upgrade (this is
 why Plausible's official snippet omits it). The scripts load from the **self-hosted,

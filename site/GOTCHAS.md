@@ -1,7 +1,6 @@
 # Site gotchas
 
-Non-obvious pitfalls hit while building this VitePress site (VitePress 1.6.4,
-`vitepress-plugin-mermaid` 2.0.17). Each cost real debugging time; the fixes are
+Non-obvious pitfalls hit while building this VitePress 1.6.4 site. The fixes are
 already in the codebase and cited below.
 
 ## 1. Feature-page icons: use the string form, not `{ svg }`
@@ -26,29 +25,32 @@ Use `stroke="currentColor"` so the icon inherits the color set in
 `.vitepress/theme/custom.css` (`.VPFeature .icon svg { color: … }`).
 See [`index.md`](./index.md) and [`.vitepress/theme/custom.css`](./.vitepress/theme/custom.css).
 
-## 2. Mermaid dark mode leaks light `themeVariables`
+## 2. Keep Mermaid out of the initial bundle
 
-**Symptom:** In dark mode, diagram edge labels render inside little **white
-boxes** even though the rest of the diagram is dark.
+**Symptom:** Registering Mermaid through `vitepress-plugin-mermaid` statically
+imports the whole parser into VitePress's app entry. The landing page then pays
+for hundreds of kilobytes of diagram code despite containing no diagram.
 
-**Cause:** `vitepress-plugin-mermaid` forces mermaid's built-in `theme: "dark"`
-when the `.dark` class is present (`Mermaid.vue`), but it still applies the
-`themeVariables` you configured for light mode. A light `edgeLabelBackground`
-(and other light fills) therefore bleed into the dark render.
+**Cause:** The plugin injects a global `Mermaid` component with a static import.
+Rollup can split Mermaid's secondary parsers, but the core still belongs to the
+initial application graph.
 
-**Fix:** Keep the light `themeVariables` in `.vitepress/config.ts`, but repaint
-the affected pieces for dark mode with CSS scoped under `.dark`:
+**Fix:** The Markdown fence rule emits the local `LazyMermaid` component.
+`LazyMermaid.vue` dynamically imports `mermaid` only after a diagram mounts,
+selects an explicit high-contrast dark or light palette itself, and rerenders
+when the theme changes. Both flowchart and sequence-diagram colors are set at
+render time; the CSS rules are a defensive layer for renderer-specific SVG
+shapes, not the primary source of contrast. The global `darkreader-lock` meta
+tag prevents color-rewriting extensions from independently changing SVG fills
+and labels after Mermaid renders them.
+The large Mermaid chunks remain asynchronous:
 
-```css
-.dark .vp-doc .mermaid .edgeLabel .labelBkg { background: var(--vp-c-bg-alt) !important; }
-.dark .vp-doc .mermaid .edgeLabel,
-.dark .vp-doc .mermaid .edgeLabel span,
-.dark .vp-doc .mermaid .edgeLabel p { background-color: transparent !important; color: var(--vp-c-text-2) !important; }
-.dark .vp-doc .mermaid .node rect { stroke: var(--cc-accent) !important; }
+```ts
+const { default: mermaid } = await import("mermaid");
 ```
 
-CSS is the reliable lever in dark mode because the plugin owns the mermaid
-`theme`. See [`.vitepress/theme/custom.css`](./.vitepress/theme/custom.css).
+See [`.vitepress/config.ts`](./.vitepress/config.ts) and
+[`LazyMermaid.vue`](./.vitepress/theme/components/LazyMermaid.vue).
 
 ## 3. `vitepress preview` serves stale chunks after a rebuild
 
