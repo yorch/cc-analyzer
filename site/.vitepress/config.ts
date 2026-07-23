@@ -21,6 +21,9 @@ export default defineConfig({
     ["link", { rel: "icon", href: "/favicon.svg" }],
     ["meta", { name: "theme-color", content: "#0b0c0a" }],
     ["meta", { name: "robots", content: "index, follow" }],
+    // The site owns complete light/dark palettes. Prevent color-rewriting
+    // extensions from turning Mermaid node fills light while labels stay light.
+    ["meta", { name: "darkreader-lock" }],
     ["meta", { property: "og:site_name", content: "cc-analyzer" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:image", content: `${siteUrl}/screenshots/dashboard.webp` }],

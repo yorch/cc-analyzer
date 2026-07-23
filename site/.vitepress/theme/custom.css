@@ -403,10 +403,9 @@ h1.name,
   height: auto;
 }
 
-/* Dark mode: the plugin forces mermaid's built-in dark theme but the
-   light-tuned themeVariables (config.ts) still leak — white edge-label plates,
-   light node fills. Repaint nodes/clusters with the amber accent and fix the
-   leaked edge-label backgrounds. */
+/* The component supplies explicit high-contrast palettes when Mermaid renders.
+   Keep these dark-mode rules as a defensive presentation layer for SVG shapes
+   emitted by different diagram renderers and Mermaid releases. */
 .dark .vp-doc .mermaid .node rect,
 .dark .vp-doc .mermaid .node polygon,
 .dark .vp-doc .mermaid .node path,

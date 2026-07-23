@@ -37,7 +37,12 @@ initial application graph.
 
 **Fix:** The Markdown fence rule emits the local `LazyMermaid` component.
 `LazyMermaid.vue` dynamically imports `mermaid` only after a diagram mounts,
-selects the dark or light palette itself, and rerenders when the theme changes.
+selects an explicit high-contrast dark or light palette itself, and rerenders
+when the theme changes. Both flowchart and sequence-diagram colors are set at
+render time; the CSS rules are a defensive layer for renderer-specific SVG
+shapes, not the primary source of contrast. The global `darkreader-lock` meta
+tag prevents color-rewriting extensions from independently changing SVG fills
+and labels after Mermaid renders them.
 The large Mermaid chunks remain asynchronous:
 
 ```ts
