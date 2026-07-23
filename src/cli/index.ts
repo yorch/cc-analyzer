@@ -135,7 +135,11 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
   if (json) {
     console.log(JSON.stringify({ ...analysis, parseErrors: errors.length }, null, 2));
   } else {
-    console.log(renderSessionSummary(analysis));
+    console.log(
+      renderSessionSummary(analysis, {
+        color: process.stdout.isTTY && !process.env.NO_COLOR,
+      }),
+    );
     if (errors.length) console.log(`\n(${errors.length} unparseable lines skipped)`);
   }
   return 0;
@@ -186,7 +190,11 @@ async function cmdStats(json: boolean): Promise<number> {
     concurrency: { peak, parallelDayShare },
   };
   db.close();
-  console.log(json ? JSON.stringify(view, null, 2) : renderStats(view));
+  console.log(
+    json
+      ? JSON.stringify(view, null, 2)
+      : renderStats(view, { color: process.stdout.isTTY && !process.env.NO_COLOR }),
+  );
   return 0;
 }
 

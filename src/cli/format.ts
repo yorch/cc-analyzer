@@ -52,10 +52,19 @@ export function formatRelativeTime(mtimeMs: number, now = Date.now()): string {
   return new Date(mtimeMs).toISOString().slice(0, 10);
 }
 
-/** Render a simple aligned text table. */
-export function table(headers: string[], rows: string[][]): string {
+export interface TableOptions {
+  align?: Array<"left" | "right">;
+}
+
+/** Render a simple aligned text table, with optional numeric column alignment. */
+export function table(headers: string[], rows: string[][], options: TableOptions = {}): string {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
-  const pad = (cells: string[]) => cells.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ");
+  const pad = (cells: string[]) =>
+    cells
+      .map((c, i) =>
+        options.align?.[i] === "right" ? c.padStart(widths[i] ?? 0) : c.padEnd(widths[i] ?? 0),
+      )
+      .join("  ");
   const sep = widths.map((w) => "-".repeat(w)).join("  ");
   return [pad(headers), sep, ...rows.map(pad)].join("\n");
 }

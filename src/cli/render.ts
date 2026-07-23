@@ -10,6 +10,38 @@ import type {
 import { topEntries } from "../core/stats-types.ts";
 import { formatCount, formatDuration, formatTokens, formatUSD, table, truncate } from "./format.ts";
 
+export interface RenderOptions {
+  color?: boolean;
+}
+
+const ANSI = {
+  reset: "\u001B[0m",
+  bold: "\u001B[1m",
+  dim: "\u001B[2m",
+  amber: "\u001B[38;5;214m",
+  green: "\u001B[38;5;114m",
+};
+
+function paint(enabled: boolean, codes: string, value: string): string {
+  return enabled ? `${codes}${value}${ANSI.reset}` : value;
+}
+
+function reportTitle(title: string, options: RenderOptions): string {
+  return paint(options.color === true, `${ANSI.bold}${ANSI.amber}`, `◆ ${title}`);
+}
+
+function section(title: string, options: RenderOptions): string {
+  return paint(options.color === true, `${ANSI.bold}${ANSI.amber}`, `▸ ${title}`);
+}
+
+function muted(value: string, options: RenderOptions): string {
+  return paint(options.color === true, ANSI.dim, value);
+}
+
+function healthy(value: string, options: RenderOptions): string {
+  return paint(options.color === true, ANSI.green, value);
+}
+
 function totalTokens(t: TokenCounts): number {
   return (
     t.inputTokens + t.outputTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens
@@ -17,16 +49,16 @@ function totalTokens(t: TokenCounts): number {
 }
 
 /** Render a full single-session analysis as a text report. */
-export function renderSessionSummary(a: SessionAnalysis): string {
+export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions = {}): string {
   const lines: string[] = [];
   const est = a.totals.cost.estimated ? " (estimated)" : "";
 
-  lines.push(`\n${a.title ?? "(untitled session)"}`);
-  lines.push(`  ${a.sessionId ?? "?"}  ·  ${a.projectPath ?? "?"}`);
+  lines.push(reportTitle(a.title ?? "(untitled session)", options));
+  lines.push(muted(`${a.sessionId ?? "?"} · ${a.projectPath ?? "?"}`, options));
   if (a.gitBranches.length) lines.push(`  branch: ${a.gitBranches.join(", ")}`);
   if (a.versions.length) lines.push(`  cc version: ${a.versions.join(", ")}`);
 
-  lines.push("\nTotals");
+  lines.push(`\n${section("Totals", options)}`);
   lines.push(
     table(
       ["metric", "value"],
@@ -54,7 +86,7 @@ export function renderSessionSummary(a: SessionAnalysis): string {
     ),
   );
 
-  lines.push("\nCost by token category");
+  lines.push(`\n${section("Cost by token category", options)}`);
   lines.push(
     table(
       ["category", "cost"],
@@ -71,16 +103,16 @@ export function renderSessionSummary(a: SessionAnalysis): string {
     .sort((x, y) => y[1].cost.total - x[1].cost.total)
     .map(([m, u]) => [m, String(u.apiCalls), formatUSD(u.cost.total)]);
   if (modelRows.length) {
-    lines.push("\nModels");
-    lines.push(table(["model", "calls", "cost"], modelRows));
+    lines.push(`\n${section("Models", options)}`);
+    lines.push(table(["model", "calls", "cost"], modelRows, { align: ["left", "right", "right"] }));
   }
 
   const toolRows = Object.entries(a.tools)
     .sort((x, y) => y[1] - x[1])
     .map(([t, c]) => [t, String(c)]);
   if (toolRows.length) {
-    lines.push("\nTools");
-    lines.push(table(["tool", "count"], toolRows));
+    lines.push(`\n${section("Tools", options)}`);
+    lines.push(table(["tool", "count"], toolRows, { align: ["left", "right"] }));
   }
 
   if (Object.keys(a.skills).length) {
@@ -104,7 +136,7 @@ export function renderSessionSummary(a: SessionAnalysis): string {
     lines.push(`Shell commands: ${topEntries(a.bashCommands, 8)}`);
   }
 
-  lines.push("\nTurns");
+  lines.push(`\n${section("Turns", options)}`);
   lines.push(
     table(
       ["#", "cost", "calls", "tools", "prompt"],
@@ -115,6 +147,7 @@ export function renderSessionSummary(a: SessionAnalysis): string {
         String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0)),
         truncate(t.prompt || "(no text)", 60),
       ]),
+      { align: ["right", "right", "right", "right", "left"] },
     ),
   );
 
@@ -131,7 +164,7 @@ export interface PortfolioView extends PortfolioStats {
 }
 
 /** Render portfolio-wide analytics as a text report. */
-export function renderStats(v: PortfolioView): string {
+export function renderStats(v: PortfolioView, options: RenderOptions = {}): string {
   const lines: string[] = [];
   const s = v.summary;
   const range = s.firstDay && s.lastDay ? `${s.firstDay} → ${s.lastDay}` : "-";
@@ -141,15 +174,27 @@ export function renderStats(v: PortfolioView): string {
   const dist = v.distribution;
   const rr = v.runRate;
   const sc = v.sidechain;
-  lines.push("\nPortfolio");
+  const ioTokens = s.inputTokens + s.outputTokens;
+  const cacheTokens = s.cacheWriteTokens + s.cacheReadTokens;
+  lines.push(reportTitle("cc-analyzer · portfolio", options));
+  lines.push(
+    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total spend`)}  ` +
+      muted(`· ${s.sessions} sessions · ${s.projects} projects · ${range}`, options),
+  );
+  lines.push(
+    muted(
+      `${formatTokens(ioTokens, cacheTokens)} · ${formatDuration(d.totalActiveMs)} active ` +
+        `(${(d.activeShare * 100).toFixed(0)}% of session time)`,
+      options,
+    ),
+  );
+
+  lines.push(`\n${section("Activity", options)}`);
   lines.push(
     table(
       ["metric", "value"],
       [
-        ["total cost", `${formatUSD(s.cost)}${estPct}`],
-        ["sessions", String(s.sessions)],
-        ["projects", String(s.projects)],
-        ["date range", range],
+        ["pricing", estPct ? `${(s.estimatedShare * 100).toFixed(0)}% estimated` : "exact"],
         ["tokens (in/out)", `${formatCount(s.inputTokens)} / ${formatCount(s.outputTokens)}`],
         [
           "cache tokens (w/r)",
@@ -181,6 +226,15 @@ export function renderStats(v: PortfolioView): string {
           `run rate (${rr.month})`,
           `${formatUSD(rr.monthToDate)} to date → ~${formatUSD(rr.projected)} projected (prev month ${formatUSD(rr.prevMonthTotal)})`,
         ],
+      ],
+    ),
+  );
+
+  lines.push(`\n${section("Efficiency & reliability", options)}`);
+  lines.push(
+    table(
+      ["signal", "value"],
+      [
         [
           "subagent spend",
           sc.cost > 0
@@ -200,7 +254,9 @@ export function renderStats(v: PortfolioView): string {
         [
           "tool-call churn",
           v.retries.total > 0
-            ? `${v.retries.total} repeated identical calls in ${v.retries.sessions} sessions`
+            ? `${v.retries.total} repeated identical calls in ${v.retries.sessions} ${
+                v.retries.sessions === 1 ? "session" : "sessions"
+              }`
             : "none",
         ],
         [
@@ -212,7 +268,7 @@ export function renderStats(v: PortfolioView): string {
   );
 
   if (dist.buckets.some((b) => b.count > 0)) {
-    lines.push("\nSession cost distribution");
+    lines.push(`\n${section("Session cost distribution", options)}`);
     const maxCount = Math.max(...dist.buckets.map((b) => b.count), 1);
     lines.push(
       table(
@@ -220,14 +276,15 @@ export function renderStats(v: PortfolioView): string {
         dist.buckets.map((b) => [
           b.label,
           String(b.count),
-          "#".repeat(Math.round((b.count / maxCount) * 30)),
+          "█".repeat(Math.round((b.count / maxCount) * 24)),
         ]),
+        { align: ["left", "right", "left"] },
       ),
     );
   }
 
   if (v.byMonth.length) {
-    lines.push("\nSpend by month");
+    lines.push(`\n${section("Spend by month", options)}`);
     lines.push(
       table(
         ["month", "cost", "sessions", "tokens"],
@@ -237,12 +294,13 @@ export function renderStats(v: PortfolioView): string {
           String(m.sessions),
           formatTokens(m.ioTokens, m.cacheTokens),
         ]),
+        { align: ["left", "right", "right", "right"] },
       ),
     );
   }
 
   if (v.byProject.length) {
-    lines.push("\nTop projects by cost");
+    lines.push(`\n${section("Top projects by cost", options)}`);
     lines.push(
       table(
         ["cost", "tokens", "sessions", "project"],
@@ -252,12 +310,13 @@ export function renderStats(v: PortfolioView): string {
           String(p.sessions),
           truncate(p.projectPath ?? p.projectId, 52),
         ]),
+        { align: ["right", "right", "right", "left"] },
       ),
     );
   }
 
   if (v.byModel.length) {
-    lines.push("\nSpend by model");
+    lines.push(`\n${section("Spend by model", options)}`);
     lines.push(
       table(
         ["model", "calls", "cost", "tokens"],
@@ -267,12 +326,13 @@ export function renderStats(v: PortfolioView): string {
           formatUSD(m.cost),
           formatTokens(m.ioTokens, m.cacheTokens),
         ]),
+        { align: ["left", "right", "right", "right"] },
       ),
     );
   }
 
   if (v.top.length) {
-    lines.push("\nMost expensive sessions");
+    lines.push(`\n${section("Most expensive sessions", options)}`);
     lines.push(
       table(
         ["cost", "tokens", "date", "title"],
@@ -282,12 +342,13 @@ export function renderStats(v: PortfolioView): string {
           t.startTime?.slice(0, 10) ?? "-",
           truncate(t.title ?? t.sessionId ?? "?", 48),
         ]),
+        { align: ["right", "right", "left", "left"] },
       ),
     );
   }
 
   if (v.bash.length) {
-    lines.push("\nTop shell commands");
+    lines.push(`\n${section("Top shell commands", options)}`);
     lines.push(
       table(
         ["command", "uses", "err %", "sessions"],
@@ -297,19 +358,25 @@ export function renderStats(v: PortfolioView): string {
           `${(b.errorRate * 100).toFixed(1)}%`,
           String(b.sessions),
         ]),
+        { align: ["left", "right", "right", "right"] },
       ),
     );
   }
 
   if (v.retries.byTool.length) {
-    lines.push("\nMost retried tools (identical repeated calls)");
+    lines.push(`\n${section("Most retried tools", options)}`);
     lines.push(
       table(
         ["tool", "retries", "sessions"],
         v.retries.byTool.slice(0, 8).map((r) => [r.tool, String(r.retries), String(r.sessions)]),
+        { align: ["left", "right", "right"] },
       ),
     );
+    lines.push(muted("Identical consecutive calls on the same chain.", options));
   }
+
+  lines.push(`\n${healthy("✓ Read-only · session data stayed local", options)}`);
+  lines.push(muted("Explore interactively: cc-analyzer", options));
 
   return lines.join("\n");
 }

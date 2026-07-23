@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatCount, formatTokens, formatUSD } from "../../src/cli/format.ts";
+import { formatCount, formatTokens, formatUSD, table } from "../../src/cli/format.ts";
 
 describe("formatTokens", () => {
   test("shows io only when there is no cache", () => {
@@ -31,5 +31,20 @@ describe("formatCount rounding boundaries", () => {
   });
   test("non-finite values render as a dash", () => {
     expect(formatCount(Number.NaN)).toBe("-");
+  });
+});
+
+describe("table alignment", () => {
+  test("right-aligns selected numeric columns", () => {
+    expect(
+      table(
+        ["name", "cost"],
+        [
+          ["alpha", "$2.00"],
+          ["b", "$12.00"],
+        ],
+        { align: ["left", "right"] },
+      ),
+    ).toBe("name     cost\n-----  ------\nalpha   $2.00\nb      $12.00");
   });
 });

@@ -5,15 +5,15 @@ import { withBase } from "vitepress";
 // carries an index used to stagger its reveal via CSS custom property --i.
 const boot: { t: string; cls?: string }[] = [
   { t: "$ cc-analyzer stats", cls: "cmd" },
+  { t: "◆ cc-analyzer · portfolio", cls: "dim" },
+  { t: "$21.45 total spend  · 18 sessions · 4 projects", cls: "row" },
+  { t: "308.9k +28.7M cache · 1h 21m active", cls: "ok" },
   { t: "", cls: "dim" },
-  { t: "  Portfolio", cls: "dim" },
-  { t: "  metric               value", cls: "rule" },
-  { t: "  -------------------  ------------------------", cls: "rule" },
-  { t: "  total cost           $21.45", cls: "row" },
-  { t: "  sessions             18", cls: "row" },
-  { t: "  projects             4", cls: "row" },
-  { t: "  tokens (in/out)      188.6k / 120.3k", cls: "row" },
-  { t: "  cache tokens (w/r)   2.0M / 26.8M", cls: "ok" },
+  { t: "▸ Activity", cls: "dim" },
+  { t: "metric               value", cls: "rule" },
+  { t: "-------------------  ----------------------", cls: "rule" },
+  { t: "pricing              exact", cls: "row" },
+  { t: "tokens (in/out)      188.6k / 120.3k", cls: "row" },
 ];
 </script>
 
