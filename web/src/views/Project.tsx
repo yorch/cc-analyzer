@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type CostDistribution,
@@ -9,7 +9,8 @@ import {
 } from "../api.ts";
 import { count, relTime, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
-import { link } from "../router.ts";
+import { link, useHashParam } from "../router.ts";
+import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { BurnPanel, ModelMix, ScatterPanel } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
@@ -23,14 +24,19 @@ const SESSION_SORT: Accessors<IndexedSession> = {
   modified: (s) => s.mtimeMs,
   title: (s) => s.title ?? s.sessionId ?? "",
 };
+const HOT_FILE_SORT: Accessors<HotFileRow> = {
+  sessions: (file) => file.sessions,
+  day: (file) => file.lastDay ?? "",
+  file: (file) => file.file,
+};
 
 export function Project({ id }: { id: string }) {
-  const { data, error, loading } = useAsync(
+  const { data, error, loading, retry } = useAsync(
     () =>
       Promise.all([api.projects(), api.sessions(id), api.projectFiles(id), api.projectTrends(id)]),
     [id],
   );
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useHashParam<string>("q", "");
   const [projects, allSessions, hotFiles, trends] = data ?? [[], [], [], null];
   const q = query.toLowerCase();
   const filtered = q
@@ -38,8 +44,8 @@ export function Project({ id }: { id: string }) {
     : allSessions;
   const sort = useSort(filtered, SESSION_SORT, "modified");
   const sessions = sort.sorted;
-  if (loading) return <div className="loading">Loading project…</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  if (loading) return <LoadingNotice>Loading project…</LoadingNotice>;
+  if (error) return <ErrorNotice error={error} retry={retry} label="Couldn’t load this project." />;
   if (!data) return null;
 
   const project = projects.find((p) => p.projectId === id);
@@ -61,18 +67,11 @@ export function Project({ id }: { id: string }) {
         </span>
       </header>
 
-      {trends && trends.daily.length > 0 && (
-        <section className="trend-panel">
-          <BurnPanel daily={trends.daily} />
-        </section>
-      )}
-
-      <input
-        className="search"
-        type="search"
+      <SearchField
+        label="Filter Sessions"
         placeholder="Filter sessions by title…"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={setQuery}
       />
 
       <div className="tablewrap">
@@ -110,9 +109,16 @@ export function Project({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      {sessions.length === 0 && <EmptyNotice>No sessions match this filter.</EmptyNotice>}
 
       {trends && (
         <>
+          <h2 className="page-divider">Project Analysis</h2>
+          {trends.daily.length > 0 && (
+            <section className="trend-panel">
+              <BurnPanel daily={trends.daily} />
+            </section>
+          )}
           <section className="trend-panel">
             <div className="trend-head">
               <h2>Session cost distribution</h2>
@@ -205,6 +211,7 @@ function ToolMix({ tools }: { tools: ToolUsageRow[] }) {
 
 /** Files Claude keeps coming back to across this project's sessions. */
 function HotFiles({ rows, projectPath }: { rows: HotFileRow[]; projectPath: string | null }) {
+  const sort = useSort(rows, HOT_FILE_SORT, "sessions");
   if (rows.length === 0) return null;
   const prefix = projectPath ? `${projectPath}/` : "";
   const rel = (f: string) => (prefix && f.startsWith(prefix) ? f.slice(prefix.length) : f);
@@ -215,13 +222,13 @@ function HotFiles({ rows, projectPath }: { rows: HotFileRow[]; projectPath: stri
         <table>
           <thead>
             <tr>
-              <th className="num">Sessions</th>
-              <th>Last touched</th>
-              <th>File</th>
+              <SortTh label="Sessions" col="sessions" sort={sort} className="num" />
+              <SortTh label="Last Touched" col="day" sort={sort} />
+              <SortTh label="File" col="file" sort={sort} />
             </tr>
           </thead>
           <tbody>
-            {rows.map((f) => (
+            {sort.sorted.map((f) => (
               <tr key={f.file}>
                 <td className="num">{f.sessions}</td>
                 <td className="muted">{f.lastDay ?? "—"}</td>

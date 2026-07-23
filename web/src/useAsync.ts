@@ -4,12 +4,20 @@ export interface AsyncState<T> {
   data: T | null;
   error: string | null;
   loading: boolean;
+  retry: () => void;
 }
 
 /** Minimal data-fetching hook: runs `fn` when `deps` change. */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T> {
-  const [state, setState] = useState<AsyncState<T>>({ data: null, error: null, loading: true });
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<Omit<AsyncState<T>, "retry">>({
+    data: null,
+    error: null,
+    loading: true,
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are supplied by the caller; attempt is the explicit retry trigger
   useEffect(() => {
+    void attempt;
     let cancelled = false;
     setState({ data: null, error: null, loading: true });
     fn().then(
@@ -19,7 +27,6 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T
     return () => {
       cancelled = true;
     };
-    // biome-ignore lint/correctness/useExhaustiveDependencies: deps are supplied by the caller of this generic hook
-  }, deps);
-  return state;
+  }, [...deps, attempt]);
+  return { ...state, retry: () => setAttempt((value) => value + 1) };
 }

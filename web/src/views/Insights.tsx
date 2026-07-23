@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   cacheVerdict,
@@ -7,7 +7,8 @@ import {
   type SessionCacheRow,
 } from "../api.ts";
 import { count, shortPath, usd } from "../format.ts";
-import { link } from "../router.ts";
+import { link, useHashParam } from "../router.ts";
+import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
@@ -27,8 +28,8 @@ const PROJECT_SORT: Accessors<ProjectCacheRow> = {
 };
 
 export function Insights() {
-  const { data, error, loading } = useAsync(() => api.insights(), []);
-  const [query, setQuery] = useState("");
+  const { data, error, loading, retry } = useAsync(() => api.insights(), []);
+  const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data?.projects ?? [];
   const filtered = q
@@ -36,8 +37,9 @@ export function Insights() {
     : all;
   const sort = useSort(filtered, PROJECT_SORT, "waste");
   const rows = sort.sorted;
-  if (loading) return <div className="loading">Loading insights…</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  if (loading) return <LoadingNotice>Loading insights…</LoadingNotice>;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load cache insights." />;
   if (!data) return null;
 
   const s = data.summary;
@@ -55,6 +57,10 @@ export function Insights() {
         Projects ranked by cache-write $ that wasn't read back — writes you paid a premium for but
         didn't reuse. A high read:write ratio means the writes amortized.
       </p>
+      <p className="insight-callout">
+        <strong>What to look for:</strong> projects marked “leaky” repeatedly pay to rebuild cache
+        without reading enough of it back.
+      </p>
       <p className="muted">
         Write TTL mix: {count(data.ttl.write5mTokens)} tokens @5m · {count(data.ttl.write1hTokens)}{" "}
         tokens @1h (1h writes are priced ~2× input, 5m ~1.25×).
@@ -62,12 +68,11 @@ export function Insights() {
 
       <IdleBuckets rows={data.idleBuckets} />
 
-      <input
-        className="search"
-        type="search"
+      <SearchField
+        label="Filter Projects"
         placeholder="Filter projects…"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={setQuery}
       />
 
       <div className="tablewrap">
@@ -102,6 +107,7 @@ export function Insights() {
           </tbody>
         </table>
       </div>
+      {rows.length === 0 && <EmptyNotice>No cache-active projects match this filter.</EmptyNotice>}
     </>
   );
 }
@@ -152,8 +158,8 @@ const SESSION_SORT: Accessors<SessionCacheRow> = {
 };
 
 export function InsightsProject({ id }: { id: string }) {
-  const { data, error, loading } = useAsync(() => api.insightsSessions(id), [id]);
-  const [query, setQuery] = useState("");
+  const { data, error, loading, retry } = useAsync(() => api.insightsSessions(id), [id]);
+  const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data ?? [];
   const filtered = q
@@ -161,8 +167,9 @@ export function InsightsProject({ id }: { id: string }) {
     : all;
   const sort = useSort(filtered, SESSION_SORT, "waste");
   const rows = sort.sorted;
-  if (loading) return <div className="loading">Loading sessions…</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  if (loading) return <LoadingNotice>Loading sessions…</LoadingNotice>;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load insight sessions." />;
   if (!data) return null;
 
   const projectPath = all[0]?.projectPath ?? id;
@@ -170,7 +177,7 @@ export function InsightsProject({ id }: { id: string }) {
   return (
     <>
       <div className="crumbs">
-        <a href={link.insights()}>← Insights</a>
+        <a href={link.insights()}>← Insights</a> · <a href={link.project(id)}>Project Overview</a>
       </div>
       <header className="top">
         <h1>{shortPath(projectPath)}</h1>
@@ -179,13 +186,26 @@ export function InsightsProject({ id }: { id: string }) {
           {q ? `/${all.length}` : ""} sessions with cache activity, ranked by waste
         </span>
       </header>
+      <div className="cards compact-cards">
+        <div className="card">
+          <div className="label">Total Waste</div>
+          <div className="value">{usd(all.reduce((sum, row) => sum + row.waste, 0))}</div>
+        </div>
+        <div className="card">
+          <div className="label">Cache Sessions</div>
+          <div className="value">{count(all.length)}</div>
+        </div>
+        <div className="card">
+          <div className="label">Worst Session</div>
+          <div className="value">{usd(Math.max(0, ...all.map((row) => row.waste)))}</div>
+        </div>
+      </div>
 
-      <input
-        className="search"
-        type="search"
+      <SearchField
+        label="Filter Sessions"
         placeholder="Filter sessions…"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={setQuery}
       />
 
       <div className="tablewrap">
@@ -222,6 +242,7 @@ export function InsightsProject({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      {rows.length === 0 && <EmptyNotice>No cache-active sessions match this filter.</EmptyNotice>}
     </>
   );
 }

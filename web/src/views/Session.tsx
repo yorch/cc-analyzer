@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type SessionAnalysis,
@@ -9,14 +10,15 @@ import {
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
-import { link } from "../router.ts";
+import { link, useHashParam } from "../router.ts";
 import { SessionCharts } from "../SessionCharts.tsx";
 import { useAsync } from "../useAsync.ts";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript";
+const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript"] as const;
 
 export function Session({ id }: { id: string }) {
-  const [tab, setTab] = useState<Tab>("summary");
+  const [tab, setTab] = useHashParam<Tab>("tab", "summary", SESSION_TABS);
   // Sticky once the transcript tab has been opened, so switching tabs doesn't
   // refetch — but the (potentially huge) transcript is never fetched eagerly.
   // Derived from `tab` in an effect so any way of reaching the tab (deep link,
@@ -25,16 +27,25 @@ export function Session({ id }: { id: string }) {
   useEffect(() => {
     if (tab === "transcript") setTranscriptWanted(true);
   }, [tab]);
-  const analysis = useAsync(() => api.session(id), [id]);
+  const analysis = useAsync(() => Promise.all([api.session(id), api.projects()]), [id]);
   const transcript = useAsync(
     () => (transcriptWanted ? api.transcript(id) : Promise.resolve(null)),
     [id, transcriptWanted],
   );
 
-  if (analysis.loading) return <div className="loading">Loading session…</div>;
-  if (analysis.error) return <div className="loading err">Error: {analysis.error}</div>;
-  const a = analysis.data;
-  if (!a) return null;
+  if (analysis.loading) return <LoadingNotice>Loading session…</LoadingNotice>;
+  if (analysis.error)
+    return (
+      <ErrorNotice
+        error={analysis.error}
+        retry={analysis.retry}
+        label="Couldn’t load this session."
+      />
+    );
+  const loaded = analysis.data;
+  if (!loaded) return null;
+  const [a, projects] = loaded;
+  const project = projects.find((row) => row.projectPath === a.projectPath);
   const c = a.totals.cost;
 
   return (
@@ -42,7 +53,11 @@ export function Session({ id }: { id: string }) {
       <div className="crumbs">
         <a href={link.dashboard()}>Dashboard</a>
         {a.projectPath && " · "}
-        <span className="muted">{a.projectPath}</span>
+        {project ? (
+          <a href={link.project(project.projectId)}>{a.projectPath}</a>
+        ) : (
+          <span className="muted">{a.projectPath}</span>
+        )}
       </div>
       <header className="top">
         <h1>{a.title ?? a.sessionId ?? "(untitled)"}</h1>
@@ -67,30 +82,48 @@ export function Session({ id }: { id: string }) {
         )}
       </div>
 
-      <div className="tabs">
-        {(["summary", "charts", "timeline", "turns", "transcript"] as Tab[]).map((t) => (
+      <div className="tabs" role="tablist" aria-label="Session Views">
+        {SESSION_TABS.map((t, index) => (
           <button
             type="button"
             key={t}
             className={t === tab ? "active" : ""}
             onClick={() => setTab(t)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const delta = event.key === "ArrowRight" ? 1 : -1;
+              const next = SESSION_TABS[
+                (index + delta + SESSION_TABS.length) % SESSION_TABS.length
+              ] as Tab;
+              setTab(next);
+              document.getElementById(`session-tab-${next}`)?.focus();
+            }}
+            id={`session-tab-${t}`}
+            role="tab"
+            aria-selected={t === tab}
+            aria-controls={`session-panel-${t}`}
+            tabIndex={t === tab ? 0 : -1}
           >
             {t}
           </button>
         ))}
       </div>
 
-      {tab === "summary" && <Summary a={a} />}
-      {tab === "charts" && <SessionCharts a={a} />}
-      {tab === "timeline" && <Timeline a={a} />}
-      {tab === "turns" && <Turns a={a} />}
-      {tab === "transcript" && (
-        <Transcript
-          loading={transcript.loading}
-          error={transcript.error}
-          items={transcript.data ?? []}
-        />
-      )}
+      <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
+        {tab === "summary" && <Summary a={a} />}
+        {tab === "charts" && <SessionCharts a={a} />}
+        {tab === "timeline" && <Timeline a={a} />}
+        {tab === "turns" && <Turns a={a} />}
+        {tab === "transcript" && (
+          <Transcript
+            loading={transcript.loading}
+            error={transcript.error}
+            retry={transcript.retry}
+            items={transcript.data ?? []}
+          />
+        )}
+      </div>
     </>
   );
 }
@@ -234,6 +267,7 @@ function Timeline({ a }: { a: SessionAnalysis }) {
           style={{ height: H }}
           preserveAspectRatio="none"
           role="img"
+          aria-label="Session timeline showing turns and API calls"
         >
           <title>Session timeline</title>
           {shown.map((t, i) => {
@@ -294,9 +328,7 @@ function useWindowed(total: number, step: number): { limit: number; more: ReactN
         <button type="button" onClick={() => setVisible((v) => v + step)}>
           Show more
         </button>
-        <button type="button" onClick={() => setVisible(total)}>
-          Show all ({count(total)})
-        </button>
+        <span className="muted">{count(total - limit)} remaining</span>
       </div>
     ) : null;
   return { limit, more };
@@ -365,22 +397,32 @@ function StepRow({ step }: { step: TurnStep }) {
   const [open, setOpen] = useState(false);
   const hasDetail = Boolean(step.detail?.input || step.detail?.result);
   const icon = STEP_ICON[step.kind] ?? "·";
+  const content = (
+    <>
+      <span className="stepicon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="steplabel">{step.label}</span>
+      {step.summary && <span className="stepsummary">{step.summary}</span>}
+      {step.status === "error" && <span className="err"> ✗</span>}
+      {step.status === "ok" && <span className="ok"> ✓</span>}
+      {step.resultHint && <span className="stephint">{step.resultHint}</span>}
+    </>
+  );
   return (
     <div className={`step k-${step.kind}`}>
-      <button
-        type="button"
-        className="steprow"
-        onClick={() => hasDetail && setOpen((v) => !v)}
-        aria-expanded={open}
-        style={{ cursor: hasDetail ? "pointer" : "default" }}
-      >
-        <span className="stepicon">{icon}</span>
-        <span className="steplabel">{step.label}</span>
-        {step.summary && <span className="stepsummary">{step.summary}</span>}
-        {step.status === "error" && <span className="err"> ✗</span>}
-        {step.status === "ok" && <span className="ok"> ✓</span>}
-        {step.resultHint && <span className="stephint">{step.resultHint}</span>}
-      </button>
+      {hasDetail ? (
+        <button
+          type="button"
+          className="steprow"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="steprow static">{content}</div>
+      )}
       {open && hasDetail && (
         <div className="stepdetail">
           {step.detail?.input && step.kind !== "note" && step.kind !== "thinking" && (
@@ -426,15 +468,18 @@ const TRANSCRIPT_WINDOW = 200;
 function Transcript({
   loading,
   error,
+  retry,
   items,
 }: {
   loading: boolean;
   error: string | null;
+  retry: () => void;
   items: TranscriptItem[];
 }) {
   const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW);
-  if (loading) return <div className="loading">Loading transcript…</div>;
-  if (error) return <div className="loading err">Error loading transcript: {error}</div>;
+  if (loading) return <LoadingNotice>Loading transcript…</LoadingNotice>;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load the transcript." />;
   const shown = items.slice(0, limit);
   return (
     <section>

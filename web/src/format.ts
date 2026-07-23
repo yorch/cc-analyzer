@@ -1,15 +1,19 @@
 export function usd(n: number): string {
-  if (n === 0) return "$0.00";
-  if (Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
-  if (Math.abs(n) < 1000) return `$${n.toFixed(2)}`;
-  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const digits = n !== 0 && Math.abs(n) < 0.01 ? 4 : Math.abs(n) < 1000 ? 2 : 0;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(n);
 }
 
 export function count(n: number): string {
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  return `${(n / 1_000_000_000).toFixed(2)}B`;
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: n >= 1_000_000_000 ? 2 : 1,
+  }).format(n);
 }
 
 import type { TokenCounts } from "./api.ts";
@@ -45,7 +49,15 @@ export function relTime(ms: number): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
-  return new Date(ms).toISOString().slice(0, 10);
+  return date(ms);
+}
+
+export function date(value: number | string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
 export function shortPath(p: string | null | undefined, fallback = "?"): string {

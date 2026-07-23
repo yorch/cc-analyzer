@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type CostDistribution,
@@ -10,9 +11,10 @@ import {
   type StatsResponse,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
-import { count, duration, shortPath, tokens, usd } from "../format.ts";
+import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
-import { link } from "../router.ts";
+import { link, useHashParam } from "../router.ts";
+import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
@@ -43,8 +45,8 @@ const TOP_SORT: Accessors<SessionRankRow> = {
 };
 
 export function Dashboard() {
-  const { data, error, loading } = useAsync(() => api.stats(), []);
-  const [projectQuery, setProjectQuery] = useState("");
+  const { data, error, loading, retry } = useAsync(() => api.stats(), []);
+  const [projectQuery, setProjectQuery] = useHashParam<string>("projects", "");
   const byMonth = data?.byMonth ?? [];
   const byProject = data?.byProject ?? [];
   const byModel = data?.byModel ?? [];
@@ -57,8 +59,9 @@ export function Dashboard() {
   const projectSort = useSort(projectFiltered, PROJECT_SORT, "cost");
   const modelSort = useSort(byModel, MODEL_SORT, "cost");
   const topSort = useSort(top, TOP_SORT, "cost");
-  if (loading) return <div className="loading">Loading portfolio</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  if (loading) return <LoadingNotice>Loading portfolio…</LoadingNotice>;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load the portfolio." />;
   if (!data) return null;
 
   const { summary } = data;
@@ -150,12 +153,11 @@ export function Dashboard() {
 
       <section>
         <h2>Top projects</h2>
-        <input
-          className="search"
-          type="search"
-          placeholder="Filter projects by path"
+        <SearchField
+          label="Filter Projects"
+          placeholder="Filter projects by path…"
           value={projectQuery}
-          onChange={(e) => setProjectQuery(e.target.value)}
+          onChange={setProjectQuery}
         />
         <div className="tablewrap">
           <table>
@@ -181,6 +183,12 @@ export function Dashboard() {
             </tbody>
           </table>
         </div>
+        {projectRows.length === 0 && <EmptyNotice>No projects match this filter.</EmptyNotice>}
+        {!pq && projectSort.sorted.length > projectRows.length && (
+          <p className="muted">
+            Showing the 15 highest-cost projects. Filter by path to find the rest.
+          </p>
+        )}
       </section>
 
       <section>
@@ -226,7 +234,7 @@ export function Dashboard() {
                 <tr key={`${t.sessionId}-${t.startTime}`}>
                   <td className="num">{usd(t.cost)}</td>
                   <td className="num">{tokens(t.ioTokens, t.cacheTokens)}</td>
-                  <td className="muted">{t.startTime?.slice(0, 10) ?? "—"}</td>
+                  <td className="muted">{t.startTime ? date(t.startTime) : "—"}</td>
                   <td>
                     {t.sessionId ? (
                       <a href={link.session(t.sessionId)}>{t.title ?? t.sessionId}</a>
@@ -345,23 +353,32 @@ function Distribution({ dist }: { dist: CostDistribution }) {
 }
 
 function GlobalSearch() {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useHashParam<string>("search", "");
   const [results, setResults] = useState<SessionWithProject[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const query = q.trim();
 
   useEffect(() => {
     if (query.length < 2) {
       setResults([]);
+      setStatus("idle");
       return;
     }
     let cancelled = false;
+    setStatus("loading");
     api
       .searchSessions(query)
       .then((r) => {
-        if (!cancelled) setResults(r);
+        if (!cancelled) {
+          setResults(r);
+          setStatus("ready");
+        }
       })
       .catch(() => {
-        if (!cancelled) setResults([]);
+        if (!cancelled) {
+          setResults([]);
+          setStatus("error");
+        }
       });
     return () => {
       cancelled = true;
@@ -371,12 +388,12 @@ function GlobalSearch() {
   return (
     <section>
       <h2>Search sessions</h2>
-      <input
-        className="search"
-        type="search"
+      <SearchField
+        label="Search Sessions"
         placeholder="Search all sessions by title, id, or project…"
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={setQ}
+        describedBy="session-search-status"
       />
       {results.length > 0 && (
         <div className="tablewrap">
@@ -408,7 +425,17 @@ function GlobalSearch() {
           </table>
         </div>
       )}
-      {query.length >= 2 && results.length === 0 && <p className="muted">No matches.</p>}
+      <div id="session-search-status" aria-live="polite">
+        {status === "loading" && <p className="muted">Searching…</p>}
+        {status === "ready" && results.length === 0 && (
+          <EmptyNotice>No sessions match this search.</EmptyNotice>
+        )}
+        {status === "error" && (
+          <p className="notice error-notice">
+            Search failed. Check the local server and try again.
+          </p>
+        )}
+      </div>
     </section>
   );
 }

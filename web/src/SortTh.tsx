@@ -17,12 +17,17 @@ export function SortTh<T>({
   return (
     <th
       className={className}
-      onClick={() => sort.toggle(col)}
-      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
-      style={{ cursor: "pointer", userSelect: "none" }}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
     >
-      {label}
-      {arrow}
+      <button type="button" className="sort-button" onClick={() => sort.toggle(col)}>
+        {label}
+        <span aria-hidden="true">{arrow}</span>
+        <span className="sr-only">
+          {active
+            ? `, sorted ${sort.dir === "asc" ? "ascending" : "descending"}`
+            : ", activate to sort"}
+        </span>
+      </button>
     </th>
   );
 }

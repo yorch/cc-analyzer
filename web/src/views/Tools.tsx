@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   type AnalyticsResponse,
   api,
@@ -12,6 +12,8 @@ import {
 } from "../api.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
+import { useHashParam } from "../router.ts";
+import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { areaPath, linePath, xScale } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
@@ -49,7 +51,13 @@ function SkillSpark({ values }: { values: number[] }) {
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
   const line = linePath(values, x, y);
   return (
-    <svg className="skillspark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+    <svg
+      className="skillspark"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="Weekly skill invocation trend"
+    >
       <title>Invocations per week</title>
       <path className="burn-area" d={areaPath(line, x, n, H)} />
       <path className="burn-line" d={line} />
@@ -83,7 +91,8 @@ function SkillDetail({ skill }: { skill: SkillUsageRow }) {
 
 function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
   const sort = useSort(skills, SKILL_SORT, "invocations");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useHashParam<string>("skill", "");
+  if (skills.length === 0) return <EmptyNotice>No skills match this filter.</EmptyNotice>;
   const sel = skills.find((s) => s.name === selected) ?? sort.sorted[0];
   return (
     <>
@@ -101,12 +110,17 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
           </thead>
           <tbody>
             {sort.sorted.map((r) => (
-              <tr
-                key={r.name}
-                className={`skillrow${r.name === sel?.name ? " sel" : ""}`}
-                onClick={() => setSelected(r.name)}
-              >
-                <td>{r.name}</td>
+              <tr key={r.name} className={`skillrow${r.name === sel?.name ? " sel" : ""}`}>
+                <td>
+                  <button
+                    type="button"
+                    className="row-button"
+                    aria-pressed={r.name === sel?.name}
+                    onClick={() => setSelected(r.name)}
+                  >
+                    {r.name}
+                  </button>
+                </td>
                 <td className="num">{count(r.invocations)}</td>
                 <td className="num">{count(r.sessions)}</td>
                 <td className="num">{count(r.projects)}</td>
@@ -130,6 +144,7 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
 
 function ToolsTable({ tools }: { tools: ToolUsageRow[] }) {
   const sort = useSort(tools, TOOL_SORT, "uses");
+  if (tools.length === 0) return <EmptyNotice>No tools match this filter.</EmptyNotice>;
   return (
     <div className="tablewrap">
       <table>
@@ -160,6 +175,7 @@ function ToolsTable({ tools }: { tools: ToolUsageRow[] }) {
 
 function NameTable({ label, rows }: { label: string; rows: NameUsageRow[] }) {
   const sort = useSort(rows, NAME_SORT, "sessions");
+  if (rows.length === 0) return <EmptyNotice>No subagents match this filter.</EmptyNotice>;
   return (
     <div className="tablewrap">
       <table>
@@ -192,6 +208,7 @@ const BASH_SORT: Accessors<BashCommandRow> = {
 
 function BashTable({ rows }: { rows: BashCommandRow[] }) {
   const sort = useSort(rows, BASH_SORT, "uses");
+  if (rows.length === 0) return <EmptyNotice>No shell commands match this filter.</EmptyNotice>;
   return (
     <div className="tablewrap">
       <table>
@@ -342,115 +359,158 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
 }
 
 export function Tools() {
-  const { data, error, loading } = useAsync(() => api.analytics(), []);
-  if (loading) return <div className="loading">Loading analytics…</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  const { data, error, loading, retry } = useAsync(() => api.analytics(), []);
+  const toolViews = ["tools", "skills", "agents", "environment"] as const;
+  type ToolView = (typeof toolViews)[number];
+  const [view, setView] = useHashParam<ToolView>("view", "tools", toolViews);
+  const [query, setQuery] = useHashParam<string>("q", "");
+  if (loading) return <LoadingNotice>Loading analytics…</LoadingNotice>;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load tool analytics." />;
   if (!data) return null;
   const wt = data.webTools;
   const sc = data.sidechain;
+  const q = query.trim().toLowerCase();
+  const matches = (value: unknown) => !q || JSON.stringify(value).toLowerCase().includes(q);
   return (
     <>
       <header className="top">
         <h1>Tools &amp; skills</h1>
         <span className="muted">what you use across every session — and what fails</span>
       </header>
+      <div className="view-nav" role="tablist" aria-label="Analytics Sections">
+        {toolViews.map((item) => (
+          <button
+            type="button"
+            key={item}
+            role="tab"
+            aria-selected={view === item}
+            className={view === item ? "active" : ""}
+            onClick={() => setView(item)}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+      <SearchField
+        label={`Filter ${view}`}
+        placeholder={`Filter ${view} data…`}
+        value={query}
+        onChange={setQuery}
+      />
 
-      <h2 className="section-h">Tools · by invocations, with error rate</h2>
-      <ToolsTable tools={data.tools} />
-
-      <h2 className="section-h">Shell commands · what Bash actually runs</h2>
-      <BashTable rows={data.bash} />
-
-      <h2 className="section-h">Reliability · test runs &amp; churn</h2>
-      <Reliability data={data} />
-
-      <h2 className="section-h">Turn depth · API calls per turn</h2>
-      <DepthPanel depth={data.turnDepth} />
-
-      <h2 className="section-h">Compactions · context-window pressure</h2>
-      <Compactions data={data.compactions} />
-
-      <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
-      <SkillsTable skills={data.skills} />
-
-      <h2 className="section-h">Subagents · by sessions</h2>
-      <NameTable label="Subagent" rows={data.subagents} />
-      {sc.summary.cost > 0 && (
+      {view === "tools" && (
         <>
-          <p className="muted">
-            Sidechain (subagent) spend: <strong>{usd(sc.summary.cost)}</strong> ·{" "}
-            {(sc.summary.share * 100).toFixed(0)}% of total · {count(sc.summary.calls)} API calls
-          </p>
-          <FactsTable
-            head={["Project", "Subagent $", "Share", "Total $"]}
-            rows={sc.byProject.map((p) => [
-              shortPath(p.projectPath, p.projectId),
-              usd(p.sidechainCost),
-              `${(p.share * 100).toFixed(0)}%`,
-              usd(p.cost),
-            ])}
-          />
+          <h2 className="section-h">Tools · by invocations, with error rate</h2>
+          <ToolsTable tools={data.tools.filter(matches)} />
+          <h2 className="section-h">Shell commands · what Bash actually runs</h2>
+          <BashTable rows={data.bash.filter(matches)} />
+          <h2 className="section-h">Reliability · test runs &amp; churn</h2>
+          <Reliability data={data} />
+          <h2 className="section-h">Turn depth · API calls per turn</h2>
+          <DepthPanel depth={data.turnDepth} />
+          <h2 className="section-h">Compactions · context-window pressure</h2>
+          <Compactions data={data.compactions} />
         </>
       )}
 
-      <h2 className="section-h">Web search &amp; fetch</h2>
-      {wt.summary.searches + wt.summary.fetches === 0 ? (
-        <p className="muted">No server-side web tool use recorded.</p>
-      ) : (
+      {view === "skills" && (
         <>
-          <p className="muted">
-            {count(wt.summary.searches)} searches · {count(wt.summary.fetches)} fetches ·{" "}
-            {count(wt.summary.sessions)} sessions
-          </p>
-          <FactsTable
-            head={["Project", "Searches", "Fetches"]}
-            rows={wt.byProject.map((p) => [
-              shortPath(p.projectPath, p.projectId),
-              count(p.searches),
-              count(p.fetches),
-            ])}
-          />
+          <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
+          <SkillsTable skills={data.skills.filter(matches)} />
         </>
       )}
 
-      <h2 className="section-h">Permission modes · how turns run</h2>
-      <FactsTable
-        head={["Mode", "Turns", "Sessions", "Avg $/session"]}
-        rows={data.permissionModes.map((m) => [
-          m.mode,
-          count(m.turns),
-          count(m.sessions),
-          usd(m.avgCostPerSession),
-        ])}
-      />
-      <p className="muted spark-cap">
-        Avg cost is session-scoped (a session using several modes counts toward each) —
-        correlational, not causal.
-      </p>
+      {view === "agents" && (
+        <>
+          <h2 className="section-h">Subagents · by sessions</h2>
+          <NameTable label="Subagent" rows={data.subagents.filter(matches)} />
+          {sc.summary.cost > 0 && (
+            <>
+              <p className="muted">
+                Sidechain (subagent) spend: <strong>{usd(sc.summary.cost)}</strong> ·{" "}
+                {(sc.summary.share * 100).toFixed(0)}% of total · {count(sc.summary.calls)} API
+                calls
+              </p>
+              <FactsTable
+                head={["Project", "Subagent $", "Share", "Total $"]}
+                rows={sc.byProject
+                  .filter(matches)
+                  .map((p) => [
+                    shortPath(p.projectPath, p.projectId),
+                    usd(p.sidechainCost),
+                    `${(p.share * 100).toFixed(0)}%`,
+                    usd(p.cost),
+                  ])}
+              />
+            </>
+          )}
+          <h2 className="section-h">Web search &amp; fetch</h2>
+          {wt.summary.searches + wt.summary.fetches === 0 ? (
+            <p className="muted">No server-side web tool use recorded.</p>
+          ) : (
+            <>
+              <p className="muted">
+                {count(wt.summary.searches)} searches · {count(wt.summary.fetches)} fetches ·{" "}
+                {count(wt.summary.sessions)} sessions
+              </p>
+              <FactsTable
+                head={["Project", "Searches", "Fetches"]}
+                rows={wt.byProject
+                  .filter(matches)
+                  .map((p) => [
+                    shortPath(p.projectPath, p.projectId),
+                    count(p.searches),
+                    count(p.fetches),
+                  ])}
+              />
+            </>
+          )}
+        </>
+      )}
 
-      <h2 className="section-h">Stop reasons · how API calls end</h2>
-      <FactsTable
-        head={["Reason", "Calls", "Sessions"]}
-        rows={data.stopReasons.map((r) => [r.reason, count(r.count), count(r.sessions)])}
-      />
-
-      <h2 className="section-h">Claude Code versions</h2>
-      <FactsTable
-        head={["Version", "Sessions", "First seen", "Last seen"]}
-        rows={data.versions
-          .slice(0, 15)
-          .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
-      />
-
-      <h2 className="section-h">Git branches · by sessions</h2>
-      <FactsTable
-        head={["Branch", "Sessions", "Session $"]}
-        rows={data.branches.slice(0, 15).map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
-      />
-      <p className="muted spark-cap">
-        Session $ is session-scoped: a session touching several branches counts its full cost toward
-        each — correlational, not causal.
-      </p>
+      {view === "environment" && (
+        <>
+          <h2 className="section-h">Permission modes · how turns run</h2>
+          <FactsTable
+            head={["Mode", "Turns", "Sessions", "Avg $/session"]}
+            rows={data.permissionModes
+              .filter(matches)
+              .map((m) => [m.mode, count(m.turns), count(m.sessions), usd(m.avgCostPerSession)])}
+          />
+          <p className="muted spark-cap">
+            Avg cost is session-scoped (a session using several modes counts toward each) —
+            correlational, not causal.
+          </p>
+          <h2 className="section-h">Stop reasons · how API calls end</h2>
+          <FactsTable
+            head={["Reason", "Calls", "Sessions"]}
+            rows={data.stopReasons
+              .filter(matches)
+              .map((r) => [r.reason, count(r.count), count(r.sessions)])}
+          />
+          <h2 className="section-h">Claude Code versions</h2>
+          <FactsTable
+            head={["Version", "Sessions", "First seen", "Last seen"]}
+            rows={data.versions
+              .filter(matches)
+              .slice(0, 15)
+              .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
+          />
+          <h2 className="section-h">Git branches · by sessions</h2>
+          <FactsTable
+            head={["Branch", "Sessions", "Session $"]}
+            rows={data.branches
+              .filter(matches)
+              .slice(0, 15)
+              .map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
+          />
+          <p className="muted spark-cap">
+            Session $ is session-scoped: a session touching several branches counts its full cost
+            toward each — correlational, not causal.
+          </p>
+        </>
+      )}
     </>
   );
 }

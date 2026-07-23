@@ -1,4 +1,5 @@
-import { memo, useState } from "react";
+import { memo } from "react";
+import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type ConcurrencySummary,
@@ -10,6 +11,7 @@ import {
   weekOf,
 } from "../api.ts";
 import { count, usd } from "../format.ts";
+import { useHashParam } from "../router.ts";
 import { Seg } from "../Seg.tsx";
 import {
   BurnPanel,
@@ -90,7 +92,12 @@ const Calendar = memo(function Calendar({
   const H = 7 * (cell + gap);
   return (
     <>
-      <svg className="calendar" viewBox={`0 0 ${W} ${H}`} role="img">
+      <svg
+        className="calendar"
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label={`Calendar heatmap of ${metric} over the last ${CAL_WEEKS} weeks`}
+      >
         <title>Daily activity calendar</title>
         {grid.weeks.map((col, wi) =>
           col.map((c, ri) => (
@@ -174,11 +181,12 @@ const Concurrency = memo(function Concurrency({ summary }: { summary: Concurrenc
 });
 
 export function Trends() {
-  const { data, error, loading } = useAsync(() => api.trends(), []);
-  const [heatMetric, setHeatMetric] = useState<HeatMetric>("sessions");
-  const [calMetric, setCalMetric] = useState<HeatMetric>("cost");
-  if (loading) return <div className="loading">Loading trends…</div>;
-  if (error) return <div className="loading err">Error: {error}</div>;
+  const { data, error, loading, retry } = useAsync(() => api.trends(), []);
+  const metrics = ["sessions", "cost"] as const;
+  const [heatMetric, setHeatMetric] = useHashParam<HeatMetric>("heat", "sessions", metrics);
+  const [calMetric, setCalMetric] = useHashParam<HeatMetric>("calendar", "cost", metrics);
+  if (loading) return <LoadingNotice>Loading trends…</LoadingNotice>;
+  if (error) return <ErrorNotice error={error} retry={retry} label="Couldn’t load trends." />;
   if (!data) return null;
 
   return (
@@ -187,6 +195,13 @@ export function Trends() {
         <h1>Trends</h1>
         <span className="muted">spend over time and when you work</span>
       </header>
+      <section className="trend-summary" aria-labelledby="trend-summary-heading">
+        <h2 id="trend-summary-heading">At a Glance</h2>
+        <p>
+          Start with burn for spend direction, activity for work patterns, and reliability for
+          operational friction. Every metric choice is saved in this URL.
+        </p>
+      </section>
 
       <section className="trend-panel">
         <BurnPanel daily={data.daily} />
@@ -196,7 +211,13 @@ export function Trends() {
         <div className="trend-head">
           <h2>Calendar</h2>
           <span className="seg-group">
-            metric <Seg options={["cost", "sessions"]} value={calMetric} onChange={setCalMetric} />
+            metric{" "}
+            <Seg
+              label="Calendar metric"
+              options={["cost", "sessions"]}
+              value={calMetric}
+              onChange={setCalMetric}
+            />
             <span className="muted"> · last {CAL_WEEKS} weeks</span>
           </span>
         </div>
@@ -216,7 +237,12 @@ export function Trends() {
           <h2>Activity heatmap</h2>
           <span className="seg-group">
             metric{" "}
-            <Seg options={["sessions", "cost"]} value={heatMetric} onChange={setHeatMetric} />
+            <Seg
+              label="Heatmap metric"
+              options={["sessions", "cost"]}
+              value={heatMetric}
+              onChange={setHeatMetric}
+            />
             <span className="muted"> · local time</span>
           </span>
         </div>
