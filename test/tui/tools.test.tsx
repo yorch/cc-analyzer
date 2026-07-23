@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { ToolsView } from "../../src/tui/screens/ToolsView.tsx";
+import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
 
 function insert(
@@ -13,18 +14,14 @@ function insert(
   skills: Record<string, number>,
   subagents: string[],
 ): void {
-  db.query(
-    `INSERT INTO sessions (path, project_id, tools_json, tool_errors_json, skills_json, skill_errors_json, subagents_json)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).run(
+  insertSession(db, {
     path,
-    "p",
-    JSON.stringify(tools),
-    JSON.stringify(errs),
-    JSON.stringify(skills),
-    JSON.stringify({}),
-    JSON.stringify(subagents),
-  );
+    tools_json: JSON.stringify(tools),
+    tool_errors_json: JSON.stringify(errs),
+    skills_json: JSON.stringify(skills),
+    skill_errors_json: JSON.stringify({}),
+    subagents_json: JSON.stringify(subagents),
+  });
 }
 
 let db: Database;

@@ -15,6 +15,9 @@ export interface ModelPricing {
   /** Cache-write with 1-hour TTL (Anthropic: ~2x input). */
   cacheWrite1hCostPerToken: number;
   cacheReadCostPerToken: number;
+  /** Context-window size (LiteLLM `max_input_tokens`), when known — the
+   * ceiling the context-fill charts draw as the limit line. */
+  maxInputTokens?: number;
 }
 
 export type PricingTable = Record<string, ModelPricing>;

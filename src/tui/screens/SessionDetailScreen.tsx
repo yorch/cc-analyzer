@@ -402,11 +402,15 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
     0,
   );
 
+  const limitLabel = ctx.contextLimit
+    ? ` (${Math.round((ctx.peakTokens / ctx.contextLimit) * 100)}% of ${formatCount(ctx.contextLimit)})`
+    : "";
+
   return (
     <Box flexDirection="column">
       <Text color={role.muted}>
-        context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>{" "}
-        · {compactions}
+        context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>
+        {limitLabel} · {compactions}
       </Text>
       {ctx.markers.length > 0 && <Text color={role.error}>{markers}</Text>}
       {chart.map((line, i) => (

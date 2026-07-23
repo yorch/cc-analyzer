@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { Text } from "ink";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
 import type { IndexedProject } from "../../core/queries.ts";
+import { projectPreviewStats } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { ProjectPreview } from "../components/previews.tsx";
 import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
@@ -32,6 +33,12 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
+  // Data acquisition stays at the screen boundary: the preview receives plain
+  // props. Memoized per highlighted project so re-renders don't re-query.
+  const previewStats = useMemo(
+    () => (highlighted ? projectPreviewStats(db, highlighted.projectId) : undefined),
+    [db, highlighted],
+  );
   // Master rows are a lean index (cost + name); full stats live in the preview.
   const nameW = Math.max(10, masterWidth(columns) - 15);
 
@@ -58,7 +65,7 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
           )}
         />
       }
-      detail={<ProjectPreview project={highlighted} db={db} />}
+      detail={<ProjectPreview project={highlighted} stats={previewStats} />}
     />
   );
 }

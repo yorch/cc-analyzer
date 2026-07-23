@@ -413,14 +413,14 @@ describe("compaction capture", () => {
 
   test("a summary alone (older Claude Code) records a timestamp-only compaction", () => {
     const a = analyze([assistantLine(1), summary(6), assistantLine(7)]);
-    expect(a.compactions).toEqual([{ timestamp: "2026-07-01T10:00:06.000Z" }]);
+    expect(a.compactions).toEqual([{ timestamp: "2026-07-01T10:00:06.000Z", uuid: "cs-6" }]);
   });
 
   test("an assistant line closes the boundary→summary pair", () => {
     // A later summary with no adjacent boundary is its own compaction.
     const a = analyze([boundary(5), summary(6), assistantLine(7), summary(9)]);
     expect(a.compactions).toHaveLength(2);
-    expect(a.compactions[1]).toEqual({ timestamp: "2026-07-01T10:00:09.000Z" });
+    expect(a.compactions[1]).toEqual({ timestamp: "2026-07-01T10:00:09.000Z", uuid: "cs-9" });
   });
 
   test("a subagent (sidechain) compaction is flagged and pairs on its own chain kind", () => {

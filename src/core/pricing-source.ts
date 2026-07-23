@@ -17,6 +17,7 @@ interface LiteLLMEntry {
   cache_creation_input_token_cost?: number;
   cache_creation_input_token_cost_above_1hr?: number;
   cache_read_input_token_cost?: number;
+  max_input_tokens?: number;
 }
 
 /** Map a raw LiteLLM model entry to our pricing shape, or null if unpriceable. */
@@ -24,12 +25,14 @@ export function mapLiteLLMEntry(entry: LiteLLMEntry): ModelPricing | null {
   const input = entry.input_cost_per_token;
   const output = entry.output_cost_per_token;
   if (typeof input !== "number" || typeof output !== "number") return null;
+  const maxInput = entry.max_input_tokens;
   return {
     inputCostPerToken: input,
     outputCostPerToken: output,
     cacheWrite5mCostPerToken: entry.cache_creation_input_token_cost ?? input * 1.25,
     cacheWrite1hCostPerToken: entry.cache_creation_input_token_cost_above_1hr ?? input * 2,
     cacheReadCostPerToken: entry.cache_read_input_token_cost ?? input * 0.1,
+    ...(Number.isFinite(maxInput) && (maxInput as number) > 0 ? { maxInputTokens: maxInput } : {}),
   };
 }
 

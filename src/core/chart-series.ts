@@ -62,6 +62,8 @@ export interface ContextPoint {
   cachedTokens: number;
   outputTokens: number;
   cost: number;
+  /** This call's model context-window size, when pricing knew it. */
+  limit?: number;
 }
 
 export interface ContextMarker {
@@ -77,6 +79,9 @@ export interface ContextSeries {
    * timestamp-less ones stay in `analysis.compactions` but are not placed. */
   markers: ContextMarker[];
   peakTokens: number;
+  /** Largest known context-window size across the charted models — the limit
+   * line. Undefined when pricing knew none of them. */
+  contextLimit?: number;
 }
 
 /**
@@ -87,6 +92,7 @@ export interface ContextSeries {
 export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
   const points: ContextPoint[] = [];
   let peakTokens = 0;
+  let contextLimit: number | undefined;
   for (const turn of analysis.turns) {
     for (const call of turn.apiCalls) {
       if (call.isSidechain) continue;
@@ -94,6 +100,7 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
       const contextTokens =
         t.inputTokens + t.cacheReadTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens;
       const ms = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
+      const limit = call.model ? analysis.models[call.model]?.contextLimit : undefined;
       points.push({
         ms: Number.isNaN(ms) ? undefined : ms,
         turnIndex: turn.index,
@@ -102,13 +109,15 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
         cachedTokens: t.cacheReadTokens,
         outputTokens: t.outputTokens,
         cost: call.cost.total,
+        ...(limit ? { limit } : {}),
       });
       if (contextTokens > peakTokens) peakTokens = contextTokens;
+      if (limit && (contextLimit === undefined || limit > contextLimit)) contextLimit = limit;
     }
   }
 
   const markers: ContextMarker[] = [];
-  if (points.length === 0) return { points, markers, peakTokens };
+  if (points.length === 0) return { points, markers, peakTokens, contextLimit };
   // Own, timestamped compactions only (see isOwnCompaction), sorted by time so
   // one cursor pass over the (stream-ordered) points places every marker.
   const timed = summarizeCompactions(analysis.compactions)
@@ -127,7 +136,7 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
     }
     markers.push({ pos: cursor, compaction });
   }
-  return { points, markers, peakTokens };
+  return { points, markers, peakTokens, contextLimit };
 }
 
 export interface BurnPoint {

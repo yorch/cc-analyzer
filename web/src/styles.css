@@ -543,11 +543,17 @@ th.num {
 .burn-line.side {
   stroke: var(--teal);
 }
-/* session charts: compaction marker + per-turn bars */
+/* session charts: compaction marker, context-limit line, per-turn bars */
 .ctx-marker {
   stroke: var(--red);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.ctx-limit {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
   vector-effect: non-scaling-stroke;
 }
 .turnbar {

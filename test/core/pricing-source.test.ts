@@ -73,3 +73,20 @@ describe("loadPricing", () => {
     }
   });
 });
+
+describe("mapLiteLLMEntry · context window", () => {
+  test("carries max_input_tokens through as maxInputTokens", () => {
+    const mapped = mapLiteLLMEntry({
+      input_cost_per_token: 0.00001,
+      output_cost_per_token: 0.00002,
+      max_input_tokens: 200_000,
+    });
+    expect(mapped?.maxInputTokens).toBe(200_000);
+  });
+
+  test("omits the field when missing or non-positive", () => {
+    const base = { input_cost_per_token: 0.00001, output_cost_per_token: 0.00002 };
+    expect(mapLiteLLMEntry(base)?.maxInputTokens).toBeUndefined();
+    expect(mapLiteLLMEntry({ ...base, max_input_tokens: 0 })?.maxInputTokens).toBeUndefined();
+  });
+});
