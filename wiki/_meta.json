@@ -1,10 +1,10 @@
 {
   "repo_url": "https://github.com/yorch/cc-analyzer",
-  "commit_sha": "4d7658d",
-  "indexed_at": "2026-07-13T00:06:00-05:00",
+  "commit_sha": "51ccd4e",
+  "indexed_at": "2026-07-23T11:41:15-04:00",
   "primary_language": "TypeScript",
   "framework": "Bun runtime; Ink (TUI), Hono (web API), React 19 + Vite (SPA), VitePress (docs site), Zod, Biome",
-  "version": "0.2.0",
+  "version": "0.6.0",
   "test_runner": "bun test",
   "subsystems": [
     { "slug": "core", "name": "Core Analysis Engine", "paths": ["src/core"], "has_tests": true },
@@ -12,6 +12,7 @@
     { "slug": "tui", "name": "Interactive Terminal UI", "paths": ["src/tui"], "has_tests": true },
     { "slug": "web-server", "name": "Web Server & API", "paths": ["src/web", "scripts"], "has_tests": true },
     { "slug": "web-spa", "name": "Web SPA Frontend", "paths": ["web/src"], "has_tests": false },
+    { "slug": "analytics", "name": "Analytics & Insights", "paths": ["src/core", "src/tui", "web/src"], "has_tests": true },
     { "slug": "updates", "name": "Updates & Distribution", "paths": ["src/core", "site/public"], "has_tests": true },
     { "slug": "docs-site", "name": "Docs Site", "paths": ["site"], "has_tests": false }
   ],
@@ -26,8 +27,9 @@
     { "slug": "4-tui", "type": "category" },
     { "slug": "5-web-server-and-api", "type": "category" },
     { "slug": "6-web-spa-frontend", "type": "category" },
-    { "slug": "7-updates-and-distribution", "type": "category" },
-    { "slug": "8-docs-site", "type": "category" },
+    { "slug": "7-analytics-and-insights", "type": "category" },
+    { "slug": "8-updates-and-distribution", "type": "category" },
+    { "slug": "9-docs-site", "type": "category" },
     { "slug": "README", "type": "overview" },
     { "slug": "glossary", "type": "glossary" }
   ]

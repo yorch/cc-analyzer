@@ -1,139 +1,140 @@
 # Core Analysis Engine
 
-> Indexed at commit `bf5a4c8` on 2026-07-12 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/bf5a4c8)
+> Indexed at commit `51ccd4e` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/51ccd4e)
 
 ## Relevant source files
 
-- [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts)
-- [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts)
-- [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts)
-- [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts)
-- [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts)
-- [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts)
-- [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts)
+- [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts)
+- [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts)
+- [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts)
+- [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts)
+- [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts)
+- [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts)
+- [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts)
 
 ## Overview
 
-The Core Analysis Engine is the domain layer of cc-analyzer. It reads Claude Code session transcripts from disk, parses them into typed events, and folds those events into per-turn and aggregate metrics. Every user-facing frontend — the command-line interface (CLI), the terminal user interface (TUI), and the local web server — is a thin presentation layer over the functions in `src/core/`, and none of them re-implement session semantics.
+The Core Analysis Engine is the shared library under `src/core/` that turns a Claude Code session's raw JSON Lines (JSONL) log into structured metrics. Every frontend — the scriptable Command-Line Interface (CLI), the terminal UI, and the web server — is a thin presentation layer over this engine; none of them re-implement parsing, turn segmentation, or metric aggregation. The engine reads from `~/.claude` but never writes to it, and all parsing is tolerant so newer Claude Code log formats never break analysis ([src/core/events.ts:L1-L8](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L1-L8)).
 
-The engine owns four responsibilities: filesystem discovery of projects and sessions ([src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts), [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts)), tolerant JSON Lines (JSONL) parsing into validated events ([src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts), [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts)), analysis of events into a `SessionAnalysis` metric tree ([src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts)), and two human-readable projections — a linear transcript ([src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts)) and a per-turn step timeline ([src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts)). The engine is strictly read-only with respect to `~/.claude`; all of cc-analyzer's own state lives under a separate config directory ([src/core/paths.ts#L4-L9](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L4-L9)).
-
-Sources: [src/core/analyze.ts:L180-L391](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L180-L391) [src/core/paths.ts:L1-L43](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L1-L43) [src/core/discover.ts:L1-L102](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L1-L102)
+The public surface is small: `parseSessionFile` / `streamSessionEvents` produce a typed `SessionEvent[]` stream from a `.jsonl` file ([src/core/parser.ts#L142](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L142)), `analyzeSession` / `analyzeSessionStream` fold those events into a `SessionAnalysis` ([src/core/analyze.ts#L834](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L834)), `buildTranscript` flattens the same events into a linear reading view ([src/core/transcript.ts#L54](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L54)), and `listProjects` / `listSessions` discover the files on disk ([src/core/discover.ts#L32-L79](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L32-L79)). `SessionAnalysis` is the central data structure the CLI and web renderers consume directly, and it is what `indexer.ts` flattens into a SQLite row.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Disk[(~/.claude/projects)] --> Discover[discover.ts]
+    Files[(.jsonl files)] --> Discover[discover.ts]
     Discover --> Parser[parser.ts]
+    Files --> Parser
     Parser --> Events[SessionEvent array]
     Events --> Analyze[analyzeSession]
     Events --> Transcript[buildTranscript]
     Analyze --> Analysis[SessionAnalysis]
-    Analysis --> Steps[TurnStep timeline]
+    Transcript --> Items[TranscriptItem array]
 
-    Parser -.validates with.-> Schemas[(events.ts schemas)]
-    Analyze -.summarizes with.-> StepsMod[steps.ts]
-    Analyze -.prices with.-> Pricing[(pricing.ts)]
-    Discover -.resolves via.-> Paths[(paths.ts)]
+    Parser -.schemas.-> Schemas[(events.ts)]
+    Analyze -.step summaries.-> Steps[(steps.ts)]
+    Analyze -.pricing.-> Pricing[(pricing.ts)]
+    Discover -.paths + env.-> Paths[(paths.ts)]
 ```
 
-The pipeline is a straight fold: [discover.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts) locates a `.jsonl` file, [parser.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts) turns its text into a `SessionEvent[]`, and that array feeds two independent consumers — `analyzeSession` for metrics and `buildTranscript` for a flat reading view. `analyzeSession` embeds each turn's `TurnStep[]` timeline directly, so the step projection is produced as a side effect of analysis rather than in a separate pass.
-
-Sources: [src/core/parser.ts:L22-L71](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts#L22-L71) [src/core/analyze.ts:L180-L354](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L180-L354) [src/core/transcript.ts:L55-L139](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L55-L139)
+The pipeline is strictly forward: [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) locates session files, [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts) decodes each line into a typed event validated against the schemas in [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts), and the event stream fans out to two consumers — `analyzeSession` for metrics and `buildTranscript` for a human-readable view. `analyze.ts` leans on [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) for per-operation summaries and on `pricing.ts` for cost. [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) supplies every filesystem location and the test-only environment overrides.
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| paths | [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts) | Resolve Claude and state directories, with env-var overrides |
-| discover | [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts) | Enumerate projects and session files on disk |
-| events | [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts) | Tolerant Zod schemas and TypeScript types for JSONL records |
-| parser | [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts) | Parse and validate JSONL text into `SessionEvent[]` |
-| analyze | [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts) | Fold events into `SessionAnalysis` (turns, totals, models, tools) |
-| transcript | [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts) | Flatten events into a linear `TranscriptItem[]` |
-| steps | [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts) | Summarize tool calls into a per-turn `TurnStep[]` timeline |
+| `analyze` | [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts) | Fold `SessionEvent[]` into a `SessionAnalysis` (turns + aggregates) |
+| `events` | [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts) | Tolerant Zod schemas, event types, `isRealPrompt` turn discriminator |
+| `parser` | [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts) | Parse JSONL text/files/streams into events, never throwing |
+| `transcript` | [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts) | Flatten events into a linear `TranscriptItem[]` reading view |
+| `steps` | [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) | Tool-aware one-line summaries and result hints for turn steps |
+| `discover` | [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) | Enumerate projects and session files under `~/.claude/projects` |
+| `paths` | [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) | Resolve data/state paths and honor env-var overrides |
 
-Sources: [src/core/paths.ts:L1-L43](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L1-L43) [src/core/discover.ts:L1-L102](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L1-L102) [src/core/events.ts:L1-L165](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts#L1-L165) [src/core/steps.ts:L1-L43](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts#L1-L43)
+Sources: [src/core/analyze.ts:L1-L28](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L1-L28) [src/core/events.ts:L156-L198](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L156-L198) [src/core/parser.ts:L71-L152](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L71-L152) [src/core/discover.ts:L1-L21](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L1-L21)
 
 ## Key Components
 
-### Discovery layer
+### Discovery and paths
 
-`discover.ts` maps the on-disk layout of `~/.claude/projects` to typed records. `listProjects` reads each subdirectory, counts its `.jsonl` files, and returns `ProjectInfo` records sorted by session count ([src/core/discover.ts#L32-L51](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L32-L51)). `listSessions` returns `SessionInfo` records for one project sorted by modification time, `listAllSessions` flattens every project, and `findSessionById` locates a single session by basename across all projects ([src/core/discover.ts#L54-L102](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L54-L102)). All directory reads swallow errors and return empty arrays, so a missing or unreadable `~/.claude` yields no projects rather than a crash.
+`discover.ts` walks `~/.claude/projects`, treating each subdirectory as a project and each `.jsonl` file as a session. `listProjects` returns one `ProjectInfo` per directory with a `sessionCount`, sorted by count ([src/core/discover.ts#L32-L51](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L32-L51)); `listSessions` returns `SessionInfo` records carrying `sizeBytes` and `mtimeMs`, sorted newest-first ([src/core/discover.ts#L54-L79](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L54-L79)). The `(size, mtime)` pair on each `SessionInfo` is exactly what the incremental indexer uses to skip unchanged files. Every filesystem read is wrapped so a missing or unreadable directory yields an empty list rather than an exception.
 
-Sources: [src/core/discover.ts:L32-L102](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L32-L102)
+A project's stable identity is its encoded directory name, exposed as `ProjectInfo.id` ([src/core/discover.ts#L5-L12](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L5-L12)). `decodeProjectLabel` produces a display label by replacing `-` with `/`, but the encoding collapses both `/` and `.` into `-` and is therefore not reversible ([src/core/paths.ts#L40-L43](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts#L40-L43)); the authoritative project path comes from a session's `cwd` field, not from decoding the id. `paths.ts` centralizes every location — `claudeDir`, `projectsDir`, `stateDir`, `indexDbPath`, `pricingCachePath`, and `updateCachePath` — and reads the `CC_ANALYZER_CLAUDE_DIR` and `CC_ANALYZER_STATE_DIR` overrides that the test suite relies on ([src/core/paths.ts#L12-L31](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts#L12-L31)).
 
-### Path resolution and env overrides
+Sources: [src/core/discover.ts:L1-L102](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L1-L102) [src/core/paths.ts:L1-L43](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts#L1-L43)
 
-`paths.ts` centralizes every filesystem location. `claudeDir` defaults to `~/.claude` but honors the `CC_ANALYZER_CLAUDE_DIR` environment variable, and `stateDir` resolves cc-analyzer's own writable directory from `CC_ANALYZER_STATE_DIR`, falling back to `XDG_CONFIG_HOME` and then `~/.config/cc-analyzer` ([src/core/paths.ts#L12-L27](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L12-L27)). Three helpers derive concrete state files from `stateDir`: `indexDbPath`, `pricingCachePath`, and `updateCachePath` for the update-check cache ([src/core/paths.ts#L29-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L29-L31)). `decodeProjectLabel` reconstructs a best-effort path label from an encoded directory name, but the encoding replaces both `/` and `.` with `-` and is therefore not reversible; the authoritative project path comes from the `cwd` field of a parsed session event instead ([src/core/paths.ts#L33-L43](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L33-L43)).
+### Parsing and events
 
-Sources: [src/core/paths.ts:L12-L43](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L12-L43)
+`parser.ts` decodes JSONL through a single per-line function, `parseLineOutcome`, shared by all three entry points so their behavior can never drift ([src/core/parser.ts#L30-L69](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L30-L69)). The parser never throws: a line that is not valid JSON becomes a recorded `ParseError` and is skipped, and a known event type whose Zod schema fails validation is still surfaced as a tolerant "unknown" event so downstream counts stay consistent ([src/core/parser.ts#L44-L59](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L44-L59)). `streamSessionEvents` yields events lazily off a byte stream that reassembles lines spanning chunks, so multi-hundred-megabyte sessions never materialize as one string ([src/core/parser.ts#L93-L139](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L93-L139)).
 
-### Tolerant parsing and event schemas
+`events.ts` defines the schemas and TypeScript types for every record kind — `assistant`, `user`, `system`, `ai-title`, and more — keyed in a `schemaByType` registry ([src/core/events.ts#L156-L166](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L156-L166)). Every object schema is a `looseObject`, preserving unknown or future fields instead of stripping them ([src/core/events.ts#L10-L27](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L10-L27)). Deep coverage of the schema layer lives in its own detail page.
 
-`parseSessionText` splits a file on newlines and processes one JSON object per line. A line that is not valid JSON is recorded in `errors` and skipped; a line whose declared `type` matches a known schema but fails validation is also logged, then kept as a tolerant "unknown" event so downstream counts stay consistent ([src/core/parser.ts#L22-L64](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts#L22-L64)). The schema registry in `events.ts` keys Zod schemas by their `type` discriminator and marks every object `loose`, so unknown or future fields are preserved rather than stripped — a deliberate choice so that new Claude Code versions never break parsing ([src/core/events.ts#L3-L8](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts#L3-L8) [src/core/events.ts#L147-L157](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts#L147-L157)). Full coverage of the schema catalog lives in the child page below.
+Sources: [src/core/parser.ts:L21-L69](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L21-L69) [src/core/events.ts:L1-L166](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L1-L166)
 
-Sources: [src/core/parser.ts:L15-L71](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts#L15-L71) [src/core/events.ts:L1-L27](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts#L1-L27) [src/core/events.ts:L147-L165](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/events.ts#L147-L165)
+### Turn segmentation and `isRealPrompt`
 
-### analyzeSession — the central orchestrator
+A *turn* is one genuine user prompt plus every assistant API call and tool loop until the next genuine prompt. The discriminator is `isRealPrompt` in [src/core/events.ts#L191-L198](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L191-L198): a user event opens a turn only when it is not a sidechain, not `isMeta`, not an `isCompactSummary` record, and carries something other than `tool_result` blocks. Because both `analyze.ts` and `transcript.ts` import this same function, turn boundaries cannot diverge between the metrics view and the reading view — the rule changes in exactly one place ([src/core/analyze.ts#L529](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L529), [src/core/transcript.ts#L78](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L78)).
 
-`analyzeSession(events, pricing)` is the heart of the engine. It first builds a `Map` from every `tool_use_id` to its result via `collectToolResults`, then walks the event stream once, accumulating aggregate sets for git branches, versions, models, tools, skills, subagents, and touched files ([src/core/analyze.ts#L181-L210](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L181-L210)). Session metadata such as `sessionId`, `projectPath` (from `cwd`), and the AI-generated `title` are captured from whichever event carries them first ([src/core/analyze.ts#L212-L226](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L212-L226)).
+Turn depth is tracked as the number of main-chain API calls in the open turn, finalized into a `turnDepths` array at each boundary; this series survives even the aggregate-only mode where the full `turns` array is never built ([src/core/analyze.ts#L362-L366](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L362-L366), [src/core/analyze.ts#L529-L557](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L529-L557)).
 
-Each genuine user prompt opens a new `Turn` appended to `turns`, and every subsequent assistant event is attributed to that current turn ([src/core/analyze.ts#L228-L349](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L228-L349)). For each assistant event the function extracts token counts via `usageToTokens`, resolves the model against the pricing table, computes cost, and marks the cost `estimated` when the model matched only by family heuristic rather than an exact identifier ([src/core/analyze.ts#L245-L256](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L245-L256)). It walks the assistant content blocks to emit `TurnStep` entries for narration, thinking, and each `tool_use`, and simultaneously tallies tool counts, detected skills, spawned subagents, and edited file paths ([src/core/analyze.ts#L258-L321](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L258-L321)). Timestamps are folded through `touchTime`, which maintains both session-wide and per-turn start and end bounds, and a final pass rolls turn tokens and cost into `SessionTotals` ([src/core/analyze.ts#L202-L210](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L202-L210) [src/core/analyze.ts#L356-L390](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L356-L390)).
+Sources: [src/core/events.ts:L176-L198](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L176-L198) [src/core/analyze.ts:L529-L560](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L529-L560) [src/core/transcript.ts:L63-L110](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L63-L110)
 
-Sources: [src/core/analyze.ts:L146-L390](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L146-L390)
+### `SessionAnalyzer` and the streaming API
 
-### The "turn" concept and isRealPrompt
+The heart of the engine is the `SessionAnalyzer` class, a streaming accumulator that both public functions wrap ([src/core/analyze.ts#L316-L397](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L316-L397)). `analyzeSession` builds an analyzer, pushes an in-memory `SessionEvent[]` through it, and calls `finish` ([src/core/analyze.ts#L834-L838](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L834-L838)); `analyzeSessionStream` does the same over an `AsyncIterable`, avoiding a full event array — the memory win for the indexer over large sessions ([src/core/analyze.ts#L847-L855](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L847-L855)). `AnalyzeOptions.detail` toggles the per-turn timeline: with `detail: false` only aggregate fields are computed, but `promptChars` and `turnDepths` still carry the turn-derived aggregates the indexer needs ([src/core/analyze.ts#L156-L163](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L156-L163)).
 
-A turn is the engine's central domain concept: one genuine user prompt plus every assistant Application Programming Interface (API) call and tool loop that follows it, up to the next genuine prompt. The discriminator is `isRealPrompt`, which rejects any user event where `isMeta` is `true` and requires the message to carry at least one content block that is not a `tool_result` ([src/core/analyze.ts#L120-L132](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L120-L132)). This excludes system-injected messages such as caveats, command output, and reminders, and it excludes the `tool_result` carriers that Claude Code emits as user-role events during a tool loop — those are continuations of the current turn, not new turns. The comment notes that `promptId` cannot serve as the discriminator because tool-result carriers also carry it ([src/core/analyze.ts#L124-L128](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L124-L128)).
+`SessionAnalysis` is the output record: per-turn `turns`, aggregate `totals`, and dozens of rollups — `models`, `tools`, `toolErrors`, `skills`, `subagents`, `filesTouched`, `stopReasons`, `permissionModes`, `bashCommands`, `commandHeads`, `testRuns`, `retries`, and `compactions` ([src/core/analyze.ts#L106-L154](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L106-L154)). A single forward pass resolves tool errors: each `tool_use` registers a `PendingTool`, and the later-arriving `tool_result` patches its status and attributes any error, so no second pass over the events is needed ([src/core/analyze.ts#L289-L301](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L289-L301), [src/core/analyze.ts#L436-L460](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L436-L460)).
 
-This same `isRealPrompt` logic is duplicated in [src/core/transcript.ts#L44-L49](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L44-L49), where `buildTranscript` uses it to advance `turnIndex`. The two copies are byte-for-byte identical, so turn numbering stays consistent between the analysis metrics and the linear transcript; any change to turn semantics must be applied in both files.
+Sources: [src/core/analyze.ts:L106-L163](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L106-L163) [src/core/analyze.ts:L316-L397](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L316-L397) [src/core/analyze.ts:L834-L855](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L834-L855)
 
-Sources: [src/core/analyze.ts:L120-L132](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L120-L132) [src/core/transcript.ts:L44-L49](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L44-L49)
+### Streamed-response de-duplication and compaction
 
-### Transcript and step projections
+A single API response is logged as one `assistant` line per content block, each repeating the same `message.id` and `requestId` and the full `usage`. `SessionAnalyzer` keys each call by that id via `usageKey`, treats any repeat as a continuation, and counts `usage` exactly once while still merging the continuation's steps into the originating `ApiCall` ([src/core/analyze.ts#L386-L392](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L386-L392), [src/core/analyze.ts#L579-L707](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L579-L707)). This is what keeps token and cost totals from being inflated by the streaming block count. A call's `stop_reason` is counted once regardless of which line first carries it ([src/core/analyze.ts#L426-L433](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L426-L433)).
 
-`buildTranscript` flattens events into an ordered `TranscriptItem[]` for reading views in the TUI and web server. It emits a `prompt` item for each genuine prompt, `tool_result` items for the carrier events, and `text`, `thinking`, and `tool_use` items for assistant content, tagging every item with its `turnIndex` ([src/core/transcript.ts#L55-L138](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L55-L138)). `steps.ts` supplies the vocabulary for the per-turn timeline: `summarizeToolUse` maps a tool name and input to a `StepKind`, display `label`, and one-line `summary` for each supported tool, while `makeResultHint` derives a short status such as `"3 lines"` or an error's first line ([src/core/steps.ts#L92-L182](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts#L92-L182)). `analyzeSession` calls these helpers to build the `TurnStep[]` embedded in each `ApiCall`.
+The engine also reconstructs context compactions. A newer `system`/`compact_boundary` event carries a trigger and pre-compaction token count, while older Claude Code versions leave only the synthetic `isCompactSummary` prompt ([src/core/analyze.ts#L66-L87](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L66-L87)). `SessionAnalyzer` pairs a boundary with its immediately following summary — per chain kind, since subagents compact too — so one compaction is never recorded twice, and it flags records as `isSidechain` or `inherited` from a parent session ([src/core/analyze.ts#L482-L513](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L482-L513), [src/core/analyze.ts#L570-L577](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L570-L577)). Cost itself is derived by `pricing.ts` from token counts, with a non-exact model match flagging the cost as `estimated` ([src/core/analyze.ts#L716-L719](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L716-L719)); the pricing model has its own detail page.
 
-Sources: [src/core/transcript.ts:L55-L139](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/transcript.ts#L55-L139) [src/core/steps.ts:L92-L182](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/steps.ts#L92-L182)
+Sources: [src/core/analyze.ts:L66-L104](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L66-L104) [src/core/analyze.ts:L386-L433](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L386-L433) [src/core/analyze.ts:L482-L513](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L482-L513) [src/core/analyze.ts:L570-L719](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L570-L719)
+
+### Transcript and step summaries
+
+`buildTranscript` produces the linear reading view: it walks the same events and emits `TranscriptItem` records for prompts, assistant text, thinking blocks, tool uses, and tool results, tagging post-compaction summaries as a `system` role rather than a prompt ([src/core/transcript.ts#L54-L110](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L54-L110)). Turn numbering advances only on `isRealPrompt`, keeping it aligned with the analyzer ([src/core/transcript.ts#L78-L88](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L78-L88)).
+
+`steps.ts` supplies the per-operation summaries that populate a turn's timeline. `summarizeToolUse` maps a tool name and input to a `StepKind`, a display label, and a one-line summary — a `Bash` call surfaces its `description` or `command`, a `Read` its `file_path`, a `Grep` its `pattern` ([src/core/steps.ts#L86-L169](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts#L86-L169)). `makeResultHint` derives a short status like `"3 lines"` or an error's first line from the result text ([src/core/steps.ts#L171-L182](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts#L171-L182)), and `capDetail` bounds long inputs and results for inline expansion ([src/core/steps.ts#L45-L57](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts#L45-L57)). The full step model has its own detail page.
+
+Sources: [src/core/transcript.ts:L1-L150](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts#L1-L150) [src/core/steps.ts:L1-L182](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts#L1-L182)
 
 ## Data Flow
 
 ```mermaid
 sequenceDiagram
     participant Caller
-    participant discover as discover.ts
-    participant parser as parser.ts
-    participant analyze as analyzeSession
-    participant steps as steps.ts
+    participant discover.ts
+    participant parser.ts
+    participant SessionAnalyzer
+    participant pricing.ts
 
-    Caller->>discover: findSessionById(id)
-    discover-->>Caller: SessionInfo (path)
-    Caller->>parser: parseSessionFile(path)
-    parser-->>Caller: SessionEvent[] + errors
-    Caller->>analyze: analyzeSession(events, pricing)
-    analyze->>analyze: collectToolResults + fold turns
-    analyze->>steps: summarizeToolUse / makeResultHint
-    steps-->>analyze: TurnStep entries
-    analyze-->>Caller: SessionAnalysis
+    Caller->>discover.ts: listSessions(projectId)
+    discover.ts-->>Caller: SessionInfo[] (path, size, mtime)
+    Caller->>parser.ts: streamSessionEvents(path)
+    parser.ts-->>SessionAnalyzer: SessionEvent (per line)
+    SessionAnalyzer->>pricing.ts: computeCost(tokens, model)
+    pricing.ts-->>SessionAnalyzer: CostBreakdown
+    SessionAnalyzer-->>Caller: SessionAnalysis (finish)
 ```
 
-A caller resolves a session path through discovery, parses the file into events with tolerant validation, then hands the events plus a pricing table to `analyzeSession`. Analysis makes a single pass, delegating per-tool summarization to `steps.ts`, and returns the complete `SessionAnalysis` tree that frontends render.
+For one session, a caller discovers the file, streams its events line by line, and pushes each event into a `SessionAnalyzer` that prices token usage as it goes and returns a `SessionAnalysis` when the stream ends. The same event stream can be handed to `buildTranscript` instead of, or alongside, the analyzer.
 
-Sources: [src/core/discover.ts:L92-L102](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/discover.ts#L92-L102) [src/core/parser.ts:L67-L71](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/parser.ts#L67-L71) [src/core/analyze.ts:L180-L354](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/analyze.ts#L180-L354)
+Sources: [src/core/discover.ts:L54-L79](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L54-L79) [src/core/parser.ts:L129-L152](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L129-L152) [src/core/analyze.ts:L710-L765](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L710-L765)
 
 ## Configuration & Extension Points
 
 | Setting | Type | Default | Purpose |
 | ------- | ---- | ------- | ------- |
-| `CC_ANALYZER_CLAUDE_DIR` | env var | `~/.claude` | Override the Claude Code data directory that discovery reads |
-| `CC_ANALYZER_STATE_DIR` | env var | `$XDG_CONFIG_HOME/cc-analyzer` or `~/.config/cc-analyzer` | Override cc-analyzer's writable state directory |
-| `XDG_CONFIG_HOME` | env var | `~/.config` | Base for the default state directory when `CC_ANALYZER_STATE_DIR` is unset |
+| `CC_ANALYZER_CLAUDE_DIR` | env var | `~/.claude` | Override the Claude Code data directory (tests) |
+| `CC_ANALYZER_STATE_DIR` | env var | `$XDG_CONFIG_HOME/cc-analyzer` or `~/.config/cc-analyzer` | Override cc-analyzer's own state directory |
+| `AnalyzeOptions.detail` | `boolean` | `true` | Build the per-turn timeline, or compute aggregates only |
 
-These variables make the engine hermetic under test: pointing `CC_ANALYZER_CLAUDE_DIR` at a fixture tree and `CC_ANALYZER_STATE_DIR` at a scratch path isolates a run from the developer's real home directory ([src/core/paths.ts#L12-L27](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L12-L27)).
-
-Sources: [src/core/paths.ts:L11-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/core/paths.ts#L11-L31)
+Sources: [src/core/paths.ts:L12-L31](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts#L12-L31) [src/core/analyze.ts:L156-L163](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L156-L163)
 
 ## Related Pages
 
@@ -141,6 +142,7 @@ Sources: [src/core/paths.ts:L11-L31](https://github.com/yorch/cc-analyzer/blob/b
 - Detail: [Cost and Pricing](./2.2-cost-and-pricing.md)
 - Detail: [Index and Analytics](./2.3-index-and-analytics.md)
 - Detail: [Per-Turn Steps](./2.4-per-turn-steps.md)
+- Sibling: [Analytics and Insights](./7-analytics-and-insights.md)
 - Sibling: [CLI](./3-cli.md)
 - Sibling: [TUI](./4-tui.md)
 - Sibling: [Web Server and API](./5-web-server-and-api.md)

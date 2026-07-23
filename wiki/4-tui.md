@@ -1,170 +1,190 @@
 # Interactive Terminal UI
 
-> Indexed at commit `4d7658d` on 2026-07-13 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/4d7658d)
+> Indexed at commit `51ccd4e` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/51ccd4e)
 
 ## Relevant source files
 
-- [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx)
-- [src/tui/App.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx)
-- [src/tui/shell/AppShell.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx)
-- [src/tui/shell/MasterDetail.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx)
-- [src/tui/theme.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts)
-- [src/tui/scroll.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/scroll.ts)
-- [src/tui/useTermSize.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useTermSize.ts)
-- [src/tui/usePageSize.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/usePageSize.ts)
-- [src/tui/useSort.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useSort.ts)
-- [src/tui/components/FilterableList.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx)
-- [src/tui/components/ui.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/ui.tsx)
-- [src/tui/components/PortfolioLede.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/PortfolioLede.tsx)
-- [src/tui/components/previews.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx)
-- [src/tui/screens/ProjectsView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/ProjectsView.tsx)
-- [src/tui/screens/SessionListView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionListView.tsx)
-- [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx)
-- [src/tui/screens/SessionDetailScreen.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx)
+- [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx)
+- [src/tui/App.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx)
+- [src/tui/shell/AppShell.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx)
+- [src/tui/shell/MasterDetail.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx)
+- [src/tui/theme.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts)
+- [src/tui/keys.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/keys.ts)
+- [src/tui/scroll.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/scroll.ts)
+- [src/tui/charts.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts)
+- [src/tui/useTermSize.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts)
+- [src/tui/usePageSize.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/usePageSize.ts)
+- [src/tui/useSort.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useSort.ts)
+- [src/tui/components/FilterableList.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx)
+- [src/tui/components/ui.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/ui.tsx)
+- [src/tui/components/PortfolioLede.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/PortfolioLede.tsx)
+- [src/tui/components/previews.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx)
+- [src/tui/screens/ProjectsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ProjectsView.tsx)
+- [src/tui/screens/SessionListView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionListView.tsx)
+- [src/tui/screens/SessionDetailScreen.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx)
+- [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx)
+- [src/tui/screens/TrendsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/TrendsView.tsx)
+- [src/tui/screens/ToolsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx)
 
 ## Overview
 
-The interactive Terminal User Interface (TUI) is an Ink (React-for-terminal) application that browses the indexed portfolio of Claude Code sessions inside a persistent, amber-phosphor master-detail shell. It launches when the Command-Line Interface (CLI) runs with no arguments, via `runTui` in [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx), which opens the SQLite index with `openDb`, loads a pricing table with `loadPricing`, and renders the `App` component through Ink's `render` ([src/tui/run.tsx#L15-L19](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx#L15-L19)). It requires a real terminal: when either standard-input or standard-output is not a TeleTYpewriter (TTY), `runTui` prints a message pointing at the non-interactive commands and returns without rendering ([src/tui/run.tsx#L8-L14](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx#L8-L14)).
+The interactive terminal user interface (TUI) is the default frontend of `cc-analyzer`: running the command with no arguments launches it via `runTui()` in [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx). It is built with Ink (React rendered to the terminal) and reads exclusively from the SQLite index, opening the database and loading the pricing table before mounting the root `App` component ([src/tui/run.tsx#L15-L20](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx#L15-L20)). Because it needs raw terminal input and cursor control, it refuses to start unless both stdin and stdout are a teletypewriter (TTY), printing a hint to use the scriptable `stats`, `sessions`, or `analyze` commands instead ([src/tui/run.tsx#L8-L14](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx#L8-L14)).
 
-The UI reads almost entirely from the SQLite index rather than parsing session files on the fly, so `cc-analyzer index` must run first. The `App` root pulls projects, sessions, and portfolio statistics from `../core/queries.ts` and `../core/stats.ts` ([src/tui/App.tsx#L41-L44](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L41-L44)); when the index holds no projects it renders an empty-state prompt telling the user to run the indexer and relaunch ([src/tui/App.tsx#L76-L86](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L76-L86)). The rail exposes five views — `portfolio`, `projects`, `sessions`, `insights`, and `trends` — of which only `trends` remains a placeholder marked `soon` ([src/tui/App.tsx#L30-L38](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L30-L38)). The session detail screen is the one place that parses a raw session file to build a full transcript on demand.
+Visually the TUI is an amber-phosphor master-detail application: a persistent chrome of title bar, nav rail, and key bar wraps a body that switches between six views — `portfolio`, `projects`, `sessions`, `insights`, `trends`, and `tools` ([src/tui/App.tsx#L40-L49](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L40-L49)). Most views follow the same pattern: a scrollable, filterable master list drives a live detail preview, and drilling into a row either descends a level or opens a full-screen session detail. The design system, keybindings, scroll math, and terminal-native chart primitives are factored into small shared modules so every screen behaves identically.
+
+Sources: [src/tui/run.tsx:L1-L21](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx#L1-L21) [src/tui/App.tsx:L40-L49](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L40-L49)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    App[App root] --> Shell[AppShell chrome]
-    Shell --> Rail[NavRail]
-    Shell --> Body[body slot]
-    Body --> Projects[ProjectsView]
-    Body --> Sessions[SessionListView]
-    Body --> Insights[InsightsView]
-    App --> Detail[SessionDetailScreen]
+    runTui[runTui] --> App
+    App --> AppShell
+    AppShell -.chrome.-> NavRail[NavRail]
+    App --> ProjectsView
+    App --> SessionListView
+    App --> InsightsView
+    App --> TrendsView
+    App --> ToolsView
+    App --> SessionDetailScreen
 
-    Projects --> MD[MasterDetail]
-    Sessions --> MD
-    Insights --> MD
-    MD --> List[FilterableList]
-    MD --> Preview[previews]
+    ProjectsView --> MasterDetail
+    SessionListView --> MasterDetail
+    InsightsView --> MasterDetail
+    MasterDetail --> FilterableList
+    MasterDetail --> previews[previews]
 
-    Insights -.opens by id.-> Detail
-    List -.uses.-> Sort[useSort]
-    List -.uses.-> Scroll[scroll.ts]
-    App -.uses.-> Term[useTermSize]
-    List -.uses.-> Page[usePageSize]
+    FilterableList -.uses.-> scroll[(scroll)]
+    ProjectsView -.uses.-> useSort[(useSort)]
+    TrendsView -.uses.-> charts[(charts)]
+    SessionDetailScreen -.uses.-> charts
+    App -.uses.-> useTermSize[(useTermSize)]
 ```
 
-The `App` root owns view and focus state, wraps everything in the `AppShell` chrome, and swaps the body between `ProjectsView`, `SessionListView`, and `InsightsView`. Each of those list screens composes `MasterDetail`, which pairs a `FilterableList` master with a preview detail pane. Opening a session escapes the shell entirely and mounts the full-screen `SessionDetailScreen` ([src/tui/App.tsx#L96-L109](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L96-L109)); `InsightsView` reaches that same screen by resolving a session id ([src/tui/App.tsx#L122-L125](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L122-L125)). The hooks (`useSort`, `useTermSize`, `usePageSize`) and `scroll.ts` are cross-cutting utilities the screens share.
+`App` is the single stateful router: it holds the current `view`, whether focus is on the `rail` or the `body`, the drilled-in project, and the open session, then selects one screen component to render inside `AppShell` ([src/tui/App.tsx#L61-L66](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L61-L66), [src/tui/App.tsx#L164-L219](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L164-L219)). List-based views compose `MasterDetail` around a `FilterableList` and a preview component, while the analytics views (`trends`, `tools`) render their own chart layouts. Shared hooks (`useTermSize`, `useSort`) and utility modules (`scroll`, `charts`, `theme`, `keys`) are consumed across screens so layout and behavior stay consistent.
 
-Sources: [src/tui/App.tsx:L40-L212](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L40-L212) [src/tui/shell/AppShell.tsx:L42-L69](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L42-L69) [src/tui/shell/MasterDetail.tsx:L29-L60](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx#L29-L60)
+Sources: [src/tui/App.tsx:L51-L247](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L51-L247) [src/tui/shell/AppShell.tsx:L42-L69](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx#L42-L69) [src/tui/shell/MasterDetail.tsx:L29-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L29-L60)
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| `runTui` | [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx) | TTY gate, database and pricing setup, Ink render entry point |
-| `App` | [src/tui/App.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx) | Root: view/focus/drill state, keybindings, body routing |
-| `AppShell` | [src/tui/shell/AppShell.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx) | Persistent chrome: title bar, nav rail, lede slot, key bar |
-| `MasterDetail` | [src/tui/shell/MasterDetail.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx) | Two-pane master-detail body with responsive collapse |
-| `theme` | [src/tui/theme.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts) | Amber-phosphor palette, semantic roles, selection style, verdict colors, sparklines |
-| `ProjectsView` | [src/tui/screens/ProjectsView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/ProjectsView.tsx) | Projects master list + live project preview |
-| `SessionListView` | [src/tui/screens/SessionListView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionListView.tsx) | Sessions master list + live session preview |
-| `InsightsView` | [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx) | Cache-efficiency hit-list: projects/sessions ranked by wasted cache-write $ |
-| `SessionDetailScreen` | [src/tui/screens/SessionDetailScreen.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx) | Full-screen session view: turns, transcript, summary |
-| `FilterableList` | [src/tui/components/FilterableList.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx) | Reusable scrolling list with inline substring filter |
-| hooks/utils | [src/tui/useSort.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useSort.ts), [src/tui/scroll.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/scroll.ts) | Column sorting, scroll-window math, responsive sizing |
+| `runTui` | [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/run.tsx) | TTY guard, open the index, render `App`, return the exit code |
+| `App` | [src/tui/App.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx) | Root router: view/focus/drill state and rail keybindings |
+| `AppShell` | [src/tui/shell/AppShell.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx) | Persistent chrome: title bar, nav rail, key bar, pinned height |
+| `MasterDetail` | [src/tui/shell/MasterDetail.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx) | Two-pane layout that collapses to one pane on narrow terminals |
+| `theme` | [src/tui/theme.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts) | Amber-phosphor palette, semantic roles, selection styling, spark/bar helpers |
+| `keys` | [src/tui/keys.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/keys.ts) | `keyIndex` guard for number-key handling |
+| `scroll` | [src/tui/scroll.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/scroll.ts) | Shared window/cursor scroll math |
+| `charts` | [src/tui/charts.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts) | Braille/ASCII chart, sparkline, calendar and heatmap grids |
+| `useTermSize` | [src/tui/useTermSize.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts) | Live terminal size + responsive `layoutMode` |
+| `useSort` | [src/tui/useSort.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useSort.ts) | Client-side list sort state |
+| `FilterableList` | [src/tui/components/FilterableList.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx) | Scrolling list with inline substring filter and live highlight |
+| Screens | [src/tui/screens/ProjectsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ProjectsView.tsx) | One component per view plus the session detail screen |
 
-Sources: [src/tui/App.tsx:L1-L38](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L1-L38) [src/tui/run.tsx:L1-L20](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/run.tsx#L1-L20)
+Sources: [src/tui/App.tsx:L1-L49](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L1-L49) [src/tui/theme.ts:L1-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts#L1-L45)
 
 ## Key Components
 
-### App root and navigation model
+### App shell and the nav rail
 
-`App` holds the whole navigation state: the active `view` (one of `portfolio`, `projects`, `sessions`, `insights`, `trends`), whether input `focus` is on the `rail` or the `body`, the drilled-into `drill` project and its `drillSessions`, the `openSession`, and the `help` flag ([src/tui/App.tsx#L47-L52](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L47-L52)). The `useInput` handler only acts when focus is on the rail: arrows move between views with `moveView`, digits `1`-`5` jump directly to a view, and Enter, right-arrow, Escape, or left-arrow hand focus to the body ([src/tui/App.tsx#L60-L74](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L60-L74)). When the body has focus, the active list owns input, so the handler defers to it ([src/tui/App.tsx#L63](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L63)).
+`AppShell` renders the persistent frame: a `TitleBar` showing the version and breadcrumb, an optional `lede` band, the `NavRail`, the active body, and a `KeyBar` of context hints ([src/tui/shell/AppShell.tsx#L42-L69](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx#L42-L69)). The whole shell is pinned to `rows - 2` with `overflow="hidden"`, and the body flex-grows and clips, so the header and key bar always stay on screen rather than scrolling off the top of the terminal ([src/tui/shell/AppShell.tsx#L32-L55](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx#L32-L55)). The `NavRail` lists the six views by icon and label, marking the active entry with an inverse amber background and a `❯` cursor when the rail itself is focused ([src/tui/shell/AppShell.tsx#L82-L118](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx#L82-L118)).
 
-Body routing is a switch over `view`. The `portfolio` and `projects` views render `ProjectsView`, `sessions` renders `SessionListView`, and `insights` renders `InsightsView` wired to `openSessionById` so it can jump straight into a session's detail ([src/tui/App.tsx#L158-L191](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L158-L191)). Only `trends` still falls through to the `Placeholder` component, which prints a "Coming in a later phase" note; the rail entry for `trends` carries the `soon: true` flag that dims it ([src/tui/App.tsx#L37](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L37), [src/tui/App.tsx#L192-L221](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L192-L221)).
+Sources: [src/tui/shell/AppShell.tsx:L42-L129](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/AppShell.tsx#L42-L129)
 
-Drilling is a two-level model. From the projects list, `openProject` records the drill target and loads its sessions with `listIndexedSessions` ([src/tui/App.tsx#L113-L117](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L113-L117)); `popDrill` clears it. Opening any session sets `openSession`, which short-circuits the render to the full-screen detail screen; `openSessionById` resolves an id through `indexedSessionById` before doing the same ([src/tui/App.tsx#L96-L125](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L96-L125)).
+### MasterDetail two-pane pattern
 
-Sources: [src/tui/App.tsx:L30-L221](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L30-L221)
+`MasterDetail` is the layout primitive behind the list views: a fixed-width master pane on the left, separated by a right border, and a flex-grown detail pane on the right ([src/tui/shell/MasterDetail.tsx#L39-L59](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L39-L59)). On a narrow terminal it collapses to the master pane alone, matching the pre-shell single-column behavior ([src/tui/shell/MasterDetail.tsx#L36-L38](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L36-L38)). The exported `masterWidth()` computes the master column width (40% of columns by default, floored at 22), so callers can truncate row content to fit rather than letting Ink wrap it ([src/tui/shell/MasterDetail.tsx#L20-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L20-L22)).
 
-### AppShell chrome
+Sources: [src/tui/shell/MasterDetail.tsx:L16-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L16-L60)
 
-`AppShell` is the persistent frame: a `TitleBar` showing `◆ cc-analyzer` with the version and a right-aligned breadcrumb, an optional `lede` band, the nav rail beside the body, and a `KeyBar` of context hints ([src/tui/shell/AppShell.tsx#L54-L68](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L54-L68)). The whole shell is pinned to `rows - 2` with `overflow="hidden"`, and the body between the lede and key bar flex-grows and clips overflow, so the title and key bar stay on screen and the frame never grows taller than the viewport ([src/tui/shell/AppShell.tsx#L32-L55](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L32-L55)). The `NavRail` renders each entry's icon and label, painting the active view with an inverse amber bar and a `❯` marker when the rail is focused, and dimming any entry flagged `soon` ([src/tui/shell/AppShell.tsx#L82-L118](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L82-L118)). The `KeyBar` always appends `? help · ctrl-c quit` ([src/tui/shell/AppShell.tsx#L121-L128](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L121-L128)).
+### FilterableList
 
-Sources: [src/tui/shell/AppShell.tsx:L1-L129](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/AppShell.tsx#L1-L129)
+`FilterableList` is the interactive list core reused by the projects, sessions, and insights screens. Printable keys build a substring query, arrows move the cursor, Enter selects, backspace edits the query, and Escape clears the query or calls `onBack` when it is already empty; vim `j`/`k` are deliberately not bound so those letters can be typed into the filter ([src/tui/components/FilterableList.tsx#L28-L119](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx#L28-L119)). Tab and shift-Tab cycle and reverse the sort through the optional `onCycleSort`/`onReverseSort` callbacks, and each cursor move fires `onHighlight` so the parent can render a live detail preview ([src/tui/components/FilterableList.tsx#L65-L104](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx#L65-L104)). It clamps its stored cursor and window offset against the (possibly shrunk) filtered length via `clampWindow`, preventing a stale offset from slicing past the end when a drill-down reuses the component ([src/tui/components/FilterableList.tsx#L55-L63](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx#L55-L63)).
 
-### MasterDetail pane pattern
+Sources: [src/tui/components/FilterableList.tsx:L34-L156](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/FilterableList.tsx#L34-L156) [src/tui/scroll.ts:L1-L28](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/scroll.ts#L1-L28)
 
-`MasterDetail` is the two-pane body used by all three list screens: a fixed-width master pane on the left drives a flex-growing detail pane on the right ([src/tui/shell/MasterDetail.tsx#L39-L59](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx#L39-L59)). The `masterWidth` helper computes the master pane's column width — 40% of terminal columns by default, floored at 22 — so list rows can truncate their content to fit rather than wrap ([src/tui/shell/MasterDetail.tsx#L16-L22](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx#L16-L22)). On narrow terminals the detail pane is dropped and only the master renders, matching the pre-shell single-column stack ([src/tui/shell/MasterDetail.tsx#L36-L38](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx#L36-L38)).
+### Theme and design system
 
-Sources: [src/tui/shell/MasterDetail.tsx:L1-L60](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/shell/MasterDetail.tsx#L1-L60)
+`theme.ts` is the single source of the amber-phosphor look: a `palette` of hex colors and an intent-named `role` map so screens reference `role.cost` or `role.heading` rather than raw hex ([src/tui/theme.ts#L20-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts#L20-L45)). There is no painted full-screen background; the phosphor identity comes from amber foregrounds, borders, and an inverse selection bar produced by `selection()` and `gutter()` ([src/tui/theme.ts#L52-L64](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts#L52-L64)). The module also exports the `sparkline()` and `bar()` block-glyph helpers and per-kind icon/color maps for transcript kinds, step kinds, and cache verdicts ([src/tui/theme.ts#L66-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts#L66-L130)).
 
-### FilterableList and previews
+Sources: [src/tui/theme.ts:L1-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/theme.ts#L1-L130)
 
-`FilterableList` is the reusable master widget. Printable keys build an inline substring `query`, arrows move the `cursor`, Enter selects, backspace edits the query, and Escape clears the query or calls `onBack` when it is already empty ([src/tui/components/FilterableList.tsx#L69-L108](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L69-L108)). Vim `j`/`k` are deliberately not bound so those letters can be typed into the filter ([src/tui/components/FilterableList.tsx#L28-L33](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L28-L33)). As the cursor or filter moves, the list fires `onHighlight` with the current item so the parent can update the live detail preview ([src/tui/components/FilterableList.tsx#L57-L62](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L57-L62)). The header shows the filter query, a `filtered/total` count, and the current sort label ([src/tui/components/FilterableList.tsx#L111-L129](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L111-L129)).
+### Charts
 
-The `previews` module renders the detail pane. `ProjectPreview` shows a selected project's spend, session count, tokens, cache share, and last-active time ([src/tui/components/previews.tsx#L29-L60](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx#L29-L60)), and `SessionPreview` shows a session's cost, tokens, turns, call and tool counts, and timestamps ([src/tui/components/previews.tsx#L62-L111](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx#L62-L111)). `CachePreview` is the insights detail pane, covered below. The shared `ui.tsx` supplies `Footer`, `Loading`, `Empty`, `ScrollRange`, and the modal `HelpOverlay` cheatsheet that lists every keybinding and closes on any key ([src/tui/components/ui.tsx#L79-L105](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/ui.tsx#L79-L105)).
+`charts.ts` holds pure ASCII/braille chart primitives, kept free of Ink and the database so series-in/strings-out functions are trivially testable ([src/tui/charts.ts#L1-L4](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L1-L4)). `brailleChart()` packs 2×4 dots per cell to plot a filled area chart at `2·width × 4·height` resolution, bucketing by max-per-column so spikes survive downsampling ([src/tui/charts.ts#L29-L72](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L29-L72)), and `markerRow()` renders a `▼` row aligned to the same column bucketing to mark events like compactions ([src/tui/charts.ts#L74-L94](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L74-L94)). It also provides a block-eighths `sparkline()`, a GitHub-style `calendarGrid()`, and a weekday-by-hour `heatGrid()`, all built on a shared `RAMP` shade ramp; the series-bucketing logic itself is re-exported from bun-free core so the TUI and web SPA can't total a week differently ([src/tui/charts.ts#L96-L174](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L96-L174), [src/tui/charts.ts#L9-L19](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L9-L19)).
 
-Sources: [src/tui/components/FilterableList.tsx:L1-L145](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L1-L145) [src/tui/components/previews.tsx:L1-L162](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx#L1-L162) [src/tui/components/ui.tsx:L1-L105](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/ui.tsx#L1-L105)
+Sources: [src/tui/charts.ts:L1-L174](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L1-L174)
 
-### List screens and PortfolioLede
+### Hooks: terminal size, page size, sort
 
-`ProjectsView` and `SessionListView` are thin adapters that wrap a `FilterableList` master and a preview detail inside `MasterDetail`. Each defines its own `SORT_FIELDS` — projects sort by recent, cost, tokens, sessions, or name ([src/tui/screens/ProjectsView.tsx#L11-L17](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/ProjectsView.tsx#L11-L17)); sessions by recent, cost, tokens, or title ([src/tui/screens/SessionListView.tsx#L11-L16](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionListView.tsx#L11-L16)) — and pipe the sorted rows into the list while tracking the highlighted item for the preview ([src/tui/screens/ProjectsView.tsx#L29-L61](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/ProjectsView.tsx#L29-L61)). `SessionListView` is generic and shared by both the all-sessions rail view and a project's drilled-in list, with a `showProject` flag adding the owning project to the searchable filter text ([src/tui/screens/SessionListView.tsx#L31-L63](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionListView.tsx#L31-L63)). `PortfolioLede` is the full-width band under the title bar on the portfolio view: total spend, tokens, session and project counts, date range, estimated share, and a per-month spend sparkline ([src/tui/components/PortfolioLede.tsx#L8-L40](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/PortfolioLede.tsx#L8-L40)).
+`useTermSize()` tracks live terminal dimensions, subscribing to the stdout `resize` event and falling back to 80×24 when unknown ([src/tui/useTermSize.ts#L10-L27](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts#L10-L27)). The companion `layoutMode()` derives a responsive breakpoint — `full` (≥100 cols) shows the nav rail with labels and two panes, `compact` (90–99) shows an icon strip, and `narrow` (<90) hides the rail and drops to a single pane ([src/tui/useTermSize.ts#L37-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts#L37-L41)). `usePageSize()` returns the row budget for a scrollable list given the chrome's reserved lines ([src/tui/usePageSize.ts#L9-L13](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/usePageSize.ts#L9-L13)), and `useSort()` holds client-side sort state, cycling fields on Tab and flipping direction on shift-Tab, defaulting to descending ([src/tui/useSort.ts#L30-L42](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useSort.ts#L30-L42)).
 
-Sources: [src/tui/screens/ProjectsView.tsx:L1-L62](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/ProjectsView.tsx#L1-L62) [src/tui/screens/SessionListView.tsx:L1-L78](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionListView.tsx#L1-L78) [src/tui/components/PortfolioLede.tsx:L1-L40](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/PortfolioLede.tsx#L1-L40)
+Sources: [src/tui/useTermSize.ts:L1-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts#L1-L41) [src/tui/usePageSize.ts:L1-L13](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/usePageSize.ts#L1-L13) [src/tui/useSort.ts:L1-L42](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useSort.ts#L1-L42)
 
-### InsightsView cache hit-list
+## Views
 
-`InsightsView` is a self-contained cache-efficiency hit-list that ranks where spend is being wasted on cache writes that never amortize. It pulls three memoized selectors from `../../core/stats.ts` — `cacheSummary` for the portfolio totals, `cacheWasteByProject` for the project ranking, and `cacheWasteBySession` for a drilled-in project's sessions ([src/tui/screens/InsightsView.tsx#L49-L56](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L49-L56)). A one-line header sits above every level, reading `cache: $X written · $Y un-amortized · Z% of spend`, where the percentage is the wasted cache-write cost over total cost ([src/tui/screens/InsightsView.tsx#L59-L67](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L59-L67)).
+### Portfolio and projects
 
-The view is a two-level drill, like the session detail screen, so `App` only routes to it. The top level lists projects sorted by wasted cache-write dollars (falling back to read:write ratio, write cost, or name), and selecting one sets `drilled` and re-renders the same list at session granularity ([src/tui/screens/InsightsView.tsx#L20-L31](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L20-L31), [src/tui/screens/InsightsView.tsx#L103-L120](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L103-L120)). At the session level, Enter calls `onOpenSession` with the session id, which `App` resolves into the full detail screen; Escape from the session level clears `drilled`, and Escape from the project level calls `onBack` to refocus the rail ([src/tui/screens/InsightsView.tsx#L69-L90](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L69-L90)). When the index holds no cache activity, the project list is replaced with a "No cache activity" note ([src/tui/screens/InsightsView.tsx#L92-L101](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L92-L101)).
+The `portfolio` view shows the projects list with the `PortfolioLede` band mounted in the shell's `lede` slot: a large total spend figure, a months-spend sparkline, and time/percentile/streak vitals computed from `portfolioSummary`, `spendByMonth`, and related core stats ([src/tui/App.tsx#L143-L147](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L143-L147), [src/tui/components/PortfolioLede.tsx#L15-L61](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/PortfolioLede.tsx#L15-L61)). Both `portfolio` and `projects` render `ProjectsView`, a lean cost-and-name master list sortable by recency, cost, tokens, sessions, or name, driving a `ProjectPreview` detail pane ([src/tui/screens/ProjectsView.tsx#L12-L63](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ProjectsView.tsx#L12-L63)). `ProjectPreview` runs cheap per-highlight index queries for a weekly burn sparkline, a session-cost distribution ramp, and a turn-depth ramp, all memoized on the selected project id ([src/tui/components/previews.tsx#L42-L133](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx#L42-L133)). Pressing Enter drills into that project's sessions via `openProject`, which loads the session list and updates the breadcrumb ([src/tui/App.tsx#L129-L133](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L129-L133)).
 
-Both drill levels share the internal `CacheHitList`, a generic over `CacheMetrics` that composes a sorted `FilterableList` master with a `CachePreview` detail pane inside `MasterDetail` ([src/tui/screens/InsightsView.tsx#L124-L188](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L124-L188)). Each row prints the waste dollars, the read:write ratio, a colored verdict dot, and a truncated label; the dot's color comes from `VERDICT_COLOR[cacheVerdict(r.ratio)]`, mapping the ratio to `efficient`, `ok`, or `leaky` ([src/tui/screens/InsightsView.tsx#L169-L176](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L169-L176)). `CachePreview` renders the highlighted row's verdict badge (`● efficient/ok/leaky` plus the ratio), its un-amortized waste, and a cost composition breaking cache-write, cache-read, input, and output into dollars and percentage of the row's total ([src/tui/components/previews.tsx#L113-L162](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx#L113-L162)).
+Sources: [src/tui/screens/ProjectsView.tsx:L1-L64](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ProjectsView.tsx#L1-L64) [src/tui/components/PortfolioLede.tsx:L1-L62](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/PortfolioLede.tsx#L1-L62) [src/tui/components/previews.tsx:L42-L133](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx#L42-L133)
 
-Sources: [src/tui/screens/InsightsView.tsx:L1-L188](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/InsightsView.tsx#L1-L188) [src/tui/components/previews.tsx:L113-L162](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/previews.tsx#L113-L162) [src/tui/theme.ts:L117-L122](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts#L117-L122)
+### Sessions
 
-### SessionDetailScreen
+`SessionListView` renders both the all-sessions rail view and a single project's drilled-in list, sharing one component parameterized by a `showProject` flag ([src/tui/screens/SessionListView.tsx#L29-L47](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionListView.tsx#L29-L47)). Rows show cost, an estimated-cost `~` marker, relative modified time, and a truncated title, sortable by recency, cost, tokens, or title ([src/tui/screens/SessionListView.tsx#L11-L16](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionListView.tsx#L11-L16), [src/tui/screens/SessionListView.tsx#L64-L72](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionListView.tsx#L64-L72)). The `SessionPreview` detail pane surfaces project, cost, tokens, cache share, turn/call/tool counts, and timestamps ([src/tui/components/previews.tsx#L135-L184](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx#L135-L184)). Selecting a row calls `setOpenSession`, which swaps the whole body for the full-screen session detail ([src/tui/App.tsx#L112-L125](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L112-L125)).
 
-Opening a session mounts `SessionDetailScreen` full-screen. It parses the raw session file with `parseSessionFile`, runs `analyzeSession`, and builds a transcript with `buildTranscript` in an effect, showing a `Loading` line until the data arrives ([src/tui/screens/SessionDetailScreen.tsx#L44-L71](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L44-L71)). It has three modes — `turns`, `transcript`, `summary` — switched with `t`/`s`/`u` or digits `1`-`3`, with Escape returning to `turns` from the other modes ([src/tui/screens/SessionDetailScreen.tsx#L59-L69](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L59-L69)). The `TurnsPane` is itself a master-detail: a turns list drives a steps detail, toggling between the `turns` and `steps` panes with right/left arrows, Tab, or Enter, mirroring the shell's rail-body model ([src/tui/screens/SessionDetailScreen.tsx#L144-L277](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L144-L277)). Individual steps expand in place via `StepRow`, showing per-step input and result detail with a chevron and status marks ([src/tui/screens/SessionDetailScreen.tsx#L279-L324](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L279-L324)).
+Sources: [src/tui/screens/SessionListView.tsx:L1-L78](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionListView.tsx#L1-L78) [src/tui/components/previews.tsx:L135-L184](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx#L135-L184)
 
-Sources: [src/tui/screens/SessionDetailScreen.tsx:L40-L324](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L40-L324)
+### Session detail
 
-### Theme, sizing, sorting, and scrolling
+`SessionDetailScreen` opens a session in its own full-height frame, parsing and analyzing the `.jsonl` file on mount and exposing four modes — `turns`, `charts`, `transcript`, and `summary` — switched by number keys `1`–`4` or the letters `u`/`c`/`t`/`s` ([src/tui/screens/SessionDetailScreen.tsx#L47-L104](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx#L47-L104)). The `turns` mode is itself a two-pane master-detail: a turns list drives a per-turn steps pane, with a `turns↔steps` focus toggle mirroring the shell's rail↔body model, and each step row expands inline to show capped input/result detail ([src/tui/screens/SessionDetailScreen.tsx#L156-L336](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx#L156-L336)). The `charts` mode draws a braille context-window sawtooth annotated with `▼` compaction markers plus cost-per-call and cost-per-turn sparklines, sharing its series with the web charts through `chart-series.ts` ([src/tui/screens/SessionDetailScreen.tsx#L366-L446](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx#L366-L446)). The `transcript` mode is a scrollable, expandable list of transcript items, and `summary` is a flat table of cost breakdown, tokens, tools, skills, subagents, and compactions ([src/tui/screens/SessionDetailScreen.tsx#L448-L562](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx#L448-L562)).
 
-`theme.ts` is the single source of the amber-phosphor design system: a `palette` of hex colors, intent-named `role` aliases (`heading`, `cost`, `body`, `muted`), a `selection` style that paints selected rows amber-inverse, and helpers for sparklines and bars ([src/tui/theme.ts#L20-L85](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts#L20-L85)). It also exposes `VERDICT_COLOR`, mapping the cache-efficiency verdict to green/amber/red, and maps step and transcript kinds to icons and colors ([src/tui/theme.ts#L87-L131](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts#L87-L131)). `useTermSize` tracks live terminal dimensions, updating on resize and falling back to 80×24 ([src/tui/useTermSize.ts#L10-L27](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useTermSize.ts#L10-L27)), and its `layoutMode` classifies width into `full`, `compact`, or `narrow` to drive the responsive rail and pane collapse ([src/tui/useTermSize.ts#L29-L41](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useTermSize.ts#L29-L41)). `usePageSize` derives how many list rows fit from terminal height minus reserved chrome ([src/tui/usePageSize.ts#L9-L13](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/usePageSize.ts#L9-L13)). `useSort` cycles sort fields on Tab and flips direction on Shift-Tab, defaulting to descending ([src/tui/useSort.ts#L30-L42](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useSort.ts#L30-L42)). `scrollOffset` keeps the cursor inside the visible window so every scrollable pane scrolls identically ([src/tui/scroll.ts#L7-L11](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/scroll.ts#L7-L11)).
+Sources: [src/tui/screens/SessionDetailScreen.tsx:L47-L562](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/SessionDetailScreen.tsx#L47-L562)
 
-Sources: [src/tui/theme.ts:L20-L131](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/theme.ts#L20-L131) [src/tui/useTermSize.ts:L10-L41](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useTermSize.ts#L10-L41) [src/tui/usePageSize.ts:L9-L13](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/usePageSize.ts#L9-L13) [src/tui/useSort.ts:L30-L42](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/useSort.ts#L30-L42) [src/tui/scroll.ts:L7-L11](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/scroll.ts#L7-L11)
+### Insights, trends, and tools
 
-## Input Handling & Keybindings
+The three analytics views present index-wide aggregates; their underlying data series are documented on the [Analytics and Insights](./7-analytics-and-insights.md) page, so the boundary is cited here rather than covered in depth. `InsightsView` is a cache-efficiency hit-list: projects ranked by un-amortized cache-write dollars, with a summary header and a two-level drill into a project's sessions, each row colored by cache verdict and backed by a `CachePreview` detail pane ([src/tui/screens/InsightsView.tsx#L44-L190](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx#L44-L190), [src/tui/components/previews.tsx#L186-L211](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/previews.tsx#L186-L211)). `TrendsView` is a three-panel dashboard — a braille burn chart, a weekday-by-hour heatmap, and a GitHub-style calendar — switched by Tab or `1`/`2`/`3`, with `m` cycling the metric and `g` cycling burn granularity ([src/tui/screens/TrendsView.tsx#L36-L99](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/TrendsView.tsx#L36-L99)). `ToolsView` ranks tool, skill, and subagent usage in switchable panels, the skills panel adding invocation/reach/reliability/cost columns and an adoption sparkline strip for the selected skill ([src/tui/screens/ToolsView.tsx#L52-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L52-L235)).
 
-Input is layered by focus. The `App` root only reacts to keys while the rail is focused; otherwise the active body view's own `useInput` owns the keyboard, and the root handler stays inert except for the global `?` help toggle ([src/tui/App.tsx#L60-L74](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L60-L74)). Escape from a list refocuses the rail, and from the rail, Enter or the right arrow pushes focus back into the body, so navigation and browsing never fight over the same keys. The key hints shown in the `KeyBar` change with context — rail focus, a drilled-in list, the `trends` placeholder, or a normal list all print different guidance ([src/tui/App.tsx#L137-L144](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L137-L144)). The full cheatsheet lives in the modal `HelpOverlay`, grouped into Global, Navigation, Lists, and Session detail sections ([src/tui/components/ui.tsx#L43-L77](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/ui.tsx#L43-L77)).
+Sources: [src/tui/screens/InsightsView.tsx:L44-L190](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx#L44-L190) [src/tui/screens/TrendsView.tsx:L36-L238](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/TrendsView.tsx#L36-L238) [src/tui/screens/ToolsView.tsx:L52-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L52-L235)
 
-Within lists, `FilterableList` interprets printable keys as filter input rather than navigation, which is why the arrows (not `j`/`k`) move the cursor and Tab/Shift-Tab drive sorting ([src/tui/components/FilterableList.tsx#L69-L108](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L69-L108)). The session detail screen inverts this: it binds `j`/`k` alongside the arrows and adds `g`/`G` jumps and Enter/Space expansion, since it has no free-text filter ([src/tui/screens/SessionDetailScreen.tsx#L186-L208](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L186-L208)).
+## Navigation and Keybindings
 
-| Key | Context | Action |
-| --- | ------- | ------ |
-| `?` | anywhere | Toggle the help overlay |
-| `ctrl-c` | anywhere | Quit |
-| `↑` / `↓` | rail focused | Switch view |
-| `1`-`5` | rail focused | Jump directly to a view |
-| `↵` / `→` | rail focused | Focus the list body |
-| `esc` | list | Clear the filter, or refocus the rail when empty |
-| type | list | Build the substring filter query |
-| `tab` / `shift-tab` | list | Cycle sort field / flip direction |
-| `↑` / `↓` | list | Move cursor and update the live preview |
-| `↵` | list | Open or drill into the highlighted row |
-| `1`-`3` / `t` `s` `u` | session detail | Switch turns / transcript / summary mode |
-| `→` / `tab` | session detail turns | Focus the steps pane |
-| `←` / `shift-tab` / `esc` | session detail steps | Return to the turns pane |
-| `↑` / `↓` / `j` / `k` | session detail | Move the cursor |
-| `g` / `G` | session detail | Jump to top / bottom |
-| `↵` / space | session detail | Expand or collapse the selected row |
+```mermaid
+stateDiagram-v2
+    [*] --> Body
+    Body --> Rail: esc
+    Rail --> Body: enter / right / 1-6
+    Rail --> Rail: up / down switch view
+    Body --> Drill: enter on project
+    Drill --> Body: esc
+    Body --> Session: enter on session
+    Session --> Body: esc
+    Body --> Help: ?
+    Help --> Body: any key
+```
 
-Sources: [src/tui/App.tsx:L60-L144](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/App.tsx#L60-L144) [src/tui/components/FilterableList.tsx:L69-L108](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/FilterableList.tsx#L69-L108) [src/tui/components/ui.tsx:L43-L105](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/components/ui.tsx#L43-L105) [src/tui/screens/SessionDetailScreen.tsx:L59-L208](https://github.com/yorch/cc-analyzer/blob/4d7658d/src/tui/screens/SessionDetailScreen.tsx#L59-L208)
+`App` owns the top-level focus model: when focus is on the `rail`, the arrow keys switch views, Enter or the right arrow focuses the body, and `1`–`6` jump directly to a view ([src/tui/App.tsx#L74-L90](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L74-L90)). When focus is on the `body`, the active view owns input, so `App` deliberately returns early rather than intercepting keys ([src/tui/App.tsx#L76-L77](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L76-L77)). Escape from a list focuses the rail; drilling into a project or opening a session pushes a deeper state that Escape pops. The `?` key is handled at the top and stays active even while a session is open, so help is always reachable ([src/tui/App.tsx#L74-L90](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L74-L90)).
+
+Number-key handling routes through `keyIndex()`, which guards an Ink footgun: non-character keys arrive as `input === ""`, and `"123".indexOf("")` returns `0`, so a naive check would make every arrow register as the first number key — `keyIndex` returns `-1` for empty input instead ([src/tui/keys.ts#L1-L10](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/keys.ts#L1-L10)). The `HelpOverlay` in [src/tui/components/ui.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/ui.tsx) is a modal cheatsheet listing every binding by section — Global, Navigation, Lists, Trends, Tools, and Session detail — and closes on any key ([src/tui/components/ui.tsx#L43-L123](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/ui.tsx#L43-L123)). Context-specific hints for the current view are assembled in `App` and rendered in the shell's key bar ([src/tui/App.tsx#L153-L162](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L153-L162)).
+
+Sources: [src/tui/App.tsx:L61-L162](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L61-L162) [src/tui/keys.ts:L1-L10](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/keys.ts#L1-L10) [src/tui/components/ui.tsx:L43-L123](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/ui.tsx#L43-L123)
+
+## Layout Sizing
+
+The TUI never relies on the terminal to scroll; every scrollable pane is sized to fit the viewport. `App` computes `listPageSize` as the terminal height minus the fixed chrome and the list's own header and scroll indicator, so the master list renders exactly as many rows as fit ([src/tui/App.tsx#L143-L147](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/App.tsx#L143-L147)). Panes share `scrollOffset()`, which keeps the cursor inside `[offset, offset + size)` and only moves the window when the cursor reaches an edge, so lists, turns, steps, and the transcript all scroll identically ([src/tui/scroll.ts#L1-L11](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/scroll.ts#L1-L11)). The `ScrollRange` component prints an `X–Y / N` indicator, hidden when everything already fits ([src/tui/components/ui.tsx#L25-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/components/ui.tsx#L25-L41)).
+
+| Setting | Type | Default | Purpose |
+| ------- | ---- | ------- | ------- |
+| `layoutMode` | `"full" \| "compact" \| "narrow"` | width-derived | Rail-with-labels / icon-strip / single-pane breakpoints |
+| `masterWidth` | `number` | 40% of columns, min 22 | Master pane column width for row truncation |
+| `usePageSize` reserved | `number` | caller-supplied | Chrome lines subtracted from terminal height for a list |
+
+Sources: [src/tui/scroll.ts:L1-L28](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/scroll.ts#L1-L28) [src/tui/useTermSize.ts:L29-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/useTermSize.ts#L29-L41) [src/tui/shell/MasterDetail.tsx:L16-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/shell/MasterDetail.tsx#L16-L22)
 
 ## Related Pages
 
-- [Core Analysis Engine](./2-core-analysis-engine.md)
-- [Command-Line Interface](./3-cli.md)
-- [Web Server and API](./5-web-server-and-api.md)
-- [Web SPA Frontend](./6-web-spa-frontend.md)
+- Core analysis engine: [Core Analysis Engine](./2-core-analysis-engine.md)
+- Command-line interface: [CLI](./3-cli.md)
+- Analytics data and series: [Analytics and Insights](./7-analytics-and-insights.md)
+- Web frontend: [Web SPA Frontend](./6-web-spa-frontend.md)

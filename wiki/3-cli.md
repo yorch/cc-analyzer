@@ -1,158 +1,130 @@
 # Command-Line Interface
 
-> Indexed at commit `bf5a4c8` on 2026-07-12 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/bf5a4c8)
+> Indexed at commit `51ccd4e` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/51ccd4e)
 
 ## Relevant source files
 
-- [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts)
-- [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts)
-- [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts)
+- [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts)
+- [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts)
+- [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts)
 
 ## Overview
 
-The Command-Line Interface (CLI) is the primary entry point for `cc-analyzer`. It is a thin dispatch layer that parses `process.argv`, routes to a command handler, and delegates all data work to the core analysis engine under `src/core`. The binary is declared with a `#!/usr/bin/env bun` shebang and executes `process.exit(await main())` at module load, so importing the module runs the program ([src/cli/index.ts#L1](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L1), [src/cli/index.ts#L245](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L245)).
+The Command-Line Interface (CLI) is the scriptable frontend of `cc-analyzer` and the entrypoint of the compiled binary. [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) reads `process.argv`, routes the first token to a command handler, and returns a process exit code — the file ends by calling `process.exit(await main())` at [src/cli/index.ts#L279](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L279). Every handler is a thin wrapper over `src/core`: the CLI parses arguments, invokes a core function, and hands the result to a renderer. It performs no analysis, pricing, or indexing itself.
 
-The CLI covers session discovery (`projects`, `sessions`), single-session analysis (`analyze`), index maintenance (`index`), portfolio analytics (`stats`), the local web app (`serve`), pricing refresh (`pricing update`), self-update (`update`, `version`), and — when invoked with no command — launches the interactive Terminal User Interface (TUI). Presentation is split across two modules: [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts) provides low-level formatting primitives (aligned tables, human-readable byte/count/time strings), and [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts) composes those primitives into full text reports. Every command that emits structured data supports a `--json` flag that prints the raw core objects for scripting ([src/cli/index.ts#L99-L100](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L99-L100), [src/cli/index.ts#L147](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L147)).
+The subsystem has three modules. [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) holds the argument router and one `cmd*` function per command. [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts) supplies primitive formatters — currency, counts, byte sizes, durations, relative time — plus a `table` layout helper. [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) composes those primitives into full text reports for a single session (`renderSessionSummary`) and for portfolio analytics (`renderStats`). Passing `--json` on the commands that support it bypasses the renderers entirely and prints the raw core objects for downstream scripting.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    Argv[process.argv] --> Main[main]
-    Main --> Run[runCommand]
-    Run -->|projects| P[cmdProjects]
-    Run -->|sessions| S[cmdSessions]
-    Run -->|analyze| A[cmdAnalyze]
-    Run -->|index| I[cmdIndex]
-    Run -->|stats| St[cmdStats]
-    Run -->|serve| Se[dynamic import web/server]
-    Run -->|pricing update| Pr[cmdPricingUpdate]
-    Run -->|update| U[cmdUpdate]
-    Run -->|no command| T[dynamic import tui/run]
-    Main -->|NOTIFY_COMMANDS| N[maybeNotifyUpdate]
+flowchart LR
+    argv[process.argv] --> main
+    main --> runCommand
+    runCommand -->|projects| cmdProjects
+    runCommand -->|sessions| cmdSessions
+    runCommand -->|analyze| cmdAnalyze
+    runCommand -->|index| cmdIndex
+    runCommand -->|stats| cmdStats
+    runCommand -->|serve| runServe[runServe dynamic import]
+    runCommand -->|pricing update| cmdPricingUpdate
+    runCommand -->|update| cmdUpdate
+    runCommand -->|no command| runTui[runTui dynamic import]
+    main -.NOTIFY_COMMANDS.-> maybeNotifyUpdate
 
-    P -.-> Fmt[format.ts]
-    S -.-> Fmt
-    A -.-> Rnd[render.ts]
-    St -.-> Rnd
-    Rnd -.-> Fmt
+    cmdProjects & cmdSessions & cmdAnalyze & cmdIndex & cmdStats & cmdPricingUpdate & cmdUpdate --> core[src/core]
+    cmdAnalyze --> render[render.ts]
+    cmdStats --> render
+    render --> format[format.ts]
 ```
 
-`main()` reads `argv`, calls `runCommand()` to dispatch, then — for a fixed set of quick commands — issues a passive update notice before returning the exit code ([src/cli/index.ts#L234-L243](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L234-L243)). Command handlers pull data from the core engine and pass it to the render/format layer; `serve` and the no-command TUI are loaded through dynamic `import()` so their heavier dependencies stay out of the fast-path startup.
-
-Sources: [src/cli/index.ts:L184-L243](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L184-L243)
+`main` splits `process.argv` into a command and the remaining arguments, then delegates to `runCommand`, whose `switch` maps each command string to a handler at [src/cli/index.ts#L209-L266](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L266). Handlers call into `src/core`; only `analyze` and `stats` route their human-readable output through the renderers, which in turn depend on `format.ts`. The `serve` and no-command (TUI) branches use dynamic `import()` so the heavier web and Ink dependencies load only when actually invoked.
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| `index` | [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts) | Binary entry point, argv parsing, command routing, per-command handlers |
-| `format` | [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts) | Formatting primitives: aligned `table`, `formatUSD`, `formatCount`, `formatBytes`, `formatDuration`, `formatRelativeTime`, `truncate` |
-| `render` | [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts) | Report composition: `renderSessionSummary`, `renderStats` |
+| `index` | [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) | Binary entrypoint, argv router, and one handler per command |
+| `format` | [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts) | Primitive text formatters and the aligned `table` helper |
+| `render` | [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) | Composes session and portfolio text reports from core data |
 
-Sources: [src/cli/index.ts:L1-L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L1-L20) [src/cli/format.ts:L1-L61](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L1-L61) [src/cli/render.ts:L1-L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L1-L20)
-
-## Command Routing
-
-`runCommand()` is the central dispatcher. It derives a `json` boolean from `--json` presence and a `positional` array by filtering out any argument starting with `--`, then switches on the command string ([src/cli/index.ts#L184-L187](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L184-L187)). Unknown commands print the help text and return exit code `2`; `help`, `--help`, and `-h` print help and return `0` ([src/cli/index.ts#L222-L231](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L222-L231)). The `HELP` constant documents every command and embeds the current `VERSION` ([src/cli/index.ts#L22-L40](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L22-L40)).
-
-Exit codes carry meaning across handlers: `0` on success, `1` for empty results or a failed remote operation, and `2` for usage errors such as a missing argument ([src/cli/index.ts#L59-L67](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L59-L67), [src/cli/index.ts#L206-L209](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L206-L209)).
-
-Sources: [src/cli/index.ts:L184-L232](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L184-L232)
+Sources: [src/cli/index.ts:L1-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L1-L41) [src/cli/format.ts:L1-L11](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L1-L11) [src/cli/render.ts:L1-L20](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L1-L20)
 
 ## Key Components
 
+### Argument router
+
+`main` destructures `process.argv` into `command` and `rest`, calls `runCommand`, and returns its exit code at [src/cli/index.ts#L268-L277](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L268-L277). `runCommand` derives two shared values before switching: `json` is true when `rest` contains `--json`, and `positional` filters out any argument starting with `--` so handlers can read positional operands cleanly ([src/cli/index.ts#L209-L212](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L212)). Exit codes are meaningful: `0` for success, `1` for a runtime failure such as a missing session or empty index, and `2` for a usage error such as a missing argument or bad flag.
+
+The `switch` recognizes `version`/`--version`/`-v` (prints `VERSION`), `help`/`--help`/`-h` (prints the `HELP` banner), an `undefined` command that launches the Terminal User Interface (TUI), and a `default` case that reports the unknown command, prints help, and returns exit code `2` ([src/cli/index.ts#L247-L265](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L247-L265)). The `HELP` string embeds the running `VERSION` and documents every command with its flags ([src/cli/index.ts#L22-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L22-L41)).
+
+Sources: [src/cli/index.ts:L209-L279](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L279) [src/cli/index.ts:L22-L41](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L22-L41)
+
 ### Discovery commands: `projects` and `sessions`
 
-`cmdProjects()` calls `listProjects()` from the core discovery module and renders a two-column table of session count and truncated project label, followed by a total count; an empty result prints a friendly message and returns `0` ([src/cli/index.ts#L42-L56](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L42-L56)). `cmdSessions()` requires a `<projectId>` positional; a missing id returns exit code `2`, and no matching sessions returns `1`. Otherwise it renders each session's id, relative modified time via `formatRelativeTime`, and size via `formatBytes` ([src/cli/index.ts#L58-L76](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L58-L76)).
+`cmdProjects` calls `listProjects()` from the core discovery module and prints an aligned two-column table of session count and truncated project label, followed by a total count ([src/cli/index.ts#L43-L57](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L43-L57)). When no projects exist under `~/.claude/projects`, it prints a plain message and returns `0`. `cmdSessions` requires a `<projectId>` operand; a missing id returns exit code `2` with guidance to run `cc-analyzer projects`, and an empty project returns `1` ([src/cli/index.ts#L59-L77](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L59-L77)). Its table renders each session id alongside `formatRelativeTime(s.mtimeMs)` and `formatBytes(s.sizeBytes)`.
 
-Sources: [src/cli/index.ts:L42-L76](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L42-L76)
+Sources: [src/cli/index.ts:L43-L77](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L43-L77)
 
-### `analyze` and session-reference resolution
+### `analyze` — single session
 
-`cmdAnalyze()` accepts a `<id|path>` reference and a `json` flag. It resolves the reference through `resolveSessionPath()`, which treats any argument ending in `.jsonl` or containing `/` as a filesystem path (returning it only if `Bun.file(ref).exists()`), and otherwise looks the reference up as a session UUID across all projects via `findSessionById()` ([src/cli/index.ts#L78-L83](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L78-L83)). An unresolved reference returns `1`. On success it parses the file with `parseSessionFile()`, loads the pricing table with `loadPricing()`, and computes the analysis via `analyzeSession()` ([src/cli/index.ts#L95-L97](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L95-L97)).
+`cmdAnalyze` resolves a session reference through `resolveSessionPath`, which treats an argument ending in `.jsonl` or containing `/` as a filesystem path and otherwise looks the id up across all projects via `findSessionById` ([src/cli/index.ts#L79-L95](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L79-L95)). It then runs the core pipeline directly: `parseSessionFile` yields events and parse errors, `loadPricing` supplies the pricing table, and `analyzeSession` produces the `SessionAnalysis` ([src/cli/index.ts#L96-L98](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L96-L98)). With `--json` it prints `JSON.stringify` of the analysis augmented with a `parseErrors` count; otherwise it prints `renderSessionSummary(analysis)` and notes any skipped unparseable lines ([src/cli/index.ts#L100-L106](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L100-L106)). Unlike `stats` and `serve`, `analyze` reads and parses the raw `.jsonl` file and needs no index.
 
-With `--json`, `cmdAnalyze()` prints the analysis object plus a `parseErrors` count as pretty JSON; otherwise it delegates to `renderSessionSummary()` and appends a note when unparseable lines were skipped ([src/cli/index.ts#L99-L104](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L99-L104)).
+Sources: [src/cli/index.ts:L79-L107](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L79-L107)
 
-Sources: [src/cli/index.ts:L78-L106](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L78-L106)
+### `index` — build the SQLite cache
 
-### `index` and `stats`
+`cmdIndex` opens the database with `openDb`, invokes `reindex(db, { rebuild, onProgress })`, and reports how many sessions were indexed, skipped, and deleted along with an elapsed time in seconds ([src/cli/index.ts#L109-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L109-L130)). Progress is written to `stderr` with a carriage return so it overwrites in place, throttled to every 200 sessions to avoid flooding the terminal ([src/cli/index.ts#L114-L121](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L114-L121)). The `--rebuild` flag forces a full re-scan rather than the default incremental pass. `stats`, `serve`, and the TUI all depend on the index this command produces.
 
-`cmdIndex()` opens the SQLite database with `openDb()` and runs `reindex()`, passing an `onProgress` callback that writes throttled `indexing done/total...` updates to `stderr` (every 200 items or on completion). It reports counts of indexed, skipped, and deleted sessions with elapsed seconds ([src/cli/index.ts#L108-L129](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L108-L129)). The `--rebuild` flag is threaded through to force a full rebuild ([src/cli/index.ts#L195-L196](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L195-L196)).
+Sources: [src/cli/index.ts:L109-L130](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L109-L130)
 
-`cmdStats()` reads portfolio analytics from the index. It first checks `portfolioSummary()`, returning `1` with a prompt to run `index` if the index is empty. Otherwise it assembles a view from `spendByMonth`, `spendByProject`, `spendByModel`, and `topSessions`, then prints it as JSON or via `renderStats()` depending on the `json` flag ([src/cli/index.ts#L131-L149](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L131-L149)).
+### `stats` — portfolio analytics
 
-Sources: [src/cli/index.ts:L108-L149](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L108-L149)
+`cmdStats` builds the shared portfolio shape with `buildPortfolioStats(db, localDayOfMs(Date.now()))` — the same builder that backs the `/api/stats` web endpoint — and returns `1` when the index is empty ([src/cli/index.ts#L132-L141](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L132-L141)). It then layers terminal-only extras on top: `cacheTtlSplit`, the top ten `analytics.bash` rows, `analytics.tests`, `analytics.retries`, and a `concurrency` headline of `peak` and `parallelDayShare` ([src/cli/index.ts#L142-L153](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L142-L153)). The composite `view` prints as raw JSON under `--json` or through `renderStats(view)` otherwise ([src/cli/index.ts#L154](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L154)). The rich analytics behind this command are documented on the [Analytics and Insights](./7-analytics-and-insights.md) page.
 
-### `serve` and the no-command TUI
+Sources: [src/cli/index.ts:L132-L156](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L132-L156)
 
-The `serve` case parses an optional `--port=` argument, dynamically imports `runServe` from [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/web/server.ts), and awaits it ([src/cli/index.ts#L199-L205](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L199-L205)). When `command` is `undefined` — the program was invoked with no arguments — the router dynamically imports `runTui` from [src/tui/run.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/tui/run.tsx) and launches the interactive interface ([src/cli/index.ts#L217-L221](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L217-L221)). Both use lazy `import()` so the web and TUI dependency trees load only when needed. Deep coverage of these subsystems lives in their own pages.
+### `serve`, `pricing update`, and `update`
 
-Sources: [src/cli/index.ts:L199-L221](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L199-L221)
+The `serve` branch parses an optional `--port=` value, rejecting anything outside the integer range 1–65535 with exit code `2`, reads an optional `--host=`, then dynamically imports `runServe` from the web server module ([src/cli/index.ts#L224-L240](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L224-L240)). `pricing update` accepts only the `update` sub-token; `cmdPricingUpdate` forces a refresh with `loadPricing({ force: true })` and returns `1` when the source is not `remote`, meaning the remote fetch failed and a cached or bundled table is still in use ([src/cli/index.ts#L158-L170](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L158-L170)). `cmdUpdate` handles `--check` by comparing `fetchLatestVersion` against `VERSION`, and otherwise runs `performUpdate` with a TTY-only progress callback that writes megabyte counts to `stderr` ([src/cli/index.ts#L172-L204](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L172-L204)). The update mechanics live on the [Updates and Distribution](./8-updates-and-distribution.md) page.
 
-### `pricing update`
+Sources: [src/cli/index.ts:L158-L204](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L158-L204) [src/cli/index.ts:L224-L246](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L224-L246)
 
-`cmdPricingUpdate()` forces a refresh with `loadPricing({ force: true })` and reports the resolved source and the number of models loaded, formatted with `formatCount`. It returns `0` only when the pricing came from the `remote` source, and `1` otherwise, signalling that a fresh fetch did not succeed ([src/cli/index.ts#L151-L156](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L151-L156)). The `pricing` command requires the `update` subcommand; any other form prints a usage line and returns `2` ([src/cli/index.ts#L206-L209](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L206-L209)).
+### Passive update notice
 
-Sources: [src/cli/index.ts:L151-L156](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L151-L156) [src/cli/index.ts:L206-L209](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L206-L209)
+After `runCommand` returns, `main` fires a best-effort, non-blocking update notice for a curated set of quick commands. `NOTIFY_COMMANDS` contains `projects`, `sessions`, `analyze`, `index`, `stats`, and `pricing`; when the command is in that set and `--json` was not passed, `main` awaits `maybeNotifyUpdate()` before returning the exit code ([src/cli/index.ts#L206-L276](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L206-L276)). Excluding `--json` keeps machine-readable output clean of the human-facing banner. The notice never changes the exit code — it runs purely for its side effect.
 
-### `update`, `version`, and the passive update notice
-
-`cmdUpdate()` handles self-update. With `--check`, it fetches the latest release via `fetchLatestVersion()` and compares against the local `VERSION` using `compareVersions()`, printing either "you're on the latest version" or an availability message; without the flag it runs `performUpdate()` and prints the result message, returning `1` only when the update status is `unsupported`. Any thrown error is caught and reported as an update failure with exit code `1` ([src/cli/index.ts#L158-L179](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L158-L179)). The `version`, `--version`, and `-v` cases print `VERSION` and return `0` ([src/cli/index.ts#L212-L216](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L212-L216)).
-
-After `runCommand()` returns, `main()` performs a best-effort, non-blocking update check. The `NOTIFY_COMMANDS` set — `projects`, `sessions`, `analyze`, `index`, `stats`, `pricing` — gates this behavior, and the notice is suppressed when `--json` was passed so machine-readable output stays clean; the actual check is delegated to `maybeNotifyUpdate()` ([src/cli/index.ts#L181-L182](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L181-L182), [src/cli/index.ts#L238-L241](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L238-L241)). The self-update and version-comparison mechanics belong to the Updates & Distribution subsystem.
-
-Sources: [src/cli/index.ts:L158-L182](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L158-L182) [src/cli/index.ts:L212-L241](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L212-L241)
+Sources: [src/cli/index.ts:L206-L277](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L206-L277)
 
 ### Formatting primitives
 
-[src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts) supplies the presentation building blocks. `table()` computes per-column widths from the headers and rows, pads each cell with `padEnd`, and inserts a dash separator row, producing a monospace-aligned block ([src/cli/format.ts#L51-L56](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L51-L56)). `formatCount()` abbreviates large numbers with `k`/`M`/`B` suffixes, `formatBytes()` scales to `B`/`KB`/`MB`, and `formatRelativeTime()` renders "just now", minute/hour/day-ago strings, or an ISO date past 30 days ([src/cli/format.ts#L9-L48](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L9-L48)). `truncate()` collapses whitespace and clips to a maximum length with an ellipsis, keeping table cells bounded ([src/cli/format.ts#L58-L61](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L58-L61)). `formatUSD`, `formatTokens`, and `formatDuration` round out the money, token, and duration formatting used by the report layer ([src/cli/format.ts#L3-L36](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L3-L36)).
+[src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts) holds pure, dependency-free formatters. `formatUSD` renders small non-zero amounts to four decimals and everything else to two, preserving sign ([src/cli/format.ts#L3-L10](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L3-L10)). `formatCount` compacts large numbers into `k`/`M`/`B` suffixes, bucketing on the rounded value so `999_960` renders as `1.0M` rather than `1000.0k` ([src/cli/format.ts#L12-L19](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L12-L19)). `formatTokens` appends a `+N cache` suffix when cache tokens are present, and `formatBytes`, `formatDuration`, and `formatRelativeTime` cover sizes, elapsed spans, and human-relative timestamps ([src/cli/format.ts#L21-L53](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L21-L53)). `table` computes per-column widths from headers and rows, then emits a padded header, a dashed separator, and padded rows joined by newlines ([src/cli/format.ts#L55-L61](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L55-L61)), while `truncate` collapses whitespace and appends an ellipsis past a max length ([src/cli/format.ts#L63-L66](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L63-L66)).
 
-Sources: [src/cli/format.ts:L1-L61](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/format.ts#L1-L61)
+Sources: [src/cli/format.ts:L1-L66](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts#L1-L66)
 
-### Report rendering
+### Report renderers
 
-[src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts) turns core data structures into multi-section text reports. `renderSessionSummary()` builds a single-session report: a header with title, session id, project path, git branches, and Claude Code versions, followed by tables for totals, cost by token category, per-model usage, tool counts, and per-turn breakdowns; model and tool tables are sorted by cost and count descending and omitted when empty ([src/cli/render.ts#L18-L92](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L18-L92)). It marks estimated costs with an "(estimated)" suffix drawn from `a.totals.cost.estimated` ([src/cli/render.ts#L20](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L20)).
+`renderSessionSummary` turns a `SessionAnalysis` into a multi-section text report: a header with title, session id, project path, git branches, and Claude Code versions; a Totals table covering cost, turns, API calls, tool calls, tokens, duration, active time, web search/fetch, subagent spend, test runs, and tool-call churn; and a per-token-category cost breakdown ([src/cli/render.ts#L19-L68](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L19-L68)). It then conditionally emits Models, Tools, Skills, Subagents, files-touched, stop reasons, permission modes, shell commands, and a final per-turn table ([src/cli/render.ts#L70-L121](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L70-L121)). The permission-modes line appears only when a mode other than plain `default` is present ([src/cli/render.ts#L98-L102](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L98-L102)).
 
-`renderStats()` consumes a `PortfolioView` and renders portfolio totals plus optional sections for spend by month, top projects by cost, spend by model, and the most expensive sessions — each conditionally emitted only when its row array is non-empty ([src/cli/render.ts#L94-L188](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L94-L188)). The `PortfolioView` interface defined here is the contract `cmdStats()` assembles from the core stats functions ([src/cli/render.ts#L94-L100](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L94-L100)).
+`renderStats` consumes a `PortfolioView`, the interface that extends `PortfolioStats` with the CLI-only `ttl`, `bash`, `tests`, `retries`, and `concurrency` fields ([src/cli/render.ts#L124-L131](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L124-L131)). It renders a Portfolio headline table with total cost, session and project counts, date range, token and cache totals, active-time share, duration and cost percentiles, spend concentration, streaks, run rate, subagent spend, cache-write TTL split, test runs, tool-call churn, and parallel-session concurrency ([src/cli/render.ts#L134-L212](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L134-L212)). Below the headline it appends a bar-chart cost distribution and conditional tables for spend by month, top projects, spend by model, most expensive sessions, top shell commands, and most-retried tools ([src/cli/render.ts#L214-L314](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L214-L314)).
 
-Sources: [src/cli/render.ts:L18-L188](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L18-L188)
+Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L19-L315)
 
-## Data Flow
+## Configuration & Extension Points
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant main
-    participant runCommand
-    participant Core as src/core
-    participant render
-    participant format
+| Flag | Command | Purpose |
+| ---- | ------- | ------- |
+| `--json` | `analyze`, `stats` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
+| `--rebuild` | `index` | Force a full re-scan instead of the incremental pass |
+| `--port=<n>` | `serve` | Bind the web server to an integer port 1–65535; invalid values exit with code `2` |
+| `--host=<h>` | `serve` | Bind address for the web server |
+| `--check` | `update` | Report whether a newer release exists without installing it |
 
-    User->>main: cc-analyzer analyze <id> [--json]
-    main->>runCommand: dispatch
-    runCommand->>Core: findSessionById / parseSessionFile / loadPricing / analyzeSession
-    Core-->>runCommand: SessionAnalysis
-    alt --json
-        runCommand-->>User: JSON.stringify(analysis)
-    else text
-        runCommand->>render: renderSessionSummary(analysis)
-        render->>format: table / formatUSD / formatCount
-        format-->>render: text
-        render-->>runCommand: report
-        runCommand-->>User: console.log(report)
-    end
-    main->>Core: maybeNotifyUpdate (NOTIFY_COMMANDS, non-json)
-```
-
-The `analyze` path illustrates the general shape shared by every data command: the CLI resolves and loads core data, then either serializes it directly (`--json`) or routes it through `render` → `format` for human-readable output, before `main()` optionally appends the update notice ([src/cli/index.ts#L85-L106](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L85-L106), [src/cli/index.ts#L234-L242](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L234-L242)).
-
-Sources: [src/cli/index.ts:L85-L106](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/index.ts#L85-L106) [src/cli/render.ts:L18-L92](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/src/cli/render.ts#L18-L92)
+Sources: [src/cli/index.ts:L209-L246](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L246)
 
 ## Related Pages
 
-- Core Analysis Engine: [Core Analysis Engine](./2-core-analysis-engine.md)
-- Terminal UI: [TUI](./4-tui.md)
-- Web server: [Web Server and API](./5-web-server-and-api.md)
-- Web frontend: [Web SPA Frontend](./6-web-spa-frontend.md)
-- Self-update: [Updates and Distribution](./7-updates-and-distribution.md)
+- Core pipeline consumed by every handler: [Core Analysis Engine](./2-core-analysis-engine.md)
+- Launched by the no-command branch: [Terminal User Interface](./4-tui.md)
+- Launched by `serve`: [Web Server and API](./5-web-server-and-api.md)
+- Analytics behind `stats`: [Analytics and Insights](./7-analytics-and-insights.md)
+- Mechanics behind `update` and `pricing update`: [Updates and Distribution](./8-updates-and-distribution.md)
