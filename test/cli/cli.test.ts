@@ -134,4 +134,15 @@ describe("CLI dispatch & exit codes", () => {
       server.stop(true);
     }
   });
+
+  test("stats presents a structured, ANSI-free report when piped", async () => {
+    expect((await run(["index"])).code).toBe(0);
+    const r = await run(["stats"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("◆ cc-analyzer · portfolio");
+    expect(r.stdout).toContain("▸ Activity");
+    expect(r.stdout).toContain("▸ Efficiency & reliability");
+    expect(r.stdout).toContain("✓ Read-only · session data stayed local");
+    expect(r.stdout).not.toContain("\u001B[");
+  });
 });
