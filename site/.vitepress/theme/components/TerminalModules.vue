@@ -11,7 +11,7 @@ const modules = [
   {
     id: "tui",
     title: "Interactive terminal UI",
-    body: "An amber-phosphor Ink TUI: a persistent nav rail and two-pane master-detail where the list drives a live preview, plus a full-screen session view with turns → steps, transcript, and summary.",
+    body: "An amber-phosphor Ink TUI: a persistent nav rail and two-pane master-detail where the list drives a live preview, plus a full-screen session view with turns → steps, charts, transcript, and summary.",
     icon: '<rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M7 9.5l3 2.5-3 2.5M13 15h4"/>',
   },
   {

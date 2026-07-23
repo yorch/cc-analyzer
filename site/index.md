@@ -8,6 +8,8 @@ pageClass: cc-landing
 
 <TerminalModules />
 
+<TuiPreview />
+
 <ProductPreview />
 
 <CommandDeck />
