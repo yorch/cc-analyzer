@@ -11,6 +11,7 @@ web/dist/
 
 # AI
 .claude/worktrees/
+.worktrees/
 
 # Visual brainstorming companion (superpowers)
 .superpowers/
