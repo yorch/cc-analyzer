@@ -159,10 +159,10 @@ describe("web API", () => {
     expect(body.distribution.sessions).toBe(1);
     expect(body.turnDepth.turns).toBeGreaterThan(0);
     expect(body.tools.some((t) => t.tool === "Bash")).toBe(true);
-    // Another project's id yields empty series, not an error.
+    // Unknown ids 404 before touching the memo cache — its keyspace must stay
+    // bounded by real projects, not by whatever ids clients probe.
     const other = await api.request("/api/projects/nope/trends");
-    expect(other.status).toBe(200);
-    expect(((await other.json()) as { daily: unknown[] }).daily).toEqual([]);
+    expect(other.status).toBe(404);
   });
 
   test("GET /api/analytics includes the compaction rollup", async () => {

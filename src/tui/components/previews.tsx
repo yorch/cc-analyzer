@@ -96,35 +96,35 @@ export function ProjectPreview({
           </Field>
         )}
       </Box>
-      {weekly.length > 1 && (
-        <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column">
+        {weekly.length > 1 && (
           <Field label="burn / week">
             <Text color={palette.amber}>{sparkline(weekly, 28)}</Text>
           </Field>
-          {dist && dist.sessions > 0 && (
-            <Field label="sess cost">
-              <Text color={palette.amber}>
-                {sparkline(
-                  dist.buckets.map((b) => b.count),
-                  dist.buckets.length,
-                )}
-              </Text>
-              <Text color={role.muted}> &lt;1¢→$100+ · median {formatUSD(dist.p50)}</Text>
-            </Field>
-          )}
-          {depth && depth.turns > 0 && (
-            <Field label="turn depth">
-              <Text color={palette.amber}>
-                {sparkline(
-                  depth.buckets.map((b) => b.turns),
-                  depth.buckets.length,
-                )}
-              </Text>
-              <Text color={role.muted}> 1→16+ · avg {depth.avgDepth.toFixed(1)} calls</Text>
-            </Field>
-          )}
-        </Box>
-      )}
+        )}
+        {dist && dist.sessions > 0 && (
+          <Field label="sess cost">
+            <Text color={palette.amber}>
+              {sparkline(
+                dist.buckets.map((b) => b.count),
+                dist.buckets.length,
+              )}
+            </Text>
+            <Text color={role.muted}> &lt;1¢→$100+ · median {formatUSD(dist.p50)}</Text>
+          </Field>
+        )}
+        {depth && depth.turns > 0 && (
+          <Field label="turn depth">
+            <Text color={palette.amber}>
+              {sparkline(
+                depth.buckets.map((b) => b.turns),
+                depth.buckets.length,
+              )}
+            </Text>
+            <Text color={role.muted}> 1→16+ · avg {depth.avgDepth.toFixed(1)} calls</Text>
+          </Field>
+        )}
+      </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>↵ browse this project's sessions</Text>
       </Box>

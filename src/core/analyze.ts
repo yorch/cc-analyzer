@@ -568,8 +568,13 @@ class SessionAnalyzer {
   }
 
   private pushAssistant(event: AssistantEvent, chain: string): void {
-    // The boundary→summary pair is adjacent; an assistant line closes it.
-    this.pendingBoundarySidechain = undefined;
+    // The boundary→summary pair is adjacent on its own chain; an assistant
+    // line on that chain kind closes it. An interleaved line from the *other*
+    // kind (e.g. a subagent streaming while the main chain compacts) must not
+    // clear it, or the still-coming summary would record a second compaction.
+    if (this.pendingBoundarySidechain === (event.isSidechain === true)) {
+      this.pendingBoundarySidechain = undefined;
+    }
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
     const isContinuation = key !== undefined && this.seenUsage.has(key);

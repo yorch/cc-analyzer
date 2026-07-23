@@ -13,9 +13,45 @@
 import type { Compaction, SessionAnalysis } from "./analyze.ts";
 import { cacheTokens, ioTokens } from "./pricing.ts";
 
+/**
+ * A session's *own* compaction: not a subagent's (which compacted its own
+ * context window) and not an inherited boundary (copied from the parent
+ * session at a continuation-file start). The single rule shared by the
+ * indexer's `compactions` column, the rollups, the chart markers, and both
+ * frontends' labels — so counts can never disagree across surfaces.
+ */
+export const isOwnCompaction = (c: Compaction): boolean => !c.isSidechain && !c.inherited;
+
+export interface CompactionBreakdown {
+  /** The session's own main-chain compactions, in session order. */
+  own: Compaction[];
+  /** Own compactions per trigger ("auto" / "manual" / "unknown"). */
+  triggers: Record<string, number>;
+  /** Compactions inside subagent transcripts. */
+  sidechain: number;
+  /** Boundaries inherited from the parent session (continuation files). */
+  inherited: number;
+}
+
+/** Split a session's compaction records the one canonical way. */
+export function summarizeCompactions(compactions: Compaction[]): CompactionBreakdown {
+  const own: Compaction[] = [];
+  const triggers: Record<string, number> = {};
+  let sidechain = 0;
+  let inherited = 0;
+  for (const c of compactions) {
+    if (c.isSidechain) sidechain += 1;
+    else if (c.inherited) inherited += 1;
+    else {
+      own.push(c);
+      const trigger = c.trigger ?? "unknown";
+      triggers[trigger] = (triggers[trigger] ?? 0) + 1;
+    }
+  }
+  return { own, triggers, sidechain, inherited };
+}
+
 export interface ContextPoint {
-  /** Position in the main-chain call sequence (the x axis). */
-  index: number;
   /** Epoch ms of the call, when timestamped. */
   ms?: number;
   turnIndex: number;
@@ -37,9 +73,8 @@ export interface ContextMarker {
 
 export interface ContextSeries {
   points: ContextPoint[];
-  /** Main-chain compactions with a mappable position; sidechain compactions
-   * and timestamp-less ones stay in `analysis.compactions` but are not
-   * placed on the axis. */
+  /** Own compactions with a mappable position; sidechain/inherited ones and
+   * timestamp-less ones stay in `analysis.compactions` but are not placed. */
   markers: ContextMarker[];
   peakTokens: number;
 }
@@ -60,7 +95,6 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
         t.inputTokens + t.cacheReadTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens;
       const ms = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
       points.push({
-        index: points.length,
         ms: Number.isNaN(ms) ? undefined : ms,
         turnIndex: turn.index,
         model: call.model,
@@ -75,22 +109,28 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
 
   const markers: ContextMarker[] = [];
   if (points.length === 0) return { points, markers, peakTokens };
-  for (const compaction of analysis.compactions) {
-    // A subagent's compaction compacts its own context window, and an
-    // inherited boundary (continuation-file start) happened before this
-    // session's first call — neither produces a drop in this chart.
-    if (compaction.isSidechain || compaction.inherited) continue;
-    const cms = compaction.timestamp ? Date.parse(compaction.timestamp) : Number.NaN;
-    if (Number.isNaN(cms)) continue;
-    const at = points.findIndex((p) => p.ms !== undefined && p.ms >= cms);
-    markers.push({ pos: at === -1 ? points.length : at, compaction });
+  // Own, timestamped compactions only (see isOwnCompaction), sorted by time so
+  // one cursor pass over the (stream-ordered) points places every marker.
+  const timed = summarizeCompactions(analysis.compactions)
+    .own.map((compaction) => ({
+      compaction,
+      ms: compaction.timestamp ? Date.parse(compaction.timestamp) : Number.NaN,
+    }))
+    .filter((c) => !Number.isNaN(c.ms))
+    .sort((a, b) => a.ms - b.ms);
+  let cursor = 0;
+  for (const { compaction, ms } of timed) {
+    while (cursor < points.length) {
+      const pms = points[cursor]?.ms;
+      if (pms !== undefined && pms >= ms) break;
+      cursor++;
+    }
+    markers.push({ pos: cursor, compaction });
   }
-  markers.sort((a, b) => a.pos - b.pos);
   return { points, markers, peakTokens };
 }
 
 export interface BurnPoint {
-  index: number;
   ms?: number;
   /** Cumulative cost across all calls up to and including this one. */
   cost: number;
@@ -104,23 +144,28 @@ export interface BurnPoint {
 /**
  * Cumulative cost over every API call (main + sidechain), ordered by
  * timestamp so interleaved subagent bursts land where they happened;
- * timestamp-less calls keep their stored position.
+ * a timestamp-less call inherits its predecessor's timestamp, keeping it
+ * anchored at its stored position instead of sorting on a bogus key.
  */
 export function buildBurnSeries(analysis: SessionAnalysis): BurnPoint[] {
   const calls = analysis.turns.flatMap((turn) => turn.apiCalls);
+  let lastMs = Number.NEGATIVE_INFINITY;
   const timed = calls.map((call, i) => {
-    const ms = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
-    return { call, i, ms: Number.isNaN(ms) ? undefined : ms };
+    const parsed = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
+    const ms = Number.isNaN(parsed) ? undefined : parsed;
+    if (ms !== undefined) lastMs = ms;
+    return { call, i, ms, sortMs: ms ?? lastMs };
   });
-  timed.sort((a, b) => (a.ms ?? a.i) - (b.ms ?? b.i) || a.i - b.i);
+  // Explicit comparisons: two -Infinity sort keys (leading untimed calls)
+  // must tie cleanly on stored order, and Infinity − Infinity is NaN.
+  timed.sort((a, b) => (a.sortMs < b.sortMs ? -1 : a.sortMs > b.sortMs ? 1 : a.i - b.i));
 
   let cost = 0;
   let sidechainCost = 0;
-  return timed.map(({ call, ms }, index) => {
+  return timed.map(({ call, ms }) => {
     cost += call.cost.total;
     if (call.isSidechain) sidechainCost += call.cost.total;
     return {
-      index,
       ms,
       cost,
       sidechainCost,

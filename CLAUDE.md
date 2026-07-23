@@ -67,8 +67,9 @@ reuse the events for `buildTranscript`.
 
 **Turn segmentation.** A *turn* is one genuine user prompt plus every assistant
 API call and tool loop until the next prompt. The discriminator `isRealPrompt()`
-lives in `events.ts` (a user event that is not a sidechain, not `isMeta`, and
-carries something other than `tool_result` blocks) and is shared by both
+lives in `events.ts` (a user event that is not a sidechain, not `isMeta`, not a
+machine-written compaction summary (`isCompactSummary`), and carries something
+other than `tool_result` blocks) and is shared by both
 `analyze.ts` and `transcript.ts`, so turn boundaries can't drift between them —
 change the rule in one place.
 
@@ -127,9 +128,10 @@ portfolio pressure for `/api/analytics` and the web Tools view.
 
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`; `toolUsage()` and
-`turnDepthStats()` are their standalone per-project counterparts (the portfolio
-Tools surfaces still use the single-scan `analyticsRollup`). `projectTrends()`
-bundles all of them for `/api/projects/:id/trends`, rendered by the web project
+`turnDepthStats()` are their standalone per-project counterparts, built on the
+same row-fold helpers `analyticsRollup` uses (so portfolio and project surfaces
+cannot disagree). `projectTrends()` bundles the six chart series — hot files
+stay on `/api/projects/:id/files` — for `/api/projects/:id/trends`, rendered by the web project
 page via the shared chart components in `web/src/trend-charts.tsx` (also used by
 the Trends page) and by the TUI project preview (weekly burn sparkline +
 distribution ramps, live per-highlight queries).

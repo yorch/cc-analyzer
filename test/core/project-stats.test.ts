@@ -126,6 +126,7 @@ describe("compaction rollups (schema v7)", () => {
     expect(u.summary.compactions).toBe(2);
     expect(u.summary.auto).toBe(1);
     expect(u.summary.manual).toBe(1);
+    expect(u.summary.unknown).toBe(0);
     expect(u.summary.sidechain).toBe(1);
     expect(u.summary.inherited).toBe(1);
   });

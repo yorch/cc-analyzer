@@ -7,53 +7,46 @@
 
 import { memo, useState } from "react";
 import type { DayRow, ModelDayRow, ScatterSession } from "./api.ts";
-import { shiftDay, weekOf } from "./api.ts";
+import { type BurnMetric, bucketSeries, type Granularity, metricValue, shiftDay } from "./api.ts";
 import { count, duration, usd } from "./format.ts";
 import { link } from "./router.ts";
 import { Seg } from "./Seg.tsx";
 
-export type BurnMetric = "cost" | "tokens" | "sessions";
-export type Granularity = "day" | "week" | "month";
+export type { BurnMetric, Granularity };
 export type HeatMetric = "sessions" | "cost";
 
-export interface Point {
-  label: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
+/** Metric label: dollars for cost, compact counts for everything else. */
+export const fmt = (m: string, v: number): string => (m === "cost" ? usd(v) : count(Math.round(v)));
 
-export function bucketSeries(daily: DayRow[], granularity: Granularity): Point[] {
-  if (granularity === "day") return daily.map((d) => ({ ...d, label: d.day }));
-  const out: Point[] = [];
-  let curKey = "";
-  for (const d of daily) {
-    const key = granularity === "month" ? d.day.slice(0, 7) : weekOf(d.day);
-    let p = out[out.length - 1];
-    if (!p || key !== curKey) {
-      p = { label: key, cost: 0, sessions: 0, ioTokens: 0, cacheTokens: 0 };
-      out.push(p);
-      curKey = key;
-    }
-    p.cost += d.cost;
-    p.sessions += d.sessions;
-    p.ioTokens += d.ioTokens;
-    p.cacheTokens += d.cacheTokens;
-  }
-  return out;
-}
+/* ——— Shared SVG line-chart geometry ————————————————————————————————— */
 
-export const seriesValue = (p: Point, m: BurnMetric): number =>
-  m === "cost" ? p.cost : m === "sessions" ? p.sessions : p.ioTokens + p.cacheTokens;
-
-export const fmt = (m: BurnMetric | HeatMetric, v: number): string =>
-  m === "cost" ? usd(v) : count(Math.round(v));
-
-/* ——— Line chart ————————————————————————————————————————————————————— */
-
+/** One viewport for every wide chart in the SPA (`.burnchart` CSS). */
+export const CHART_W = 900;
+export const CHART_PAD = 6;
 /** Long series would drown in hover dots; past this the path stands alone. */
-const MAX_LINE_DOTS = 366;
+export const MAX_LINE_DOTS = 366;
+
+/** x position of point i out of n across a `width` viewport. */
+export const xScale =
+  (n: number, width = CHART_W, pad = CHART_PAD) =>
+  (i: number): number =>
+    n <= 1 ? pad : (i / (n - 1)) * (width - pad * 2) + pad;
+
+/** SVG path ("M … L …") through every value. */
+export function linePath(
+  values: number[],
+  x: (i: number) => number,
+  y: (v: number) => number,
+): string {
+  return values
+    .map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`)
+    .join(" ");
+}
+
+/** Close a line path down to the baseline, for area fills. */
+export function areaPath(line: string, x: (i: number) => number, n: number, h: number): string {
+  return `M ${x(0).toFixed(1)},${h} ${line.replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${h} Z`;
+}
 
 export function LineChart({
   values,
@@ -70,23 +63,23 @@ export function LineChart({
   area?: boolean;
   title?: string;
 }) {
-  const W = 900;
   const H = height;
-  const pad = 6;
   const max = Math.max(...values, 1e-9);
   const n = values.length;
-  const x = (i: number) => (n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad);
-  const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
-  const line = values.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-  const areaPath = area
-    ? `M ${x(0).toFixed(1)},${H} ${line.join(" ").replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${H} Z`
-    : undefined;
+  const x = xScale(n);
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
+  const line = linePath(values, x, y);
   return (
     <>
-      <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <svg
+        className="burnchart"
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+      >
         <title>{title}</title>
-        {areaPath && <path className="burn-area" d={areaPath} />}
-        <path className="burn-line" d={line.join(" ")} />
+        {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
+        <path className="burn-line" d={line} />
         {format &&
           n <= MAX_LINE_DOTS &&
           values.map((v, i) => (
@@ -105,11 +98,11 @@ export function LineChart({
 
 /* ——— Burn panel (owns its metric/granularity controls) ———————————————— */
 
-export function BurnPanel({ daily }: { daily: DayRow[] }) {
+export const BurnPanel = memo(function BurnPanel({ daily }: { daily: DayRow[] }) {
   const [metric, setMetric] = useState<BurnMetric>("cost");
   const [granularity, setGranularity] = useState<Granularity>("day");
   const series = bucketSeries(daily, granularity);
-  const values = series.map((p) => seriesValue(p, metric));
+  const values = series.map((p) => metricValue(p, metric));
   const total = values.reduce((s, v) => s + v, 0);
   const peakIdx = values.reduce((b, v, i) => (v > (values[b] ?? -1) ? i : b), 0);
   const avg = values.length ? total / values.length : 0;
@@ -145,7 +138,7 @@ export function BurnPanel({ daily }: { daily: DayRow[] }) {
       )}
     </>
   );
-}
+});
 
 /* ——— Model mix stacked area ————————————————————————————————————————— */
 
@@ -280,7 +273,7 @@ export const Scatter = memo(function Scatter({
 });
 
 /** Scatter with its own x-axis toggle and section head. */
-export function ScatterPanel({ points }: { points: ScatterSession[] }) {
+export const ScatterPanel = memo(function ScatterPanel({ points }: { points: ScatterSession[] }) {
   const [xAxis, setXAxis] = useState<ScatterX>("wall");
   return (
     <>
@@ -294,4 +287,4 @@ export function ScatterPanel({ points }: { points: ScatterSession[] }) {
       <Scatter points={points} xAxis={xAxis} />
     </>
   );
-}
+});

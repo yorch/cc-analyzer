@@ -436,6 +436,34 @@ describe("compaction capture", () => {
     expect(b.compactions[1]?.isSidechain).toBeUndefined();
   });
 
+  test("an interleaved subagent line does not break the boundary→summary pair", () => {
+    // A subagent streaming while the main chain compacts: boundary (main) →
+    // assistant (sidechain) → summary (main) is still ONE compaction.
+    const sideLine = { ...assistantLine(6), isSidechain: true, uuid: "side-1" };
+    const a = analyze([assistantLine(1), boundary(5), sideLine, summary(7), assistantLine(8)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.trigger).toBe("auto");
+  });
+
+  test("a compact summary does not open a turn (isRealPrompt excludes it)", () => {
+    const a = analyze([
+      {
+        type: "user",
+        uuid: "u1",
+        timestamp: "2026-07-01T10:00:00.000Z",
+        message: { role: "user", content: "real prompt" },
+      },
+      assistantLine(1),
+      boundary(5),
+      summary(6),
+      assistantLine(7),
+    ]);
+    // The synthetic summary is machine-written; the interrupted turn continues.
+    expect(a.totals.turns).toBe(1);
+    expect(a.turns).toHaveLength(1);
+    expect(a.compactions).toHaveLength(1);
+  });
+
   test("survives aggregate mode (the indexer path)", async () => {
     const events = [boundary(5), summary(6)] as Parameters<typeof analyzeSession>[0];
     const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });

@@ -7,23 +7,20 @@ import {
   type Compaction,
   type ContextSeries,
   type SessionAnalysis,
+  summarizeCompactions,
   type TurnPoint,
 } from "./api.ts";
 import { count, duration, usd } from "./format.ts";
 import { Seg } from "./Seg.tsx";
-
-const W = 900;
-const PAD = 6;
-/** Past this many points, per-point hover dots would drown the chart. */
-const MAX_DOTS = 366;
-
-const xScale = (n: number) => (i: number) => (n <= 1 ? W / 2 : PAD + (i / (n - 1)) * (W - PAD * 2));
-
-function linePath(values: number[], x: (i: number) => number, y: (v: number) => number): string {
-  return values
-    .map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`)
-    .join(" ");
-}
+import {
+  areaPath,
+  CHART_PAD,
+  CHART_W,
+  fmt,
+  linePath,
+  MAX_LINE_DOTS,
+  xScale,
+} from "./trend-charts.tsx";
 
 /** Session-scoped charts: context-window fill (with compaction markers),
  * cumulative burn, and per-turn bars. Series come from core `chart-series.ts`
@@ -64,50 +61,51 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
   );
 }
 
+/** "2 auto + 1 manual compactions", from the own-compaction trigger split. */
+function triggerLabel(triggers: Record<string, number>, total: number): string {
+  if (total === 0) return "no compactions";
+  const parts = Object.entries(triggers)
+    .map(([t, c]) => `${c} ${t}`)
+    .join(" + ");
+  return `${parts} compaction${total > 1 ? "s" : ""}`;
+}
+
 function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: Compaction[] }) {
   const { points, markers, peakTokens } = ctx;
-  // Subagent compactions compact their own context windows — counted, but
-  // never marked on the main-chain chart.
-  const mainCompactions = compactions.filter((c) => !c.isSidechain);
-  const subCompactions = compactions.length - mainCompactions.length;
-  const totalCompactions = mainCompactions.length;
+  // The one canonical split: own vs subagent vs inherited (see chart-series.ts).
+  const b = summarizeCompactions(compactions);
   const n = points.length;
   if (n === 0) return <p className="muted">No main-chain API calls in this session.</p>;
   const H = 220;
   const max = Math.max(peakTokens, 1);
   const x = xScale(n);
-  const y = (v: number) => H - PAD - (v / max) * (H - PAD * 2);
-  const values = points.map((p) => p.contextTokens);
-  const line = linePath(values, x, y);
-  const area = `M ${x(0).toFixed(1)},${H} ${line.replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${H} Z`;
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
+  const line = linePath(
+    points.map((p) => p.contextTokens),
+    x,
+    y,
+  );
   const t0 = points.find((p) => p.ms !== undefined)?.ms;
   const offset = (ms?: number) => (ms !== undefined && t0 !== undefined ? duration(ms - t0) : "?");
   // A marker sits between the last pre-compaction call and the first one after.
   const markerX = (pos: number) =>
-    pos <= 0 ? PAD : pos >= n ? W - PAD : (x(pos - 1) + x(pos)) / 2;
-  const triggers = mainCompactions
-    .map((c) => c.trigger ?? "unknown")
-    .reduce<Record<string, number>>((acc, t) => {
-      acc[t] = (acc[t] ?? 0) + 1;
-      return acc;
-    }, {});
+    pos <= 0 ? CHART_PAD : pos >= n ? CHART_W - CHART_PAD : (x(pos - 1) + x(pos)) / 2;
   return (
     <>
       <p className="muted">
-        peak {count(peakTokens)} tokens ·{" "}
-        {totalCompactions === 0
-          ? "no compactions"
-          : Object.entries(triggers)
-              .map(([t, c]) => `${c} ${t}`)
-              .join(" + ")
-              .concat(" compaction", totalCompactions > 1 ? "s" : "")}
-        {totalCompactions > markers.length ? " (some without timestamps, not placed)" : ""}
-        {subCompactions > 0 &&
-          ` · ${subCompactions} in subagents (own context windows, not marked)`}
+        peak {count(peakTokens)} tokens · {triggerLabel(b.triggers, b.own.length)}
+        {b.own.length > markers.length && " (some without timestamps, not placed)"}
+        {b.inherited > 0 && " · started post-compaction (inherited boundary, not marked)"}
+        {b.sidechain > 0 && ` · ${b.sidechain} in subagents (own context windows, not marked)`}
       </p>
-      <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <svg
+        className="burnchart"
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+      >
         <title>Context-window tokens per call</title>
-        <path className="burn-area" d={area} />
+        <path className="burn-area" d={areaPath(line, x, n, H)} />
         <path className="burn-line" d={line} />
         {markers.map((m, mi) => (
           <line
@@ -116,18 +114,25 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
             className="ctx-marker"
             x1={markerX(m.pos)}
             x2={markerX(m.pos)}
-            y1={PAD}
-            y2={H - PAD}
+            y1={CHART_PAD}
+            y2={H - CHART_PAD}
           >
             <title>{`compaction (${m.compaction.trigger ?? "unknown trigger"}) · +${offset(
               m.compaction.timestamp ? Date.parse(m.compaction.timestamp) : undefined,
             )}${m.compaction.preTokens ? ` · ${count(m.compaction.preTokens)} tokens before` : ""}`}</title>
           </line>
         ))}
-        {n <= MAX_DOTS &&
-          points.map((p) => (
-            <circle key={p.index} className="dot" cx={x(p.index)} cy={y(p.contextTokens)} r={3.5}>
-              <title>{`call ${p.index + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
+        {n <= MAX_LINE_DOTS &&
+          points.map((p, i) => (
+            <circle
+              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+              key={i}
+              className="dot"
+              cx={x(i)}
+              cy={y(p.contextTokens)}
+              r={3.5}
+            >
+              <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
                 p.contextTokens,
               )} context (${count(p.cachedTokens)} cached) · ${count(p.outputTokens)} out · ${usd(
                 p.cost,
@@ -150,7 +155,7 @@ function BurnChart({ points }: { points: BurnPoint[] }) {
   const last = points[n - 1] as BurnPoint;
   const max = Math.max(last.cost, 1e-9);
   const x = xScale(n);
-  const y = (v: number) => H - PAD - (v / max) * (H - PAD * 2);
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const total = linePath(
     points.map((p) => p.cost),
     x,
@@ -172,13 +177,25 @@ function BurnChart({ points }: { points: BurnPoint[] }) {
         {usd(last.cost)} total
         {last.sidechainCost > 0 ? ` · ${usd(last.sidechainCost)} on subagents (teal)` : ""}
       </p>
-      <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <svg
+        className="burnchart"
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+      >
         <title>Cumulative session cost</title>
         <path className="burn-line" d={total} />
         {side && <path className="burn-line side" d={side} />}
-        {n <= MAX_DOTS &&
-          points.map((p) => (
-            <circle key={p.index} className="dot" cx={x(p.index)} cy={y(p.cost)} r={3.5}>
+        {n <= MAX_LINE_DOTS &&
+          points.map((p, i) => (
+            <circle
+              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+              key={i}
+              className="dot"
+              cx={x(i)}
+              cy={y(p.cost)}
+              r={3.5}
+            >
               <title>{`+${offset(p.ms)} · ${usd(p.cost)} so far (${usd(p.callCost)} this call${
                 p.isSidechain ? ", sidechain" : ""
               })`}</title>
@@ -198,9 +215,6 @@ type TurnMetric = "cost" | "tokens" | "calls";
 const turnValue = (t: TurnPoint, m: TurnMetric): number =>
   m === "cost" ? t.cost : m === "tokens" ? t.ioTokens + t.cacheTokens : t.apiCalls;
 
-const fmtTurn = (m: TurnMetric, v: number): string =>
-  m === "cost" ? usd(v) : count(Math.round(v));
-
 function TurnBars({ turns }: { turns: TurnPoint[] }) {
   const [metric, setMetric] = useState<TurnMetric>("cost");
   const n = turns.length;
@@ -208,7 +222,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
   const values = turns.map((t) => turnValue(t, metric));
   const max = Math.max(...values, 1e-9);
   const peakIdx = values.reduce((best, v, i) => (v > (values[best] ?? -1) ? i : best), 0);
-  const slot = (W - PAD * 2) / n;
+  const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
   return (
     <>
@@ -219,20 +233,25 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
         </span>
       </div>
       <p className="muted">
-        peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(turns[peakIdx]?.index ?? 0) + 1} ·{" "}
+        peak {fmt(metric, values[peakIdx] ?? 0)} (turn #{(turns[peakIdx]?.index ?? 0) + 1} ·{" "}
         {turns[peakIdx]?.prompt.slice(0, 60) || "no text"})
       </p>
-      <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <svg
+        className="burnchart"
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+      >
         <title>Per-turn {metric}</title>
         {turns.map((t, i) => {
           const v = values[i] ?? 0;
-          const h = v > 0 ? Math.max((v / max) * (H - PAD * 2), 1.5) : 0;
+          const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
           return (
             <rect
               key={t.index}
               className="turnbar"
-              x={PAD + i * slot + gap / 2}
-              y={H - PAD - h}
+              x={CHART_PAD + i * slot + gap / 2}
+              y={H - CHART_PAD - h}
               width={Math.max(slot - gap, 1)}
               height={h}
             >

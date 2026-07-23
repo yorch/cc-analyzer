@@ -121,9 +121,13 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
 
   // Project-scoped chart series: burn, model mix, scatter, and distributions.
-  // Memoized per project id against the same index fingerprint.
+  // Memoized per project id against the same index fingerprint. Unknown ids
+  // 404 *before* touching the memo Map — its keyspace must stay bounded by
+  // real projects, not by whatever ids clients probe.
   api.get("/api/projects/:id/trends", (c) => {
     const id = c.req.param("id");
+    const known = db.query("SELECT 1 FROM sessions WHERE project_id = ? LIMIT 1").get(id);
+    if (!known) return c.json({ error: "project not found" }, 404);
     return cachedJson(c, `ptrends:${id}`, fingerprint(), () => projectTrends(db, id));
   });
 

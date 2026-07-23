@@ -4,6 +4,8 @@ import {
   buildBurnSeries,
   buildContextSeries,
   buildTurnSeries,
+  isOwnCompaction,
+  summarizeCompactions,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
@@ -112,6 +114,25 @@ describe("buildContextSeries", () => {
   });
 });
 
+describe("summarizeCompactions", () => {
+  test("splits own/sidechain/inherited and buckets triggers, unknown included", () => {
+    const b = summarizeCompactions([
+      { timestamp: ts(1), trigger: "auto" },
+      { timestamp: ts(2), trigger: "manual" },
+      { timestamp: ts(3) }, // legacy summary-only record: trigger unknown
+      { timestamp: ts(4), trigger: "auto", isSidechain: true },
+      { timestamp: ts(5), inherited: true },
+    ]);
+    expect(b.own).toHaveLength(3);
+    expect(b.triggers).toEqual({ auto: 1, manual: 1, unknown: 1 });
+    expect(b.sidechain).toBe(1);
+    expect(b.inherited).toBe(1);
+    expect([...b.own, { isSidechain: true }, { inherited: true }].filter(isOwnCompaction)).toEqual(
+      b.own,
+    );
+  });
+});
+
 describe("buildBurnSeries", () => {
   test("accumulates every call in timestamp order, splitting sidechain spend", () => {
     const s = buildBurnSeries(analysis);
@@ -125,6 +146,29 @@ describe("buildBurnSeries", () => {
     for (let i = 1; i < s.length; i++) {
       expect((s[i]?.cost ?? 0) >= (s[i - 1]?.cost ?? 0)).toBe(true);
     }
+  });
+
+  test("a timestamp-less call keeps its stored position", () => {
+    // Middle call loses its timestamp (tolerant parser keeps such events):
+    // it must stay anchored after its predecessor, not jump to the front.
+    const noTs = analyzeSession(
+      [
+        prompt("u1", 0, "p"),
+        assistant("a", 5, { input_tokens: 1, output_tokens: 1 }),
+        {
+          ...(assistant("b", 6, { input_tokens: 2, output_tokens: 2 }) as Record<string, unknown>),
+          timestamp: undefined,
+        } as unknown as SessionEvent,
+        assistant("c", 10, { input_tokens: 3, output_tokens: 3 }),
+      ],
+      pricing,
+    );
+    const s = buildBurnSeries(noTs);
+    // Order stays a, b, c — the untimed b sits between a and c (per-call
+    // costs rise with token counts, so order is observable through them).
+    expect(s.map((p) => p.ms !== undefined)).toEqual([true, false, true]);
+    expect((s[0]?.callCost ?? 0) < (s[1]?.callCost ?? 0)).toBe(true);
+    expect((s[1]?.callCost ?? 0) < (s[2]?.callCost ?? 0)).toBe(true);
   });
 });
 

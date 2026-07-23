@@ -9,7 +9,12 @@ import {
 } from "../../cli/format.ts";
 import type { SessionAnalysis } from "../../core/analyze.ts";
 import { analyzeSession } from "../../core/analyze.ts";
-import { buildBurnSeries, buildContextSeries, buildTurnSeries } from "../../core/chart-series.ts";
+import {
+  buildBurnSeries,
+  buildContextSeries,
+  buildTurnSeries,
+  summarizeCompactions,
+} from "../../core/chart-series.ts";
 import { parseSessionFile } from "../../core/parser.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
@@ -380,16 +385,18 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
     ctx.points.length,
     width,
   );
-  // Subagent compactions compact their own windows — counted, never marked.
-  const mainCompactions = a.compactions.filter((c) => !c.isSidechain);
-  const subCompactions = a.compactions.length - mainCompactions.length;
+  // One canonical split (chart-series.ts): own compactions get ▼ markers;
+  // subagent and inherited ones are labeled, never marked.
+  const b = summarizeCompactions(a.compactions);
   const compactions =
-    (mainCompactions.length === 0
+    (b.own.length === 0
       ? "no compactions"
-      : `${mainCompactions.length} compaction${mainCompactions.length > 1 ? "s" : ""} (${mainCompactions
+      : `${b.own.length} compaction${b.own.length > 1 ? "s" : ""} (${b.own
           .map((c) => c.trigger ?? "?")
-          .join(", ")})`) + (subCompactions > 0 ? ` · ${subCompactions} subagent` : "");
-  const totalCost = burn.length > 0 ? (burn[burn.length - 1]?.cost ?? 0) : 0;
+          .join(", ")})`) +
+    (b.inherited > 0 ? " · continued post-compaction" : "") +
+    (b.sidechain > 0 ? ` · ${b.sidechain} subagent` : "");
+  const totalCost = burn[burn.length - 1]?.cost ?? 0;
   const peakTurn = turnSeries.reduce(
     (best, t) => (t.cost > (turnSeries[best]?.cost ?? -1) ? t.index : best),
     0,
@@ -543,7 +550,10 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
         line(
           "compactions",
           `${a.compactions.length} (${a.compactions
-            .map((c) => `${c.trigger ?? "?"}${c.isSidechain ? " subagent" : ""}`)
+            .map(
+              (c) =>
+                `${c.trigger ?? "?"}${c.isSidechain ? " subagent" : ""}${c.inherited ? " inherited" : ""}`,
+            )
             .join(", ")})`,
         )}
       {line("files touched", String(a.filesTouched.length))}
