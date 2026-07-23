@@ -29,6 +29,7 @@ export function stateDir(): string {
 export const indexDbPath = (): string => join(stateDir(), "index.db");
 export const pricingCachePath = (): string => join(stateDir(), "pricing.json");
 export const updateCachePath = (): string => join(stateDir(), "update-check.json");
+export const telemetryConfigPath = (): string => join(stateDir(), "telemetry.json");
 
 /**
  * Best-effort, human-readable label for an encoded project directory name.

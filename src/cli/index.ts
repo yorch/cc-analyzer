@@ -13,6 +13,12 @@ import {
   concurrency,
   localDayOfMs,
 } from "../core/stats.ts";
+import {
+  maybeShowFirstRunNotice,
+  setTelemetryEnabled,
+  telemetryStatus,
+  trackCommand,
+} from "../core/telemetry.ts";
 import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
@@ -34,11 +40,39 @@ Usage:
   cc-analyzer pricing update           Refresh the pricing cache
   cc-analyzer update [--check]         Update to the latest release (or just check)
   cc-analyzer version                  Print the version
+  cc-analyzer telemetry <on|off|status>
+                                       View or change anonymous usage telemetry
   cc-analyzer help                     Show this help
 
 Notes:
   <id> is a session uuid (searched across all projects) or a path to a .jsonl file.
+
+Telemetry:
+  cc-analyzer reports anonymous, cookieless usage stats (no session content,
+  paths, or personal data). Opt out with CC_ANALYZER_TELEMETRY=0, DO_NOT_TRACK,
+  or \`cc-analyzer telemetry off\`.
 `;
+
+function cmdTelemetry(action: string | undefined): number {
+  switch (action) {
+    case "on":
+      setTelemetryEnabled(true);
+      console.log("Telemetry enabled. Thank you — this helps improve cc-analyzer.");
+      return 0;
+    case "off":
+      setTelemetryEnabled(false);
+      console.log("Telemetry disabled.");
+      return 0;
+    case "status": {
+      const { enabled, reason } = telemetryStatus();
+      console.log(`Telemetry is ${enabled ? "ON" : "OFF"} — ${reason}.`);
+      return 0;
+    }
+    default:
+      console.error("usage: cc-analyzer telemetry <on|off|status>");
+      return 2;
+  }
+}
 
 async function cmdProjects(): Promise<number> {
   const projects = await listProjects();
@@ -210,6 +244,23 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
   const json = rest.includes("--json");
   const positional = rest.filter((a) => !a.startsWith("--"));
 
+  // Fire at dispatch time (before serve/tui block forever). `telemetry`, `version`,
+  // and help are never tracked; undefined command means the TUI is launching.
+  const TRACKED = new Set([
+    "projects",
+    "sessions",
+    "analyze",
+    "index",
+    "stats",
+    "serve",
+    "pricing",
+    "update",
+  ]);
+  if (command === undefined || TRACKED.has(command)) {
+    maybeShowFirstRunNotice();
+    trackCommand(command ?? "tui");
+  }
+
   switch (command) {
     case "projects":
       return cmdProjects();
@@ -249,6 +300,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "-v":
       console.log(VERSION);
       return 0;
+    case "telemetry":
+      return cmdTelemetry(positional[0]);
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
       return await runTui();

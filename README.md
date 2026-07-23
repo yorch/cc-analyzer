@@ -160,6 +160,35 @@ Environment overrides (mainly for testing):
 - `CC_ANALYZER_CLAUDE_DIR` — Claude Code data dir (default `~/.claude`).
 - `CC_ANALYZER_STATE_DIR` — cc-analyzer state dir (default `~/.config/cc-analyzer`).
 
+## Telemetry & privacy
+
+cc-analyzer reports **anonymous, cookieless** usage stats to a self-hosted
+[Plausible](https://plausible.io) instance so its author can see which features
+are used. It is designed to respect the tool's read-only, privacy-first nature:
+
+- **Never sent:** session content, prompts, file paths, project names, tokens,
+  costs, or anything identifying. Each CLI event carries only the command name
+  (`stats`, `index`, …), the cc-analyzer version, your OS/arch, and a coarse
+  session-count bucket (e.g. `11-100`). The web app reports only which **view**
+  you open (`/session`, `/project`, …) — the session id or project path in the
+  URL is stripped before anything is sent.
+- **Where:** the CLI/TUI send server-side events; the local web app bundles the
+  Plausible tracker and the docs site loads its cookieless script. Telemetry
+  state lives only in `~/.config/cc-analyzer/` — **never** in `~/.claude`.
+- **On by default, easy to opt out.** The first run prints a one-time notice.
+
+Opt out in any of these ways (any one is enough):
+
+```bash
+cc-analyzer telemetry off        # persisted setting
+export CC_ANALYZER_TELEMETRY=0   # per-shell / per-run
+export DO_NOT_TRACK=1            # honored globally
+```
+
+Telemetry is also **automatically disabled in CI** (`CI` env set). Check the
+current state with `cc-analyzer telemetry status`. In the web app and docs site,
+Do-Not-Track and `localStorage.plausible_ignore = "true"` are honored.
+
 ## Development
 
 ```bash
