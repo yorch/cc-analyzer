@@ -159,17 +159,22 @@ export function trackCommand(name: string, extraProps: Record<string, string> = 
   void postEvent(buildEventBody(name, extraProps));
 }
 
-/** The Plausible script tag for the local web SPA, or "" when disabled. Uses the
- *  `script.local.js` variant because the standard script ignores localhost. */
-export function spaScriptTag(): string {
-  if (!isTelemetryEnabled()) return "";
-  return `<script defer data-domain="${WEB_DOMAIN}" src="${plausibleUrl()}/js/script.local.js"></script>`;
+/** Runtime telemetry config for the SPA, or null when disabled. The SPA bundles
+ *  the Plausible tracker and reads this to decide whether to initialize — so the
+ *  same opt-out switch governs the CLI and the web UI. */
+export function spaTelemetryConfig(): { domain: string; endpoint: string } | null {
+  if (!isTelemetryEnabled()) return null;
+  return { domain: WEB_DOMAIN, endpoint: `${plausibleUrl()}/api/event` };
 }
 
-/** Insert the SPA telemetry tag before </head>, or return html unchanged when
- *  telemetry is disabled or there is no </head> to anchor to. */
+/** Insert the SPA telemetry config (as `window.__CC_TELEMETRY__`) before </head>,
+ *  or return html unchanged when telemetry is disabled. The inline classic script
+ *  runs before the deferred module bundle, so the config is set before the SPA
+ *  reads it. `<` is escaped so a value can never break out of the script tag. */
 export function injectSpaTelemetry(html: string): string {
-  const tag = spaScriptTag();
-  if (!tag) return html;
+  const cfg = spaTelemetryConfig();
+  if (!cfg) return html;
+  const json = JSON.stringify(cfg).replace(/</g, "\\u003c");
+  const tag = `<script>window.__CC_TELEMETRY__=${json}</script>`;
   return html.replace("</head>", `${tag}</head>`);
 }

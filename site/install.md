@@ -133,10 +133,13 @@ nature:
 - **Never sent:** session content, prompts, file paths, project names, tokens,
   costs, or anything identifying. Each CLI event carries only the command name
   (`stats`, `index`, …), the cc-analyzer version, your OS/arch, and a coarse
-  session-count bucket (e.g. `11-100`).
+  session-count bucket (e.g. `11-100`). The web app reports only which **view**
+  you open (`/session`, `/project`, …) — the session id or project path in the
+  URL is stripped before anything is sent.
 - **Where:** the CLI and TUI send server-side events; the local web app
-  (`serve`) and this docs site load Plausible's cookieless script. Telemetry
-  state lives only under `~/.config/cc-analyzer/` — **never** in `~/.claude`.
+  (`serve`) bundles the Plausible tracker and this docs site loads its cookieless
+  script. Telemetry state lives only under `~/.config/cc-analyzer/` — **never**
+  in `~/.claude`.
 - **On by default, easy to opt out.** The first run prints a one-time notice.
 
 Opt out in any of these ways — any one is enough:

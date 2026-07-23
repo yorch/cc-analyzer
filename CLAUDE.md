@@ -190,13 +190,17 @@ possible.
 **Telemetry has one authority, two governed surfaces.** `core/telemetry.ts` owns
 enablement (`CC_ANALYZER_TELEMETRY` → `DO_NOT_TRACK` → `CI` → persisted
 `telemetry.json` → default on) and the Plausible poster. The CLI/TUI call
-`trackCommand()` at **dispatch time** (before `serve`/`tui` block forever); the
-`serve` command's SPA is governed by the **same** switch via `injectSpaTelemetry()`,
-which uses Plausible's `script.local.js` because the standard script ignores
-localhost. The docs site (`site/.vitepress/config.ts`) is a **separate** static
-lifecycle — its opt-out is Do-Not-Track / `plausible_ignore`, not the runtime switch.
-`trackCommand` is fire-and-forget (swallows all errors, never blocks); telemetry
-state lives in the state dir, never `~/.claude`.
+`trackCommand()` at **dispatch time** (before `serve`/`tui` block forever). The
+`serve` command's SPA is governed by the **same** switch: `injectSpaTelemetry()`
+injects a `window.__CC_TELEMETRY__` config into the served HTML **only when
+enabled**, and the SPA (which bundles `@plausible-analytics/tracker`) inits from
+it — its absence is the SPA's opt-out. Auto-capture is **off**; the SPA sends
+sanitized pageviews via `web/src/view-path.ts`, which maps a route to a view type
+(`/session`, `/project`) and **drops the id segment** so session UUIDs and encoded
+project paths never leave the machine. The docs site (`site/.vitepress/config.ts`)
+is a **separate** static lifecycle — its opt-out is Do-Not-Track / `plausible_ignore`,
+not the runtime switch. `trackCommand` is fire-and-forget (swallows all errors,
+never blocks); telemetry state lives in the state dir, never `~/.claude`.
 
 ## Self-update subsystem
 

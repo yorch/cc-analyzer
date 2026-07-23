@@ -169,10 +169,12 @@ are used. It is designed to respect the tool's read-only, privacy-first nature:
 - **Never sent:** session content, prompts, file paths, project names, tokens,
   costs, or anything identifying. Each CLI event carries only the command name
   (`stats`, `index`, …), the cc-analyzer version, your OS/arch, and a coarse
-  session-count bucket (e.g. `11-100`).
-- **Where:** the CLI/TUI send server-side events; the local web app and the docs
-  site load Plausible's cookieless script. Telemetry state lives only in
-  `~/.config/cc-analyzer/` — **never** in `~/.claude`.
+  session-count bucket (e.g. `11-100`). The web app reports only which **view**
+  you open (`/session`, `/project`, …) — the session id or project path in the
+  URL is stripped before anything is sent.
+- **Where:** the CLI/TUI send server-side events; the local web app bundles the
+  Plausible tracker and the docs site loads its cookieless script. Telemetry
+  state lives only in `~/.config/cc-analyzer/` — **never** in `~/.claude`.
 - **On by default, easy to opt out.** The first run prints a one-time notice.
 
 Opt out in any of these ways (any one is enough):

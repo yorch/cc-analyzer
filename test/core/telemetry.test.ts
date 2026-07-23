@@ -10,7 +10,7 @@ import {
   isTelemetryEnabled,
   maybeShowFirstRunNotice,
   setTelemetryEnabled,
-  spaScriptTag,
+  spaTelemetryConfig,
   telemetryStatus,
   trackCommand,
 } from "../../src/core/telemetry.ts";
@@ -240,23 +240,36 @@ describe("trackCommand", () => {
 });
 
 describe("spa injection", () => {
-  test("spaScriptTag uses the localhost-friendly script and web domain when enabled", () => {
+  test("spaTelemetryConfig carries web domain + Events API endpoint when enabled", () => {
     process.env.CC_ANALYZER_TELEMETRY_URL = "https://plausible.test";
-    const tag = spaScriptTag();
-    expect(tag).toContain("script.local.js");
-    expect(tag).toContain('data-domain="web.cc-analyzer"');
-    expect(tag).toContain("https://plausible.test/js/script.local.js");
+    const cfg = spaTelemetryConfig();
+    expect(cfg).toEqual({
+      domain: "web.cc-analyzer",
+      endpoint: "https://plausible.test/api/event",
+    });
   });
 
-  test("spaScriptTag empty when disabled", () => {
+  test("spaTelemetryConfig null when disabled", () => {
     process.env.CC_ANALYZER_TELEMETRY = "0";
-    expect(spaScriptTag()).toBe("");
+    expect(spaTelemetryConfig()).toBeNull();
   });
 
-  test("injectSpaTelemetry inserts before </head> when enabled", () => {
+  test("injectSpaTelemetry inserts the config before </head> when enabled", () => {
     const out = injectSpaTelemetry("<head><title>x</title></head><body></body>");
-    expect(out).toContain("script.local.js");
-    expect(out.indexOf("script.local.js")).toBeLessThan(out.indexOf("</head>"));
+    expect(out).toContain("window.__CC_TELEMETRY__=");
+    expect(out).toContain('"domain":"web.cc-analyzer"');
+    // config must land before </head> (so it runs before the deferred SPA bundle)
+    expect(out.indexOf("__CC_TELEMETRY__")).toBeLessThan(out.indexOf("</head>"));
+    // never emit an auto-capturing script src — pageviews are sanitized client-side
+    expect(out).not.toContain("script.local.js");
+  });
+
+  test("injectSpaTelemetry escapes < so a value cannot break out of the script", () => {
+    process.env.CC_ANALYZER_TELEMETRY_URL = "https://plausible.test/</script>";
+    const out = injectSpaTelemetry("<head></head><body></body>");
+    // The payload's "<" is escaped, so the only "</script>" is the wrapper's own.
+    expect(out.split("</script>").length - 1).toBe(1);
+    expect(out).toContain("\\u003c");
   });
 
   test("injectSpaTelemetry is a no-op when disabled", () => {

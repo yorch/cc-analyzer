@@ -66,7 +66,7 @@ config; each surface consumes it as appropriate.
                       └──────────────┬──────────────┘
           ┌──────────────────────────┼──────────────────────────┐
    CLI/TUI (index.ts, tui)     serve (server.ts)          docs site (VitePress)
-   trackCommand(<cmd>)         inject script.local.js      standard script.js
+   trackCommand(<cmd>)         inject __CC_TELEMETRY__      standard script.js
    → Events API POST           iff isEnabled()             (independent lifecycle)
 ```
 
@@ -143,20 +143,33 @@ and zero user-facing latency beat guaranteed delivery for opt-out telemetry.
     DO_NOT_TRACK").
 - The `telemetry` subcommand itself is **not** tracked.
 
-## Component 3 — Local web SPA (`src/web/server.ts`)
+## Component 3 — Local web SPA (`src/web/server.ts` + `web/src/`)
 
-- `runServe` calls `isTelemetryEnabled()`. When enabled, inject the Plausible tag into
-  the served HTML before `</head>`:
+The SPA **bundles** the official `@plausible-analytics/tracker` and drives pageviews
+itself, rather than loading an external auto-capturing script. This is a deliberate
+choice: the SPA's hash routes embed **identifying data** (`#/session/<uuid>`,
+`#/project/<encoded-cwd-path>`), so an auto-capturing script would leak session ids and
+filesystem paths — a violation of this design's core promise. Manual pageviews let us
+sanitize the URL.
+
+- `injectSpaTelemetry()` (server): when enabled, inject a config into the served HTML
+  before `</head>`:
   ```html
-  <script defer data-domain="web.cc-analyzer"
-          src="https://plausible.brnby.com/js/script.local.js"></script>
+  <script>window.__CC_TELEMETRY__={"domain":"web.cc-analyzer","endpoint":"https://plausible.brnby.com/api/event"}</script>
   ```
-  **`script.local.js`** (not `script.js`) because the standard script deliberately
-  ignores `localhost`/`file://` and would record nothing from `localhost:4317`.
-- When disabled, inject nothing. Injection is a string operation on `spaHtml` at serve
-  time; the generated `src/web/spa.ts` artifact is unchanged (still self-contained;
-  analytics is the one intentional external request, made by the browser at runtime).
-- If `hasSpa` is false (UI not built into binary), no injection.
+  The inline classic script runs before the deferred module bundle, so the config is set
+  before the SPA reads it; `<` in any value is escaped so it can't break out of the tag.
+  When disabled, inject nothing — the config's **absence** is the SPA's opt-out.
+- `web/src/telemetry.ts` (SPA): `initTelemetry()` reads `window.__CC_TELEMETRY__` and, if
+  present, calls the tracker's `init({ domain, endpoint, autoCapturePageviews: false,
+  captureOnLocalhost: true })`. `captureOnLocalhost` replaces the old `script.local.js`
+  trick (the standard hosted script ignores localhost).
+- `web/src/view-path.ts` (SPA, pure): maps a route **name** to a fixed, id-free path
+  (`session` → `/session`, `project` → `/project`, …). `App.tsx` calls `trackView()` on
+  each route change, sending `track("pageview", { url })` with that sanitized path — **no
+  id ever appended**. Unit-tested in `test/web/view-path.test.ts`.
+- The generated `src/web/spa.ts` bundles the tracker; the only runtime external request is
+  the pageview POST to the Events API.
 
 ## Component 4 — Docs site (`site/.vitepress/config.ts`)
 
@@ -190,7 +203,7 @@ than SRI here.
 | Surface | Transport | Trigger | Domain |
 | --- | --- | --- | --- |
 | Docs site | `script.js` (browser) | pageview | `cc-analyzer.brnby.com` |
-| Web SPA | `script.local.js` (browser) | pageview | `web.cc-analyzer` |
+| Web SPA | bundled tracker (browser) | sanitized pageview per view | `web.cc-analyzer` |
 | CLI/TUI | Events API POST (server-side) | per command run | `cli.cc-analyzer` |
 
 ## Error handling

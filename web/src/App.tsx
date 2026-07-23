@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { link, useHashRoute } from "./router.ts";
+import { trackView } from "./telemetry.ts";
 import { Dashboard } from "./views/Dashboard.tsx";
 import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
@@ -8,6 +10,10 @@ import { Trends } from "./views/Trends.tsx";
 
 export function App() {
   const route = useHashRoute();
+  // Report a sanitized pageview whenever the view changes (ids never sent).
+  useEffect(() => {
+    trackView(route.name);
+  }, [route.name]);
   const onInsights = route.name === "insights" || route.name === "insightsProject";
   return (
     <div className="wrap">
