@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { openDb } from "../../src/core/db.ts";
 import { listIndexedProjects } from "../../src/core/queries.ts";
 import {
+  analyticsRollup,
+  buildPortfolioStats,
   compactionUsage,
   costDistribution,
   modelMixByDay,
@@ -67,6 +69,20 @@ beforeAll(() => {
 afterAll(() => db.close());
 
 describe("project-scoped rollups", () => {
+  test("the shared stats report scopes every section to one project", () => {
+    const stats = buildPortfolioStats(db, "2026-07-23", { projectId: "p1" });
+    expect(stats.summary).toMatchObject({ sessions: 2, projects: 1, cost: 4 });
+    expect(stats.byProject).toEqual([]);
+    expect(stats.byMonth.map((row) => row.cost)).toEqual([4]);
+    expect(stats.byModel.map((row) => row.model)).toEqual(["claude-opus-4-7"]);
+    expect(stats.top.map((row) => row.cost)).toEqual([3, 1]);
+    expect(stats.duration.sessions).toBe(2);
+    expect(stats.distribution.sessions).toBe(2);
+
+    const tools = analyticsRollup(db, "p1").tools;
+    expect(tools.map((row) => row.tool)).toEqual(["Bash", "Read"]);
+  });
+
   test("spendByDay filters to one project", () => {
     expect(spendByDay(db).map((d) => d.cost)).toEqual([1, 13]);
     expect(spendByDay(db, "p1").map((d) => d.cost)).toEqual([1, 3]);

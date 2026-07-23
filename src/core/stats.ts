@@ -64,23 +64,17 @@ function scopedAll<T>(
   ) as T[];
 }
 
-export function portfolioSummary(db: Database): PortfolioSummary {
-  const r = db
-    .query(
-      `SELECT
-        COUNT(*) AS sessions,
-        COUNT(DISTINCT project_id) AS projects,
-        COALESCE(SUM(cost_total), 0) AS cost,
-        COALESCE(SUM(cost_total * cost_estimated), 0) AS est_cost,
-        COALESCE(SUM(input_tokens), 0) AS it,
-        COALESCE(SUM(output_tokens), 0) AS ot,
-        COALESCE(SUM(cache_write_5m + cache_write_1h), 0) AS cw,
-        COALESCE(SUM(cache_read), 0) AS cr,
-        MIN(day) AS first_day,
-        MAX(day) AS last_day
-      FROM sessions`,
-    )
-    .get() as {
+function scopedGet<T>(
+  db: Database,
+  sql: string,
+  projectId: string | undefined,
+  ...params: (string | number)[]
+): T {
+  return (projectId ? db.query(sql).get(projectId, ...params) : db.query(sql).get(...params)) as T;
+}
+
+export function portfolioSummary(db: Database, projectId?: string): PortfolioSummary {
+  const r = scopedGet<{
     sessions: number;
     projects: number;
     cost: number;
@@ -91,7 +85,22 @@ export function portfolioSummary(db: Database): PortfolioSummary {
     cr: number;
     first_day: string | null;
     last_day: string | null;
-  };
+  }>(
+    db,
+    `SELECT
+        COUNT(*) AS sessions,
+        COUNT(DISTINCT project_id) AS projects,
+        COALESCE(SUM(cost_total), 0) AS cost,
+        COALESCE(SUM(cost_total * cost_estimated), 0) AS est_cost,
+        COALESCE(SUM(input_tokens), 0) AS it,
+        COALESCE(SUM(output_tokens), 0) AS ot,
+        COALESCE(SUM(cache_write_5m + cache_write_1h), 0) AS cw,
+        COALESCE(SUM(cache_read), 0) AS cr,
+        MIN(day) AS first_day,
+        MAX(day) AS last_day
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    projectId,
+  );
   return {
     sessions: r.sessions,
     projects: r.projects,
@@ -106,18 +115,18 @@ export function portfolioSummary(db: Database): PortfolioSummary {
   };
 }
 
-export function spendByMonth(db: Database): MonthRow[] {
-  return db
-    .query(
-      `SELECT month,
+export function spendByMonth(db: Database, projectId?: string): MonthRow[] {
+  return scopedAll<MonthRow>(
+    db,
+    `SELECT month,
         SUM(cost_total) AS cost,
         COUNT(*) AS sessions,
         SUM(${IO_TOKENS}) AS ioTokens,
         SUM(${CACHE_TOKENS}) AS cacheTokens
-      FROM sessions WHERE month IS NOT NULL
+      FROM sessions WHERE month IS NOT NULL ${projectScope(projectId)}
       GROUP BY month ORDER BY month`,
-    )
-    .all() as MonthRow[];
+    projectId,
+  );
 }
 
 export function spendByProject(db: Database, limit = 20): ProjectRow[] {
@@ -135,19 +144,21 @@ export function spendByProject(db: Database, limit = 20): ProjectRow[] {
     .all(limit) as ProjectRow[];
 }
 
-export function topSessions(db: Database, limit = 10): SessionRankRow[] {
-  return db
-    .query(
-      `SELECT session_id AS sessionId,
+export function topSessions(db: Database, limit = 10, projectId?: string): SessionRankRow[] {
+  return scopedAll<SessionRankRow>(
+    db,
+    `SELECT session_id AS sessionId,
         project_path AS projectPath,
         title,
         cost_total AS cost,
         (${IO_TOKENS}) AS ioTokens,
         (${CACHE_TOKENS}) AS cacheTokens,
         start_time AS startTime
-      FROM sessions ORDER BY cost_total DESC LIMIT ?`,
-    )
-    .all(limit) as SessionRankRow[];
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}
+      ORDER BY cost_total DESC LIMIT ?`,
+    projectId,
+    limit,
+  );
 }
 
 interface JsonTokens {
@@ -159,8 +170,12 @@ interface JsonTokens {
 }
 
 /** Aggregate per-model spend across all sessions (models live in a JSON column). */
-export function spendByModel(db: Database): ModelRow[] {
-  const rows = db.query("SELECT models_json FROM sessions").all() as { models_json: string }[];
+export function spendByModel(db: Database, projectId?: string): ModelRow[] {
+  const rows = scopedAll<{ models_json: string }>(
+    db,
+    `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    projectId,
+  );
   const totals = new Map<string, { calls: number; cost: number; io: number; cache: number }>();
   for (const row of rows) {
     let models: Record<
@@ -326,14 +341,14 @@ function percentile(sorted: number[], p: number): number {
   return a + (b - a) * (idx - lo);
 }
 
-/** Portfolio-wide session-duration and active-time rollup. */
-export function durationSummary(db: Database): DurationSummary {
-  const rows = db
-    .query(
-      `SELECT duration_ms AS d, COALESCE(active_ms, 0) AS a
-      FROM sessions WHERE duration_ms IS NOT NULL AND duration_ms > 0`,
-    )
-    .all() as { d: number; a: number }[];
+/** Session-duration and active-time rollup, optionally for one project. */
+export function durationSummary(db: Database, projectId?: string): DurationSummary {
+  const rows = scopedAll<{ d: number; a: number }>(
+    db,
+    `SELECT duration_ms AS d, COALESCE(active_ms, 0) AS a
+      FROM sessions WHERE duration_ms IS NOT NULL AND duration_ms > 0 ${projectScope(projectId)}`,
+    projectId,
+  );
   const durations = rows.map((r) => r.d).sort((x, y) => x - y);
   const totalMs = durations.reduce((s, v) => s + v, 0);
   const totalActiveMs = rows.reduce((s, r) => s + r.a, 0);
@@ -411,10 +426,13 @@ export function costDistribution(db: Database, projectId?: string): CostDistribu
 }
 
 /** Active-day streaks. `today` is the caller's local YYYY-MM-DD. */
-export function streaks(db: Database, today: string): StreakSummary {
-  const rows = db
-    .query("SELECT DISTINCT day FROM sessions WHERE day IS NOT NULL ORDER BY day")
-    .all() as { day: string }[];
+export function streaks(db: Database, today: string, projectId?: string): StreakSummary {
+  const rows = scopedAll<{ day: string }>(
+    db,
+    `SELECT DISTINCT day FROM sessions
+    WHERE day IS NOT NULL ${projectScope(projectId)} ORDER BY day`,
+    projectId,
+  );
   const days = rows.map((r) => r.day);
   const daySet = new Set(days);
 
@@ -451,7 +469,7 @@ export function streaks(db: Database, today: string): StreakSummary {
 }
 
 /** Month-to-date spend vs last month, plus a run-rate projection. */
-export function runRate(db: Database, today: string): RunRate {
+export function runRate(db: Database, today: string, projectId?: string): RunRate {
   const month = today.slice(0, 7);
   const dayOfMonth = Number(today.slice(8, 10));
   const [y, m] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
@@ -461,10 +479,13 @@ export function runRate(db: Database, today: string): RunRate {
   const prevSamePointEnd = `${prevMonth}-${String(Math.min(dayOfMonth, new Date(Date.UTC(y, m - 1, 0)).getUTCDate())).padStart(2, "0")}`;
 
   const sum = (from: string, to: string): number =>
-    (
-      db
-        .query("SELECT COALESCE(SUM(cost_total), 0) AS c FROM sessions WHERE day >= ? AND day <= ?")
-        .get(from, to) as { c: number }
+    scopedGet<{ c: number }>(
+      db,
+      `SELECT COALESCE(SUM(cost_total), 0) AS c FROM sessions
+      WHERE 1 = 1 ${projectScope(projectId)} AND day >= ? AND day <= ?`,
+      projectId,
+      from,
+      to,
     ).c;
 
   const monthToDate = sum(`${month}-01`, today);
@@ -486,15 +507,15 @@ export function runRate(db: Database, today: string): RunRate {
  * ———————————————————————————————————————————————————————————————————————— */
 
 /** How cache writes split between the 5-minute and 1-hour (2× priced) TTLs. */
-export function cacheTtlSplit(db: Database): CacheTtlSplit {
-  return db
-    .query(
-      `SELECT COALESCE(SUM(cache_write_5m), 0) AS write5mTokens,
+export function cacheTtlSplit(db: Database, projectId?: string): CacheTtlSplit {
+  return scopedGet<CacheTtlSplit>(
+    db,
+    `SELECT COALESCE(SUM(cache_write_5m), 0) AS write5mTokens,
         COALESCE(SUM(cache_write_1h), 0) AS write1hTokens,
         COALESCE(SUM(cost_cache_write), 0) AS writeCost
-      FROM sessions`,
-    )
-    .get() as CacheTtlSplit;
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    projectId,
+  );
 }
 
 /** Server-side web search/fetch usage: portfolio summary + top projects. */
@@ -543,17 +564,17 @@ export function estimatedShareByProject(db: Database, limit = 20): EstimatedShar
     .all(limit) as EstimatedShareRow[];
 }
 
-/** How much of the portfolio's spend ran on sidechains (subagents). */
-export function sidechainSummary(db: Database): SidechainSummary {
-  const r = db
-    .query(
-      `SELECT COALESCE(SUM(sidechain_cost), 0) AS cost,
+/** How much spend ran on sidechains (subagents), optionally for one project. */
+export function sidechainSummary(db: Database, projectId?: string): SidechainSummary {
+  const r = scopedGet<Omit<SidechainSummary, "share">>(
+    db,
+    `SELECT COALESCE(SUM(sidechain_cost), 0) AS cost,
         COALESCE(SUM(sidechain_calls), 0) AS calls,
         COALESCE(SUM(cost_total), 0) AS totalCost,
         COALESCE(SUM(api_calls), 0) AS totalCalls
-      FROM sessions`,
-    )
-    .get() as Omit<SidechainSummary, "share">;
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    projectId,
+  );
   return { ...r, share: r.totalCost > 0 ? r.cost / r.totalCost : 0 };
 }
 
@@ -893,14 +914,14 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
  * end_time must not make the day walk crawl to the year 3000. */
 const MAX_SESSION_SPAN_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** How many sessions overlap in time — parallel-Claude usage, per day. */
-export function concurrency(db: Database): ConcurrencySummary {
-  const rows = db
-    .query(
-      `SELECT start_time AS s, end_time AS e FROM sessions
-      WHERE start_time IS NOT NULL AND end_time IS NOT NULL`,
-    )
-    .all() as { s: string; e: string }[];
+/** How many sessions overlap in time — parallel-Claude usage, optionally for one project. */
+export function concurrency(db: Database, projectId?: string): ConcurrencySummary {
+  const rows = scopedAll<{ s: string; e: string }>(
+    db,
+    `SELECT start_time AS s, end_time AS e FROM sessions
+      WHERE start_time IS NOT NULL AND end_time IS NOT NULL ${projectScope(projectId)}`,
+    projectId,
+  );
   interface Edge {
     ms: number;
     delta: 1 | -1;
@@ -1038,7 +1059,7 @@ export function errorRateByWeek(db: Database): ErrorWeekRow[] {
  * from the raw command heads stored in the index (schema v6), so those
  * heuristics can change without a reindex.
  */
-export function analyticsRollup(db: Database): AnalyticsRollup {
+export function analyticsRollup(db: Database, projectId?: string): AnalyticsRollup {
   interface Row {
     project_id: string;
     day: string | null;
@@ -1059,17 +1080,17 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
     versions_json: string | null;
     branches_json: string | null;
   }
-  const rows = db
-    .query(
-      `SELECT project_id, day, month, cost_total AS cost,
+  const rows = scopedAll<Row>(
+    db,
+    `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
-      FROM sessions`,
-    )
-    .all() as Row[];
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    projectId,
+  );
 
   const toolFold = newToolFold();
 
@@ -1305,26 +1326,27 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
 }
 
 /**
- * The shared portfolio view behind both `cc-analyzer stats` and the web
- * `/api/stats` route. Frontends may append extras, but the common shape is
- * assembled in exactly one place.
+ * The shared stats view behind both `cc-analyzer stats` and the web
+ * `/api/stats` route. The CLI may scope it to one project; frontends may append
+ * extras, but the common shape is assembled in exactly one place.
  */
 export function buildPortfolioStats(
   db: Database,
   today: string,
-  opts: { projectLimit?: number; topLimit?: number } = {},
+  opts: { projectId?: string; projectLimit?: number; topLimit?: number } = {},
 ): PortfolioStats {
+  const projectId = opts.projectId;
   return {
-    summary: portfolioSummary(db),
-    byMonth: spendByMonth(db),
-    byProject: spendByProject(db, opts.projectLimit ?? 20),
-    byModel: spendByModel(db),
-    top: topSessions(db, opts.topLimit ?? 10),
-    duration: durationSummary(db),
-    distribution: costDistribution(db),
-    streaks: streaks(db, today),
-    runRate: runRate(db, today),
-    sidechain: sidechainSummary(db),
-    estimatedByProject: estimatedShareByProject(db),
+    summary: portfolioSummary(db, projectId),
+    byMonth: spendByMonth(db, projectId),
+    byProject: projectId ? [] : spendByProject(db, opts.projectLimit ?? 20),
+    byModel: spendByModel(db, projectId),
+    top: topSessions(db, opts.topLimit ?? 10, projectId),
+    duration: durationSummary(db, projectId),
+    distribution: costDistribution(db, projectId),
+    streaks: streaks(db, today, projectId),
+    runRate: runRate(db, today, projectId),
+    sidechain: sidechainSummary(db, projectId),
+    estimatedByProject: projectId ? [] : estimatedShareByProject(db),
   };
 }

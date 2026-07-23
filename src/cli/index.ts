@@ -5,6 +5,7 @@ import { findSessionById, listProjects, listSessions } from "../core/discover.ts
 import { reindex } from "../core/indexer.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
+import { indexedProjectForPath } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import {
   analyticsRollup,
@@ -35,7 +36,8 @@ Usage:
   cc-analyzer analyze <id|path> [--json]
                                        Analyze a single session
   cc-analyzer index [--rebuild]        Build/refresh the session index
-  cc-analyzer stats [--json]           Portfolio-wide analytics (needs an index)
+  cc-analyzer stats [--current] [--json]
+                                       Portfolio or current-project analytics (needs an index)
   cc-analyzer serve [--port=4317] [--host=127.0.0.1]
                                        Launch the local web app (needs an index)
   cc-analyzer pricing update           Refresh the pricing cache
@@ -168,22 +170,40 @@ async function cmdIndex(rebuild: boolean): Promise<number> {
   return 0;
 }
 
-async function cmdStats(json: boolean): Promise<number> {
+async function cmdStats(json: boolean, current: boolean): Promise<number> {
   const db = openDb();
+  const project = current ? indexedProjectForPath(db, process.cwd()) : undefined;
+  if (current && !project) {
+    db.close();
+    console.error(
+      `No indexed Claude Code project contains '${process.cwd()}'. ` +
+        "Run `cc-analyzer index` and try again.",
+    );
+    return 1;
+  }
+  const projectId = project?.projectId;
   // The shared portfolio shape comes from the same builder as /api/stats;
   // the CLI adds its terminal-only extras on top.
-  const portfolio = buildPortfolioStats(db, localDayOfMs(Date.now()));
+  const portfolio = buildPortfolioStats(db, localDayOfMs(Date.now()), { projectId });
   if (portfolio.summary.sessions === 0) {
     db.close();
     console.error("Index is empty. Run `cc-analyzer index` first.");
     return 1;
   }
-  const analytics = analyticsRollup(db);
+  const analytics = analyticsRollup(db, projectId);
   // The CLI reports only the concurrency headline, not the per-day series.
-  const { peak, parallelDayShare } = concurrency(db);
+  const { peak, parallelDayShare } = concurrency(db, projectId);
+  const scope = project
+    ? {
+        type: "project" as const,
+        projectId: project.projectId,
+        projectPath: project.projectPath,
+      }
+    : { type: "portfolio" as const };
   const view = {
+    scope,
     ...portfolio,
-    ttl: cacheTtlSplit(db),
+    ttl: cacheTtlSplit(db, projectId),
     bash: analytics.bash.slice(0, 10),
     tests: analytics.tests,
     retries: analytics.retries,
@@ -193,7 +213,10 @@ async function cmdStats(json: boolean): Promise<number> {
   console.log(
     json
       ? JSON.stringify(view, null, 2)
-      : renderStats(view, { color: process.stdout.isTTY && !process.env.NO_COLOR }),
+      : renderStats(view, {
+          color: process.stdout.isTTY && !process.env.NO_COLOR,
+          projectPath: project?.projectPath,
+        }),
   );
   return 0;
 }
@@ -280,7 +303,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "index":
       return cmdIndex(rest.includes("--rebuild"));
     case "stats":
-      return cmdStats(json);
+      return cmdStats(json, rest.includes("--current"));
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

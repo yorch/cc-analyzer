@@ -124,7 +124,8 @@ cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
-cc-analyzer stats [--json]           # portfolio-wide analytics (needs an index)
+cc-analyzer stats [--current] [--json]
+                                     # portfolio or current-project analytics (needs an index)
 cc-analyzer serve [--port=4317] [--host=127.0.0.1]
                                      # launch the local web app (needs an index)
 cc-analyzer pricing update           # refresh the pricing cache
@@ -215,7 +216,14 @@ rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
 month/project/model, and the most expensive sessions. Human-readable reports
 use a compact headline, grouped activity/reliability sections, and aligned
 numeric tables; terminals receive restrained color while pipes, redirects,
-`NO_COLOR`, and `--json` stay automation-safe.
+`NO_COLOR`, and `--json` stay automation-safe. JSON reports include a
+discriminated `scope` object identifying either the portfolio or the selected
+project.
+
+Run `cc-analyzer stats --current` from a project—or any directory beneath
+it—to scope every metric to that project's indexed sessions. Project matching
+uses the authoritative session `cwd`; if it is missing from the cache, refresh
+it with `cc-analyzer index`.
 
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run
