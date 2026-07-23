@@ -4,9 +4,6 @@
   // value if the tracker configuration is regenerated in Plausible.
   const PLAUSIBLE_TRACKER_ID = "pa-ngd1ppRBUHfoOrHRCjEei";
 
-  const dnt = navigator.doNotTrack || window.doNotTrack;
-  if (dnt === "1" || dnt === "yes") return;
-
   try {
     if (localStorage.getItem("plausible_ignore") === "true") return;
   } catch {

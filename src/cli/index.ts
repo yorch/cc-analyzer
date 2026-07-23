@@ -14,6 +14,7 @@ import {
   localDayOfMs,
 } from "../core/stats.ts";
 import {
+  flushTelemetry,
   maybeShowFirstRunNotice,
   setTelemetryEnabled,
   telemetryStatus,
@@ -326,6 +327,7 @@ async function main(): Promise<number> {
   if (command && NOTIFY_COMMANDS.has(command) && !rest.includes("--json")) {
     await maybeNotifyUpdate();
   }
+  await flushTelemetry();
   return code;
 }
 

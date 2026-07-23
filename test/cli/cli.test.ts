@@ -34,13 +34,18 @@ afterAll(() => {
 });
 
 /** Run the CLI in an isolated env (temp dirs, update check off, no TTY). */
-async function run(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function run(
+  args: string[],
+  env: Record<string, string | undefined> = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", cliPath, ...args], {
     env: {
       ...process.env,
       CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "claude"),
       CC_ANALYZER_STATE_DIR: join(tmpDir, "state"),
       CC_ANALYZER_NO_UPDATE_CHECK: "1",
+      CC_ANALYZER_TELEMETRY: "0",
+      ...env,
     },
     stdin: "ignore",
     stdout: "pipe",
@@ -105,5 +110,28 @@ describe("CLI dispatch & exit codes", () => {
     const r = await run(["projects"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("1 projects");
+  });
+
+  test("a quick command lets its telemetry request settle before exiting", async () => {
+    let body: { props?: { name?: string } } | undefined;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        body = (await req.json()) as { props?: { name?: string } };
+        return new Response("", { status: 202 });
+      },
+    });
+    try {
+      const r = await run(["projects"], {
+        CC_ANALYZER_TELEMETRY_URL: server.url.origin,
+        CC_ANALYZER_TELEMETRY: "1",
+        DO_NOT_TRACK: undefined,
+        CI: undefined,
+      });
+      expect(r.code).toBe(0);
+      expect(body?.props?.name).toBe("projects");
+    } finally {
+      server.stop(true);
+    }
   });
 });

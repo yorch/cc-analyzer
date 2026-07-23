@@ -152,11 +152,26 @@ async function postEvent(body: EventBody): Promise<void> {
   }
 }
 
+const pendingEvents = new Set<Promise<void>>();
+
 /** Record a command run. No-op when disabled. Fire-and-forget: returns
  *  immediately, never throws, never blocks or delays the caller. */
 export function trackCommand(name: string, extraProps: Record<string, string> = {}): void {
   if (!isTelemetryEnabled()) return;
-  void postEvent(buildEventBody(name, extraProps));
+  const request = postEvent(buildEventBody(name, extraProps));
+  pendingEvents.add(request);
+  void request.finally(() => pendingEvents.delete(request));
+}
+
+/** Give pending events a brief chance to leave the process before a quick CLI
+ *  command exits. Delivery stays best-effort and the bounded wait never changes
+ *  the command's result. Long-running TUI/serve commands settle naturally. */
+export async function flushTelemetry(timeoutMs = 100): Promise<void> {
+  if (pendingEvents.size === 0) return;
+  await Promise.race([
+    Promise.allSettled([...pendingEvents]),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
 }
 
 /** Runtime telemetry config for the SPA, or null when disabled. The SPA bundles
