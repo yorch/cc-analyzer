@@ -39,6 +39,17 @@ describe("web API", () => {
     expect(body.byModel.length).toBeGreaterThan(0);
   });
 
+  test("GET /api/index-status reports exact source freshness", async () => {
+    const res = await api.request("/api/index-status");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      stale: false,
+      added: 0,
+      changed: 0,
+      deleted: 0,
+    });
+  });
+
   test("GET /api/projects lists projects", async () => {
     const res = await api.request("/api/projects");
     const body = (await res.json()) as { projectId: string }[];

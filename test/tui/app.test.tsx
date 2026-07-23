@@ -116,4 +116,23 @@ describe("App (smoke render)", () => {
     unmount();
     emptyDb.close();
   });
+
+  test("shows exact index changes in the shell notice", () => {
+    const { lastFrame, unmount } = render(
+      <App
+        db={db}
+        pricing={pricing}
+        indexStatus={{
+          lastRefreshedAt: "2026-07-22T10:00:00.000Z",
+          ageMs: 86_400_000,
+          stale: true,
+          added: 2,
+          changed: 1,
+          deleted: 0,
+        }}
+      />,
+    );
+    expect(lastFrame() ?? "").toContain("Index behind: 2 new · 1 changed · 0 deleted");
+    unmount();
+  });
 });

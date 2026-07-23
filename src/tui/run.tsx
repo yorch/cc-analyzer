@@ -1,5 +1,7 @@
 import { render } from "ink";
 import { openDb } from "../core/db.ts";
+import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
+import { inspectIndexStatus } from "../core/index-status.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { App } from "./App.tsx";
 
@@ -14,7 +16,18 @@ export async function runTui(): Promise<number> {
   }
   const db = openDb();
   const { table } = await loadPricing();
-  const app = render(<App db={db} pricing={table} />);
+  const refreshed = await refreshIndexIfNeeded(db, {
+    pricing: table,
+    onProgress: (done, total) => {
+      process.stderr.write(`\rBuilding initial index ${done}/${total}...`);
+    },
+  });
+  if (refreshed) {
+    if (refreshed.total > 0) process.stderr.write("\n");
+    console.error(`Indexed ${refreshed.indexed} Claude Code sessions.`);
+  }
+  const indexStatus = await inspectIndexStatus(db);
+  const app = render(<App db={db} pricing={table} indexStatus={indexStatus} />);
   await app.waitUntilExit();
   db.close();
   return 0;

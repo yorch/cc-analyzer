@@ -26,6 +26,8 @@ interface Props {
   railFocused?: boolean;
   /** Optional band under the title bar (e.g. the portfolio lede). */
   lede?: ReactNode;
+  /** Optional one-line status notice under the title bar. */
+  notice?: string;
   children: ReactNode;
 }
 
@@ -48,12 +50,14 @@ export function AppShell({
   rows,
   railFocused = false,
   lede,
+  notice,
   children,
 }: Props) {
   const mode = layoutMode(columns);
   return (
     <Box flexDirection="column" height={Math.max(1, rows - 2)} overflow="hidden">
       <TitleBar breadcrumb={breadcrumb} />
+      {notice ? <Text color={palette.amberDim}>◇ {notice}</Text> : null}
       {lede}
       <Box marginTop={1} flexGrow={1} overflow="hidden">
         {mode !== "narrow" && (

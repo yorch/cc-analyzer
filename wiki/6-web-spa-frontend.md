@@ -81,6 +81,12 @@ Sources: [web/src/App.tsx#L1-L46](https://github.com/yorch/cc-analyzer/blob/51cc
 
 ## Routing and shell
 
+The application shell fetches `/api/index-status` independently of the active
+route. `IndexNotice` renders a global warning when session files differ from the
+cache or when the last successful scan is old or unknown, and the footer always
+shows the last refresh time. The warning points users to `cc-analyzer index`;
+the browser remains read-only and never starts an index operation itself.
+
 Routing is client-side and hash-based. `parse()` turns `window.location.hash` into a discriminated `Route` union covering `dashboard`, `insights`, `insightsProject`, `trends`, `tools`, `project`, and `session`, extracting the id segment with `decodeURIComponent` for the parameterized routes ([web/src/router.ts#L3-L25](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L3-L25)). `useHashRoute` seeds state from the initial hash and subscribes to the `hashchange` event, re-parsing on every navigation ([web/src/router.ts#L27-L35](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L27-L35)). The `link` object centralizes URL construction so views never hand-build hashes, encoding ids symmetrically with `encodeURIComponent` ([web/src/router.ts#L37-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L37-L45)).
 
 `App` renders a fixed masthead with a brand link and a four-item nav — Dashboard, Insights, Trends, Tools — marking the active tab by comparing `route.name`, and treats both `insights` and `insightsProject` as the Insights tab ([web/src/App.tsx#L11-L36](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L11-L36)). Below the header it conditionally mounts the one matching view, passing `route.id` to `Project`, `Session`, and `InsightsProject` ([web/src/App.tsx#L37-L44](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L37-L44)).

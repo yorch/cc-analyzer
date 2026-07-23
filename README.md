@@ -118,16 +118,17 @@ bun run build                        # compile a single binary -> dist/cc-analyz
 ## Usage
 
 ```bash
-cc-analyzer                          # launch the interactive TUI (needs an index)
+cc-analyzer                          # launch the interactive TUI (builds an empty index)
 cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
+cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
-cc-analyzer serve [--port=4317] [--host=127.0.0.1]
-                                     # launch the local web app (needs an index)
+cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
+                                     # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
@@ -138,6 +139,11 @@ notice when one is available (`cc-analyzer update` to install it). Set
 `CC_ANALYZER_NO_UPDATE_CHECK=1` to disable that check; it is also skipped in CI
 and non-interactive shells. `update` replaces the installed binary in place on
 macOS/Linux; on Windows it points you at the PowerShell installer.
+
+Index-backed reports include the last successful refresh time. `index --check`
+compares source file metadata with the cache without parsing sessions and exits
+non-zero when it finds new, changed, or deleted files. The TUI, `stats`, and
+web app surface the same freshness status so an older cache is never silent.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.
@@ -252,8 +258,9 @@ several skills counts its full cost toward each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and
-**summary** modes (`t` / `s`). It reads from the index, so run `cc-analyzer
-index` first.
+**summary** modes (`t` / `s`). It reads from the index; on first use it builds
+an empty cache automatically. Later source changes are reported in the shell so
+you know when to run `cc-analyzer index`.
 
 Navigation uses a two-zone focus model: in a list, just start typing to
 **filter**, `tab`/`shift-tab` cycles the **sort**, `↑/↓` moves (updating the
@@ -266,8 +273,11 @@ falls back to a hint about the scriptable commands.
 
 ### Web app
 
-`cc-analyzer serve` starts a local web server (Hono API + an embedded React
-SPA). It listens on loopback only (`127.0.0.1`) and rejects non-local `Host`
+`cc-analyzer serve` builds the index when it is empty, then starts a local web
+server (Hono API + an embedded React SPA). Pass `--refresh` to incrementally
+refresh an existing index before serving, and `--open` to launch the URL in
+your default browser. Browser opening is best-effort and limited to loopback
+hosts. The server listens on loopback only (`127.0.0.1`) and rejects non-local `Host`
 headers, since sessions contain full conversation transcripts; pass
 `--host=0.0.0.0` only if you deliberately want to expose it to your network.
 The UI ships a portfolio dashboard, project drill-down, a per-session view, an

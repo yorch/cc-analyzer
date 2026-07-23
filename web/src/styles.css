@@ -222,6 +222,48 @@ main {
   text-transform: uppercase;
   color: var(--faint);
 }
+.index-notice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  margin: -12px 0 28px;
+  padding: 11px 14px;
+  color: var(--signal-2);
+  background:
+    linear-gradient(90deg, var(--glow), transparent 70%),
+    repeating-linear-gradient(90deg, transparent 0 19px, var(--border) 20px);
+  border-block: 1px solid var(--border-strong);
+}
+.index-notice-mark {
+  color: var(--signal);
+  font-size: 17px;
+  line-height: 1.2;
+}
+.index-notice strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-variation-settings:
+    "opsz" 20,
+    "wght" 560;
+  letter-spacing: 0.01em;
+}
+.index-notice p {
+  margin: 1px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.index-notice code {
+  color: var(--signal-2);
+}
+.index-freshness {
+  display: block;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
 .masthead-rule {
   flex: 1;
   height: 1px;

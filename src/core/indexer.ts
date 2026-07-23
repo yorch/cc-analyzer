@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
 import { listAllSessions, type SessionInfo } from "./discover.ts";
+import { LAST_SCAN_KEY } from "./index-status.ts";
 import { streamSessionEvents } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
@@ -292,6 +293,10 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
         deleted++;
       }
     }
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      LAST_SCAN_KEY,
+      String(Date.now()),
+    );
   });
   writeAll();
 

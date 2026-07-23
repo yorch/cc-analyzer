@@ -1,4 +1,5 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
+import type { IndexStatus } from "../core/index-status-types.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import type {
   BashCommandRow,
@@ -8,7 +9,15 @@ import type {
   TestRunSummary,
 } from "../core/stats.ts";
 import { topEntries } from "../core/stats-types.ts";
-import { formatCount, formatDuration, formatTokens, formatUSD, table, truncate } from "./format.ts";
+import {
+  formatCount,
+  formatDuration,
+  formatRelativeTime,
+  formatTokens,
+  formatUSD,
+  table,
+  truncate,
+} from "./format.ts";
 
 export interface RenderOptions {
   color?: boolean;
@@ -157,6 +166,7 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
 
 /** The shared portfolio shape plus the CLI's terminal-only extras. */
 export interface PortfolioView extends PortfolioStats {
+  index: IndexStatus;
   ttl: CacheTtlSplit;
   bash: BashCommandRow[];
   tests: TestRunSummary;
@@ -198,6 +208,19 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         `(${(d.activeShare * 100).toFixed(0)}% of session time)`,
       options,
     ),
+  );
+  const refreshed = v.index.lastRefreshedAt
+    ? formatRelativeTime(Date.parse(v.index.lastRefreshedAt))
+    : "unknown";
+  lines.push(
+    v.index.stale
+      ? paint(
+          options.color === true,
+          ANSI.amber,
+          `Index behind · ${v.index.added} new · ${v.index.changed} changed · ` +
+            `${v.index.deleted} deleted · run cc-analyzer index`,
+        )
+      : muted(`Index refreshed ${refreshed}`, options),
   );
 
   lines.push(`\n${section("Activity", options)}`);

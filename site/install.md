@@ -123,6 +123,34 @@ via `cc-analyzer update --check`. On Windows, re-run the installer one-liner.
 `cc-analyzer` also prints a passive, once-a-day notice when a newer version is
 available; silence it with `CC_ANALYZER_NO_UPDATE_CHECK=1`.
 
+## First run and index freshness
+
+Launch the terminal UI directly:
+
+```sh
+cc-analyzer
+```
+
+Or start the local web app and open it in your default browser:
+
+```sh
+cc-analyzer serve --open
+```
+
+Both commands build the local session index automatically when it is empty.
+After that, indexing remains explicit so a large changed session cannot make
+startup unexpectedly slow. The TUI, `stats`, and web app show when the index was
+last refreshed and warn when session files were added, changed, or deleted.
+
+```sh
+cc-analyzer index --check       # inspect freshness without changing the cache
+cc-analyzer index               # incremental refresh
+cc-analyzer serve --refresh     # refresh, then serve
+```
+
+`index --check` exits non-zero when the cache is stale, making it suitable for
+scripts. `serve --open` is opt-in and only opens a browser for loopback hosts.
+
 ## Telemetry & privacy
 
 `cc-analyzer` reports **anonymous, cookieless** usage stats to a self-hosted

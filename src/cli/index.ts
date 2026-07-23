@@ -2,6 +2,7 @@
 import { analyzeSession } from "../core/analyze.ts";
 import { openDb } from "../core/db.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
+import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
@@ -30,16 +31,17 @@ import { renderSessionSummary, renderStats } from "./render.ts";
 const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
 
 Usage:
-  cc-analyzer                          Launch the interactive TUI (needs an index)
+  cc-analyzer                          Launch the interactive TUI
   cc-analyzer projects                 List all projects
   cc-analyzer sessions <projectId>     List sessions in a project
   cc-analyzer analyze <id|path> [--json]
                                        Analyze a single session
-  cc-analyzer index [--rebuild]        Build/refresh the session index
+  cc-analyzer index [--rebuild|--check]
+                                       Build, refresh, or check the session index
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
-  cc-analyzer serve [--port=4317] [--host=127.0.0.1]
-                                       Launch the local web app (needs an index)
+  cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
+                                       Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
   cc-analyzer update [--check]         Update to the latest release (or just check)
   cc-analyzer version                  Print the version
@@ -147,8 +149,27 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
   return 0;
 }
 
-async function cmdIndex(rebuild: boolean): Promise<number> {
+function indexChangeSummary(status: { added: number; changed: number; deleted: number }): string {
+  return `${status.added} new, ${status.changed} changed, ${status.deleted} deleted`;
+}
+
+async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   const db = openDb();
+  if (check) {
+    const status = await inspectIndexStatus(db);
+    db.close();
+    if (status.stale) {
+      console.log(`Index is stale: ${indexChangeSummary(status)} sessions.`);
+      console.log("Run `cc-analyzer index` to refresh.");
+      return 1;
+    }
+    const refreshed = status.lastRefreshedAt
+      ? formatRelativeTime(Date.parse(status.lastRefreshedAt))
+      : "unknown";
+    console.log(`Index is current (${status.added + status.changed + status.deleted} changes).`);
+    console.log(`Last refreshed: ${refreshed}.`);
+    return 0;
+  }
   const start = Date.now();
   let lastLogged = 0;
   const result = await reindex(db, {
@@ -202,6 +223,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     : { type: "portfolio" as const };
   const view = {
     scope,
+    index: await inspectIndexStatus(db),
     ...portfolio,
     ttl: cacheTtlSplit(db, projectId),
     bash: analytics.bash.slice(0, 10),
@@ -301,7 +323,11 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "analyze":
       return cmdAnalyze(positional[0], json);
     case "index":
-      return cmdIndex(rest.includes("--rebuild"));
+      if (rest.includes("--rebuild") && rest.includes("--check")) {
+        console.error("error: --rebuild and --check cannot be used together.");
+        return 2;
+      }
+      return cmdIndex(rest.includes("--rebuild"), rest.includes("--check"));
     case "stats":
       return cmdStats(json, rest.includes("--current"));
     case "serve": {
@@ -319,7 +345,12 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       const hostArg = rest.find((a) => a.startsWith("--host="));
       const host = hostArg ? hostArg.slice("--host=".length) : undefined;
       const { runServe } = await import("../web/server.ts");
-      return await runServe({ port, host });
+      return await runServe({
+        port,
+        host,
+        refresh: rest.includes("--refresh"),
+        open: rest.includes("--open"),
+      });
     }
     case "pricing":
       if (positional[0] === "update") return cmdPricingUpdate();

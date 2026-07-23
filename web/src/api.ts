@@ -5,6 +5,7 @@
 // here.
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
+import type { IndexStatus } from "../../src/core/index-status-types.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -112,6 +113,7 @@ async function get<T>(url: string): Promise<T> {
 }
 
 export const api = {
+  indexStatus: () => get<IndexStatus>("/api/index-status"),
   stats: () => get<StatsResponse>("/api/stats"),
   projects: () => get<IndexedProject[]>("/api/projects"),
   sessions: (projectId: string) =>
