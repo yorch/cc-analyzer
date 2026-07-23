@@ -15,9 +15,13 @@ and the fixes already applied here.
 ```bash
 bun install        # once
 bun run docs:dev   # sync wiki -> dev server
-bun run docs:build # sync wiki -> production build (site/.vitepress/dist)
+bun run docs:build # sync wiki -> build + verify every internal anchor
 bun run docs:preview
 ```
+
+The production build runs `scripts/check-anchors.ts` against the rendered HTML.
+It fails on same-page or cross-page fragment links whose target page or emitted
+`id` does not exist.
 
 ## How content flows
 

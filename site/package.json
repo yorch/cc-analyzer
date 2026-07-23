@@ -6,7 +6,8 @@
   "scripts": {
     "sync": "bun run scripts/sync-wiki.ts",
     "docs:dev": "bun run sync && vitepress dev",
-    "docs:build": "bun run sync && vitepress build",
+    "docs:build": "bun run sync && vitepress build && bun run check:anchors",
+    "check:anchors": "bun run scripts/check-anchors.ts",
     "docs:preview": "vitepress preview"
   },
   "devDependencies": {
