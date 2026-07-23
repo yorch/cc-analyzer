@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   type BurnPoint,
   buildBurnSeries,
@@ -12,6 +12,7 @@ import {
   type TurnPoint,
 } from "./api.ts";
 import { count, duration, usd } from "./format.ts";
+import { useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
 import {
   areaPath,
@@ -241,7 +242,8 @@ const turnValue = (t: TurnPoint, m: TurnMetric): number =>
   m === "cost" ? t.cost : m === "tokens" ? t.ioTokens + t.cacheTokens : t.apiCalls;
 
 function TurnBars({ turns }: { turns: TurnPoint[] }) {
-  const [metric, setMetric] = useState<TurnMetric>("cost");
+  const metrics = ["cost", "tokens", "calls"] as const;
+  const [metric, setMetric] = useHashParam<TurnMetric>("turnMetric", "cost", metrics);
   const n = turns.length;
   const H = 160;
   const values = turns.map((t) => turnValue(t, metric));

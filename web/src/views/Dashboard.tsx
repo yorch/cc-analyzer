@@ -110,9 +110,9 @@ export function Dashboard() {
         </dl>
       </section>
 
-      <StatCards data={data} />
-
       <GlobalSearch />
+
+      <StatCards data={data} />
 
       <section>
         <h2>Session cost distribution</h2>
@@ -366,22 +366,25 @@ function GlobalSearch() {
     }
     let cancelled = false;
     setStatus("loading");
-    api
-      .searchSessions(query)
-      .then((r) => {
-        if (!cancelled) {
-          setResults(r);
-          setStatus("ready");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setResults([]);
-          setStatus("error");
-        }
-      });
+    const timer = window.setTimeout(() => {
+      api
+        .searchSessions(query)
+        .then((r) => {
+          if (!cancelled) {
+            setResults(r);
+            setStatus("ready");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setResults([]);
+            setStatus("error");
+          }
+        });
+    }, 250);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [query]);
 

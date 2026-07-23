@@ -10,6 +10,7 @@ import {
   type SidechainDayRow,
   weekOf,
 } from "../api.ts";
+import { Card } from "../Card.tsx";
 import { count, usd } from "../format.ts";
 import { useHashParam } from "../router.ts";
 import { Seg } from "../Seg.tsx";
@@ -42,31 +43,61 @@ const Heatmap = memo(function Heatmap({
   }
   const max = Math.max(...grid.flat(), 1e-9);
   return (
-    <div className="heatmap">
-      <div className="heat-row heat-axis">
-        <span className="heat-label" />
-        {Array.from({ length: 24 }, (_, h) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: fixed 24-hour columns
-          <span key={h} className="heat-hour">
-            {h % 6 === 0 ? `${h}` : ""}
-          </span>
-        ))}
-      </div>
-      {grid.map((row, ri) => (
-        <div className="heat-row" key={WEEKDAY_LABELS[ri]}>
-          <span className="heat-label">{WEEKDAY_LABELS[ri]}</span>
-          {row.map((v, h) => (
-            <span
-              // biome-ignore lint/suspicious/noArrayIndexKey: fixed 24-hour columns
-              key={h}
-              className="heat-cell"
-              style={{ opacity: v > 0 ? 0.12 + 0.88 * (v / max) : 0 }}
-              title={`${WEEKDAY_LABELS[ri]} ${h}:00 — ${fmt(metric, v)}`}
-            />
+    <>
+      <div className="heatmap" aria-hidden="true">
+        <div className="heat-row heat-axis">
+          <span className="heat-label" />
+          {Array.from({ length: 24 }, (_, h) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed 24-hour columns
+            <span key={h} className="heat-hour">
+              {h % 6 === 0 ? `${h}` : ""}
+            </span>
           ))}
         </div>
-      ))}
-    </div>
+        {grid.map((row, ri) => (
+          <div className="heat-row" key={WEEKDAY_LABELS[ri]}>
+            <span className="heat-label">{WEEKDAY_LABELS[ri]}</span>
+            {row.map((v, h) => (
+              <span
+                // biome-ignore lint/suspicious/noArrayIndexKey: fixed 24-hour columns
+                key={h}
+                className="heat-cell"
+                style={{ opacity: v > 0 ? 0.12 + 0.88 * (v / max) : 0 }}
+                title={`${WEEKDAY_LABELS[ri]} ${h}:00 — ${fmt(metric, v)}`}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <details className="chart-data">
+        <summary>View Activity Data</summary>
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Hour</th>
+                <th className="num">{metric}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grid
+                .flatMap((row, ri) =>
+                  row.map((value, hour) => ({ day: WEEKDAY_LABELS[ri], hour, value })),
+                )
+                .filter((entry) => entry.value > 0)
+                .map((entry) => (
+                  <tr key={`${entry.day}-${entry.hour}`}>
+                    <td>{entry.day}</td>
+                    <td>{`${entry.hour}:00`}</td>
+                    <td className="num">{fmt(metric, entry.value)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </>
   );
 });
 
@@ -122,6 +153,30 @@ const Calendar = memo(function Calendar({
         <span>{grid.firstDay}</span>
         <span>{grid.lastDay}</span>
       </div>
+      <details className="chart-data">
+        <summary>View Calendar Data</summary>
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th className="num">{metric}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grid.weeks
+                .flat()
+                .filter((cell) => cell.v > 0)
+                .map((cell) => (
+                  <tr key={cell.day}>
+                    <td>{cell.day}</td>
+                    <td className="num">{fmt(metric, cell.v)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </>
   );
 });
@@ -188,6 +243,15 @@ export function Trends() {
   if (loading) return <LoadingNotice>Loading trends…</LoadingNotice>;
   if (error) return <ErrorNotice error={error} retry={retry} label="Couldn’t load trends." />;
   if (!data) return null;
+  const recentCost = data.daily.slice(-30).reduce((sum, day) => sum + day.cost, 0);
+  const previousCost = data.daily.slice(-60, -30).reduce((sum, day) => sum + day.cost, 0);
+  const costDelta =
+    previousCost > 0 ? `${(((recentCost - previousCost) / previousCost) * 100).toFixed(0)}%` : "—";
+  const peakDay = data.daily.reduce<DayRow | null>(
+    (peak, day) => (!peak || day.cost > peak.cost ? day : peak),
+    null,
+  );
+  const latestError = data.errorWeekly[data.errorWeekly.length - 1];
 
   return (
     <>
@@ -197,10 +261,24 @@ export function Trends() {
       </header>
       <section className="trend-summary" aria-labelledby="trend-summary-heading">
         <h2 id="trend-summary-heading">At a Glance</h2>
-        <p>
-          Start with burn for spend direction, activity for work patterns, and reliability for
-          operational friction. Every metric choice is saved in this URL.
-        </p>
+        <div className="cards trend-kpis">
+          <Card
+            label="Latest 30 Days"
+            value={usd(recentCost)}
+            sub={`${costDelta} vs previous 30 days`}
+          />
+          <Card
+            label="Peak Spend Day"
+            value={peakDay ? usd(peakDay.cost) : "—"}
+            sub={peakDay?.day ?? "No dated sessions"}
+          />
+          <Card
+            label="Latest Tool Error Rate"
+            value={latestError ? `${(latestError.errorRate * 100).toFixed(1)}%` : "—"}
+            sub={latestError ? `week ${latestError.week}` : "No tool calls"}
+          />
+        </div>
+        <p className="muted">Every metric choice is saved in this URL.</p>
       </section>
 
       <section className="trend-panel">

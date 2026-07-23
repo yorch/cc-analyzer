@@ -250,6 +250,17 @@ interrupted.
 - Formatting/linting is **Biome** (`biome.json`): 2-space indent, width 100, double
   quotes, semicolons, trailing commas. Biome excludes `web/dist` and the placeholder
   `src/web/spa.ts`.
+- Use **Conventional Commits** for commit messages and pull request titles:
+  `<type>(<optional scope>): <description>` (for example,
+  `feat(web): improve analytics navigation`). Use an appropriate standard type such
+  as `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, or `chore`.
+  PR descriptions should summarize the change, motivation, user impact, and
+  validation.
+- For **every change**, identify and update all relevant documentation in the same
+  branch. Check `README.md`, `wiki/`, `site/`, inline architecture notes, examples,
+  and command/help text as applicable; do not treat code as complete while related
+  docs are stale. If no documentation needs changing, explicitly confirm that the
+  audit found no affected docs.
 - Tests mirror source under `test/`, using Bun's runner and `ink-testing-library` for
   the TUI. `test/fixtures/sample-session.jsonl` is the canonical parse fixture.
 

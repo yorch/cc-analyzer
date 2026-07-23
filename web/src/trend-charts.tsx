@@ -5,11 +5,11 @@
  * `stats-types.ts`, so both pages chart the same numbers.
  */
 
-import { memo, useState } from "react";
+import { memo } from "react";
 import type { DayRow, ModelDayRow, ScatterSession } from "./api.ts";
 import { type BurnMetric, bucketSeries, type Granularity, metricValue, shiftDay } from "./api.ts";
 import { count, duration, usd } from "./format.ts";
-import { link } from "./router.ts";
+import { link, useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
 
 export type { BurnMetric, Granularity };
@@ -25,6 +25,42 @@ export const CHART_W = 900;
 export const CHART_PAD = 6;
 /** Long series would drown in hover dots; past this the path stands alone. */
 export const MAX_LINE_DOTS = 366;
+
+function ChartData({
+  labels,
+  values,
+  format = String,
+  labelHeading = "Period",
+}: {
+  labels: string[];
+  values: number[];
+  format?: (value: number) => string;
+  labelHeading?: string;
+}) {
+  return (
+    <details className="chart-data">
+      <summary>View Chart Data</summary>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{labelHeading}</th>
+              <th className="num">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {labels.map((label, index) => (
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="num">{format(values[index] ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
 
 /** x position of point i out of n across a `width` viewport. */
 export const xScale =
@@ -93,6 +129,7 @@ export function LineChart({
         <span>{labels[0]}</span>
         <span>{labels[n - 1]}</span>
       </div>
+      <ChartData labels={labels} values={values} format={format} />
     </>
   );
 }
@@ -100,8 +137,10 @@ export function LineChart({
 /* ——— Burn panel (owns its metric/granularity controls) ———————————————— */
 
 export const BurnPanel = memo(function BurnPanel({ daily }: { daily: DayRow[] }) {
-  const [metric, setMetric] = useState<BurnMetric>("cost");
-  const [granularity, setGranularity] = useState<Granularity>("day");
+  const metrics = ["cost", "tokens", "sessions"] as const;
+  const granularities = ["day", "week", "month"] as const;
+  const [metric, setMetric] = useHashParam<BurnMetric>("burn", "cost", metrics);
+  const [granularity, setGranularity] = useHashParam<Granularity>("by", "day", granularities);
   const series = bucketSeries(daily, granularity);
   const values = series.map((p) => metricValue(p, metric));
   const total = values.reduce((s, v) => s + v, 0);
@@ -221,6 +260,12 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
           </span>
         ))}
       </div>
+      <ChartData
+        labelHeading="Model"
+        labels={bands.map((band) => band.model)}
+        values={bands.map((band) => totals.get(band.model) ?? 0)}
+        format={usd}
+      />
     </>
   );
 });
@@ -280,13 +325,47 @@ export const Scatter = memo(function Scatter({
           {xAxis} time → {duration(maxX)}
         </span>
       </div>
+      <details className="chart-data">
+        <summary>View Session Data</summary>
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th className="num">Cost</th>
+                <th className="num">Wall</th>
+                <th className="num">Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usable.map((point) => (
+                <tr
+                  key={`${point.sessionId ?? point.title ?? "session"}-${point.durationMs}-${point.cost}`}
+                >
+                  <td>
+                    {point.sessionId ? (
+                      <a href={link.session(point.sessionId)}>{point.title ?? point.sessionId}</a>
+                    ) : (
+                      (point.title ?? "(untitled)")
+                    )}
+                  </td>
+                  <td className="num">{usd(point.cost)}</td>
+                  <td className="num">{duration(point.durationMs)}</td>
+                  <td className="num">{duration(point.activeMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </>
   );
 });
 
 /** Scatter with its own x-axis toggle and section head. */
 export const ScatterPanel = memo(function ScatterPanel({ points }: { points: ScatterSession[] }) {
-  const [xAxis, setXAxis] = useState<ScatterX>("wall");
+  const axes = ["wall", "active"] as const;
+  const [xAxis, setXAxis] = useHashParam<ScatterX>("scatter", "wall", axes);
   return (
     <>
       <div className="trend-head">
