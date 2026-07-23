@@ -311,3 +311,7 @@ The release workflow then attaches the five platform binaries and `SHA256SUMS` t
 - ~~Interactive TUI (Ink)~~ ✓
 - ~~Local web app (Hono + React SPA)~~ ✓
 - Ideas: live-follow of active sessions; diff/compare two sessions; export reports.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
