@@ -1,23 +1,23 @@
 # cc-analyzer Wiki
 
-> Indexed at commit `9d4dd3f` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/9d4dd3f)
+> Indexed at commit `51ccd4e` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/51ccd4e)
 
 ## Relevant source files
 
-- [README.md](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/README.md)
-- [package.json](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/package.json)
-- [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/src/cli/index.ts)
-- [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/src/core/analyze.ts)
+- [README.md](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md)
+- [package.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json)
+- [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts)
+- [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts)
 
 ## Overview
 
-`cc-analyzer` is a read-only command-line tool that browses and analyzes [Claude Code](https://claude.com/claude-code) sessions stored under `~/.claude`. Claude Code writes each session as a JSONL transcript that records token usage per API call but not cost; `cc-analyzer` derives cost from those token counts and a per-model pricing table, then surfaces cost, tokens, tools, skills, subagents, a per-turn (and per-step) breakdown, and a growing suite of portfolio analytics — cache-efficiency insights, time-series trends, tool/skill usage, and session/project charts ([README.md](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/README.md)).
+`cc-analyzer` is a read-only command-line tool that browses and analyzes [Claude Code](https://claude.com/claude-code) sessions stored under `~/.claude`. Claude Code writes each session as a JSONL transcript that records token usage per API call but not cost; `cc-analyzer` derives cost from those token counts and a per-model pricing table, then surfaces cost, tokens, tools, skills, subagents, a per-turn (and per-step) breakdown, and a growing suite of portfolio analytics — cache-efficiency insights, time-series trends, tool/skill usage, and session/project charts ([README.md](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md)).
 
 The tool never writes to `~/.claude`. Its own state — a pricing cache, a SQLite session index, and an update-check cache — lives under `~/.config/cc-analyzer/`. It is written in TypeScript, runs on Bun, and ships as a single self-contained binary bundling the CLI, the terminal UI, the web API, and the web front end.
 
 ## What is cc-analyzer?
 
-`cc-analyzer` is version `0.6.0`, a TypeScript project targeting the Bun runtime (≥ 1.3) and distributed as a compiled binary ([package.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/package.json#L1-L20)). It exposes several ways to consume one analysis core: scriptable CLI commands, an interactive Ink terminal UI, a local Hono web API, and an embedded React single-page application — plus a VitePress documentation site. Dependencies reflect those surfaces: `ink` (TUI), `hono` (API), `react`/`react-dom` (SPA), `zod` (tolerant event parsing), and Bun's built-in SQLite driver for the index.
+`cc-analyzer` is version `0.6.0`, a TypeScript project targeting the Bun runtime (≥ 1.3) and distributed as a compiled binary ([package.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L1-L20)). It exposes several ways to consume one analysis core: scriptable CLI commands, an interactive Ink terminal UI, a local Hono web API, and an embedded React single-page application — plus a VitePress documentation site. Dependencies reflect those surfaces: `ink` (TUI), `hono` (API), `react`/`react-dom` (SPA), `zod` (tolerant event parsing), and Bun's built-in SQLite driver for the index.
 
 ## High-Level Architecture
 
@@ -58,7 +58,7 @@ flowchart TB
     site -. installs & documents .-> cli
 ```
 
-Every frontend is a thin presentation layer over `src/core`. A single session flows `.jsonl → parser → SessionEvent[] → analyzeSession() → SessionAnalysis` (with a streaming variant for very large sessions), which the frontends render and which `indexer.ts` flattens into a SQLite row. The index then feeds portfolio analytics: `stats.ts` and the bun-free `stats-types.ts`/`chart-series.ts` modules build metrics and chart series that the TUI and web SPA import directly, so both frontends chart identical data ([src/core/analyze.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/src/core/analyze.ts#L1-L40)).
+Every frontend is a thin presentation layer over `src/core`. A single session flows `.jsonl → parser → SessionEvent[] → analyzeSession() → SessionAnalysis` (with a streaming variant for very large sessions), which the frontends render and which `indexer.ts` flattens into a SQLite row. The index then feeds portfolio analytics: `stats.ts` and the bun-free `stats-types.ts`/`chart-series.ts` modules build metrics and chart series that the TUI and web SPA import directly, so both frontends chart identical data ([src/core/analyze.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L1-L40)).
 
 ## Repository Layout
 
@@ -126,8 +126,8 @@ Bun is both the runtime and the package manager. `bun test` runs the suite, Biom
 - [9. Docs Site](./9-docs-site.md)
 - [Glossary](./glossary.md)
 
-Sources: [README.md](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/README.md) [package.json:L1-L42](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/package.json#L1-L42) [src/cli/index.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/src/cli/index.ts#L1-L40) [src/core/analyze.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/src/core/analyze.ts#L1-L40)
+Sources: [README.md](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md) [package.json:L1-L42](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L1-L42) [src/cli/index.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L1-L40) [src/core/analyze.ts:L1-L40](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L1-L40)
 
 ---
 
-_Generated by [`repo-wiki-generator`](https://github.com/yorch/claude-skills/tree/main/skills/repo-wiki-generator) on 2026-07-23 from commit `9d4dd3f`._
+_Generated by [`repo-wiki-generator`](https://github.com/yorch/claude-skills/tree/main/skills/repo-wiki-generator) on 2026-07-23 from commit `51ccd4e`._

@@ -1,7 +1,7 @@
 {
   "repo_url": "https://github.com/yorch/cc-analyzer",
-  "commit_sha": "9d4dd3f",
-  "indexed_at": "2026-07-23T08:52:24-05:00",
+  "commit_sha": "51ccd4e",
+  "indexed_at": "2026-07-23T11:41:15-04:00",
   "primary_language": "TypeScript",
   "framework": "Bun runtime; Ink (TUI), Hono (web API), React 19 + Vite (SPA), VitePress (docs site), Zod, Biome",
   "version": "0.6.0",
