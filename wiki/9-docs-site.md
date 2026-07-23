@@ -60,7 +60,7 @@ Sources: [site/scripts/sync-wiki.ts:L13-L54](https://github.com/yorch/cc-analyze
 | Theme CSS | [site/.vitepress/theme/custom.css](https://github.com/yorch/cc-analyzer/blob/51ccd4e/site/.vitepress/theme/custom.css) | Amber-phosphor design tokens and dark/light palettes |
 | Landing components | [site/.vitepress/theme/components/](https://github.com/yorch/cc-analyzer/blob/51ccd4e/site/.vitepress/theme/components/CommandDeck.vue) | `TerminalHero`, `TerminalModules`, `ProductPreview`, `CommandDeck` |
 | Diagram renderer | `site/.vitepress/theme/components/LazyMermaid.vue` | Dynamically imports Mermaid only on pages containing diagrams |
-| Analytics loader | `site/public/analytics.js` | Honors DNT and the Plausible localStorage opt-out before loading analytics |
+| Analytics loader | `site/public/analytics.js` | Honors DNT and the Plausible localStorage opt-out before initializing the site-specific `pa-*` tracker |
 | Wiki sync | [site/scripts/sync-wiki.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/site/scripts/sync-wiki.ts) | Copies `/wiki` → `site/docs/` with filename and link rewrites |
 | Fixture generator | [site/scripts/gen-fixtures.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/site/scripts/gen-fixtures.ts) | Builds a deterministic synthetic `~/.claude` dataset for screenshots |
 | Deploy workflow | [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.github/workflows/deploy-site.yml) | Builds and publishes to GitHub Pages on relevant pushes |

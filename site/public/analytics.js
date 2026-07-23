@@ -9,9 +9,21 @@
     // cookieless and collects only the page URL in that case.
   }
 
+  const plausible =
+    window.plausible ||
+    function () {
+      (plausible.q = plausible.q || []).push(arguments);
+    };
+  window.plausible = plausible;
+  plausible.init =
+    plausible.init ||
+    function (options) {
+      plausible.o = options || {};
+    };
+
   const script = document.createElement("script");
-  script.defer = true;
-  script.dataset.domain = "cc-analyzer.brnby.com";
-  script.src = "https://plausible.brnby.com/js/script.js";
+  script.async = true;
+  script.src = "https://plausible.brnby.com/js/pa-ngd1ppRBUHfoOrHRCjEei.js";
   document.head.append(script);
+  plausible.init();
 })();

@@ -175,9 +175,11 @@ sanitize the URL.
 
 - Load the local `/analytics.js` helper from the `head` array. The helper checks
   browser Do-Not-Track and `localStorage.plausible_ignore` before dynamically
-  requesting `https://plausible.brnby.com/js/script.js`.
-- Standard `script.js` auto-ignores localhost, so `vitepress dev` / local previews do
-  not pollute production stats.
+  initializing Plausible and requesting the site-specific tracker at
+  `https://plausible.brnby.com/js/pa-ngd1ppRBUHfoOrHRCjEei.js`.
+- The generated `pa-*` tracker is the installation snippet assigned to
+  `cc-analyzer.brnby.com`; keep the opaque id synchronized with the Plausible
+  site settings if its tracker configuration is regenerated.
 - Opt-out is enforced by the local loader rather than assumed of the upstream
   script; it is documented in the site and install guide.
 
