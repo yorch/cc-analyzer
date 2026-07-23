@@ -262,10 +262,12 @@ generates a `SHA256SUMS` manifest, signs a build-provenance attestation for each
 binary (`actions/attest-build-provenance`, needing `id-token`/`attestations` write),
 and publishes a GitHub release with auto-generated notes.
 
-**Cutting a release.** The compiled binary embeds `package.json`'s version (via
-`version.ts`, bundled by `bun --compile`), so the version bump must land on `main`
-*before* the tag — tag a commit whose `package.json` still says the old version and the
-release binaries report the wrong version.
+**Cutting a release.** Invoke the `cut-release` skill (`.claude/skills/cut-release/`)
+for the guided, gated procedure. The steps below are the reference. The compiled
+binary embeds `package.json`'s version (via `version.ts`, bundled by
+`bun --compile`), so the version bump must land on `main` *before* the tag — tag a
+commit whose `package.json` still says the old version and the release binaries
+report the wrong version.
 
 1. Make sure `main` is green.
 2. Bump `package.json` `version` to `X.Y.Z` in a `chore(release): prepare vX.Y.Z` PR and
