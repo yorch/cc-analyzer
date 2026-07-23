@@ -8,7 +8,7 @@
 - [tsconfig.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/tsconfig.json)
 - [web/tsconfig.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/tsconfig.json)
 - [biome.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json)
-- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts)
+- `scripts/compile-with-spa.ts`
 - [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.github/workflows/ci.yml)
 - [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.github/workflows/release.yml)
 - [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.github/workflows/deploy-site.yml)
@@ -29,19 +29,19 @@ Sources: [README.md:L1-L27](https://github.com/yorch/cc-analyzer/blob/51ccd4e/RE
 ```mermaid
 flowchart LR
     Vite["vite build (web/)"] --> Html["web/dist/index.html"]
-    Html --> Embed["scripts/embed-spa.ts"]
-    Embed --> Spa["src/web/spa.ts (generated)"]
+    Html --> Embed["scripts/compile-with-spa.ts"]
+    Embed --> Spa["tmp/compile-spa-*/src/web/spa.ts"]
     Spa --> Compile["bun build --compile"]
     Cli["src/cli/index.ts"] --> Compile
     Compile --> Binary["dist/cc-analyzer"]
 
     Vite -.singlefile plugin.-> Html
-    Embed -.JSON.stringify.-> Spa
+    Embed -.disposable source copy.-> Spa
 ```
 
-The release build is a two-stage pipeline. `bun run build:web` first runs Vite over the `web/` SPA, producing a single self-contained `web/dist/index.html`, then runs `scripts/embed-spa.ts` to write that HTML as a string module into `src/web/spa.ts`; `bun run build` then invokes `bun build --compile` over `src/cli/index.ts`, which bakes the embedded SPA and every frontend into `dist/cc-analyzer` ([package.json#L20-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L20-L22), [scripts/embed-spa.ts#L1-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L1-L22)). The resulting executable serves the whole web UI with no external assets ([README.md#L238-L242](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md#L238-L242)).
+The release build is a two-stage pipeline. `bun run build:web` first runs Vite over the `web/` SPA, producing a single self-contained `web/dist/index.html`. `scripts/compile-with-spa.ts` then copies the source tree and `package.json` under ignored `tmp/`, writes the HTML as a string module into that disposable copy, and invokes `bun build --compile` against the copied entrypoint. The resulting executable serves the whole web UI with no external assets while builds never modify tracked source.
 
-Sources: [package.json:L12-L23](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L12-L23) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L1-L22) [README.md:L244-L251](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md#L244-L251)
+Sources: `package.json`, `scripts/compile-with-spa.ts`, `README.md`
 
 ## Module Layout
 
@@ -53,7 +53,7 @@ Sources: [package.json:L12-L23](https://github.com/yorch/cc-analyzer/blob/51ccd4
 | Web server | `src/web/` | `cc-analyzer serve`: a Hono API plus the embedded React SPA |
 | Web SPA | `web/` | Standalone browser React app, browser-targeted tsconfig, built by Vite |
 | Docs site | `site/` | VitePress documentation, landing page, and install scripts |
-| Build script | `scripts/` | `embed-spa.ts` embeds the Vite build into `src/web/spa.ts` |
+| Build script | `scripts/` | `compile-with-spa.ts` embeds the Vite build in a disposable source copy |
 | Tests | `test/` | Bun test suite mirroring the source tree under `core/`, `cli/`, `tui/`, `web/` |
 
 All parsing, analysis, pricing, and indexing live in `src/core/`; the three frontends under `src/cli/`, `src/tui/`, and `src/web/` are thin presentation layers that consume it ([CLAUDE.md#L30-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/CLAUDE.md#L30-L45)). The `web/` directory is distinct from `src/web/`: `web/` is the browser SPA compiled by Vite, whereas `src/web/` is the Bun-side Hono server that serves the embedded SPA ([CLAUDE.md#L37-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/CLAUDE.md#L37-L45)).
@@ -76,15 +76,15 @@ Sources: [tsconfig.json:L1-L21](https://github.com/yorch/cc-analyzer/blob/51ccd4
 
 ### Linting and formatting
 
-[biome.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json) configures Biome as the single lint-and-format tool, replacing ESLint and Prettier. The formatter uses 2-space indentation, a 100-column line width, double quotes, always-on semicolons, and trailing commas everywhere ([biome.json#L19-L37](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L19-L37)). Biome reads the Git ignore file, and its `includes` glob covers `src`, `test`, `web`, `scripts`, and top-level JSON while explicitly excluding `web/dist` and the generated `src/web/spa.ts` ([biome.json#L3-L18](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L3-L18)). Import organization runs as an assist action ([biome.json#L38-L44](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L38-L44)).
+[biome.json](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json) configures Biome as the single lint-and-format tool, replacing ESLint and Prettier. The formatter uses 2-space indentation, a 100-column line width, double quotes, always-on semicolons, and trailing commas everywhere ([biome.json#L19-L37](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L19-L37)). Biome reads the Git ignore file, and its `includes` glob covers `src`, `test`, `web`, `scripts`, and top-level JSON while explicitly excluding `web/dist` and the temporarily generated `src/web/spa.ts` ([biome.json#L3-L18](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L3-L18)). Import organization runs as an assist action ([biome.json#L38-L44](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L38-L44)).
 
 Sources: [biome.json:L1-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/biome.json#L1-L45)
 
-### Generated SPA artifact
+### Embedded SPA artifact
 
-`src/web/spa.ts` is a generated, git-ignored artifact and must not be edited by hand ([CLAUDE.md#L206-L214](https://github.com/yorch/cc-analyzer/blob/51ccd4e/CLAUDE.md#L206-L214)). [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts) reads the single-file Vite build at `web/dist/index.html`, exits with an error if it is missing, and writes the HTML into `src/web/spa.ts` via `JSON.stringify`, exporting `spaHtml` and `hasSpa` ([scripts/embed-spa.ts#L7-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L7-L22)). The [.gitignore](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.gitignore) excludes `web/dist/` and `src/web/spa.ts`, noting that a placeholder is force-added once while regenerated content stays out of Git ([.gitignore#L10-L14](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.gitignore#L10-L14)).
+`src/web/spa.ts` is a tracked placeholder exporting an empty SPA for typechecking and source-mode commands. `scripts/compile-with-spa.ts` reads `web/dist/index.html` and embeds it only in a disposable source copy under ignored `tmp/`. The tracked placeholder remains byte-for-byte stable across builds.
 
-Sources: [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L1-L22) [.gitignore:L1-L19](https://github.com/yorch/cc-analyzer/blob/51ccd4e/.gitignore#L1-L19) [CLAUDE.md:L206-L214](https://github.com/yorch/cc-analyzer/blob/51ccd4e/CLAUDE.md#L206-L214)
+Sources: `scripts/compile-with-spa.ts`, `.gitignore`, `CLAUDE.md`
 
 ### Continuous integration and release workflows
 
@@ -104,7 +104,7 @@ sequenceDiagram
     Dev->>Tag: git push origin vX.Y.Z
     Tag->>Release: trigger workflow
     Release->>Release: verify tag == package.json version
-    Release->>Release: bun run build:web (embed SPA)
+    Release->>Release: bun run build:web
     Release->>Release: compile 5 platform binaries
     Release->>Release: generate SHA256SUMS
     Release->>Release: attest build provenance (OIDC)

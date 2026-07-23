@@ -71,7 +71,7 @@ cc-analyzer/
 │   └── web/    # Hono API + generated embedded SPA module
 ├── web/        # React SPA source (built by Vite, separate tsconfig)
 ├── site/       # VitePress docs site (landing + this wiki) + install scripts
-├── scripts/    # embed-spa.ts — bakes the built SPA into the binary
+├── scripts/    # compile-with-spa.ts — temporarily embeds the SPA while compiling
 ├── test/       # Bun tests, mirroring src/
 ├── docs/       # Design specs
 └── .github/    # CI (matrix), release (binaries + checksums + provenance), Pages-deploy
