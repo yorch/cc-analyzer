@@ -205,7 +205,10 @@ metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, and the most expensive sessions.
+month/project/model, and the most expensive sessions. Human-readable reports
+use a compact headline, grouped activity/reliability sections, and aligned
+numeric tables; terminals receive restrained color while pipes, redirects,
+`NO_COLOR`, and `--json` stay automation-safe.
 
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run
