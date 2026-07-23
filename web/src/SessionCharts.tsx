@@ -110,6 +110,7 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
         viewBox={`0 0 ${CHART_W} ${H}`}
         preserveAspectRatio="none"
         role="img"
+        aria-label="Context-window token usage over API calls"
       >
         <title>Context-window tokens per call</title>
         <path className="burn-area" d={areaPath(line, x, n, H)} />
@@ -205,6 +206,7 @@ function BurnChart({ points }: { points: BurnPoint[] }) {
         viewBox={`0 0 ${CHART_W} ${H}`}
         preserveAspectRatio="none"
         role="img"
+        aria-label="Cumulative session cost over API calls"
       >
         <title>Cumulative session cost</title>
         <path className="burn-line" d={total} />
@@ -264,6 +266,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
         viewBox={`0 0 ${CHART_W} ${H}`}
         preserveAspectRatio="none"
         role="img"
+        aria-label={`Per-turn ${metric} bar chart`}
       >
         <title>Per-turn {metric}</title>
         {turns.map((t, i) => {

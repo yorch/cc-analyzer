@@ -76,6 +76,7 @@ export function LineChart({
         viewBox={`0 0 ${CHART_W} ${H}`}
         preserveAspectRatio="none"
         role="img"
+        aria-label={`${title} line chart with ${values.length} points`}
       >
         <title>{title}</title>
         {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
@@ -194,7 +195,13 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
   });
   return (
     <>
-      <svg className="burnchart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <svg
+        className="burnchart"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Daily model spend as a stacked area chart"
+      >
         <title>Spend per model over time</title>
         {bands.map((b) => (
           <path key={b.model} className={`mix-band ${b.cls}`} d={b.path}>
@@ -250,7 +257,12 @@ export const Scatter = memo(function Scatter({
   const y = (p: ScatterSession) => H - pad - Math.sqrt(p.cost / maxY) * (H - pad * 2);
   return (
     <>
-      <svg className="scatter" viewBox={`0 0 ${W} ${H}`} role="img">
+      <svg
+        className="scatter"
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label={`Session cost by ${xAxis === "wall" ? "wall time" : "active time"} scatter plot`}
+      >
         <title>Session cost vs duration</title>
         {usable.map((p) =>
           p.sessionId ? (
