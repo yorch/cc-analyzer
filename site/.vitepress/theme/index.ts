@@ -5,6 +5,7 @@ import LazyMermaid from "./components/LazyMermaid.vue";
 import ProductPreview from "./components/ProductPreview.vue";
 import TerminalHero from "./components/TerminalHero.vue";
 import TerminalModules from "./components/TerminalModules.vue";
+import TuiPreview from "./components/TuiPreview.vue";
 import Layout from "./Layout.vue";
 
 import "@fontsource/ibm-plex-mono/latin-400.css";
@@ -22,6 +23,7 @@ export default {
     app.component("TerminalModules", TerminalModules);
     app.component("CommandDeck", CommandDeck);
     app.component("ProductPreview", ProductPreview);
+    app.component("TuiPreview", TuiPreview);
     app.component("LazyMermaid", LazyMermaid);
   },
 } satisfies Theme;

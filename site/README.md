@@ -57,6 +57,12 @@ bun run scripts/gen-fixtures.ts                          # -> site/.tmp/claude
 # capture http://localhost:4318 as public/screenshots/dashboard.png, then:
 cwebp -q 82 -m 6 public/screenshots/dashboard.png \
   -o public/screenshots/dashboard.webp
+
+# render the Portfolio and Trends TUI frames from the same fixture:
+(cd .. && CC_ANALYZER_TELEMETRY=0 \
+           CC_ANALYZER_CLAUDE_DIR=site/.tmp/claude \
+           CC_ANALYZER_STATE_DIR=site/.tmp/state \
+           bun run scripts/gen-site-tui-snapshots.tsx)
 ```
 
 ## Deploy

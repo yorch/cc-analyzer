@@ -1,6 +1,8 @@
 import { defineConfig } from "vitepress";
+import { fileURLToPath } from "node:url";
 
 const siteUrl = "https://cc-analyzer.brnby.com";
+const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -65,6 +67,11 @@ export default defineConfig({
   },
 
   vite: {
+    server: {
+      // Bun may hoist the site's font package to the repository root. Vite's
+      // dev allow-list otherwise rejects those files even though builds work.
+      fs: { allow: [repositoryRoot] },
+    },
     build: {
       // Mermaid is loaded only when a diagram mounts. Its parser remains a
       // large isolated async chunk, not part of the initial page payload.

@@ -9,7 +9,7 @@ const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
   { k: "c", t: "# 2 · build the index from ~/.claude, then read the totals" },
   { k: "p", t: "cc-analyzer index" },
   { k: "p", t: "cc-analyzer stats" },
-  { k: "o", t: "  total spend  $1,284.57   ·   342 sessions   ·   8,912 turns" },
+  { k: "o", t: "  total cost  $21.45   ·   18 sessions   ·   4 projects" },
   { k: "c", t: "" },
   { k: "c", t: "# 3 · dig in — one session, the TUI, or the local web app" },
   { k: "p", t: "cc-analyzer analyze <session-id> --json" },
