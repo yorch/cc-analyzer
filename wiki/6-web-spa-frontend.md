@@ -1,160 +1,175 @@
 # Web SPA Frontend
 
-> Indexed at commit `bf5a4c8` on 2026-07-12 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/bf5a4c8)
+> Indexed at commit `9d4dd3f` on 2026-07-23 · [view on GitHub](https://github.com/yorch/cc-analyzer/tree/9d4dd3f)
 
 ## Relevant source files
 
-- [web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx)
-- [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts)
-- [web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts)
-- [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts)
-- [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts)
-- [web/src/SortTh.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx)
-- [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts)
-- [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx)
-- [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx)
-- [web/src/views/Project.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx)
-- [web/src/views/Session.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx)
-- [web/vite.config.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts)
+- [web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx)
+- [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/router.ts)
+- [web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts)
+- [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts)
+- [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useSort.ts)
+- [web/src/SortTh.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SortTh.tsx)
+- [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/format.ts)
+- [web/src/Card.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Card.tsx)
+- [web/src/Seg.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Seg.tsx)
+- [web/src/Histogram.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Histogram.tsx)
+- [web/src/SessionCharts.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SessionCharts.tsx)
+- [web/src/trend-charts.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx)
+- [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx)
+- [web/src/views/Project.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Project.tsx)
+- [web/src/views/Session.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx)
+- [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Insights.tsx)
+- [web/src/views/Trends.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Trends.tsx)
+- [web/src/views/Tools.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Tools.tsx)
+- [web/vite.config.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/vite.config.ts)
 
 ## Overview
 
-The Web Single-Page Application (SPA) is the browser front end that `cc-analyzer serve` ships. It lives in the `web/` tree, which is distinct from the `src/web/` server tree that hosts the JavaScript Object Notation (JSON) Application Programming Interface (API). The SPA is a React 19 application built with four top-level views — Dashboard, Insights, Project, and Session — wired together by a hash-based router in [web/src/router.ts#L17-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L17-L31) and mounted by [web/src/App.tsx#L6-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L6-L24). A masthead nav links Dashboard and Insights ([web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/App.tsx)).
+The Web Single-Page Application (SPA) is the browser frontend that `cc-analyzer serve` ships. It is a React 19 application rooted in the `web/` tree (distinct from the `src/web/` server), built by Vite into one self-contained HTML file and embedded into the compiled binary. It renders the same portfolio, project, session, and analytics data the Terminal UI (TUI) shows, reading everything over a small typed JSON HTTP client rather than touching the SQLite index directly.
 
-Data enters exclusively through the typed client in [web/src/api.ts#L168-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L168-L178), whose response interfaces mirror the server's `core/stats`, `core/queries`, `core/analyze`, and `core/transcript` outputs. Shared behavior lives in small hooks and helpers: [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts) for fetch state, [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts) with [web/src/SortTh.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx) for sortable tables, and [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts) for currency, token, and time formatting. Vite compiles the whole tree into one self-contained Hypertext Markup Language (HTML) file that the binary embeds and serves.
+The SPA has no build-time server dependency: its type imports (`SessionAnalysis`, the `stats-types.ts` rollup shapes, `TranscriptItem`) come straight from the bun-free core modules and are erased at compile time, and its runtime chart-geometry helpers import the same `chart-series.ts` builders the TUI uses, so the two frontends chart identical numbers ([web/src/api.ts#L40-L46](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L40-L46)). Its public surface is a hash-routed set of seven views wired together in [web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx), each driven by a single `useAsync` fetch against the API in [web/src/api.ts#L114-L133](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L114-L133).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     App[App] --> Router[useHashRoute]
-    Router --> Dashboard
-    Router --> Project
-    Router --> Session
+    App --> Dashboard
+    App --> Project
+    App --> Session
+    App --> Insights
+    App --> Trends
+    App --> Tools
 
-    Dashboard --> api[api client]
-    Project --> api
-    Session --> api
+    Dashboard --> useAsync
+    Project --> useAsync
+    Session --> useAsync
+    Insights --> useAsync
+    Trends --> useAsync
+    Tools --> useAsync
+    useAsync --> api[api client]
+    api -.fetch.-> HTTP[(/api/*)]
 
-    Dashboard -.uses.-> useAsync
-    Project -.uses.-> useAsync
-    Session -.uses.-> useAsync
-    Dashboard -.uses.-> useSort
-    Project -.uses.-> useSort
-    useSort --> SortTh
-    Dashboard -.uses.-> format
-    Project -.uses.-> format
-    Session -.uses.-> format
+    Dashboard --> useSort
+    Project --> useSort
+    Insights --> useSort
+    Tools --> useSort
 
-    api --> Server[(HTTP JSON API)]
+    Project --> trendCharts[trend-charts]
+    Trends --> trendCharts
+    Session --> SessionCharts
+    SessionCharts -.imports.-> trendCharts
+    trendCharts -.imports.-> series[chart-series core]
+    SessionCharts -.imports.-> series
 ```
 
-`App` reads the current route and renders exactly one view; each view fetches through the shared `api` client via `useAsync`, and formats output through `format`. Sortable tables are the only stateful table pattern, shared by Dashboard and Project through `useSort` and its header component `SortTh`.
+`App` reads the current route from `useHashRoute` and mounts exactly one view. Every view fetches through `useAsync`, which calls a method on the shared `api` object; the chart views (`Project`, `Trends`, `Session`) render SVG built by geometry helpers in `trend-charts.tsx` and `SessionCharts.tsx`, both of which derive their series from the bun-free core `chart-series.ts` builders.
 
 ## Module Layout
 
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
-| `App` | [web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx) | Masthead plus route-to-view switch |
-| `router` | [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts) | Hash parsing, `useHashRoute`, `link` builders |
-| `api` | [web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts) | Typed `fetch` wrappers and response interfaces |
-| `useAsync` | [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts) | Async data-fetch state hook |
-| `useSort` / `SortTh` | [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts) | Client-side table sort and clickable headers |
-| `format` | [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts) | Currency, token, duration, path helpers |
-| `Dashboard` | [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx) | Portfolio overview, search, project filter |
-| `Insights` | [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) | Cache-efficiency hit-list (projects → sessions) |
-| `Project` | [web/src/views/Project.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx) | Per-project session list |
-| `Session` | [web/src/views/Session.tsx](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx) | Per-session summary, turns, transcript |
-| `vite.config` | [web/vite.config.ts](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts) | Single-file build configuration |
+| `App` | [web/src/App.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx) | Masthead, nav, and route-to-view dispatch |
+| `router` | [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/router.ts) | Hash-based `Route` type, `useHashRoute`, `link` builders |
+| `api` | [web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts) | Typed `fetch` client + response envelope types |
+| `useAsync` | [web/src/useAsync.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts) | Fetch-on-deps-change data hook |
+| `useSort` / `SortTh` | [web/src/useSort.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useSort.ts) | Client-side table sorting and clickable headers |
+| `format` | [web/src/format.ts](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/format.ts) | Currency, count, token, duration formatters |
+| primitives | [web/src/Card.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Card.tsx) [web/src/Seg.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Seg.tsx) [web/src/Histogram.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Histogram.tsx) | Stat card, segmented control, bar histogram |
+| charts | [web/src/trend-charts.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx) [web/src/SessionCharts.tsx](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SessionCharts.tsx) | Inline SVG line/area/scatter charts |
+| views | [web/src/views/](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx) | The seven page components |
 
-Sources: [web/src/App.tsx:L1-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L1-L24) [web/src/api.ts:L162-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L162-L178) [web/vite.config.ts:L1-L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts#L1-L17)
+Sources: [web/src/App.tsx:L1-L46](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx#L1-L46) [web/src/api.ts:L1-L46](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L1-L46)
 
 ## Key Components
 
 ### Routing and App shell
 
-`App` calls `useHashRoute()` once and switches on `route.name`, rendering `Dashboard`, `Project`, or `Session` inside a fixed masthead in [web/src/App.tsx#L19-L21](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L19-L21). The router parses `window.location.hash` into a discriminated `Route` union — `dashboard`, `project` with an `id`, or `session` with an `id` — using two regular expressions and `decodeURIComponent`, defaulting to `dashboard` in [web/src/router.ts#L8-L15](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L8-L15). `useHashRoute` seeds state from the current hash and subscribes to the `hashchange` event so navigation re-renders without a full reload in [web/src/router.ts#L17-L25](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L17-L25). The `link` object builds the matching URLs (`#/`, `#/project/<id>`, `#/session/<id>`) so views never hand-write hashes in [web/src/router.ts#L27-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L27-L31).
+`App` renders a persistent masthead with links built from the `link` helper and highlights the active tab by comparing `route.name` ([web/src/App.tsx#L9-L45](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx#L9-L45)). Routing is hash-based: `parse()` matches the `location.hash` against a fixed set of patterns and returns a discriminated `Route` union covering `dashboard`, `insights`, `insightsProject`, `trends`, `tools`, `project`, and `session` ([web/src/router.ts#L3-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/router.ts#L3-L25)). `useHashRoute` seeds state from the current hash and subscribes to the `hashchange` event, so navigation is a pure client-side URL change with no history-API or server round trip ([web/src/router.ts#L27-L45](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/router.ts#L27-L45)).
 
-Sources: [web/src/App.tsx:L1-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/App.tsx#L1-L24) [web/src/router.ts:L1-L31](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L1-L31)
+Sources: [web/src/router.ts:L1-L45](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/router.ts#L1-L45) [web/src/App.tsx:L1-L46](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/App.tsx#L1-L46)
 
-### API client and types
+### Data layer: api, useAsync, useSort
 
-`api.ts` exposes a single `get<T>` helper that wraps `fetch`, throws on a non-`ok` status, and casts the parsed JSON to the requested type in [web/src/api.ts#L162-L166](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L162-L166). The exported `api` object binds the read endpoints — `stats`, `projects`, `sessions`, `session`, `transcript`, and `searchSessions` — each URL-encoding its path parameters in [web/src/api.ts#L168-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L168-L178), plus `insights` and `insightsSessions` for the cache-efficiency view and a client-side `cacheVerdict` mirror ([web/src/api.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/api.ts)). The file also declares the full response contract, including `StatsResponse` for the dashboard, `SessionAnalysis` with nested `Turn`, `ApiCall`, and `TurnStep` shapes for the session view, and `TranscriptItem` for the reader in [web/src/api.ts#L43-L160](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L43-L160).
+`api` is a flat object of methods that each call a generic `get<T>` wrapping `fetch`, throwing on non-OK responses ([web/src/api.ts#L108-L133](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L108-L133)). Its response types re-export core shapes verbatim — `StatsResponse` is `PortfolioStats`, and `InsightsResponse`, `TrendsResponse`, and `AnalyticsResponse` compose the cache, day-row, and rollup types from `stats-types.ts` so the server and client cannot drift ([web/src/api.ts#L84-L106](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L84-L106)). `useAsync` runs its `fn` whenever `deps` change, tracks `{ data, error, loading }`, and guards against setting state after unmount with a `cancelled` flag ([web/src/useAsync.ts#L10-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts#L10-L25)).
 
-Sources: [web/src/api.ts:L1-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L1-L178)
+`useSort` implements every sortable table: it takes rows plus an `Accessors` map, sorts a copy by the active key, and `toggle` flips direction on the active column or switches to a new one descending-first ([web/src/useSort.ts#L22-L42](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useSort.ts#L22-L42)). `SortTh` is the clickable header that drives a `useSort` instance, rendering the sort arrow and an `aria-sort` attribute ([web/src/SortTh.tsx#L4-L28](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SortTh.tsx#L4-L28)). Display formatting lives in `format.ts`: `usd`, `count` (with k/M/B suffixes), `tokens`, `duration`, `relTime`, and `shortPath` ([web/src/format.ts#L1-L55](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/format.ts#L1-L55)).
 
-### Data-fetch and sorting hooks
+Sources: [web/src/api.ts:L108-L133](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L108-L133) [web/src/useAsync.ts:L1-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts#L1-L25) [web/src/useSort.ts:L1-L42](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useSort.ts#L1-L42) [web/src/format.ts:L1-L55](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/format.ts#L1-L55)
 
-`useAsync` is a minimal fetch hook that re-runs its function when `deps` change, tracks `data`, `error`, and `loading`, and guards against stale updates with a `cancelled` flag in its cleanup in [web/src/useAsync.ts#L10-L24](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts#L10-L24). Every view resolves its network state through this one hook. `useSort` performs client-side sorting: it holds the active `key` and `dir`, resolves a value accessor from an `Accessors` map, and returns a `sorted` copy plus a `toggle` that flips direction on the active column or switches to a new column descending-first in [web/src/useSort.ts#L22-L42](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts#L22-L42). Its `compare` function sorts numbers numerically and strings with a case-insensitive `localeCompare` in [web/src/useSort.ts#L13-L16](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts#L13-L16). `SortTh` renders a clickable `th` that calls `sort.toggle`, shows an ascending or descending arrow on the active column, and sets `aria-sort` for accessibility in [web/src/SortTh.tsx#L15-L27](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx#L15-L27).
+### Dashboard
 
-Sources: [web/src/useAsync.ts:L1-L25](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts#L1-L25) [web/src/useSort.ts:L1-L42](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useSort.ts#L1-L42) [web/src/SortTh.tsx:L1-L28](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/SortTh.tsx#L1-L28)
+`Dashboard` is the portfolio overview. It fetches `api.stats()` once and renders a hero spend figure, a `StatCards` band of headline metrics (time with Claude, session-length percentiles, cost percentiles, streaks, month projection, subagent spend), and a per-session cost `Distribution` histogram ([web/src/views/Dashboard.tsx#L45-L118](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx#L45-L118)). Below the hero come sortable tables for spend by month, top projects, spend by model, and the most expensive sessions, each wired to its own `useSort` over an `Accessors` map ([web/src/views/Dashboard.tsx#L20-L59](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx#L20-L59)). `GlobalSearch` debounces a two-character-minimum query against `api.searchSessions` and lists matching sessions across projects ([web/src/views/Dashboard.tsx#L347-L414](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx#L347-L414)).
 
-### Formatting helpers
+Sources: [web/src/views/Dashboard.tsx:L45-L118](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx#L45-L118) [web/src/views/Dashboard.tsx:L283-L414](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Dashboard.tsx#L283-L414)
 
-`format.ts` centralizes display formatting so views stay declarative. `usd` scales precision by magnitude — four decimals below a cent, two below `1000`, and grouped whole dollars above — in [web/src/format.ts#L1-L6](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts#L1-L6), while `count` abbreviates large numbers with `k`, `M`, and `B` suffixes in [web/src/format.ts#L8-L13](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts#L8-L13). `tokens` and `tokensOf` render an input/output figure with an optional `+<n> cache` tail, deriving cache totals from all three cache fields in [web/src/format.ts#L18-L27](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts#L18-L27). `duration` collapses milliseconds into `s`/`m`/`h`/`d` units, `relTime` produces relative "ago" labels, and `shortPath` truncates long paths to their last two segments in [web/src/format.ts#L29-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts#L29-L55).
+### Project drill-down
 
-Sources: [web/src/format.ts:L1-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/format.ts#L1-L55)
+`Project` fetches four endpoints in parallel with `Promise.all` — the project list, this project's sessions, its hot files, and its trend series — keyed on the project `id` ([web/src/views/Project.tsx#L27-L39](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Project.tsx#L27-L39)). It renders a filterable, sortable session table, then a `BurnPanel`, cost-distribution and turn-depth histograms, a tool-mix histogram, a `ModelMix` stacked area, and a `ScatterPanel`, followed by a "hot files" table of paths Claude repeatedly edits ([web/src/views/Project.tsx#L64-L156](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Project.tsx#L64-L156)). The chart components are the same ones the Trends page uses, so a project's spend chart matches the portfolio-wide one in shape.
 
-### Dashboard view
+Sources: [web/src/views/Project.tsx:L27-L156](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Project.tsx#L27-L156)
 
-`Dashboard` fetches `api.stats()` once and renders a hero panel of total spend, estimated share, token totals, and session counts in [web/src/views/Dashboard.tsx#L41-L104](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx#L41-L104). Below it sit four sortable tables — spend by month (with an inline cost bar scaled to `maxMonth`), top projects, spend by model, and most expensive sessions — each driven by its own `Accessors` map and a `useSort` instance in [web/src/views/Dashboard.tsx#L16-L55](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx#L16-L55). The top-projects table adds a client-side path filter and caps the unfiltered view to the first 15 rows in [web/src/views/Dashboard.tsx#L48-L67](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx#L48-L67). A separate `GlobalSearch` component debounces nothing but requires at least two characters, calls `api.searchSessions`, and links matches to their session pages in [web/src/views/Dashboard.tsx#L236-L303](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx#L236-L303).
+### Session detail
 
-Sources: [web/src/views/Dashboard.tsx:L1-L303](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Dashboard.tsx#L1-L303)
+`Session` is the deepest view. It fetches `api.session(id)` for the analysis and lazily fetches the transcript only after the transcript tab is first opened, latching a `transcriptWanted` flag in an effect so any route to that tab triggers the one-time load ([web/src/views/Session.tsx#L18-L32](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L18-L32)). Five tabs — `summary`, `charts`, `timeline`, `turns`, `transcript` — sit above a `Card` band of cost, tokens, turns, tool calls, duration, and subagent totals ([web/src/views/Session.tsx#L51-L96](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L51-L96)). The `Turns` tab renders one collapsible header per turn that expands into per-`ApiCall` blocks, each listing `TurnStep` rows whose `StepRow` further expands into input/result detail panes ([web/src/views/Session.tsx#L305-L407](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L305-L407)).
 
-### Project view
+Long lists are windowed by `useWindowed`, which reveals rows in fixed chunks with "Show more" / "Show all" controls so a session with tens of thousands of API calls does not render at once ([web/src/views/Session.tsx#L288-L303](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L288-L303)). The `Timeline` tab parses each turn's timestamps once via `useMemo` and draws a per-turn Gantt lane of API-call dots, and the `Transcript` tab renders the windowed `TranscriptItem[]` as labelled `pre` blocks ([web/src/views/Session.tsx#L194-L282](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L194-L282), [web/src/views/Session.tsx#L426-L456](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L426-L456)).
 
-`Project` fetches the project list and the project's sessions together with `Promise.all`, re-running whenever the route `id` changes in [web/src/views/Project.tsx#L18-L22](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L18-L22). It resolves the current project's metadata by matching `projectId`, renders a header with a session count and cost, and offers a title/id filter input in [web/src/views/Project.tsx#L35-L57](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L35-L57). The session table is sortable across cost, tokens, turns, tools, modified time, and title, defaulting to most-recently modified, and each title links to its session page in [web/src/views/Project.tsx#L9-L16](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L9-L16) and [web/src/views/Project.tsx#L72-L91](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L72-L91).
+Sources: [web/src/views/Session.tsx:L18-L96](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L18-L96) [web/src/views/Session.tsx:L194-L456](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Session.tsx#L194-L456)
 
-Sources: [web/src/views/Project.tsx:L1-L96](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Project.tsx#L1-L96)
+### Analytics views: Insights, Trends, Tools
 
-### Insights view
+`Insights` ranks projects by cache-write dollars that were never read back, rendering a `Verdict` badge from `cacheVerdict(ratio)`, a write-TTL mix line, and an idle-time-versus-cache-waste correlation panel ([web/src/views/Insights.tsx#L29-L107](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Insights.tsx#L29-L107)). `InsightsProject` drills into one project's per-session cache rows ([web/src/views/Insights.tsx#L154-L227](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Insights.tsx#L154-L227)). `Trends` is time-series: a `BurnPanel`, a contribution `Calendar`, a `ModelMix` migration chart, an activity `Heatmap` keyed by weekday and hour, a `ScatterPanel`, and weekly error-rate, subagent-share, and parallel-session line charts ([web/src/views/Trends.tsx#L176-L258](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Trends.tsx#L176-L258)).
 
-`Insights` is the web parity of the TUI's cache-efficiency view. It fetches `api.insights()` and renders projects ranked by **un-amortized cache-write $** (waste) in a sortable table alongside a read:write ratio and a colored `Verdict` badge (efficient / ok / leaky, from `cacheVerdict`), above a summary line of total cache-write spend, waste, and waste as a percentage of spend. Each project links to `InsightsProject`, which fetches `api.insightsSessions(id)` and ranks that project's sessions by the same waste metric, linking each session to its detail page. Both reuse `useAsync`, `useSort`, and `SortTh` like the other tables ([web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) · [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/router.ts)).
+`Tools` fetches `api.analytics()` and renders sortable tables for tools, shell commands, skills, subagents, permission modes, stop reasons, Claude Code versions, and git branches, plus reliability and compaction rollups ([web/src/views/Tools.tsx#L344-L456](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Tools.tsx#L344-L456)). Its `SkillsTable` links a selected row to a `SkillDetail` panel with a per-week invocation sparkline built from the shared SVG helpers ([web/src/views/Tools.tsx#L42-L129](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Tools.tsx#L42-L129)). The metric definitions and series builders behind all of these are documented on the analytics page — see Related Pages.
 
-Sources: [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/views/Insights.tsx) [web/src/router.ts](https://github.com/yorch/cc-analyzer/blob/4d7658d/web/src/router.ts)
+Sources: [web/src/views/Insights.tsx:L29-L227](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Insights.tsx#L29-L227) [web/src/views/Trends.tsx:L176-L258](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Trends.tsx#L176-L258) [web/src/views/Tools.tsx:L344-L456](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Tools.tsx#L344-L456)
 
-### Session view
+### Chart and UI primitives
 
-`Session` is the deepest view. It fetches both `api.session(id)` and `api.transcript(id)` and switches between three tabs — `summary`, `turns`, and `transcript` — held in local state in [web/src/views/Session.tsx#L9-L58](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L9-L58). A row of `Card` metrics shows cost, tokens, turns, tool calls, and duration above the tabs in [web/src/views/Session.tsx#L31-L37](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L31-L37). The `Summary` tab lays out a cost/token breakdown table plus tags for tools, skills, and subagents in [web/src/views/Session.tsx#L71-L107](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L71-L107).
+Charts are hand-rolled inline SVG, not a charting library. `trend-charts.tsx` exports the shared geometry — a fixed `CHART_W` of 900, an `xScale`, `linePath`, and `areaPath` — plus the reusable `LineChart`, the metric/granularity-toggling `BurnPanel`, the `ModelMix` stacked-area band builder, and the sqrt-scaled `Scatter`/`ScatterPanel` ([web/src/trend-charts.tsx#L21-L97](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx#L21-L97), [web/src/trend-charts.tsx#L101-L290](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx#L101-L290)). `SessionCharts` reuses that geometry for session-scoped context-window, cumulative-cost, and per-turn bar charts, computing its series with `buildContextSeries`, `buildBurnSeries`, and `buildTurnSeries` from core ([web/src/SessionCharts.tsx#L28-L62](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SessionCharts.tsx#L28-L62)). Past `MAX_LINE_DOTS` points the hover dots are dropped and the path stands alone ([web/src/trend-charts.tsx#L26-L27](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx#L26-L27)).
 
-The `Turns` tab renders each turn as a collapsible `item` whose header shows the index, cost, tokens, call count, tool counts, and a 140-character prompt preview in [web/src/views/Session.tsx#L133-L152](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L133-L152). Expanding a turn reveals each API call divided by model, and every call renders its `TurnStep` timeline through `StepRow` in [web/src/views/Session.tsx#L153-L176](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L153-L176). A `StepRow` maps each step `kind` to an icon from `STEP_ICON`, shows status ticks and result hints, and expands to a `pre` of input and result when detail exists, distinguishing note/thinking "full text" from tool "result" in [web/src/views/Session.tsx#L178-L236](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L178-L236). The `Transcript` tab is a windowed reader that shows `TRANSCRIPT_WINDOW` (200) color-coded items keyed by `kind` and grows the window with "Show more" or jumps to the full length with "Show all" in [web/src/views/Session.tsx#L238-L270](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L238-L270).
+The small primitives are `Card` (label/value/sub stat block), `Seg` (a segmented button control used for every metric toggle), and `Histogram` (a horizontal bar chart normalized to the fullest bucket) ([web/src/Card.tsx#L2-L10](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Card.tsx#L2-L10), [web/src/Seg.tsx#L2-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Seg.tsx#L2-L25), [web/src/Histogram.tsx#L9-L24](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Histogram.tsx#L9-L24)).
 
-Sources: [web/src/views/Session.tsx:L1-L270](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L1-L270)
+Sources: [web/src/trend-charts.tsx:L21-L290](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/trend-charts.tsx#L21-L290) [web/src/SessionCharts.tsx:L28-L62](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/SessionCharts.tsx#L28-L62) [web/src/Card.tsx:L1-L10](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Card.tsx#L1-L10) [web/src/Seg.tsx:L1-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Seg.tsx#L1-L25) [web/src/Histogram.tsx:L1-L24](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/Histogram.tsx#L1-L24)
 
 ## Data Flow
 
 ```mermaid
 sequenceDiagram
-    participant Hash as location.hash
+    participant Browser
     participant App
     participant View
     participant useAsync
     participant api
-    participant Server as JSON API
+    participant Server as Hono /api
 
-    Hash->>App: hashchange
-    App->>View: render(route)
-    View->>useAsync: run(fetch fn, deps)
-    useAsync->>api: api.session(id)
-    api->>Server: GET /api/sessions/:id
-    Server-->>api: JSON
-    api-->>useAsync: SessionAnalysis
-    useAsync-->>View: {data, loading, error}
+    Browser->>App: #/project/<id>
+    App->>View: mount Project(id)
+    View->>useAsync: fn = api.projects/sessions/files/trends
+    useAsync->>api: Promise.all([...])
+    api->>Server: GET /api/projects/<id>/sessions
+    Server-->>api: JSON rows
+    api-->>useAsync: typed data
+    useAsync-->>View: { data, loading, error }
+    View-->>Browser: sortable tables + SVG charts
 ```
 
-Every view follows the same lifecycle: a hash change re-renders `App`, the selected view registers a fetch function with `useAsync`, and the typed `api` client issues the corresponding `GET` request. The hook flips `loading` to false and hands back `data` or `error`, which the view renders as a table, card grid, or loading/error banner. Route identifiers flow into the fetch through the `deps` array, so navigating between sessions or projects transparently refetches in [web/src/views/Session.tsx#L11-L12](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/views/Session.tsx#L11-L12) and [web/src/useAsync.ts#L12-L23](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts#L12-L23).
+A hash change updates the route, `App` mounts the matching view, and the view's `useAsync` fires its `api` call(s) keyed on route params. The client throws on any non-OK status, which `useAsync` catches into `error` and each view renders as an error banner ([web/src/api.ts#L108-L112](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L108-L112), [web/src/useAsync.ts#L12-L24](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts#L12-L24)). All sorting, filtering, and windowing then happen entirely client-side over the already-fetched data.
 
-Sources: [web/src/useAsync.ts:L1-L25](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/useAsync.ts#L1-L25) [web/src/api.ts:L162-L178](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/api.ts#L162-L178) [web/src/router.ts:L17-L25](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/src/router.ts#L17-L25)
+Sources: [web/src/api.ts:L108-L133](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/api.ts#L108-L133) [web/src/useAsync.ts:L1-L25](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/useAsync.ts#L1-L25) [web/src/views/Project.tsx:L27-L45](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/src/views/Project.tsx#L27-L45)
 
-## Build & Packaging
+## Build
 
-Vite builds the SPA with the React plugin and `vite-plugin-singlefile`, which inlines every script and style into one `dist` HTML file so the output can be embedded in the `cc-analyzer` binary as a single string and served by the Hono API in [web/vite.config.ts#L6-L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts#L6-L17). The config sets `base: "./"` for relative asset paths, empties the output directory on each build, and raises the chunk-size warning limit to accommodate the single bundle in [web/vite.config.ts#L8-L16](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts#L8-L16). Because the artifact is one file, the browser makes no secondary requests for assets, only the runtime `/api/*` calls issued by the client.
+Vite builds the SPA with `@vitejs/plugin-react` and `vite-plugin-singlefile`, inlining every asset into one self-contained HTML file so the output can be embedded in the `cc-analyzer` binary as a single string and served by Hono ([web/vite.config.ts#L1-L17](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/vite.config.ts#L1-L17)). The `base` is set to `./` and the `chunkSizeWarningLimit` is raised to 4000 because the singlefile output is one large bundle by design. The embedding step and the generated `src/web/spa.ts` artifact belong to the server subsystem — see Related Pages.
 
-Sources: [web/vite.config.ts:L1-L17](https://github.com/yorch/cc-analyzer/blob/bf5a4c8/web/vite.config.ts#L1-L17)
+Sources: [web/vite.config.ts:L1-L17](https://github.com/yorch/cc-analyzer/blob/9d4dd3f/web/vite.config.ts#L1-L17)
 
 ## Related Pages
 
 - Parent: [Web Server and API](./5-web-server-and-api.md)
 - Sibling: [Core Analysis Engine](./2-core-analysis-engine.md)
 - Sibling: [CLI](./3-cli.md)
-- Sibling: [TUI](./4-tui.md)
+- Sibling: [Terminal UI](./4-tui.md)
+- Sibling: [Analytics and Insights](./7-analytics-and-insights.md)
