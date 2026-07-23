@@ -1,6 +1,7 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import type { TokenCounts } from "../core/pricing.ts";
+import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import type {
   BashCommandRow,
   CacheTtlSplit,
@@ -144,6 +145,20 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
   }
   if (Object.keys(a.bashCommands).length) {
     lines.push(`Shell commands: ${topEntries(a.bashCommands, 8)}`);
+  }
+
+  const diagnostics = buildSessionDiagnostics(a);
+  lines.push(`\n${section("Actionable diagnostics", options)}`);
+  if (diagnostics.length === 0) {
+    lines.push(
+      healthy("No notable context or cost patterns crossed the current thresholds.", options),
+    );
+  } else {
+    for (const diagnostic of diagnostics) {
+      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
+      lines.push(`  ${diagnostic.evidence}`);
+      lines.push(muted(`  Next: ${diagnostic.action}`, options));
+    }
   }
 
   lines.push(`\n${section("Turns", options)}`);

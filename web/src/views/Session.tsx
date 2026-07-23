@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  buildSessionDiagnostics,
   type SessionAnalysis,
   type TranscriptItem,
   type Turn,
@@ -131,8 +132,32 @@ export function Session({ id }: { id: string }) {
 function Summary({ a }: { a: SessionAnalysis }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
+  const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
   return (
     <section>
+      <section className="session-diagnostics" aria-labelledby="session-diagnostics-title">
+        <h2 id="session-diagnostics-title">Actionable diagnostics</h2>
+        {diagnostics.length === 0 ? (
+          <p className="muted">
+            No notable context or cost patterns crossed the current diagnostic thresholds.
+          </p>
+        ) : (
+          <div className="diagnostic-list">
+            {diagnostics.map((diagnostic) => (
+              <article
+                className={`diagnostic diagnostic-${diagnostic.severity}`}
+                key={diagnostic.code}
+              >
+                <h3>{diagnostic.title}</h3>
+                <p>{diagnostic.evidence}</p>
+                <p className="muted">
+                  <strong>Next:</strong> {diagnostic.action}
+                </p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
       <div className="summary-grid">
         <SummaryGroup title="Spend & Tokens">
           <Row k="Cost (input/output)" v={`${usd(c.input)} / ${usd(c.output)}`} />

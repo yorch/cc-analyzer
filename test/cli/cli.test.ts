@@ -113,6 +113,13 @@ describe("CLI dispatch & exit codes", () => {
     expect(parsed.totals.turns).toBe(2);
   });
 
+  test("analyze human output includes actionable diagnostics", async () => {
+    const r = await run(["analyze", join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl")]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Actionable diagnostics");
+    expect(r.stdout).toContain("No notable context or cost patterns");
+  });
+
   test("analyze with a missing session exits 1", async () => {
     const r = await run(["analyze", "does-not-exist"]);
     expect(r.code).toBe(1);

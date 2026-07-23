@@ -41,7 +41,8 @@ const boot: { t: string; cls?: string }[] = [
           Point it at the JSONL transcripts already sitting in
           <code>~/.claude</code> and it reconstructs the ledger your Claude Code
           sessions never wrote down — <strong>cost, tokens, cache accounting,
-          tools, skills, models,</strong> and a per-turn breakdown.
+          tools, skills, models,</strong> per-turn breakdowns, and actionable
+          context diagnostics.
         </p>
         <div class="cc-hero__actions">
           <a class="cc-btn cc-btn--brand" :href="withBase('/install')">

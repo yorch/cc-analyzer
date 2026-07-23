@@ -159,6 +159,10 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
 - **Tools**, **skills**, and **subagents** used; files touched.
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
+- **Actionable diagnostics** with observed evidence and a suggested next step for
+  context pressure, large context jumps, cache rewrites after idle gaps,
+  post-compaction refills, and concentrated per-turn spend. These are named
+  heuristics, not a session-quality score.
 
 ## Configuration
 
@@ -258,9 +262,10 @@ several skills counts its full cost toward each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and
-**summary** modes (`t` / `s`). It reads from the index; on first use it builds
-an empty cache automatically. Later source changes are reported in the shell so
-you know when to run `cc-analyzer index`.
+**summary** modes (`t` / `s`). The summary includes the same evidence-backed
+context and cost diagnostics as the CLI and web app. It reads from the index;
+on first use it builds an empty cache automatically. Later source changes are
+reported in the shell so you know when to run `cc-analyzer index`.
 
 Navigation uses a two-zone focus model: in a list, just start typing to
 **filter**, `tab`/`shift-tab` cycles the **sort**, `↑/↓` moves (updating the
@@ -297,7 +302,8 @@ operations with a one-line summary and a result status/hint (`✓ 71 lines`,
 `✗ error…`), each step click-to-expand for its full input and result; and the
 color-coded **transcript** reader is windowed ("show more") so very large
 sessions stay responsive. Session summaries group spend/tokens, execution, and
-environment details. The SPA is built
+environment details, followed by explainable context and cost diagnostics with
+suggested next actions. The SPA is built
 by Vite into a single self-contained HTML file (`bun run build:web`) and baked
 into the binary, so the release build serves the whole UI with no external
 assets.
