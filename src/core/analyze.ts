@@ -61,6 +61,9 @@ export interface ModelUsage {
   apiCalls: number;
   tokens: TokenCounts;
   cost: CostBreakdown;
+  /** Context-window size of the model (pricing `maxInputTokens`), when known —
+   * lets the context-fill charts draw the limit line without a pricing table. */
+  contextLimit?: number;
 }
 
 /**
@@ -71,6 +74,11 @@ export interface ModelUsage {
  */
 export interface Compaction {
   timestamp?: string;
+  /** The boundary/summary event's uuid, when present. Continuation files copy
+   * the parent's boundary verbatim (same uuid), and session files themselves
+   * get copied around — rollups dedupe own compactions on this id so one
+   * compaction never counts twice across rows. */
+  uuid?: string;
   /** "auto" | "manual" when known (from compactMetadata). */
   trigger?: string;
   /** Context tokens just before the compaction, when known. */
@@ -483,12 +491,14 @@ class SessionAnalyzer {
       const sys = event as {
         subtype?: string;
         timestamp?: string;
+        uuid?: string;
         compactMetadata?: { trigger?: string; preTokens?: number };
       };
       if (sys.subtype === "compact_boundary") {
         const side = (event as { isSidechain?: boolean }).isSidechain === true;
         this.compactions.push({
           timestamp: sys.timestamp,
+          uuid: sys.uuid,
           trigger: sys.compactMetadata?.trigger,
           preTokens: sys.compactMetadata?.preTokens,
           ...(side ? { isSidechain: true } : {}),
@@ -507,6 +517,7 @@ class SessionAnalyzer {
         else
           this.compactions.push({
             timestamp: event.timestamp,
+            uuid: event.uuid,
             ...(side ? { isSidechain: true } : {}),
             ...(this.apiCallCount === 0 ? { inherited: true } : {}),
           });
@@ -735,6 +746,8 @@ class SessionAnalyzer {
       let mu = this.models[model];
       if (!mu) {
         mu = { apiCalls: 0, tokens: zeroTokens(), cost: zeroCost() };
+        const limit = resolved?.pricing.maxInputTokens;
+        if (limit) mu.contextLimit = limit;
         this.models[model] = mu;
       }
       mu.apiCalls += 1;

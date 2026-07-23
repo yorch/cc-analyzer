@@ -1,35 +1,32 @@
 import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { App } from "../../src/tui/App.tsx";
+import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { waitForFrame, waitForFrameGone } from "../helpers/tui.ts";
 
-const tmpDir = join("/tmp", `cc-analyzer-app-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
-let prevClaudeDir: string | undefined;
+let claude: ReturnType<typeof tempClaudeDir>;
 let db: Database;
 
 beforeAll(async () => {
+  claude = tempClaudeDir("cc-analyzer-app");
   const content = await Bun.file(fixture).text();
-  mkdirSync(join(tmpDir, "projects", "proj-a"), { recursive: true });
-  writeFileSync(join(tmpDir, "projects", "proj-a", "s1.jsonl"), content);
-  prevClaudeDir = process.env.CC_ANALYZER_CLAUDE_DIR;
-  process.env.CC_ANALYZER_CLAUDE_DIR = tmpDir;
+  mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
+  writeFileSync(join(claude.dir, "projects", "proj-a", "s1.jsonl"), content);
   db = openDb(":memory:");
   await reindex(db, { pricing });
 });
 
 afterAll(() => {
   db.close();
-  if (prevClaudeDir === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
-  else process.env.CC_ANALYZER_CLAUDE_DIR = prevClaudeDir;
-  rmSync(tmpDir, { recursive: true, force: true });
+  claude.cleanup();
 });
 
 describe("App (smoke render)", () => {

@@ -116,6 +116,18 @@ module (like `stats-types.ts`) the SPA imports directly, so both frontends chart
 identical numbers: context-window fill per main-chain API call (sidechains run in
 their own context windows and are excluded), cumulative burn (main + sidechain),
 per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
+Pricing's `maxInputTokens` (LiteLLM `max_input_tokens`, also in the bundled
+snapshot; the pricing cache is format-versioned so pre-upgrade caches refresh)
+flows through `resolveModel` into `ModelUsage.contextLimit` →
+`ContextSeries.contextLimit` (suppressed when the peak exceeds it — a
+bigger-window variant priced by the family heuristic), so both context charts
+scale to the window and label "% of window" via the shared `pctOfLimit` (the
+web draws the dashed limit line; the TUI braille chart takes the limit as its
+ceiling). Compaction records carry the boundary event's `uuid`;
+`compactionUsage()` filters every category through `dedupeCompactions()`
+portfolio-wide, so a copied session file (or continuation edge case) never
+counts one compaction twice — the `compactions` INT column stays a per-row
+SUM-able convenience (schema v8 forces the rebuild that backfills uuids).
 Subagents compact too (`compact_boundary` with `isSidechain`): those compactions
 are captured and counted but never marked on the main-chain context chart —
 they compacted the subagent's own window. Continuation files copy the parent
@@ -127,14 +139,18 @@ two rows), with full detail in `compactions_json`; `compactionUsage()` rolls up
 portfolio pressure for `/api/analytics` and the web Tools view.
 
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
-`costDistribution`, `hotFiles` take an optional `projectId`; `toolUsage()` and
-`turnDepthStats()` are their standalone per-project counterparts, built on the
-same row-fold helpers `analyticsRollup` uses (so portfolio and project surfaces
-cannot disagree). `projectTrends()` bundles the six chart series — hot files
-stay on `/api/projects/:id/files` — for `/api/projects/:id/trends`, rendered by the web project
-page via the shared chart components in `web/src/trend-charts.tsx` (also used by
-the Trends page) and by the TUI project preview (weekly burn sparkline +
-distribution ramps, live per-highlight queries).
+`costDistribution`, `hotFiles` take an optional `projectId`;
+`turnDepthStats()` is their standalone per-project counterpart, and all the
+JSON-blob series are built on the same row-fold helpers `analyticsRollup` uses
+(so portfolio and project surfaces cannot disagree). `projectTrends()` bundles the six chart series — hot files
+stay on `/api/projects/:id/files` — for `/api/projects/:id/trends`, folding the
+three JSON-blob series (model mix, tools, turn depth) in one pass over the
+project's rows while the SQL aggregates stay in SQLite. The web project page
+renders it via the shared chart components in `web/src/trend-charts.tsx` (also
+used by the Trends page); the TUI project preview renders
+`projectPreviewStats()` (weekly burn sparkline + distribution ramps), computed
+at the screen boundary in `ProjectsView` and passed in as plain props — TUI
+presentation components never touch the database.
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token

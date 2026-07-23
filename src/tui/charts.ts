@@ -30,9 +30,16 @@ const DOTS = [
  * A filled braille area chart of `values`, `width` cells wide × `height` tall.
  * Each cell packs 2×4 dots, so the plot resolution is 2·width × 4·height. Values
  * are bucketed (max per column, so spikes survive downsampling) and scaled to
- * the series max. Returns `height` strings, top row first.
+ * the series max — or to `ceiling` when given, so headroom below a known
+ * limit (e.g. the context window) renders as empty rows instead of the
+ * series always filling the chart. Returns `height` strings, top row first.
  */
-export function brailleChart(values: number[], width: number, height: number): string[] {
+export function brailleChart(
+  values: number[],
+  width: number,
+  height: number,
+  ceiling?: number,
+): string[] {
   const W = Math.max(1, Math.floor(width));
   const H = Math.max(1, Math.floor(height));
   const dotCols = 2 * W;
@@ -47,7 +54,7 @@ export function brailleChart(values: number[], width: number, height: number): s
     for (let j = lo; j < hi && j < values.length; j++) m = Math.max(m, values[j] ?? 0);
     cols.push(m);
   }
-  const max = Math.max(1e-9, ...cols);
+  const max = Math.max(1e-9, ...cols, ceiling ?? 0);
   // Floor nonzero values to one dot (like the sparkline) so a low-activity
   // column is distinguishable from a truly empty one.
   const heights = cols.map((v) => (v > 0 ? Math.max(1, Math.round((v / max) * dotRows)) : 0));

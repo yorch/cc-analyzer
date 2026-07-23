@@ -3,15 +3,18 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { TrendsView } from "../../src/tui/screens/TrendsView.tsx";
+import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
 
 function insert(db: Database, path: string, day: string, startTime: string, cost: number): void {
-  db.query(
-    `INSERT INTO sessions
-      (path, project_id, day, start_time, cost_total, input_tokens, output_tokens,
-       cache_write_5m, cache_write_1h, cache_read)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
-  ).run(path, "p", day, startTime, cost, 100, 0, 0, 0, 1000);
+  insertSession(db, {
+    path,
+    day,
+    start_time: startTime,
+    cost_total: cost,
+    input_tokens: 100,
+    cache_read: 1000,
+  });
 }
 
 let db: Database;

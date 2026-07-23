@@ -7,20 +7,19 @@ import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { createApi } from "../../src/web/api.ts";
 import { createApp, isLoopbackHost } from "../../src/web/server.ts";
+import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
-const tmpDir = join("/tmp", `cc-analyzer-api-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
-let prevClaudeDir: string | undefined;
+let claude: ReturnType<typeof tempClaudeDir>;
 let db: Database;
 let api: ReturnType<typeof createApi>;
 
 beforeAll(async () => {
+  claude = tempClaudeDir("cc-analyzer-api");
   const content = await Bun.file(fixture).text();
-  mkdirSync(join(tmpDir, "projects", "proj-a"), { recursive: true });
-  writeFileSync(join(tmpDir, "projects", "proj-a", "sess-1.jsonl"), content);
-  prevClaudeDir = process.env.CC_ANALYZER_CLAUDE_DIR;
-  process.env.CC_ANALYZER_CLAUDE_DIR = tmpDir;
+  mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
+  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), content);
   db = openDb(":memory:");
   await reindex(db, { pricing });
   api = createApi(db, pricing);
@@ -28,9 +27,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   db.close();
-  if (prevClaudeDir === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
-  else process.env.CC_ANALYZER_CLAUDE_DIR = prevClaudeDir;
-  rmSync(tmpDir, { recursive: true, force: true });
+  claude.cleanup();
 });
 
 describe("web API", () => {
@@ -191,7 +188,7 @@ describe("web API", () => {
 
 describe("web API · stale index", () => {
   test("a session whose file was deleted after indexing 404s with a hint", async () => {
-    const stalePath = join(tmpDir, "projects", "proj-a", "sess-stale.jsonl");
+    const stalePath = join(claude.dir, "projects", "proj-a", "sess-stale.jsonl");
     writeFileSync(stalePath, await Bun.file(fixture).text());
     await reindex(db, { pricing });
     rmSync(stalePath, { force: true });

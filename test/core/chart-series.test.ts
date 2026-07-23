@@ -4,7 +4,9 @@ import {
   buildBurnSeries,
   buildContextSeries,
   buildTurnSeries,
+  dedupeCompactions,
   isOwnCompaction,
+  pctOfLimit,
   summarizeCompactions,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
@@ -180,5 +182,49 @@ describe("buildTurnSeries", () => {
     expect(s[0]?.mainApiCalls).toBe(2);
     expect(s[0]?.prompt).toBe("first");
     expect(s[1]?.cost).toBeCloseTo(analysis.turns[1]?.cost.total ?? -1, 10);
+  });
+});
+
+describe("dedupeCompactions / pctOfLimit", () => {
+  test("dedupes across a shared seen-set; uuid-less records always pass", () => {
+    const seen = new Set<string>();
+    const rowA = dedupeCompactions(
+      [{ uuid: "x", trigger: "auto" }, { uuid: "y", isSidechain: true }, { trigger: "manual" }],
+      seen,
+    );
+    expect(rowA).toHaveLength(3);
+    // A copied row: both uuid'd records (own AND sidechain) drop, uuid-less stays.
+    const rowB = dedupeCompactions(
+      [{ uuid: "x", trigger: "auto" }, { uuid: "y", isSidechain: true }, { trigger: "manual" }],
+      seen,
+    );
+    expect(rowB).toEqual([{ trigger: "manual" }]);
+  });
+
+  test("pctOfLimit rounds to whole percent", () => {
+    expect(pctOfLimit(158_100, 200_000)).toBe(79);
+    expect(pctOfLimit(210_000, 200_000)).toBe(105);
+  });
+});
+
+describe("buildContextSeries · context limit sanity", () => {
+  test("drops a limit the peak wildly exceeds (wrong-window heuristic match)", () => {
+    // flatPricing says 200k, but this session peaked at 750k prompt-side —
+    // a bigger-window variant priced by the family heuristic. No limit line.
+    const big = analyzeSession(
+      [prompt("u1", 0, "p"), assistant("a", 5, { input_tokens: 750_000, output_tokens: 10 })],
+      pricing,
+    );
+    const s = buildContextSeries(big);
+    expect(s.peakTokens).toBe(750_000);
+    expect(s.contextLimit).toBeUndefined();
+  });
+
+  test("keeps the limit under slight overshoot (the overflowing call itself)", () => {
+    const slight = analyzeSession(
+      [prompt("u1", 0, "p"), assistant("a", 5, { input_tokens: 205_000, output_tokens: 10 })],
+      pricing,
+    );
+    expect(buildContextSeries(slight).contextLimit).toBe(200_000);
   });
 });

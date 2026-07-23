@@ -5,27 +5,24 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { portfolioSummary, spendByModel, spendByProject } from "../../src/core/stats.ts";
+import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
-const tmpDir = join("/tmp", `cc-analyzer-idx-${process.pid}-${Date.now()}`);
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
-let prevClaudeDir: string | undefined;
+let claude: ReturnType<typeof tempClaudeDir>;
 
 beforeAll(async () => {
+  claude = tempClaudeDir("cc-analyzer-idx");
   const content = await Bun.file(fixture).text();
-  mkdirSync(join(tmpDir, "projects", "proj-a"), { recursive: true });
-  mkdirSync(join(tmpDir, "projects", "proj-b"), { recursive: true });
-  writeFileSync(join(tmpDir, "projects", "proj-a", "sess-1.jsonl"), content);
-  writeFileSync(join(tmpDir, "projects", "proj-a", "sess-2.jsonl"), content);
-  writeFileSync(join(tmpDir, "projects", "proj-b", "sess-3.jsonl"), content);
-  prevClaudeDir = process.env.CC_ANALYZER_CLAUDE_DIR;
-  process.env.CC_ANALYZER_CLAUDE_DIR = tmpDir;
+  mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
+  mkdirSync(join(claude.dir, "projects", "proj-b"), { recursive: true });
+  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), content);
+  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-2.jsonl"), content);
+  writeFileSync(join(claude.dir, "projects", "proj-b", "sess-3.jsonl"), content);
 });
 
 afterAll(() => {
-  if (prevClaudeDir === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
-  else process.env.CC_ANALYZER_CLAUDE_DIR = prevClaudeDir;
-  rmSync(tmpDir, { recursive: true, force: true });
+  claude.cleanup();
 });
 
 describe("reindex + stats", () => {
@@ -110,7 +107,7 @@ describe("reindex · compactions (schema v7)", () => {
         compactMetadata: { trigger: "auto", preTokens: 99 },
       }),
     ].join("\n");
-    const file = join(tmpDir, "projects", "proj-b", "sess-compact.jsonl");
+    const file = join(claude.dir, "projects", "proj-b", "sess-compact.jsonl");
     writeFileSync(file, lines);
     const db = openDb(":memory:");
     await reindex(db, { pricing });
@@ -130,7 +127,7 @@ describe("reindex · compactions (schema v7)", () => {
 describe("reindex · rebuild", () => {
   test("rebuild re-parses everything and still prunes deleted files", async () => {
     const content = await Bun.file(fixture).text();
-    const extra = join(tmpDir, "projects", "proj-b", "sess-extra.jsonl");
+    const extra = join(claude.dir, "projects", "proj-b", "sess-extra.jsonl");
     writeFileSync(extra, content);
     const db = openDb(":memory:");
     await reindex(db, { pricing });

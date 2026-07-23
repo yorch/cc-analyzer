@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { type Compaction, isTestCommand } from "./analyze.ts";
-import { summarizeCompactions } from "./chart-series.ts";
+import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -39,7 +39,7 @@ import type {
   WebToolsProjectRow,
   WebToolsSummary,
 } from "./stats-types.ts";
-import { localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
+import { bucketSeries, localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
 
 export * from "./stats-types.ts";
 
@@ -619,34 +619,39 @@ export function hotFiles(db: Database, projectId?: string, limit = 30): HotFileR
  * "other"), for the model-mix stacked chart, optionally for one project.
  * Attribution is by session day.
  */
-export function modelMixByDay(db: Database, topN = 6, projectId?: string): ModelDayRow[] {
-  const query = `SELECT day, models_json AS j FROM sessions
-    WHERE day IS NOT NULL ${projectScope(projectId)}`;
-  const rows = scopedAll<{ day: string; j: string | null }>(db, query, projectId);
-  const perDay = new Map<string, Map<string, number>>();
-  const totals = new Map<string, number>();
-  for (const r of rows) {
-    const models = parseJson<Record<string, { cost?: { total?: number } }>>(r.j, {});
-    for (const [model, usage] of Object.entries(models)) {
-      const cost = usage.cost?.total ?? 0;
-      if (cost <= 0) continue;
-      let day = perDay.get(r.day);
-      if (!day) {
-        day = new Map();
-        perDay.set(r.day, day);
-      }
-      day.set(model, (day.get(model) ?? 0) + cost);
-      totals.set(model, (totals.get(model) ?? 0) + cost);
+interface ModelMixFold {
+  perDay: Map<string, Map<string, number>>;
+  totals: Map<string, number>;
+}
+
+const newModelMixFold = (): ModelMixFold => ({ perDay: new Map(), totals: new Map() });
+
+function addModelMixRow(acc: ModelMixFold, day: string | null, modelsJson: string | null): void {
+  if (!day) return;
+  const models = parseJson<Record<string, { cost?: { total?: number } }>>(modelsJson, {});
+  for (const [model, usage] of Object.entries(models)) {
+    const cost = usage.cost?.total ?? 0;
+    if (cost <= 0) continue;
+    let d = acc.perDay.get(day);
+    if (!d) {
+      d = new Map();
+      acc.perDay.set(day, d);
     }
+    d.set(model, (d.get(model) ?? 0) + cost);
+    acc.totals.set(model, (acc.totals.get(model) ?? 0) + cost);
   }
+}
+
+/** Top-N models keep their names; the rest fold into "other", per day. */
+function modelMixRows(acc: ModelMixFold, topN: number): ModelDayRow[] {
   const top = new Set(
-    [...totals.entries()]
+    [...acc.totals.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, topN)
       .map(([m]) => m),
   );
   const out: ModelDayRow[] = [];
-  for (const [day, models] of [...perDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  for (const [day, models] of [...acc.perDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     let other = 0;
     for (const [model, cost] of models) {
       if (top.has(model)) out.push({ day, model, cost });
@@ -655,6 +660,15 @@ export function modelMixByDay(db: Database, topN = 6, projectId?: string): Model
     if (other > 0) out.push({ day, model: "other", cost: other });
   }
   return out;
+}
+
+export function modelMixByDay(db: Database, topN = 6, projectId?: string): ModelDayRow[] {
+  const query = `SELECT day, models_json AS j FROM sessions
+    WHERE day IS NOT NULL ${projectScope(projectId)}`;
+  const rows = scopedAll<{ day: string; j: string | null }>(db, query, projectId);
+  const acc = newModelMixFold();
+  for (const r of rows) addModelMixRow(acc, r.day, r.j);
+  return modelMixRows(acc, topN);
 }
 
 const DEPTH_BUCKETS: { label: string; max: number }[] = [
@@ -747,18 +761,6 @@ function depthStats(acc: DepthFold): TurnDepthStats {
   };
 }
 
-/** Aggregate tool usage with error rates, optionally for one project. The
- * portfolio-wide Tools view uses `analyticsRollup` (one scan for everything);
- * this is the standalone slice for project pages. */
-export function toolUsage(db: Database, projectId?: string): ToolUsageRow[] {
-  const query = `SELECT tools_json AS t, tool_errors_json AS e FROM sessions
-    WHERE 1 = 1 ${projectScope(projectId)}`;
-  const rows = scopedAll<{ t: string | null; e: string | null }>(db, query, projectId);
-  const acc = newToolFold();
-  for (const r of rows) addToolRow(acc, r.t, r.e);
-  return toolRows(acc);
-}
-
 /** Turn-depth stats (buckets + monthly trend), optionally for one project. */
 export function turnDepthStats(db: Database, projectId?: string): TurnDepthStats {
   const query = `SELECT turn_depths_json AS j, month FROM sessions
@@ -769,15 +771,57 @@ export function turnDepthStats(db: Database, projectId?: string): TurnDepthStats
   return depthStats(acc);
 }
 
-/** Everything the project page charts need, in one bundle. */
+/** Everything the project page charts need, in one bundle. The three
+ * JSON-blob series (model mix, tools, turn depth) fold in ONE pass over the
+ * project's rows; the SQL aggregates (daily, scatter, distribution) stay in
+ * SQLite where they're cheapest. */
 export function projectTrends(db: Database, projectId: string): ProjectTrends {
+  const rows = db
+    .query(
+      `SELECT day, month, models_json, tools_json, tool_errors_json, turn_depths_json
+      FROM sessions WHERE project_id = ?`,
+    )
+    .all(projectId) as {
+    day: string | null;
+    month: string | null;
+    models_json: string | null;
+    tools_json: string | null;
+    tool_errors_json: string | null;
+    turn_depths_json: string | null;
+  }[];
+  const mixFold = newModelMixFold();
+  const toolFold = newToolFold();
+  const depthFold = newDepthFold();
+  for (const r of rows) {
+    addModelMixRow(mixFold, r.day, r.models_json);
+    addToolRow(toolFold, r.tools_json, r.tool_errors_json);
+    addDepthRow(depthFold, r.turn_depths_json, r.month);
+  }
   return {
     daily: spendByDay(db, projectId),
-    modelMix: modelMixByDay(db, 6, projectId),
+    modelMix: modelMixRows(mixFold, 6),
     scatter: sessionScatter(db, 500, projectId),
     distribution: costDistribution(db, projectId),
+    turnDepth: depthStats(depthFold),
+    tools: toolRows(toolFold),
+  };
+}
+
+/** The per-project chart lines the TUI project preview renders — computed at
+ * the screen boundary (ProjectsView) and passed in as plain props, so the
+ * preview component stays free of database access. */
+export interface ProjectPreviewStats {
+  /** Weekly cost series, oldest first. */
+  weeklyBurn: number[];
+  distribution: CostDistribution;
+  turnDepth: TurnDepthStats;
+}
+
+export function projectPreviewStats(db: Database, projectId: string): ProjectPreviewStats {
+  return {
+    weeklyBurn: bucketSeries(spendByDay(db, projectId), "week").map((p) => p.cost),
+    distribution: costDistribution(db, projectId),
     turnDepth: turnDepthStats(db, projectId),
-    tools: toolUsage(db, projectId),
   };
 }
 
@@ -790,10 +834,13 @@ export function projectTrends(db: Database, projectId: string): ProjectTrends {
  */
 export function compactionUsage(db: Database, limit = 30): CompactionUsage {
   const totalSessions = (db.query("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
+  // ORDER BY path: which row keeps a deduped record must not depend on scan
+  // order, or reruns could attribute the compaction to different sessions.
   const rows = db
     .query(
       `SELECT compactions_json AS j FROM sessions
-      WHERE compactions_json IS NOT NULL AND compactions_json != '[]'`,
+      WHERE compactions_json IS NOT NULL AND compactions_json != '[]'
+      ORDER BY path`,
     )
     .all() as { j: string | null }[];
   let sessions = 0;
@@ -803,8 +850,12 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
   let unknown = 0;
   let sidechain = 0;
   let inherited = 0;
+  // Dedupe by boundary uuid across ALL categories (a copied session file
+  // duplicates its subagent/inherited records too), then split with the one
+  // canonical summarizeCompactions — no second classification site.
+  const seen = new Set<string>();
   for (const r of rows) {
-    const b = summarizeCompactions(parseJson<Compaction[]>(r.j, []));
+    const b = summarizeCompactions(dedupeCompactions(parseJson<Compaction[]>(r.j, []), seen));
     if (b.own.length > 0) sessions += 1;
     compactions += b.own.length;
     auto += b.triggers.auto ?? 0;

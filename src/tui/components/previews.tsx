@@ -1,6 +1,4 @@
-import type { Database } from "bun:sqlite";
 import { Box, Text } from "ink";
-import { useMemo } from "react";
 import {
   formatCount,
   formatRelativeTime,
@@ -9,14 +7,8 @@ import {
   truncate,
 } from "../../cli/format.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
-import {
-  type CacheMetrics,
-  cacheVerdict,
-  costDistribution,
-  spendByDay,
-  turnDepthStats,
-} from "../../core/stats.ts";
-import { bucketSeries, sparkline } from "../charts.ts";
+import { type CacheMetrics, cacheVerdict, type ProjectPreviewStats } from "../../core/stats.ts";
+import { sparkline } from "../charts.ts";
 import { palette, role, VERDICT_COLOR } from "../theme.ts";
 
 /** A padded `label   value` line, shared by the preview panes. */
@@ -38,35 +30,19 @@ function cacheShare(io: number, cache: number): string {
 const SPARK_WEEKS = 26;
 
 /** Detail-pane summary for a selected project, with per-project chart lines
- * (weekly burn sparkline + distribution ramps) computed live from the index. */
+ * (weekly burn sparkline + distribution ramps). `stats` arrives as plain
+ * props from the screen boundary — this component never touches the db. */
 export function ProjectPreview({
   project,
-  db,
+  stats,
 }: {
   project: IndexedProject | undefined;
-  db: Database;
+  stats: ProjectPreviewStats | undefined;
 }) {
-  const projectId = project?.projectId;
-  // Per-highlight queries are cheap (indexed by project_id); memoized so
-  // re-renders without a selection change don't re-scan.
-  const weekly = useMemo(
-    () =>
-      projectId
-        ? bucketSeries(spendByDay(db, projectId), "week")
-            .slice(-SPARK_WEEKS)
-            .map((p) => p.cost)
-        : [],
-    [db, projectId],
-  );
-  const dist = useMemo(
-    () => (projectId ? costDistribution(db, projectId) : undefined),
-    [db, projectId],
-  );
-  const depth = useMemo(
-    () => (projectId ? turnDepthStats(db, projectId) : undefined),
-    [db, projectId],
-  );
   if (!project) return <Text color={role.muted}>(no selection)</Text>;
+  const weekly = stats?.weeklyBurn.slice(-SPARK_WEEKS) ?? [];
+  const dist = stats?.distribution;
+  const depth = stats?.turnDepth;
   return (
     <Box flexDirection="column">
       <Text bold color={role.heading}>

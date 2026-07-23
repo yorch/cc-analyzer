@@ -7,6 +7,7 @@ export const flatPricing: ModelPricing = {
   cacheWrite5mCostPerToken: 0.0000125,
   cacheWrite1hCostPerToken: 0.00002,
   cacheReadCostPerToken: 0.000001,
+  maxInputTokens: 200_000,
 };
 
 /** Pricing table covering the models used in the sample-session fixture. */

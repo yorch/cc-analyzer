@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { InsightsView } from "../../src/tui/screens/InsightsView.tsx";
+import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
 
 function insert(
@@ -14,13 +15,18 @@ function insert(
   r: number,
   cw: number,
 ): void {
-  db.query(
-    `INSERT INTO sessions
-      (path, project_id, project_path, session_id, title,
-       cache_write_5m, cache_write_1h, cache_read,
-       cost_cache_write, cost_cache_read, cost_input, cost_output, cost_total)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).run(path, project, projectPath, path, path, w, 0, r, cw, 0.1, 1, 1, cw + 2.1);
+  insertSession(db, {
+    path,
+    project_id: project,
+    project_path: projectPath,
+    cache_write_5m: w,
+    cache_read: r,
+    cost_cache_write: cw,
+    cost_cache_read: 0.1,
+    cost_input: 1,
+    cost_output: 1,
+    cost_total: cw + 2.1,
+  });
 }
 
 let db: Database;

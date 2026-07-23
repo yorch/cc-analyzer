@@ -9,7 +9,6 @@ import {
   projectTrends,
   sessionScatter,
   spendByDay,
-  toolUsage,
   turnDepthStats,
 } from "../../src/core/stats.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -91,12 +90,12 @@ describe("project-scoped rollups", () => {
     expect(models).toEqual(new Set(["claude-opus-4-7"]));
   });
 
-  test("toolUsage folds uses, sessions and error rates per project", () => {
-    const p1 = toolUsage(db, "p1");
+  test("projectTrends folds tool uses, sessions and error rates per project", () => {
+    const p1 = projectTrends(db, "p1").tools;
     const bash = p1.find((t) => t.tool === "Bash");
     expect(bash).toEqual({ tool: "Bash", uses: 5, errors: 1, errorRate: 0.2, sessions: 2 });
     expect(p1.some((t) => t.tool === "Write")).toBe(false);
-    expect(toolUsage(db).some((t) => t.tool === "Write")).toBe(true);
+    expect(projectTrends(db, "p2").tools.some((t) => t.tool === "Write")).toBe(true);
   });
 
   test("turnDepthStats buckets depths per project", () => {
@@ -139,6 +138,24 @@ describe("compaction rollups (schema v7)", () => {
     expect(p1?.compactions).toBe(2);
     expect(p1?.sessionsWithCompaction).toBe(1);
     expect(p1?.share).toBeCloseTo(0.5, 10);
+  });
+
+  test("copied rows dedupe every category by boundary uuid", () => {
+    const db2 = openDb(":memory:");
+    const blob = JSON.stringify([
+      { timestamp: "t1", uuid: "o1", trigger: "auto" },
+      { timestamp: "t2", uuid: "s1", isSidechain: true },
+      { timestamp: "t0", uuid: "i1", inherited: true },
+    ]);
+    insertSession(db2, { path: "/x/a.jsonl", compactions: 1, compactions_json: blob });
+    insertSession(db2, { path: "/x/b.jsonl", compactions: 1, compactions_json: blob });
+    const u = compactionUsage(db2);
+    expect(u.summary.compactions).toBe(1);
+    expect(u.summary.auto).toBe(1);
+    expect(u.summary.sidechain).toBe(1); // not doubled by the copy
+    expect(u.summary.inherited).toBe(1);
+    expect(u.summary.sessions).toBe(1);
+    db2.close();
   });
 
   test("listIndexedProjects carries the summed compaction count", () => {

@@ -17,6 +17,7 @@ interface LiteLLMEntry {
   cache_creation_input_token_cost?: number;
   cache_creation_input_token_cost_above_1hr?: number;
   cache_read_input_token_cost?: number;
+  max_input_tokens?: number;
 }
 
 /** Map a raw LiteLLM model entry to our pricing shape, or null if unpriceable. */
@@ -24,12 +25,14 @@ export function mapLiteLLMEntry(entry: LiteLLMEntry): ModelPricing | null {
   const input = entry.input_cost_per_token;
   const output = entry.output_cost_per_token;
   if (typeof input !== "number" || typeof output !== "number") return null;
+  const maxInput = entry.max_input_tokens;
   return {
     inputCostPerToken: input,
     outputCostPerToken: output,
     cacheWrite5mCostPerToken: entry.cache_creation_input_token_cost ?? input * 1.25,
     cacheWrite1hCostPerToken: entry.cache_creation_input_token_cost_above_1hr ?? input * 2,
     cacheReadCostPerToken: entry.cache_read_input_token_cost ?? input * 0.1,
+    ...(Number.isFinite(maxInput) && (maxInput as number) > 0 ? { maxInputTokens: maxInput } : {}),
   };
 }
 
@@ -59,8 +62,15 @@ export interface LoadedPricing {
   source: "cache" | "remote" | "bundled";
 }
 
+/** Bump when the cached table's shape gains load-bearing fields: a cache
+ * written by an older binary is then refreshed (or bundled pricing used)
+ * instead of silently serving entries that lack the new data. v2 added
+ * `maxInputTokens` (the context-window limit the charts draw). */
+export const CACHE_FORMAT_VERSION = 2;
+
 interface CacheFile {
   fetchedAt: number;
+  formatVersion?: number;
   table: PricingTable;
 }
 
@@ -88,7 +98,11 @@ export async function loadPricing(opts: LoadPricingOptions = {}): Promise<Loaded
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const table = parseLiteLLMTable(await res.json());
     if (Object.keys(table).length === 0) throw new Error("empty pricing table");
-    await writeCache(cachePath, { fetchedAt: Date.now(), table });
+    await writeCache(cachePath, {
+      fetchedAt: Date.now(),
+      formatVersion: CACHE_FORMAT_VERSION,
+      table,
+    });
     return { table, source: "remote" };
   } catch {
     if (cached) return { table: cached.table, source: "cache" };
@@ -116,6 +130,9 @@ async function readCache(path: string): Promise<CacheFile | null> {
     const data = (await file.json()) as CacheFile;
     if (typeof data.fetchedAt !== "number" || typeof data.table !== "object" || data.table === null)
       return null;
+    // A pre-upgrade cache lacks fields newer code depends on; rejecting it
+    // falls through to a refetch, and offline to the bundled snapshot.
+    if (data.formatVersion !== CACHE_FORMAT_VERSION) return null;
     // A corrupted cache (string rates, nulls) would silently yield NaN costs
     // for every session — drop invalid entries, and reject an unusable cache.
     for (const [key, entry] of Object.entries(data.table)) {

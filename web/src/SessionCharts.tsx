@@ -6,6 +6,7 @@ import {
   buildTurnSeries,
   type Compaction,
   type ContextSeries,
+  pctOfLimit,
   type SessionAnalysis,
   summarizeCompactions,
   type TurnPoint,
@@ -71,13 +72,15 @@ function triggerLabel(triggers: Record<string, number>, total: number): string {
 }
 
 function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: Compaction[] }) {
-  const { points, markers, peakTokens } = ctx;
+  const { points, markers, peakTokens, contextLimit } = ctx;
   // The one canonical split: own vs subagent vs inherited (see chart-series.ts).
   const b = summarizeCompactions(compactions);
   const n = points.length;
   if (n === 0) return <p className="muted">No main-chain API calls in this session.</p>;
   const H = 220;
-  const max = Math.max(peakTokens, 1);
+  // When the window size is known, scale to it: the empty headroom above the
+  // sawtooth IS the signal (how close this session ran to the ceiling).
+  const max = Math.max(peakTokens, contextLimit ?? 0, 1);
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const line = linePath(
@@ -93,7 +96,11 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
   return (
     <>
       <p className="muted">
-        peak {count(peakTokens)} tokens · {triggerLabel(b.triggers, b.own.length)}
+        peak {count(peakTokens)} tokens
+        {contextLimit
+          ? ` (${pctOfLimit(peakTokens, contextLimit)}% of the ${count(contextLimit)} window)`
+          : ""}{" "}
+        · {triggerLabel(b.triggers, b.own.length)}
         {b.own.length > markers.length && " (some without timestamps, not placed)"}
         {b.inherited > 0 && " · started post-compaction (inherited boundary, not marked)"}
         {b.sidechain > 0 && ` · ${b.sidechain} in subagents (own context windows, not marked)`}
@@ -107,6 +114,17 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
         <title>Context-window tokens per call</title>
         <path className="burn-area" d={areaPath(line, x, n, H)} />
         <path className="burn-line" d={line} />
+        {contextLimit && (
+          <line
+            className="ctx-limit"
+            x1={CHART_PAD}
+            x2={CHART_W - CHART_PAD}
+            y1={y(contextLimit)}
+            y2={y(contextLimit)}
+          >
+            <title>{`context window · ${count(contextLimit)} tokens`}</title>
+          </line>
+        )}
         {markers.map((m, mi) => (
           <line
             // biome-ignore lint/suspicious/noArrayIndexKey: markers are order-stable
@@ -123,22 +141,27 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
           </line>
         ))}
         {n <= MAX_LINE_DOTS &&
-          points.map((p, i) => (
-            <circle
-              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
-              key={i}
-              className="dot"
-              cx={x(i)}
-              cy={y(p.contextTokens)}
-              r={3.5}
-            >
-              <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
-                p.contextTokens,
-              )} context (${count(p.cachedTokens)} cached) · ${count(p.outputTokens)} out · ${usd(
-                p.cost,
-              )}${p.model ? ` · ${p.model}` : ""}`}</title>
-            </circle>
-          ))}
+          points.map((p, i) => {
+            const windowPct = contextLimit
+              ? ` (${pctOfLimit(p.contextTokens, contextLimit)}% of window)`
+              : "";
+            return (
+              <circle
+                // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+                key={i}
+                className="dot"
+                cx={x(i)}
+                cy={y(p.contextTokens)}
+                r={3.5}
+              >
+                <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
+                  p.contextTokens,
+                )} context${windowPct} (${count(p.cachedTokens)} cached) · ${count(
+                  p.outputTokens,
+                )} out · ${usd(p.cost)}${p.model ? ` · ${p.model}` : ""}`}</title>
+              </circle>
+            );
+          })}
       </svg>
       <div className="axis">
         <span>call 1</span>
