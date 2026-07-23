@@ -1,5 +1,18 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { withBase } from "vitepress";
+
+const installCommand = "curl -fsSL https://cc-analyzer.brnby.com/install.sh | sh";
+const copyState = ref<"idle" | "copied" | "failed">("idle");
+
+async function copyInstallCommand() {
+  try {
+    await navigator.clipboard.writeText(installCommand);
+    copyState.value = "copied";
+  } catch {
+    copyState.value = "failed";
+  }
+}
 
 // Sample ledger output rendered line-by-line as a fake boot sequence. Each line
 // carries an index used to stagger its reveal via CSS custom property --i.
@@ -31,8 +44,8 @@ const boot: { t: string; cls?: string }[] = [
           tools, skills, models,</strong> and a per-turn breakdown.
         </p>
         <div class="cc-hero__actions">
-          <a class="cc-btn cc-btn--brand" :href="withBase('/docs/')">
-            Get started <span aria-hidden="true">▸</span>
+          <a class="cc-btn cc-btn--brand" :href="withBase('/install')">
+            Install <span aria-hidden="true">▸</span>
           </a>
           <a
             class="cc-btn cc-btn--ghost"
@@ -43,9 +56,32 @@ const boot: { t: string; cls?: string }[] = [
             View source
           </a>
         </div>
-        <p class="cc-hero__hint">
-          <span class="cc-key">$</span> curl -fL …/releases/latest/download/cc-analyzer-darwin-arm64
-        </p>
+        <div class="cc-install">
+          <div class="cc-install__command">
+            <code><span class="cc-key">$</span> {{ installCommand }}</code>
+            <button
+              class="cc-install__copy"
+              type="button"
+              :aria-label="copyState === 'copied' ? 'Install command copied' : 'Copy install command'"
+              @click="copyInstallCommand"
+            >
+              {{ copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "copy" }}
+            </button>
+          </div>
+          <p class="cc-install__meta">
+            macOS / Linux · detects platform · verifies SHA-256 ·
+            <a :href="withBase('/install')">review installer</a>
+          </p>
+          <span class="sr-only" aria-live="polite">
+            {{
+              copyState === "copied"
+                ? "Install command copied to clipboard."
+                : copyState === "failed"
+                  ? "Could not copy the install command."
+                  : ""
+            }}
+          </span>
+        </div>
       </div>
 
       <!-- Right: animated terminal window -->
@@ -153,16 +189,70 @@ const boot: { t: string; cls?: string }[] = [
   text-shadow: 0 0 12px var(--cc-glow);
 }
 
-.cc-hero__hint {
+.cc-install {
   font-family: var(--cc-mono);
-  font-size: 0.78rem;
-  color: var(--cc-ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   border-top: 1px dashed var(--cc-line);
   padding-top: 1rem;
-  margin: 0;
+}
+.cc-install__command {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  color: var(--cc-ink-2);
+}
+.cc-install__command code {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.cc-install__copy {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.48rem;
+  border: 1px solid var(--cc-line-strong);
+  border-radius: 4px;
+  background: var(--cc-bg-2);
+  color: var(--cc-ink-2);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.cc-install__copy:hover {
+  border-color: var(--cc-amber);
+  color: var(--cc-amber-hi);
+}
+.cc-install__meta {
+  margin: 0.45rem 0 0;
+  color: var(--cc-ink-3);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.cc-install__meta a {
+  color: var(--cc-ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--cc-line-strong);
+  text-underline-offset: 0.18em;
+}
+.cc-install__meta a:hover {
+  color: var(--cc-amber);
+}
+.cc-install__copy:focus-visible,
+.cc-install__meta a:focus-visible {
+  outline: 2px solid var(--cc-amber);
+  outline-offset: 3px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .cc-key {
   color: var(--cc-amber);
@@ -252,7 +342,7 @@ const boot: { t: string; cls?: string }[] = [
   .cc-hero__mark { animation-delay: 0.14s; }
   .cc-hero__tag { animation-delay: 0.24s; }
   .cc-hero__actions { animation-delay: 0.34s; }
-  .cc-hero__hint { animation-delay: 0.44s; }
+  .cc-install { animation-delay: 0.44s; }
   @keyframes cc-rise {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: none; }
