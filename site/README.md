@@ -32,8 +32,8 @@ regenerated with a **different set of pages**, update that sidebar to match.
 The same config maps transformed docs routes back to their canonical wiki files
 for edit links, excludes this contributor README and `GOTCHAS.md` from the public
 build, emits canonical/social metadata and a sitemap, and loads docs analytics
-through `public/analytics.js` so browser Do-Not-Track is checked before Plausible
-is initialized and its site-specific `pa-*` tracker is requested.
+through `public/analytics.js`, which checks the local Plausible opt-out before
+Plausible is initialized and its site-specific `pa-*` tracker is requested.
 
 Mermaid fences are converted to the local `LazyMermaid` component at build time.
 The component imports Mermaid only on pages with a diagram, keeping Mermaid's

@@ -157,8 +157,9 @@ current state any time:
 cc-analyzer telemetry status
 ```
 
-In the web app and this docs site, Do-Not-Track and
-`localStorage.plausible_ignore = "true"` are both honored.
+The `DO_NOT_TRACK` environment variable governs CLI telemetry and the locally
+served web app. In the web app and this docs site,
+`localStorage.plausible_ignore = "true"` disables browser analytics.
 
 ## Run from source
 

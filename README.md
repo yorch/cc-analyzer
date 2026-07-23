@@ -186,8 +186,9 @@ export DO_NOT_TRACK=1            # honored globally
 ```
 
 Telemetry is also **automatically disabled in CI** (`CI` env set). Check the
-current state with `cc-analyzer telemetry status`. In the web app and docs site,
-Do-Not-Track and `localStorage.plausible_ignore = "true"` are honored.
+current state with `cc-analyzer telemetry status`. The `DO_NOT_TRACK` environment
+variable also governs the locally served web app; in the web app and docs site,
+`localStorage.plausible_ignore = "true"` disables browser analytics.
 
 ## Development
 
