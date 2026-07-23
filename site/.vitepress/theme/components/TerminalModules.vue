@@ -57,7 +57,7 @@ const modules = [
             v-html="`<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'>${m.icon}</svg>`"
           />
         </div>
-        <h3 class="cc-mod__title">{{ m.title }}</h3>
+        <h2 class="cc-mod__title">{{ m.title }}</h2>
         <p class="cc-mod__body">{{ m.body }}</p>
       </article>
     </div>

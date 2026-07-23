@@ -74,9 +74,13 @@ const boot: { t: string; cls?: string }[] = [
 }
 .cc-hero__grid {
   display: grid;
-  grid-template-columns: 1.05fr 1fr;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   gap: clamp(2rem, 5vw, 4rem);
   align-items: center;
+}
+.cc-hero__intro,
+.cc-term {
+  min-width: 0;
 }
 
 /* ---- Intro column -------------------------------------------------------- */
@@ -261,6 +265,19 @@ const boot: { t: string; cls?: string }[] = [
   }
   .cc-term {
     order: 2;
+  }
+}
+@media (max-width: 520px) {
+  .cc-hero__mark {
+    font-size: clamp(2rem, 11vw, 2.8rem);
+  }
+  .cc-term__body {
+    font-size: 0.72rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-caret {
+    animation: none;
   }
 }
 </style>

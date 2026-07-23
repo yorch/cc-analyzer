@@ -123,6 +123,10 @@
 
 html {
   background: var(--cc-bg);
+  color-scheme: dark;
+}
+:root:not(.dark) {
+  color-scheme: light;
 }
 
 body {
@@ -207,6 +211,11 @@ h1.name,
   border-top: 1px solid var(--cc-line);
   padding-top: 1.4rem;
   margin-top: 3rem;
+}
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4 {
+  scroll-margin-top: 96px;
 }
 /* a leading prompt caret on section headers */
 .vp-doc h2::before {
@@ -489,6 +498,21 @@ h1.name,
   gap: 0.9rem;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.cc-landing a:focus-visible,
+.vp-doc a:focus-visible,
+.VPNav a:focus-visible,
+.VPNav button:focus-visible {
+  outline: 2px solid var(--cc-amber-hi);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.cc-diagram-loading {
+  margin: 0;
+  color: var(--cc-ink-3);
+  font: 0.82rem var(--cc-mono);
 }
 
 /* selection */

@@ -6,9 +6,9 @@ The VitePress source for the project's GitHub Pages site
 This is an **isolated toolchain** — its own `package.json` and `bun.lock` — so
 VitePress's Vite 5 does not collide with the SPA's Vite 8 in the repo root.
 
-Before changing icons, diagrams, or the preview workflow, skim
-[`GOTCHAS.md`](./GOTCHAS.md) — it records three non-obvious VitePress/Mermaid
-pitfalls (and their fixes) hit while building this site.
+Before changing diagrams or the preview workflow, skim
+[`GOTCHAS.md`](./GOTCHAS.md) — it records non-obvious VitePress/Mermaid pitfalls
+and the fixes already applied here.
 
 ## Local development
 
@@ -29,19 +29,34 @@ directly** — it is generated and git-ignored. Edit the wiki instead.
 
 The docs sidebar is defined by hand in `.vitepress/config.ts`. If the wiki is
 regenerated with a **different set of pages**, update that sidebar to match.
+The same config maps transformed docs routes back to their canonical wiki files
+for edit links, excludes this contributor README and `GOTCHAS.md` from the public
+build, emits canonical/social metadata and a sitemap, and loads docs analytics
+through `public/analytics.js` so browser Do-Not-Track is checked before Plausible
+is requested.
+
+Mermaid fences are converted to the local `LazyMermaid` component at build time.
+The component imports Mermaid only on pages with a diagram, keeping Mermaid's
+large parser out of the initial landing-page bundle.
 
 ## Screenshots
 
 `site/public/screenshots/` holds images captured from the web UI running against
-a **synthetic** dataset (no real `~/.claude` data). To regenerate:
+a **synthetic** dataset (no real `~/.claude` data). The landing page uses the
+80 KB `dashboard.webp`; `dashboard.png` is the lossless source. From `site/`,
+regenerate the dataset and launch the current app with telemetry disabled:
 
 ```bash
 bun run scripts/gen-fixtures.ts                          # -> site/.tmp/claude
-cd .. && CC_ANALYZER_CLAUDE_DIR=site/.tmp/claude \
-         CC_ANALYZER_STATE_DIR=site/.tmp/state bun start index
-cd .. && CC_ANALYZER_CLAUDE_DIR=site/.tmp/claude \
-         CC_ANALYZER_STATE_DIR=site/.tmp/state bun start serve --port=4318
-# then capture http://localhost:4318 into site/public/screenshots/
+(cd .. && CC_ANALYZER_TELEMETRY=0 \
+           CC_ANALYZER_CLAUDE_DIR=site/.tmp/claude \
+           CC_ANALYZER_STATE_DIR=site/.tmp/state bun start index)
+(cd .. && CC_ANALYZER_TELEMETRY=0 \
+           CC_ANALYZER_CLAUDE_DIR=site/.tmp/claude \
+           CC_ANALYZER_STATE_DIR=site/.tmp/state bun start serve --port=4318)
+# capture http://localhost:4318 as public/screenshots/dashboard.png, then:
+cwebp -q 82 -m 6 public/screenshots/dashboard.png \
+  -o public/screenshots/dashboard.webp
 ```
 
 ## Deploy
