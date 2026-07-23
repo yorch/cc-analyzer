@@ -244,11 +244,12 @@ assets.
 ## Building the release binary
 
 ```bash
-bun run build   # vite build → embed SPA → bun compile → dist/cc-analyzer
+bun run build   # vite build → disposable SPA embed → bun compile
 ```
 
 This produces a single ~63 MB executable containing the CLI, TUI, API, and web
-UI. `bun run build:web` builds and embeds only the SPA (used by the full build).
+UI. `bun run build:web` writes the single-file SPA to `web/dist/`; the full build
+embeds it in a disposable source copy while compiling, leaving tracked source untouched.
 
 ### Releases (CI)
 

@@ -7,7 +7,7 @@
 - [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/server.ts)
 - [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/api.ts)
 - [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts)
-- [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts)
+- `scripts/compile-with-spa.ts`
 
 ## Overview
 
@@ -42,10 +42,10 @@ flowchart LR
 | ------ | ---- | -------------- |
 | `server` | [src/web/server.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/server.ts) | `runServe` lifecycle, `createApp` composition, loopback Host guard, SPA fallback |
 | `api` | [src/web/api.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/api.ts) | `createApi` Hono router: all `/api/*` JSON endpoints with fingerprint memoization |
-| `spa` | [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts) | Generated module exporting `spaHtml` and `hasSpa` — the baked-in web UI |
-| `embed-spa` | [scripts/embed-spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts) | Build script that writes the Vite single-file HTML into `spa.ts` |
+| `spa` | [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts) | Tracked placeholder used by clean source checkouts |
+| `compile-with-spa` | `scripts/compile-with-spa.ts` | Compiles a disposable source copy containing embedded HTML |
 
-Sources: [src/web/server.ts:L1-L106](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/server.ts#L1-L106) [src/web/api.ts:L1-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/api.ts#L1-L45) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L1-L22)
+Sources: `src/web/server.ts`, `src/web/api.ts`, `scripts/compile-with-spa.ts`
 
 ## Key Components
 
@@ -91,9 +91,9 @@ Sources: [src/web/api.ts:L75-L171](https://github.com/yorch/cc-analyzer/blob/51c
 
 The web UI is baked into the compiled binary as a string. [src/web/spa.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts) exports `spaHtml` (the full HTML document) and the `hasSpa` boolean, which the server consults to decide whether to serve the app or a plain-text "not built" notice ([src/web/server.ts#L66-L72](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/server.ts#L66-L72)). The committed placeholder ships `spaHtml = ""` and `hasSpa = false`, so the server compiles and runs before the SPA is ever built ([src/web/spa.ts#L1-L5](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts#L1-L5)).
 
-`scripts/embed-spa.ts` regenerates the module. It reads the single-file Vite build at `web/dist/index.html`, exits with an error if the build output is missing, and otherwise writes a `GENERATED` module setting `spaHtml` to the JSON-stringified HTML and `hasSpa` to `true` ([scripts/embed-spa.ts#L7-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L7-L22)). `bun build --compile` then bakes the string into the binary, so a release serves the whole UI with no external assets. The real `spa.ts` is git-ignored and only the placeholder is force-added once — regenerated content stays untracked. The React SPA that this HTML boots is documented in [Web SPA Frontend](./6-web-spa-frontend.md).
+`scripts/compile-with-spa.ts` reads the single-file Vite build at `web/dist/index.html`, copies the source tree under ignored `tmp/`, writes `spaHtml` and `hasSpa = true` into that disposable copy, and runs `bun build --compile` against the copied entrypoint. Release binaries therefore serve the whole UI with no external assets while the tracked placeholder is never modified. The React SPA that this HTML boots is documented in [Web SPA Frontend](./6-web-spa-frontend.md).
 
-Sources: [src/web/spa.ts:L1-L5](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/spa.ts#L1-L5) [scripts/embed-spa.ts:L1-L22](https://github.com/yorch/cc-analyzer/blob/51ccd4e/scripts/embed-spa.ts#L1-L22) [src/web/server.ts:L66-L72](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/web/server.ts#L66-L72)
+Sources: `src/web/spa.ts`, `scripts/compile-with-spa.ts`, `src/web/server.ts`
 
 ## Data Flow
 

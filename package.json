@@ -17,9 +17,9 @@
     "check": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p web/tsconfig.json",
-    "build:web": "vite build --config web/vite.config.ts && bun run scripts/embed-spa.ts",
+    "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "build": "bun run build:web && bun build --compile --outfile dist/cc-analyzer src/cli/index.ts"
+    "build": "bun run build:web && bun run scripts/compile-with-spa.ts -- --compile --outfile dist/cc-analyzer src/cli/index.ts"
   },
   "dependencies": {
     "hono": "4.12.28",

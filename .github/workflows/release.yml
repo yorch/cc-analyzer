@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build & embed the web UI
+      - name: Build the web UI
         run: bun run build:web
 
       - name: Compile cross-platform binaries
@@ -55,7 +55,7 @@ jobs:
             target="${entry%%:*}"
             out="${entry##*:}"
             echo "::group::Compiling $out ($target)"
-            bun build --compile --minify --target="$target" \
+            bun run scripts/compile-with-spa.ts -- --compile --minify --target="$target" \
               --outfile "dist/$out" src/cli/index.ts
             echo "::endgroup::"
           done

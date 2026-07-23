@@ -23,8 +23,8 @@ bun run typecheck            # tsc for core/CLI/TUI/server (root tsconfig)
 bun run typecheck:web        # tsc for the web SPA (web/tsconfig.json)
 
 bun run dev:web              # Vite dev server for the SPA
-bun run build:web            # Vite build → embed SPA into src/web/spa.ts
-bun run build                # build:web, then bun compile → dist/cc-analyzer
+bun run build:web            # Vite build → web/dist/index.html
+bun run build                # build:web, disposable embed, compile → dist/cc-analyzer
 ```
 
 There are **two separate typecheck commands** because there are two tsconfigs with
@@ -214,12 +214,14 @@ does — it requires the manifest).
 
 ## Build & the generated SPA
 
-`src/web/spa.ts` is a **generated, gitignored artifact** — do not edit it by hand.
-`bun run build:web` runs Vite (which bundles the SPA to a single self-contained HTML
-file via `vite-plugin-singlefile`) then `scripts/embed-spa.ts` writes that HTML as a
-string into `src/web/spa.ts`. `bun build --compile` bakes it into the binary, so the
-release serves the whole UI with no external assets. A placeholder `spa.ts` is
-force-added to git once; regenerated content stays untracked.
+`src/web/spa.ts` is a tracked placeholder so clean checkouts typecheck and source-mode
+commands can run before the SPA is built. `bun run build:web` runs Vite, which bundles
+the SPA to `web/dist/index.html` as a single self-contained file via
+`vite-plugin-singlefile`. `scripts/compile-with-spa.ts` copies `src/` and `package.json`
+into an ignored disposable directory under `tmp/`, embeds the HTML in that copy, and
+runs `bun build --compile` against the copied entrypoint. Release binaries therefore
+embed the full UI without ever modifying tracked source, even if compilation is
+interrupted.
 
 ## Conventions
 
@@ -229,7 +231,7 @@ force-added to git once; regenerated content stays untracked.
   belongs to the web config.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).
 - Formatting/linting is **Biome** (`biome.json`): 2-space indent, width 100, double
-  quotes, semicolons, trailing commas. Biome excludes `web/dist` and the generated
+  quotes, semicolons, trailing commas. Biome excludes `web/dist` and the placeholder
   `src/web/spa.ts`.
 - Tests mirror source under `test/`, using Bun's runner and `ink-testing-library` for
   the TUI. `test/fixtures/sample-session.jsonl` is the canonical parse fixture.
