@@ -10,10 +10,12 @@ import { Trends } from "./views/Trends.tsx";
 
 export function App() {
   const route = useHashRoute();
-  // Report a sanitized pageview whenever the view changes (ids never sent).
+  // Report a sanitized pageview whenever the route changes. Depending on the
+  // complete route counts navigation between two records of the same type, but
+  // only the route name is passed through so ids are never sent.
   useEffect(() => {
     trackView(route.name);
-  }, [route.name]);
+  }, [route]);
   const onInsights = route.name === "insights" || route.name === "insightsProject";
   return (
     <div className="wrap">
