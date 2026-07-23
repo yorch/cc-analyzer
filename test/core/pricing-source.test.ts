@@ -90,3 +90,45 @@ describe("mapLiteLLMEntry · context window", () => {
     expect(mapLiteLLMEntry({ ...base, max_input_tokens: 0 })?.maxInputTokens).toBeUndefined();
   });
 });
+
+describe("loadPricing · cache format version", () => {
+  test("rejects a pre-upgrade cache (no formatVersion) instead of serving it", async () => {
+    const dir = `/tmp/cc-analyzer-test-${Bun.hash(import.meta.url)}-oldcache`;
+    const prev = process.env.CC_ANALYZER_STATE_DIR;
+    process.env.CC_ANALYZER_STATE_DIR = dir;
+    try {
+      // A fresh-looking cache written by an older binary: valid rates, no
+      // formatVersion (and so no maxInputTokens anywhere).
+      const { pricingCachePath } = await import("../../src/core/paths.ts");
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const { dirname } = await import("node:path");
+      const path = pricingCachePath();
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        JSON.stringify({
+          fetchedAt: Date.now(),
+          table: {
+            "claude-old": {
+              inputCostPerToken: 1,
+              outputCostPerToken: 2,
+              cacheWrite5mCostPerToken: 1,
+              cacheWrite1hCostPerToken: 2,
+              cacheReadCostPerToken: 0.1,
+            },
+          },
+        }),
+      );
+      // Offline: the stale-format cache must NOT win; bundled (which carries
+      // maxInputTokens) is the answer.
+      const loaded = await loadPricing({ fetchImpl: () => Promise.reject(new Error("offline")) });
+      expect(loaded.source).toBe("bundled");
+      expect(loaded.table["claude-opus-4-7"]?.maxInputTokens).toBe(200_000);
+    } finally {
+      const { rmSync } = await import("node:fs");
+      rmSync(dir, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prev;
+    }
+  });
+});

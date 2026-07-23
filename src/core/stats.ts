@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { type Compaction, isTestCommand } from "./analyze.ts";
-import { summarizeCompactions } from "./chart-series.ts";
+import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -761,18 +761,6 @@ function depthStats(acc: DepthFold): TurnDepthStats {
   };
 }
 
-/** Aggregate tool usage with error rates, optionally for one project. The
- * portfolio-wide Tools view uses `analyticsRollup` (one scan for everything);
- * this is the standalone slice for project pages. */
-export function toolUsage(db: Database, projectId?: string): ToolUsageRow[] {
-  const query = `SELECT tools_json AS t, tool_errors_json AS e FROM sessions
-    WHERE 1 = 1 ${projectScope(projectId)}`;
-  const rows = scopedAll<{ t: string | null; e: string | null }>(db, query, projectId);
-  const acc = newToolFold();
-  for (const r of rows) addToolRow(acc, r.t, r.e);
-  return toolRows(acc);
-}
-
 /** Turn-depth stats (buckets + monthly trend), optionally for one project. */
 export function turnDepthStats(db: Database, projectId?: string): TurnDepthStats {
   const query = `SELECT turn_depths_json AS j, month FROM sessions
@@ -846,10 +834,13 @@ export function projectPreviewStats(db: Database, projectId: string): ProjectPre
  */
 export function compactionUsage(db: Database, limit = 30): CompactionUsage {
   const totalSessions = (db.query("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
+  // ORDER BY path: which row keeps a deduped record must not depend on scan
+  // order, or reruns could attribute the compaction to different sessions.
   const rows = db
     .query(
       `SELECT compactions_json AS j FROM sessions
-      WHERE compactions_json IS NOT NULL AND compactions_json != '[]'`,
+      WHERE compactions_json IS NOT NULL AND compactions_json != '[]'
+      ORDER BY path`,
     )
     .all() as { j: string | null }[];
   let sessions = 0;
@@ -859,25 +850,17 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
   let unknown = 0;
   let sidechain = 0;
   let inherited = 0;
-  // Copied session files (and continuation edge cases) can land the same
-  // boundary event in two rows; its uuid is the stable identity, so own
-  // compactions dedupe on it portfolio-wide. Uuid-less records can't.
-  const seenUuids = new Set<string>();
+  // Dedupe by boundary uuid across ALL categories (a copied session file
+  // duplicates its subagent/inherited records too), then split with the one
+  // canonical summarizeCompactions — no second classification site.
+  const seen = new Set<string>();
   for (const r of rows) {
-    const b = summarizeCompactions(parseJson<Compaction[]>(r.j, []));
-    const own = b.own.filter((c) => {
-      if (!c.uuid) return true;
-      if (seenUuids.has(c.uuid)) return false;
-      seenUuids.add(c.uuid);
-      return true;
-    });
-    if (own.length > 0) sessions += 1;
-    compactions += own.length;
-    for (const c of own) {
-      if (c.trigger === "auto") auto += 1;
-      else if (c.trigger === "manual") manual += 1;
-      else unknown += 1;
-    }
+    const b = summarizeCompactions(dedupeCompactions(parseJson<Compaction[]>(r.j, []), seen));
+    if (b.own.length > 0) sessions += 1;
+    compactions += b.own.length;
+    auto += b.triggers.auto ?? 0;
+    manual += b.triggers.manual ?? 0;
+    unknown += b.own.length - (b.triggers.auto ?? 0) - (b.triggers.manual ?? 0);
     sidechain += b.sidechain;
     inherited += b.inherited;
   }

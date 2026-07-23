@@ -33,6 +33,26 @@ export interface CompactionBreakdown {
   inherited: number;
 }
 
+/**
+ * Drop compaction records whose `uuid` was already seen. Copied session files
+ * (and continuation edge cases) land the same boundary event in several rows;
+ * the uuid is its stable identity, so cross-row rollups filter through one
+ * shared `seen` set before summarizing. Uuid-less records (older files)
+ * cannot dedupe and always pass.
+ */
+export function dedupeCompactions(compactions: Compaction[], seen: Set<string>): Compaction[] {
+  return compactions.filter((c) => {
+    if (!c.uuid) return true;
+    if (seen.has(c.uuid)) return false;
+    seen.add(c.uuid);
+    return true;
+  });
+}
+
+/** Percentage of a context window used, rounded to whole percent. */
+export const pctOfLimit = (tokens: number, limit: number): number =>
+  Math.round((tokens / limit) * 100);
+
 /** Split a session's compaction records the one canonical way. */
 export function summarizeCompactions(compactions: Compaction[]): CompactionBreakdown {
   const own: Compaction[] = [];
@@ -62,8 +82,6 @@ export interface ContextPoint {
   cachedTokens: number;
   outputTokens: number;
   cost: number;
-  /** This call's model context-window size, when pricing knew it. */
-  limit?: number;
 }
 
 export interface ContextMarker {
@@ -80,7 +98,10 @@ export interface ContextSeries {
   markers: ContextMarker[];
   peakTokens: number;
   /** Largest known context-window size across the charted models — the limit
-   * line. Undefined when pricing knew none of them. */
+   * line and the "% of window" denominator, single-sourced here for both
+   * frontends. Undefined when pricing knew none of them, or when the peak
+   * exceeds it by enough that the limit is evidently wrong for this session
+   * (e.g. a 1M-context beta priced by the family heuristic's 200k entry). */
   contextLimit?: number;
 }
 
@@ -109,12 +130,16 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
         cachedTokens: t.cacheReadTokens,
         outputTokens: t.outputTokens,
         cost: call.cost.total,
-        ...(limit ? { limit } : {}),
       });
       if (contextTokens > peakTokens) peakTokens = contextTokens;
       if (limit && (contextLimit === undefined || limit > contextLimit)) contextLimit = limit;
     }
   }
+  // A peak meaningfully above the "limit" means the limit is wrong for this
+  // session (a bigger-window variant priced by the family heuristic) — drop
+  // it rather than render an impossible ">100% of window". Slight overshoot
+  // is real: the overflowing call itself can exceed the window briefly.
+  if (contextLimit !== undefined && peakTokens > contextLimit * 1.1) contextLimit = undefined;
 
   const markers: ContextMarker[] = [];
   if (points.length === 0) return { points, markers, peakTokens, contextLimit };

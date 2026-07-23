@@ -498,7 +498,7 @@ class SessionAnalyzer {
         const side = (event as { isSidechain?: boolean }).isSidechain === true;
         this.compactions.push({
           timestamp: sys.timestamp,
-          ...(sys.uuid ? { uuid: sys.uuid } : {}),
+          uuid: sys.uuid,
           trigger: sys.compactMetadata?.trigger,
           preTokens: sys.compactMetadata?.preTokens,
           ...(side ? { isSidechain: true } : {}),
@@ -517,7 +517,7 @@ class SessionAnalyzer {
         else
           this.compactions.push({
             timestamp: event.timestamp,
-            ...(event.uuid ? { uuid: event.uuid } : {}),
+            uuid: event.uuid,
             ...(side ? { isSidechain: true } : {}),
             ...(this.apiCallCount === 0 ? { inherited: true } : {}),
           });

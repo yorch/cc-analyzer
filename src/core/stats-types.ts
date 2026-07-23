@@ -595,7 +595,9 @@ export interface CompactionProjectRow {
   projectPath: string | null;
   sessions: number;
   sessionsWithCompaction: number;
-  /** Own main-chain compactions. */
+  /** Own main-chain compactions as RAW per-row sums of the `compactions`
+   * column — a copied session file counts in each row here, unlike the
+   * uuid-deduped portfolio summary. */
   compactions: number;
   /** sessionsWithCompaction / sessions. */
   share: number;

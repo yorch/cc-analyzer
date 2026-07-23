@@ -79,7 +79,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // main-chain compactions: subagent compactions and inherited continuation-file
 // boundaries excluded, so one compaction never counts in two rows) plus the
 // full `compactions_json` detail for query-time splits.
-export const SCHEMA_VERSION = "7";
+// v8: compactions_json records now carry the boundary event's `uuid`, which
+// `compactionUsage()` dedupes on portfolio-wide. The incremental indexer skips
+// unchanged files, so rows written by v7 would keep uuid-less records forever
+// and the dedupe would silently no-op — the bump forces the rebuild.
+export const SCHEMA_VERSION = "8";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

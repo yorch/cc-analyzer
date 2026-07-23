@@ -144,3 +144,14 @@ describe("markerRow", () => {
     expect(markerRow([99], 4, 4)).toBe("   ▼");
   });
 });
+
+describe("brailleChart · ceiling", () => {
+  test("scales to the ceiling so headroom renders as empty rows", () => {
+    const BLANK = "⠀";
+    const full = brailleChart([4, 4], 1, 2); // no ceiling: series fills the chart
+    expect(full[0]).not.toBe(BLANK);
+    const half = brailleChart([4, 4], 1, 2, 8); // ceiling 2× peak: top row empty
+    expect(half[0]).toBe(BLANK);
+    expect(half[1]).not.toBe(BLANK);
+  });
+});

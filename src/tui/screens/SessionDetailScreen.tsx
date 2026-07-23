@@ -13,6 +13,7 @@ import {
   buildBurnSeries,
   buildContextSeries,
   buildTurnSeries,
+  pctOfLimit,
   summarizeCompactions,
 } from "../../core/chart-series.ts";
 import { parseSessionFile } from "../../core/parser.ts";
@@ -379,7 +380,9 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   const width = Math.max(16, Math.min(columns - 18, 120));
   const chartH = Math.max(3, rows - 20);
   const values = ctx.points.map((p) => p.contextTokens);
-  const chart = brailleChart(values, width, chartH);
+  // Ceiling at the window limit (like the web chart): the empty rows above
+  // the sawtooth are the headroom signal.
+  const chart = brailleChart(values, width, chartH, ctx.contextLimit);
   const markers = markerRow(
     ctx.markers.map((m) => m.pos),
     ctx.points.length,
@@ -403,7 +406,7 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   );
 
   const limitLabel = ctx.contextLimit
-    ? ` (${Math.round((ctx.peakTokens / ctx.contextLimit) * 100)}% of ${formatCount(ctx.contextLimit)})`
+    ? ` (${pctOfLimit(ctx.peakTokens, ctx.contextLimit)}% of ${formatCount(ctx.contextLimit)})`
     : "";
 
   return (

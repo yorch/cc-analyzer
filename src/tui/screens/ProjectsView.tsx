@@ -34,10 +34,12 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
   const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
   // Data acquisition stays at the screen boundary: the preview receives plain
-  // props. Memoized per highlighted project so re-renders don't re-query.
+  // props. Keyed on the stable projectId string (not the row object) so a
+  // future parent that recreates project rows can't defeat the memo.
+  const highlightedId = highlighted?.projectId;
   const previewStats = useMemo(
-    () => (highlighted ? projectPreviewStats(db, highlighted.projectId) : undefined),
-    [db, highlighted],
+    () => (highlightedId ? projectPreviewStats(db, highlightedId) : undefined),
+    [db, highlightedId],
   );
   // Master rows are a lean index (cost + name); full stats live in the preview.
   const nameW = Math.max(10, masterWidth(columns) - 15);

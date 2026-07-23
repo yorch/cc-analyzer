@@ -6,6 +6,7 @@ import {
   buildTurnSeries,
   type Compaction,
   type ContextSeries,
+  pctOfLimit,
   type SessionAnalysis,
   summarizeCompactions,
   type TurnPoint,
@@ -97,7 +98,7 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
       <p className="muted">
         peak {count(peakTokens)} tokens
         {contextLimit
-          ? ` (${Math.round((peakTokens / contextLimit) * 100)}% of the ${count(contextLimit)} window)`
+          ? ` (${pctOfLimit(peakTokens, contextLimit)}% of the ${count(contextLimit)} window)`
           : ""}{" "}
         · {triggerLabel(b.triggers, b.own.length)}
         {b.own.length > markers.length && " (some without timestamps, not placed)"}
@@ -140,24 +141,27 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
           </line>
         ))}
         {n <= MAX_LINE_DOTS &&
-          points.map((p, i) => (
-            <circle
-              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
-              key={i}
-              className="dot"
-              cx={x(i)}
-              cy={y(p.contextTokens)}
-              r={3.5}
-            >
-              <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
-                p.contextTokens,
-              )} context${
-                p.limit ? ` (${Math.round((p.contextTokens / p.limit) * 100)}% of window)` : ""
-              } (${count(p.cachedTokens)} cached) · ${count(p.outputTokens)} out · ${usd(
-                p.cost,
-              )}${p.model ? ` · ${p.model}` : ""}`}</title>
-            </circle>
-          ))}
+          points.map((p, i) => {
+            const windowPct = contextLimit
+              ? ` (${pctOfLimit(p.contextTokens, contextLimit)}% of window)`
+              : "";
+            return (
+              <circle
+                // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+                key={i}
+                className="dot"
+                cx={x(i)}
+                cy={y(p.contextTokens)}
+                r={3.5}
+              >
+                <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
+                  p.contextTokens,
+                )} context${windowPct} (${count(p.cachedTokens)} cached) · ${count(
+                  p.outputTokens,
+                )} out · ${usd(p.cost)}${p.model ? ` · ${p.model}` : ""}`}</title>
+              </circle>
+            );
+          })}
       </svg>
       <div className="axis">
         <span>call 1</span>

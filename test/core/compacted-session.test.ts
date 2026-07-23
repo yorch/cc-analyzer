@@ -7,7 +7,7 @@
 
 import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeSession, type SessionAnalysis } from "../../src/core/analyze.ts";
@@ -16,15 +16,16 @@ import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { parseSessionFile } from "../../src/core/parser.ts";
 import { compactionUsage } from "../../src/core/stats.ts";
+import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/compacted-session.jsonl", import.meta.url));
-const tmpDir = join("/tmp", `cc-analyzer-compact-${process.pid}-${Date.now()}`);
-let prevClaudeDir: string | undefined;
+let claude: ReturnType<typeof tempClaudeDir>;
 let analysis: SessionAnalysis;
 let db: Database;
 
 beforeAll(async () => {
+  claude = tempClaudeDir("cc-analyzer-compact");
   const parsed = await parseSessionFile(fixture);
   expect(parsed.errors).toHaveLength(0);
   analysis = analyzeSession(parsed.events, pricing);
@@ -32,23 +33,19 @@ beforeAll(async () => {
   // Index the same file twice (a copied session file) to exercise the
   // uuid-based rollup dedupe.
   const content = await Bun.file(fixture).text();
-  mkdirSync(join(tmpDir, "projects", "proj-c"), { recursive: true });
-  writeFileSync(join(tmpDir, "projects", "proj-c", "sess-compact.jsonl"), content);
+  mkdirSync(join(claude.dir, "projects", "proj-c"), { recursive: true });
+  writeFileSync(join(claude.dir, "projects", "proj-c", "sess-compact.jsonl"), content);
   writeFileSync(
-    join(tmpDir, "projects", "proj-c", "sess-compact-copy.jsonl"),
+    join(claude.dir, "projects", "proj-c", "sess-compact-copy.jsonl"),
     content.replaceAll("sess-compact", "sess-compact-copy"),
   );
-  prevClaudeDir = process.env.CC_ANALYZER_CLAUDE_DIR;
-  process.env.CC_ANALYZER_CLAUDE_DIR = tmpDir;
   db = openDb(":memory:");
   await reindex(db, { pricing });
 });
 
 afterAll(() => {
   db.close();
-  if (prevClaudeDir === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
-  else process.env.CC_ANALYZER_CLAUDE_DIR = prevClaudeDir;
-  rmSync(tmpDir, { recursive: true, force: true });
+  claude.cleanup();
 });
 
 describe("compacted session end-to-end", () => {

@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CACHE_FORMAT_VERSION } from "../../src/core/pricing-source.ts";
 import { VERSION } from "../../src/core/version.ts";
 import { samplePricing } from "../helpers/pricing.ts";
 
@@ -20,7 +21,11 @@ beforeAll(async () => {
   // Seed a fresh pricing cache so no spawned CLI ever touches the network.
   writeFileSync(
     join(tmpDir, "state", "pricing.json"),
-    JSON.stringify({ fetchedAt: Date.now(), table: samplePricing }),
+    JSON.stringify({
+      fetchedAt: Date.now(),
+      formatVersion: CACHE_FORMAT_VERSION,
+      table: samplePricing,
+    }),
   );
 });
 
