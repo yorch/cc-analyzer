@@ -3,7 +3,7 @@
 //   c = comment, p = prompt/command, x = command continuation, o = output.
 const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
   { k: "c", t: "# 1 · install — one line; detects your platform, grabs the latest binary" },
-  { k: "p", t: "curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh" },
+  { k: "p", t: "curl -fsSL https://cc-analyzer.brnby.com/install.sh | sh" },
   { k: "c", t: "#   (Windows PowerShell one-liner in the install guide ▸)" },
   { k: "c", t: "" },
   { k: "c", t: "# 2 · build the index from ~/.claude, then read the totals" },
@@ -29,7 +29,7 @@ const lines: { k: "c" | "p" | "x" | "o"; t: string }[] = [
           Windows — or run it from source with <code>bun</code>. The index is a
           disposable local cache; delete and rebuild it any time.
         </p>
-        <a class="cc-deck__link" href="/cc-analyzer/install">
+        <a class="cc-deck__link" href="/install">
           Full install guide ▸
         </a>
       </div>

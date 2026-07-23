@@ -5,14 +5,14 @@ export default withMermaid({
   title: "cc-analyzer",
   description:
     "Read-only CLI to browse and analyze Claude Code sessions in ~/.claude — cost, tokens, tools, skills, models, and per-turn breakdowns.",
-  base: "/cc-analyzer/",
+  base: "/",
   lastUpdated: true,
   cleanUrls: true,
   // The whole aesthetic is an amber-phosphor CRT; dark is the intended default,
   // with the light "print-out" theme still one toggle away.
   appearance: "dark",
 
-  head: [["link", { rel: "icon", href: "/cc-analyzer/favicon.svg" }]],
+  head: [["link", { rel: "icon", href: "/favicon.svg" }]],
 
   // Light-mode ("print-out") diagram palette: warm-cream nodes, amber-ink
   // borders, monospace labels. Dark mode uses mermaid's built-in dark theme

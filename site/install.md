@@ -19,11 +19,11 @@ verifies its checksum, and installs it.
 ::: code-group
 
 ```sh [macOS / Linux]
-curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh
+curl -fsSL https://cc-analyzer.brnby.com/install.sh | sh
 ```
 
 ```powershell [Windows]
-irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
+irm https://cc-analyzer.brnby.com/install.ps1 | iex
 ```
 
 :::
@@ -33,8 +33,8 @@ By default it installs to `~/.local/bin` (macOS/Linux) or
 `PATH`, the installer prints the line to add to your shell profile.
 
 Prefer to read before piping to a shell? Inspect the scripts first:
-[`install.sh`](https://yorch.github.io/cc-analyzer/install.sh) ·
-[`install.ps1`](https://yorch.github.io/cc-analyzer/install.ps1).
+[`install.sh`](https://cc-analyzer.brnby.com/install.sh) ·
+[`install.ps1`](https://cc-analyzer.brnby.com/install.ps1).
 
 ### Options
 
@@ -49,12 +49,12 @@ Both installers read two environment variables:
 
 ```sh [macOS / Linux]
 CC_ANALYZER_VERSION=v0.4.1 CC_ANALYZER_INSTALL_DIR="$HOME/bin" \
-  sh -c "$(curl -fsSL https://yorch.github.io/cc-analyzer/install.sh)"
+  sh -c "$(curl -fsSL https://cc-analyzer.brnby.com/install.sh)"
 ```
 
 ```powershell [Windows]
 $env:CC_ANALYZER_VERSION = 'v0.4.1'
-irm https://yorch.github.io/cc-analyzer/install.ps1 | iex
+irm https://cc-analyzer.brnby.com/install.ps1 | iex
 ```
 
 :::

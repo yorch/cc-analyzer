@@ -1,7 +1,7 @@
 #!/bin/sh
 # cc-analyzer installer for macOS and Linux.
 #
-#   curl -fsSL https://yorch.github.io/cc-analyzer/install.sh | sh
+#   curl -fsSL https://cc-analyzer.brnby.com/install.sh | sh
 #
 # Environment overrides:
 #   CC_ANALYZER_VERSION      release tag to install (e.g. v0.2.0); default: latest
