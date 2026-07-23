@@ -39,3 +39,29 @@ describe("buildTranscript", () => {
     expect(bash).toBeDefined();
   });
 });
+
+describe("buildTranscript · compaction summaries", () => {
+  test("renders the machine-written summary as a labeled system item, not a prompt", () => {
+    const events = [
+      {
+        type: "user",
+        uuid: "u1",
+        timestamp: "t1",
+        message: { role: "user", content: "real prompt" },
+      },
+      {
+        type: "user",
+        uuid: "u2",
+        isCompactSummary: true,
+        timestamp: "t2",
+        message: { role: "user", content: "This session is being continued…" },
+      },
+    ] as unknown as Parameters<typeof buildTranscript>[0];
+    const items = buildTranscript(events);
+    expect(items.map((i) => i.label)).toEqual(["You", "Compaction summary"]);
+    expect(items[1]?.role).toBe("system");
+    expect(items[1]?.kind).toBe("text");
+    // Turn numbering follows genuine prompts only.
+    expect(items[1]?.turnIndex).toBe(0);
+  });
+});

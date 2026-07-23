@@ -63,6 +63,29 @@ export interface ModelUsage {
   cost: CostBreakdown;
 }
 
+/**
+ * One context compaction. Newer Claude Code versions log a
+ * `system`/`compact_boundary` event carrying trigger + pre-compaction token
+ * count; older versions only leave the synthetic summary prompt
+ * (`isCompactSummary`), which yields a timestamp-only record.
+ */
+export interface Compaction {
+  timestamp?: string;
+  /** "auto" | "manual" when known (from compactMetadata). */
+  trigger?: string;
+  /** Context tokens just before the compaction, when known. */
+  preTokens?: number;
+  /** True when the compaction happened inside a subagent (sidechain)
+   * transcript — it compacted that subagent's own context window, not the
+   * main chain's, so it must not be marked on the main context chart. */
+  isSidechain?: boolean;
+  /** True when the record precedes any API call in the file. Continuation
+   * files copy the parent session's final compact_boundary at their start, so
+   * such a record describes the *parent's* compaction — portfolio rollups
+   * must not count it again here. */
+  inherited?: boolean;
+}
+
 export interface SessionTotals {
   turns: number;
   apiCalls: number;
@@ -126,6 +149,8 @@ export interface SessionAnalysis {
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
    * even in aggregate mode, where `turns` is empty. */
   turnDepths: number[];
+  /** Context compactions, in session order. Available in aggregate mode too. */
+  compactions: Compaction[];
 }
 
 export interface AnalyzeOptions {
@@ -307,6 +332,13 @@ class SessionAnalyzer {
   private readonly commandHeadErrors: Record<string, number> = {};
   private readonly retriesByTool: Record<string, number> = {};
   private readonly turnDepths: number[] = [];
+  private readonly compactions: Compaction[] = [];
+  // A compact_boundary is immediately followed by its isCompactSummary prompt;
+  // pairing them (per chain kind, since subagents compact too) keeps one
+  // compaction from being recorded twice. Cleared on the next assistant line,
+  // so a summary-only file (older versions) still records. Holds the pending
+  // boundary's sidechain-ness; undefined = no boundary pending.
+  private pendingBoundarySidechain: boolean | undefined;
   private title?: string;
   private sessionId?: string;
   private projectPath?: string;
@@ -447,7 +479,38 @@ class SessionAnalyzer {
     if (meta.version) this.versions.add(meta.version);
     if (meta.type === "ai-title" && meta.aiTitle) this.title = meta.aiTitle;
 
+    if (meta.type === "system") {
+      const sys = event as {
+        subtype?: string;
+        timestamp?: string;
+        compactMetadata?: { trigger?: string; preTokens?: number };
+      };
+      if (sys.subtype === "compact_boundary") {
+        const side = (event as { isSidechain?: boolean }).isSidechain === true;
+        this.compactions.push({
+          timestamp: sys.timestamp,
+          trigger: sys.compactMetadata?.trigger,
+          preTokens: sys.compactMetadata?.preTokens,
+          ...(side ? { isSidechain: true } : {}),
+          ...(this.apiCallCount === 0 ? { inherited: true } : {}),
+        });
+        this.pendingBoundarySidechain = side;
+      }
+    }
+
     if (isUser(event)) {
+      if (event.isCompactSummary === true) {
+        // Only record when no boundary event announced this compaction —
+        // older Claude Code versions write just the summary prompt.
+        const side = event.isSidechain === true;
+        if (this.pendingBoundarySidechain === side) this.pendingBoundarySidechain = undefined;
+        else
+          this.compactions.push({
+            timestamp: event.timestamp,
+            ...(side ? { isSidechain: true } : {}),
+            ...(this.apiCallCount === 0 ? { inherited: true } : {}),
+          });
+      }
       // Resolve any tool_result blocks first (a user event may carry them
       // whether or not it is also a genuine prompt).
       const content = event.message.content;
@@ -505,6 +568,13 @@ class SessionAnalyzer {
   }
 
   private pushAssistant(event: AssistantEvent, chain: string): void {
+    // The boundary→summary pair is adjacent on its own chain; an assistant
+    // line on that chain kind closes it. An interleaved line from the *other*
+    // kind (e.g. a subagent streaming while the main chain compacts) must not
+    // clear it, or the still-coming summary would record a second compaction.
+    if (this.pendingBoundarySidechain === (event.isSidechain === true)) {
+      this.pendingBoundarySidechain = undefined;
+    }
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
     const isContinuation = key !== undefined && this.seenUsage.has(key);
@@ -755,6 +825,7 @@ class SessionAnalyzer {
       retriesByTool: this.retriesByTool,
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
+      compactions: this.compactions,
     };
   }
 }

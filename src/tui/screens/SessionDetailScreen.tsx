@@ -9,11 +9,18 @@ import {
 } from "../../cli/format.ts";
 import type { SessionAnalysis } from "../../core/analyze.ts";
 import { analyzeSession } from "../../core/analyze.ts";
+import {
+  buildBurnSeries,
+  buildContextSeries,
+  buildTurnSeries,
+  summarizeCompactions,
+} from "../../core/chart-series.ts";
 import { parseSessionFile } from "../../core/parser.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
+import { brailleChart, markerRow, sparkline } from "../charts.ts";
 import { Loading, ScrollRange } from "../components/ui.tsx";
 import { scrollOffset } from "../scroll.ts";
 import { masterWidth } from "../shell/MasterDetail.tsx";
@@ -30,7 +37,7 @@ interface Props {
   onBack: () => void;
 }
 
-type Mode = "turns" | "transcript" | "summary";
+type Mode = "turns" | "charts" | "transcript" | "summary";
 
 interface Loaded {
   analysis: SessionAnalysis;
@@ -60,9 +67,11 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
     (input, key) => {
       if (input === "t") return setMode("transcript");
       if (input === "s") return setMode("summary");
+      if (input === "c") return setMode("charts");
       if (input === "u" || input === "1") return setMode("turns");
-      if (input === "2") return setMode("transcript");
-      if (input === "3") return setMode("summary");
+      if (input === "2") return setMode("charts");
+      if (input === "3") return setMode("transcript");
+      if (input === "4") return setMode("summary");
       if (key.escape && mode !== "turns") return setMode("turns");
     },
     { isActive: isActive && !!data },
@@ -78,7 +87,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       </Text>
       <SummaryBand a={analysis} />
       <Box marginTop={1}>
-        {(["turns", "transcript", "summary"] as Mode[]).map((m) => (
+        {(["turns", "charts", "transcript", "summary"] as Mode[]).map((m) => (
           <Text key={m} {...(m === mode ? selection(true) : { color: role.muted })}>
             {" "}
             {m}{" "}
@@ -89,14 +98,17 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
         {mode === "turns" && (
           <TurnsPane a={analysis} columns={columns} isActive={isActive} onBack={onBack} />
         )}
+        {mode === "charts" && <ChartsView a={analysis} columns={columns} rows={rows} />}
         {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
         {mode === "summary" && <SummaryView a={analysis} />}
       </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · g/G jump · t transcript · s summary · esc back"
-            : "↑↓ move · ↵ expand · g/G jump · esc turns"}
+            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · esc back"
+            : mode === "charts"
+              ? "1-4 modes · esc turns"
+              : "↑↓ move · ↵ expand · g/G jump · esc turns"}
           {" · "}
           <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
         </Text>
@@ -351,6 +363,88 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
   return next;
 }
 
+/** Session charts: context-window sawtooth (▼ = compaction), cost per call,
+ * and per-turn cost — series shared with the web charts via chart-series.ts. */
+function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number; rows: number }) {
+  const ctx = useMemo(() => buildContextSeries(a), [a]);
+  const burn = useMemo(() => buildBurnSeries(a), [a]);
+  const turnSeries = useMemo(() => buildTurnSeries(a), [a]);
+
+  if (ctx.points.length === 0) {
+    return <Text color={role.muted}>No main-chain API calls to chart.</Text>;
+  }
+
+  // Same horizontal margin the trends burn chart uses — a braille row that
+  // wraps destroys the whole layout, so stay well inside the terminal.
+  const width = Math.max(16, Math.min(columns - 18, 120));
+  const chartH = Math.max(3, rows - 20);
+  const values = ctx.points.map((p) => p.contextTokens);
+  const chart = brailleChart(values, width, chartH);
+  const markers = markerRow(
+    ctx.markers.map((m) => m.pos),
+    ctx.points.length,
+    width,
+  );
+  // One canonical split (chart-series.ts): own compactions get ▼ markers;
+  // subagent and inherited ones are labeled, never marked.
+  const b = summarizeCompactions(a.compactions);
+  const compactions =
+    (b.own.length === 0
+      ? "no compactions"
+      : `${b.own.length} compaction${b.own.length > 1 ? "s" : ""} (${b.own
+          .map((c) => c.trigger ?? "?")
+          .join(", ")})`) +
+    (b.inherited > 0 ? " · continued post-compaction" : "") +
+    (b.sidechain > 0 ? ` · ${b.sidechain} subagent` : "");
+  const totalCost = burn[burn.length - 1]?.cost ?? 0;
+  const peakTurn = turnSeries.reduce(
+    (best, t) => (t.cost > (turnSeries[best]?.cost ?? -1) ? t.index : best),
+    0,
+  );
+
+  return (
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>{" "}
+        · {compactions}
+      </Text>
+      {ctx.markers.length > 0 && <Text color={role.error}>{markers}</Text>}
+      {chart.map((line, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed-order chart rows
+        <Text key={i} color={palette.amberDim}>
+          {line}
+        </Text>
+      ))}
+      <Text color={role.muted}>
+        call 1 {"─".repeat(Math.max(0, width - 14 - String(ctx.points.length).length))} call{" "}
+        {ctx.points.length}
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        <Text color={role.muted}>
+          cost per call · <Text color={role.cost}>{formatUSD(totalCost)}</Text> total
+        </Text>
+        <Text color={palette.amber}>
+          {sparkline(
+            burn.map((p) => p.callCost),
+            width,
+          )}
+        </Text>
+        <Text color={role.muted}>
+          cost per turn · peak{" "}
+          <Text color={role.cost}>{formatUSD(turnSeries[peakTurn]?.cost ?? 0)}</Text> (#
+          {peakTurn + 1})
+        </Text>
+        <Text color={palette.amber}>
+          {sparkline(
+            turnSeries.map((t) => t.cost),
+            width,
+          )}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
 function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -452,6 +546,16 @@ function SummaryView({ a }: { a: SessionAnalysis }) {
             .join(" "),
         )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
+      {a.compactions.length > 0 &&
+        line(
+          "compactions",
+          `${a.compactions.length} (${a.compactions
+            .map(
+              (c) =>
+                `${c.trigger ?? "?"}${c.isSidechain ? " subagent" : ""}${c.inherited ? " inherited" : ""}`,
+            )
+            .join(", ")})`,
+        )}
       {line("files touched", String(a.filesTouched.length))}
     </Box>
   );

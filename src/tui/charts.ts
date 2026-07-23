@@ -4,57 +4,19 @@
  */
 
 import type { DayRow, HeatCell } from "../core/stats.ts";
-import { calendarWeeks, weekOf } from "../core/stats.ts";
+import { calendarWeeks } from "../core/stats.ts";
 
-export interface SeriesPoint {
-  label: string;
-  cost: number;
-  sessions: number;
-  ioTokens: number;
-  cacheTokens: number;
-}
-
-export type Granularity = "day" | "week" | "month";
-export type BurnMetric = "cost" | "tokens" | "sessions";
-
-/**
- * Regroup the daily series into day / week / month buckets, summing each metric.
- * Relies on `daily` being sorted ascending (as `spendByDay` returns it) so equal
- * bucket keys are contiguous.
- */
-export function bucketSeries(daily: DayRow[], granularity: Granularity): SeriesPoint[] {
-  if (granularity === "day") {
-    return daily.map((d) => ({
-      label: d.day,
-      cost: d.cost,
-      sessions: d.sessions,
-      ioTokens: d.ioTokens,
-      cacheTokens: d.cacheTokens,
-    }));
-  }
-  const out: SeriesPoint[] = [];
-  let curKey = "";
-  for (const d of daily) {
-    const key = granularity === "month" ? d.day.slice(0, 7) : weekOf(d.day);
-    let p = out[out.length - 1];
-    if (!p || key !== curKey) {
-      p = { label: key, cost: 0, sessions: 0, ioTokens: 0, cacheTokens: 0 };
-      out.push(p);
-      curKey = key;
-    }
-    p.cost += d.cost;
-    p.sessions += d.sessions;
-    p.ioTokens += d.ioTokens;
-    p.cacheTokens += d.cacheTokens;
-  }
-  return out;
-}
-
-export function metricValue(p: SeriesPoint, metric: BurnMetric): number {
-  if (metric === "cost") return p.cost;
-  if (metric === "sessions") return p.sessions;
-  return p.ioTokens + p.cacheTokens;
-}
+// Series bucketing lives in bun-free core (shared with the web SPA) so the
+// two frontends can't total a week or month differently; re-exported here so
+// TUI callers keep one import site for chart helpers.
+export {
+  type BurnMetric,
+  bucketSeries,
+  type Granularity,
+  metricValue,
+  type SeriesPoint,
+  weeklySeries,
+} from "../core/stats-types.ts";
 
 // Braille dot bitmasks: DOTS[row][col], 4 rows × 2 cols per cell (U+2800 base).
 const DOTS = [
@@ -109,6 +71,28 @@ export function brailleChart(values: number[], width: number, height: number): s
   return rows;
 }
 
+/**
+ * A one-line marker row aligned with `brailleChart`'s column bucketing: for a
+ * series of `seriesLen` values plotted `width` cells wide, place `mark` on the
+ * cell covering each series position. Positions may equal `seriesLen` (a
+ * marker after the last point); they clamp to the final cell.
+ */
+export function markerRow(
+  positions: number[],
+  seriesLen: number,
+  width: number,
+  mark = "▼",
+): string {
+  const W = Math.max(1, Math.floor(width));
+  if (seriesLen <= 0) return " ".repeat(W);
+  const cells = new Array<boolean>(W).fill(false);
+  for (const pos of positions) {
+    const p = Math.max(0, Math.min(pos, seriesLen - 1));
+    cells[Math.min(W - 1, Math.floor((p * W) / seriesLen))] = true;
+  }
+  return cells.map((on) => (on ? mark : " ")).join("");
+}
+
 const SPARK = "▁▂▃▄▅▆▇█";
 /**
  * A one-line block-eighths sparkline of `values`, downsampled to at most `width`
@@ -130,28 +114,9 @@ export function sparkline(values: number[], width = 24): string {
     .join("");
 }
 
-/**
- * Dense weekly invocation totals across a skill's active span (gap weeks count as
- * 0), oldest first — the series behind the adoption sparkline. Reuses core `weekOf` so
- * each bucket is an ISO week (Monday-anchored).
- */
-export function weeklySkillSeries(daily: { day: string; count: number }[]): number[] {
-  if (daily.length === 0) return [];
-  const byWeek = new Map<string, number>();
-  for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
-  const keys = [...byWeek.keys()].sort();
-  const first = keys[0];
-  const last = keys[keys.length - 1];
-  if (first === undefined || last === undefined) return [];
-  const out: number[] = [];
-  const cur = new Date(`${first}T00:00:00Z`);
-  const end = new Date(`${last}T00:00:00Z`);
-  while (cur <= end) {
-    out.push(byWeek.get(cur.toISOString().slice(0, 10)) ?? 0);
-    cur.setUTCDate(cur.getUTCDate() + 7);
-  }
-  return out;
-}
+// The skill-adoption sparkline series is the shared core `weeklySeries`
+// (also used by the web Tools view); the historical TUI name is kept.
+export { weeklySeries as weeklySkillSeries } from "../core/stats-types.ts";
 
 /** Shade ramp shared by every TUI density grid (and their legends). */
 export const RAMP = " ·░▒▓█";

@@ -1,9 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { isTestCommand } from "./analyze.ts";
+import { type Compaction, isTestCommand } from "./analyze.ts";
+import { summarizeCompactions } from "./chart-series.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
   CacheTtlSplit,
+  CompactionProjectRow,
+  CompactionUsage,
   ConcurrencySummary,
   CostBucket,
   CostDistribution,
@@ -22,6 +25,7 @@ import type {
   PortfolioSummary,
   ProjectCacheRow,
   ProjectRow,
+  ProjectTrends,
   RunRate,
   ScatterSession,
   SessionCacheRow,
@@ -30,6 +34,8 @@ import type {
   SidechainProjectRow,
   SidechainSummary,
   StreakSummary,
+  ToolUsageRow,
+  TurnDepthStats,
   WebToolsProjectRow,
   WebToolsSummary,
 } from "./stats-types.ts";
@@ -39,6 +45,24 @@ export * from "./stats-types.ts";
 
 const IO_TOKENS = "input_tokens + output_tokens";
 const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+
+/** `AND project_id = ?` when scoped — pair with `scopedAll` so the bind list
+ * can't drift from the SQL fragment across the two branches. */
+const projectScope = (projectId?: string): string => (projectId ? "AND project_id = ?" : "");
+
+/** Run a query whose SQL embeds `projectScope(projectId)`: the project id (when
+ * present) binds first, then the remaining params — one call site per query
+ * instead of a hand-rolled two-branch ternary at each. */
+function scopedAll<T>(
+  db: Database,
+  sql: string,
+  projectId: string | undefined,
+  ...params: (string | number)[]
+): T[] {
+  return (
+    projectId ? db.query(sql).all(projectId, ...params) : db.query(sql).all(...params)
+  ) as T[];
+}
 
 export function portfolioSummary(db: Database): PortfolioSummary {
   const r = db
@@ -250,19 +274,17 @@ export function cacheWasteBySession(
   return rows.map(withRatio);
 }
 
-/** Daily spend/activity series for the trends burn chart, oldest day first. */
-export function spendByDay(db: Database): DayRow[] {
-  return db
-    .query(
-      `SELECT day,
-        SUM(cost_total) AS cost,
-        COUNT(*) AS sessions,
-        SUM(${IO_TOKENS}) AS ioTokens,
-        SUM(${CACHE_TOKENS}) AS cacheTokens
-      FROM sessions WHERE day IS NOT NULL
-      GROUP BY day ORDER BY day`,
-    )
-    .all() as DayRow[];
+/** Daily spend/activity series for the burn charts (optionally one project),
+ * oldest day first. */
+export function spendByDay(db: Database, projectId?: string): DayRow[] {
+  const query = `SELECT day,
+      SUM(cost_total) AS cost,
+      COUNT(*) AS sessions,
+      SUM(${IO_TOKENS}) AS ioTokens,
+      SUM(${CACHE_TOKENS}) AS cacheTokens
+    FROM sessions WHERE day IS NOT NULL ${projectScope(projectId)}
+    GROUP BY day ORDER BY day`;
+  return scopedAll<DayRow>(db, query, projectId);
 }
 
 /** Sessions and cost bucketed by local weekday × hour for the activity heatmap.
@@ -326,23 +348,21 @@ export function durationSummary(db: Database): DurationSummary {
   };
 }
 
-/** Per-session points for the cost/duration and prompt-length/cost scatters. */
-export function sessionScatter(db: Database, limit = 1000): ScatterSession[] {
-  return db
-    .query(
-      `SELECT session_id AS sessionId,
-        title,
-        project_path AS projectPath,
-        cost_total AS cost,
-        duration_ms AS durationMs,
-        COALESCE(active_ms, 0) AS activeMs,
-        turns,
-        COALESCE(prompt_chars, 0) AS promptChars
-      FROM sessions
-      WHERE duration_ms IS NOT NULL AND duration_ms > 0
-      ORDER BY cost_total DESC LIMIT ?`,
-    )
-    .all(limit) as ScatterSession[];
+/** Per-session points for the cost/duration and prompt-length/cost scatters
+ * (optionally one project). */
+export function sessionScatter(db: Database, limit = 1000, projectId?: string): ScatterSession[] {
+  const query = `SELECT session_id AS sessionId,
+      title,
+      project_path AS projectPath,
+      cost_total AS cost,
+      duration_ms AS durationMs,
+      COALESCE(active_ms, 0) AS activeMs,
+      turns,
+      COALESCE(prompt_chars, 0) AS promptChars
+    FROM sessions
+    WHERE duration_ms IS NOT NULL AND duration_ms > 0 ${projectScope(projectId)}
+    ORDER BY cost_total DESC LIMIT ?`;
+  return scopedAll<ScatterSession>(db, query, projectId, limit);
 }
 
 /** Buckets are ascending with an Infinity-capped tail, so every value lands. */
@@ -360,11 +380,12 @@ const COST_BUCKETS: { label: string; max: number }[] = [
   { label: "$100+", max: Number.POSITIVE_INFINITY },
 ];
 
-/** Distribution of per-session cost: percentiles, histogram, spend concentration. */
-export function costDistribution(db: Database): CostDistribution {
-  const rows = db
-    .query("SELECT cost_total AS c FROM sessions WHERE cost_total > 0 ORDER BY cost_total ASC")
-    .all() as { c: number }[];
+/** Distribution of per-session cost (optionally one project): percentiles,
+ * histogram, spend concentration. */
+export function costDistribution(db: Database, projectId?: string): CostDistribution {
+  const query = `SELECT cost_total AS c FROM sessions
+    WHERE cost_total > 0 ${projectScope(projectId)} ORDER BY cost_total ASC`;
+  const rows = scopedAll<{ c: number }>(db, query, projectId);
   const costs = rows.map((r) => r.c);
   const total = costs.reduce((s, v) => s + v, 0);
   const buckets = COST_BUCKETS.map((b) => ({ label: b.label, count: 0 }));
@@ -595,12 +616,13 @@ export function hotFiles(db: Database, projectId?: string, limit = 30): HotFileR
 
 /**
  * Daily spend per model (top `topN` models by total cost; the rest fold into
- * "other"), for the model-mix stacked chart. Attribution is by session day.
+ * "other"), for the model-mix stacked chart, optionally for one project.
+ * Attribution is by session day.
  */
-export function modelMixByDay(db: Database, topN = 6): ModelDayRow[] {
-  const rows = db
-    .query("SELECT day, models_json AS j FROM sessions WHERE day IS NOT NULL")
-    .all() as { day: string; j: string | null }[];
+export function modelMixByDay(db: Database, topN = 6, projectId?: string): ModelDayRow[] {
+  const query = `SELECT day, models_json AS j FROM sessions
+    WHERE day IS NOT NULL ${projectScope(projectId)}`;
+  const rows = scopedAll<{ day: string; j: string | null }>(db, query, projectId);
   const perDay = new Map<string, Map<string, number>>();
   const totals = new Map<string, number>();
   for (const r of rows) {
@@ -642,6 +664,175 @@ const DEPTH_BUCKETS: { label: string; max: number }[] = [
   { label: "8–15", max: 16 },
   { label: "16+", max: Number.POSITIVE_INFINITY },
 ];
+
+/* Shared row folds: `analyticsRollup`'s single portfolio scan and the
+ * per-project slices below feed rows through the SAME accumulator, so the
+ * portfolio Tools view and the project pages can never disagree about
+ * error rates or bucket boundaries. */
+
+interface ToolFold {
+  uses: Map<string, number>;
+  errors: Map<string, number>;
+  sessions: Map<string, number>;
+}
+
+const newToolFold = (): ToolFold => ({ uses: new Map(), errors: new Map(), sessions: new Map() });
+
+function addToolRow(acc: ToolFold, toolsJson: string | null, errorsJson: string | null): void {
+  for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(toolsJson, {}))) {
+    acc.uses.set(tool, (acc.uses.get(tool) ?? 0) + n);
+    acc.sessions.set(tool, (acc.sessions.get(tool) ?? 0) + 1);
+  }
+  for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(errorsJson, {}))) {
+    acc.errors.set(tool, (acc.errors.get(tool) ?? 0) + n);
+  }
+}
+
+function toolRows(acc: ToolFold): ToolUsageRow[] {
+  return [...acc.uses.entries()]
+    .map(([tool, uses]) => {
+      const errors = acc.errors.get(tool) ?? 0;
+      return {
+        tool,
+        uses,
+        errors,
+        errorRate: uses > 0 ? errors / uses : 0,
+        sessions: acc.sessions.get(tool) ?? 0,
+      };
+    })
+    .sort((a, b) => b.uses - a.uses);
+}
+
+interface DepthFold {
+  buckets: DepthBucket[];
+  byMonth: Map<string, { sum: number; turns: number }>;
+  turns: number;
+  sum: number;
+  maxDepth: number;
+}
+
+const newDepthFold = (): DepthFold => ({
+  buckets: DEPTH_BUCKETS.map((b) => ({ label: b.label, turns: 0 })),
+  byMonth: new Map(),
+  turns: 0,
+  sum: 0,
+  maxDepth: 0,
+});
+
+function addDepthRow(acc: DepthFold, depthsJson: string | null, month: string | null): void {
+  for (const depth of parseJson<number[]>(depthsJson, [])) {
+    if (depth <= 0) continue;
+    acc.turns += 1;
+    acc.sum += depth;
+    if (depth > acc.maxDepth) acc.maxDepth = depth;
+    (acc.buckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
+    if (month) {
+      const m = acc.byMonth.get(month) ?? { sum: 0, turns: 0 };
+      m.sum += depth;
+      m.turns += 1;
+      acc.byMonth.set(month, m);
+    }
+  }
+}
+
+function depthStats(acc: DepthFold): TurnDepthStats {
+  return {
+    turns: acc.turns,
+    avgDepth: acc.turns > 0 ? acc.sum / acc.turns : 0,
+    maxDepth: acc.maxDepth,
+    buckets: acc.buckets,
+    byMonth: [...acc.byMonth.entries()]
+      .map(([month, m]) => ({ month, avgDepth: m.sum / m.turns, turns: m.turns }))
+      .sort((a, b) => (a.month < b.month ? -1 : 1)),
+  };
+}
+
+/** Aggregate tool usage with error rates, optionally for one project. The
+ * portfolio-wide Tools view uses `analyticsRollup` (one scan for everything);
+ * this is the standalone slice for project pages. */
+export function toolUsage(db: Database, projectId?: string): ToolUsageRow[] {
+  const query = `SELECT tools_json AS t, tool_errors_json AS e FROM sessions
+    WHERE 1 = 1 ${projectScope(projectId)}`;
+  const rows = scopedAll<{ t: string | null; e: string | null }>(db, query, projectId);
+  const acc = newToolFold();
+  for (const r of rows) addToolRow(acc, r.t, r.e);
+  return toolRows(acc);
+}
+
+/** Turn-depth stats (buckets + monthly trend), optionally for one project. */
+export function turnDepthStats(db: Database, projectId?: string): TurnDepthStats {
+  const query = `SELECT turn_depths_json AS j, month FROM sessions
+    WHERE 1 = 1 ${projectScope(projectId)}`;
+  const rows = scopedAll<{ j: string | null; month: string | null }>(db, query, projectId);
+  const acc = newDepthFold();
+  for (const r of rows) addDepthRow(acc, r.j, r.month);
+  return depthStats(acc);
+}
+
+/** Everything the project page charts need, in one bundle. */
+export function projectTrends(db: Database, projectId: string): ProjectTrends {
+  return {
+    daily: spendByDay(db, projectId),
+    modelMix: modelMixByDay(db, 6, projectId),
+    scatter: sessionScatter(db, 500, projectId),
+    distribution: costDistribution(db, projectId),
+    turnDepth: turnDepthStats(db, projectId),
+    tools: toolUsage(db, projectId),
+  };
+}
+
+/**
+ * Compaction pressure: which sessions/projects chronically hit the context
+ * ceiling. The summary is single-sourced from `compactions_json` via the
+ * shared `summarizeCompactions` split (own = not subagent, not inherited —
+ * the same rule the indexer bakes into the `compactions` INT column, which
+ * stays as a SUM-able convenience for the per-project rollup).
+ */
+export function compactionUsage(db: Database, limit = 30): CompactionUsage {
+  const totalSessions = (db.query("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
+  const rows = db
+    .query(
+      `SELECT compactions_json AS j FROM sessions
+      WHERE compactions_json IS NOT NULL AND compactions_json != '[]'`,
+    )
+    .all() as { j: string | null }[];
+  let sessions = 0;
+  let compactions = 0;
+  let auto = 0;
+  let manual = 0;
+  let unknown = 0;
+  let sidechain = 0;
+  let inherited = 0;
+  for (const r of rows) {
+    const b = summarizeCompactions(parseJson<Compaction[]>(r.j, []));
+    if (b.own.length > 0) sessions += 1;
+    compactions += b.own.length;
+    auto += b.triggers.auto ?? 0;
+    manual += b.triggers.manual ?? 0;
+    unknown += b.own.length - (b.triggers.auto ?? 0) - (b.triggers.manual ?? 0);
+    sidechain += b.sidechain;
+    inherited += b.inherited;
+  }
+  const byProject = (
+    db
+      .query(
+        `SELECT project_id AS projectId,
+          MAX(project_path) AS projectPath,
+          COUNT(*) AS sessions,
+          COALESCE(SUM(compactions > 0), 0) AS sessionsWithCompaction,
+          COALESCE(SUM(compactions), 0) AS compactions
+        FROM sessions
+        GROUP BY project_id
+        HAVING SUM(compactions) > 0
+        ORDER BY compactions DESC LIMIT ?`,
+      )
+      .all(limit) as Omit<CompactionProjectRow, "share">[]
+  ).map((p) => ({ ...p, share: p.sessions > 0 ? p.sessionsWithCompaction / p.sessions : 0 }));
+  return {
+    summary: { sessions, totalSessions, compactions, auto, manual, unknown, sidechain, inherited },
+    byProject,
+  };
+}
 
 /* ————————————————————————————————————————————————————————————————————————
  * Concurrency and cross-insights
@@ -829,9 +1020,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
     )
     .all() as Row[];
 
-  const toolUses = new Map<string, number>();
-  const toolErrors = new Map<string, number>();
-  const toolSessions = new Map<string, number>();
+  const toolFold = newToolFold();
 
   interface SkillAcc {
     invocations: number;
@@ -885,11 +1074,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
   const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
   const reasonAcc = new Map<string, { count: number; sessions: number }>();
 
-  const depthBuckets = DEPTH_BUCKETS.map((b) => ({ label: b.label, turns: 0 }));
-  const depthByMonth = new Map<string, { sum: number; turns: number }>();
-  let depthTurns = 0;
-  let depthSum = 0;
-  let maxDepth = 0;
+  const depthFold = newDepthFold();
 
   const versionAcc = new Map<
     string,
@@ -900,15 +1085,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
   for (const r of rows) {
     const cost = r.cost ?? 0;
 
-    for (const [t, n] of Object.entries(parseJson<Record<string, number>>(r.tools_json, {}))) {
-      toolUses.set(t, (toolUses.get(t) ?? 0) + n);
-      toolSessions.set(t, (toolSessions.get(t) ?? 0) + 1);
-    }
-    for (const [t, n] of Object.entries(
-      parseJson<Record<string, number>>(r.tool_errors_json, {}),
-    )) {
-      toolErrors.set(t, (toolErrors.get(t) ?? 0) + n);
-    }
+    addToolRow(toolFold, r.tools_json, r.tool_errors_json);
 
     for (const [name, n] of Object.entries(parseJson<Record<string, number>>(r.skills_json, {}))) {
       const a = skillOf(name);
@@ -987,19 +1164,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
       reasonAcc.set(reason, a);
     }
 
-    for (const depth of parseJson<number[]>(r.turn_depths_json, [])) {
-      if (depth <= 0) continue;
-      depthTurns += 1;
-      depthSum += depth;
-      if (depth > maxDepth) maxDepth = depth;
-      (depthBuckets[bucketIndex(depth, DEPTH_BUCKETS)] as DepthBucket).turns += 1;
-      if (r.month) {
-        const m = depthByMonth.get(r.month) ?? { sum: 0, turns: 0 };
-        m.sum += depth;
-        m.turns += 1;
-        depthByMonth.set(r.month, m);
-      }
-    }
+    addDepthRow(depthFold, r.turn_depths_json, r.month);
 
     for (const v of new Set(parseJson<string[]>(r.versions_json, []))) {
       const a = versionAcc.get(v) ?? { sessions: 0, firstDay: null, lastDay: null };
@@ -1021,18 +1186,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
   }
 
   return {
-    tools: [...toolUses.entries()]
-      .map(([tool, uses]) => {
-        const errors = toolErrors.get(tool) ?? 0;
-        return {
-          tool,
-          uses,
-          errors,
-          errorRate: uses > 0 ? errors / uses : 0,
-          sessions: toolSessions.get(tool) ?? 0,
-        };
-      })
-      .sort((a, b) => b.uses - a.uses),
+    tools: toolRows(toolFold),
     skills: [...skillAcc.entries()]
       .map(([name, a]) => ({
         name,
@@ -1088,15 +1242,7 @@ export function analyticsRollup(db: Database): AnalyticsRollup {
     stopReasons: [...reasonAcc.entries()]
       .map(([reason, a]) => ({ reason, count: a.count, sessions: a.sessions }))
       .sort((a, b) => b.count - a.count),
-    turnDepth: {
-      turns: depthTurns,
-      avgDepth: depthTurns > 0 ? depthSum / depthTurns : 0,
-      maxDepth,
-      buckets: depthBuckets,
-      byMonth: [...depthByMonth.entries()]
-        .map(([month, m]) => ({ month, avgDepth: m.sum / m.turns, turns: m.turns }))
-        .sort((a, b) => (a.month < b.month ? -1 : 1)),
-    },
+    turnDepth: depthStats(depthFold),
     versions: [...versionAcc.entries()]
       .map(([version, a]) => ({ version, ...a }))
       .sort((a, b) => ((b.lastDay ?? "") < (a.lastDay ?? "") ? -1 : 1)),

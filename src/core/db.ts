@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   sidechain_cost REAL,
   prompt_chars INTEGER,
   retries INTEGER,
+  compactions INTEGER,
   models_json TEXT,
   tools_json TEXT,
   tool_errors_json TEXT,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   commands_json TEXT,
   command_errors_json TEXT,
   retries_json TEXT,
+  compactions_json TEXT,
   size_bytes INTEGER,
   mtime_ms REAL,
   indexed_at REAL
@@ -73,7 +75,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // (commands_json/command_errors_json), so command-family and test-runner
 // heuristics classify at query time and can evolve without reindexing. Stale
 // indexes must be dropped and rebuilt.
-export const SCHEMA_VERSION = "6";
+// v7: adds compaction columns — `compactions` (count of the session's OWN
+// main-chain compactions: subagent compactions and inherited continuation-file
+// boundaries excluded, so one compaction never counts in two rows) plus the
+// full `compactions_json` detail for query-time splits.
+export const SCHEMA_VERSION = "7";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

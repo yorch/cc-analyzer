@@ -63,6 +63,18 @@ export function buildTranscript(events: SessionEvent[]): TranscriptItem[] {
   for (const event of events) {
     if (isUser(event)) {
       const content = event.message.content;
+      // Post-compaction summaries are machine-written, not prompts (see
+      // isRealPrompt) — keep them readable but clearly labeled as system.
+      if (event.isCompactSummary === true) {
+        push({
+          role: "system",
+          kind: "text",
+          label: "Compaction summary",
+          body: typeof content === "string" ? content : contentToText(content),
+          timestamp: event.timestamp,
+        });
+        continue;
+      }
       if (isRealPrompt(event)) {
         turnIndex++;
         push({

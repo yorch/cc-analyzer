@@ -9,6 +9,7 @@ import type {
   AnalyticsRollup,
   CacheSummary,
   CacheTtlSplit,
+  CompactionUsage,
   ConcurrencySummary,
   DayRow,
   ErrorWeekRow,
@@ -18,6 +19,7 @@ import type {
   ModelDayRow,
   PortfolioStats,
   ProjectCacheRow,
+  ProjectTrends,
   ScatterSession,
   SessionCacheRow,
   SidechainDayRow,
@@ -28,7 +30,16 @@ import type {
 } from "../../src/core/stats-types.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
 
-export type { ApiCall, SessionAnalysis, SessionTotals, Turn } from "../../src/core/analyze.ts";
+export type {
+  ApiCall,
+  Compaction,
+  SessionAnalysis,
+  SessionTotals,
+  Turn,
+} from "../../src/core/analyze.ts";
+// Runtime series builders are bun-free core code (see chart-series.ts), so the
+// SPA computes chart geometry from the same numbers the TUI renders.
+export * from "../../src/core/chart-series.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/stats-types.ts";
 export type { StepKind, TurnStep } from "../../src/core/steps.ts";
@@ -50,6 +61,8 @@ export interface IndexedProject extends TokenSplit {
   sessions: number;
   cost: number;
   lastActivityMs: number;
+  /** Own main-chain compactions across the project's sessions. */
+  compactions: number;
 }
 export interface IndexedSession extends TokenSplit {
   sessionId: string | null;
@@ -84,11 +97,12 @@ export interface TrendsResponse {
   scatter: ScatterSession[];
 }
 
-/** `/api/analytics` is the single-scan rollup plus the web-tool and sidechain
- * SQL aggregates. */
+/** `/api/analytics` is the single-scan rollup plus the web-tool, sidechain,
+ * and compaction SQL aggregates. */
 export interface AnalyticsResponse extends AnalyticsRollup {
   webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
+  compactions: CompactionUsage;
 }
 
 async function get<T>(url: string): Promise<T> {
@@ -104,6 +118,8 @@ export const api = {
     get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
   projectFiles: (projectId: string) =>
     get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`),
+  projectTrends: (projectId: string) =>
+    get<ProjectTrends>(`/api/projects/${encodeURIComponent(projectId)}/trends`),
   session: (id: string) => get<SessionAnalysis>(`/api/sessions/${encodeURIComponent(id)}`),
   transcript: (id: string) =>
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),

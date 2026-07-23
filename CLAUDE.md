@@ -67,8 +67,9 @@ reuse the events for `buildTranscript`.
 
 **Turn segmentation.** A *turn* is one genuine user prompt plus every assistant
 API call and tool loop until the next prompt. The discriminator `isRealPrompt()`
-lives in `events.ts` (a user event that is not a sidechain, not `isMeta`, and
-carries something other than `tool_result` blocks) and is shared by both
+lives in `events.ts` (a user event that is not a sidechain, not `isMeta`, not a
+machine-written compaction summary (`isCompactSummary`), and carries something
+other than `tool_result` blocks) and is shared by both
 `analyze.ts` and `transcript.ts`, so turn boundaries can't drift between them —
 change the rule in one place.
 
@@ -104,6 +105,36 @@ so client and server types cannot drift. Several rollups are **session-scoped
 and correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cache
 buckets): a session counts its full cost toward each label it carries. Keep the
 "correlational, not causal" caveat wherever they're rendered.
+
+**Compactions and session charts.** `analyze.ts` records context compactions
+(`SessionAnalysis.compactions`) from `system`/`compact_boundary` events (trigger +
+`preTokens`), falling back to `isCompactSummary` user prompts for older Claude Code
+files; a boundary and its immediately-following summary prompt count as one
+compaction. The per-session charts — TUI `SessionDetailScreen` charts mode and the
+web session Charts tab — render series built in `chart-series.ts`, a **bun-free**
+module (like `stats-types.ts`) the SPA imports directly, so both frontends chart
+identical numbers: context-window fill per main-chain API call (sidechains run in
+their own context windows and are excluded), cumulative burn (main + sidechain),
+per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
+Subagents compact too (`compact_boundary` with `isSidechain`): those compactions
+are captured and counted but never marked on the main-chain context chart —
+they compacted the subagent's own window. Continuation files copy the parent
+session's final boundary at their start; the analyzer flags those `inherited`
+(boundary before any API call). Schema v7 flattens compactions into the index:
+the `compactions` INT column counts only a session's *own main-chain*
+compactions (sidechain + inherited excluded, so one compaction never counts in
+two rows), with full detail in `compactions_json`; `compactionUsage()` rolls up
+portfolio pressure for `/api/analytics` and the web Tools view.
+
+**Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
+`costDistribution`, `hotFiles` take an optional `projectId`; `toolUsage()` and
+`turnDepthStats()` are their standalone per-project counterparts, built on the
+same row-fold helpers `analyticsRollup` uses (so portfolio and project surfaces
+cannot disagree). `projectTrends()` bundles the six chart series — hot files
+stay on `/api/projects/:id/files` — for `/api/projects/:id/trends`, rendered by the web project
+page via the shared chart components in `web/src/trend-charts.tsx` (also used by
+the Trends page) and by the TUI project preview (weekly burn sparkline +
+distribution ramps, live per-highlight queries).
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token

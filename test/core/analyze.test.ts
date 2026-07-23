@@ -359,3 +359,115 @@ describe("analyzeSessionStream", () => {
     expect(agg.totals.turns).toBe(2); // turn count still tracked
   });
 });
+
+describe("compaction capture", () => {
+  const boundary = (second: number, trigger = "auto", preTokens = 150_000) => ({
+    type: "system",
+    subtype: "compact_boundary",
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    compactMetadata: { trigger, preTokens },
+  });
+  const summary = (second: number) => ({
+    type: "user",
+    uuid: `cs-${second}`,
+    isCompactSummary: true,
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    message: { role: "user", content: "This session is being continued…" },
+  });
+  const assistantLine = (second: number) => ({
+    type: "assistant",
+    uuid: `a-${second}`,
+    timestamp: `2026-07-01T10:00:${String(second).padStart(2, "0")}.000Z`,
+    message: {
+      id: `msg-${second}`,
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  const analyze = (events: unknown[]) =>
+    analyzeSession(events as Parameters<typeof analyzeSession>[0], pricing);
+
+  test("records a compact_boundary with trigger and preTokens", () => {
+    const a = analyze([assistantLine(1), boundary(5, "manual", 42)]);
+    expect(a.compactions).toEqual([
+      { timestamp: "2026-07-01T10:00:05.000Z", trigger: "manual", preTokens: 42 },
+    ]);
+  });
+
+  test("flags a boundary before any API call as inherited (continuation file)", () => {
+    // Continuation files copy the parent session's final boundary at their
+    // start — it describes the parent's compaction, not one of this session's.
+    const a = analyze([boundary(5), assistantLine(7)]);
+    expect(a.compactions[0]?.inherited).toBe(true);
+    const b = analyze([assistantLine(1), boundary(5), assistantLine(7)]);
+    expect(b.compactions[0]?.inherited).toBeUndefined();
+  });
+
+  test("a boundary followed by its summary prompt records one compaction", () => {
+    const a = analyze([boundary(5), summary(6), assistantLine(7)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.trigger).toBe("auto");
+  });
+
+  test("a summary alone (older Claude Code) records a timestamp-only compaction", () => {
+    const a = analyze([assistantLine(1), summary(6), assistantLine(7)]);
+    expect(a.compactions).toEqual([{ timestamp: "2026-07-01T10:00:06.000Z" }]);
+  });
+
+  test("an assistant line closes the boundary→summary pair", () => {
+    // A later summary with no adjacent boundary is its own compaction.
+    const a = analyze([boundary(5), summary(6), assistantLine(7), summary(9)]);
+    expect(a.compactions).toHaveLength(2);
+    expect(a.compactions[1]).toEqual({ timestamp: "2026-07-01T10:00:09.000Z" });
+  });
+
+  test("a subagent (sidechain) compaction is flagged and pairs on its own chain kind", () => {
+    const sideBoundary = { ...boundary(5), isSidechain: true, agentId: "a1" };
+    const sideSummary = { ...summary(6), isSidechain: true };
+    const a = analyze([sideBoundary, sideSummary, assistantLine(7)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.isSidechain).toBe(true);
+    // A main-chain summary does not consume a pending *sidechain* boundary.
+    const b = analyze([sideBoundary, summary(6), assistantLine(7)]);
+    expect(b.compactions).toHaveLength(2);
+    expect(b.compactions[0]?.isSidechain).toBe(true);
+    expect(b.compactions[1]?.isSidechain).toBeUndefined();
+  });
+
+  test("an interleaved subagent line does not break the boundary→summary pair", () => {
+    // A subagent streaming while the main chain compacts: boundary (main) →
+    // assistant (sidechain) → summary (main) is still ONE compaction.
+    const sideLine = { ...assistantLine(6), isSidechain: true, uuid: "side-1" };
+    const a = analyze([assistantLine(1), boundary(5), sideLine, summary(7), assistantLine(8)]);
+    expect(a.compactions).toHaveLength(1);
+    expect(a.compactions[0]?.trigger).toBe("auto");
+  });
+
+  test("a compact summary does not open a turn (isRealPrompt excludes it)", () => {
+    const a = analyze([
+      {
+        type: "user",
+        uuid: "u1",
+        timestamp: "2026-07-01T10:00:00.000Z",
+        message: { role: "user", content: "real prompt" },
+      },
+      assistantLine(1),
+      boundary(5),
+      summary(6),
+      assistantLine(7),
+    ]);
+    // The synthetic summary is machine-written; the interrupted turn continues.
+    expect(a.totals.turns).toBe(1);
+    expect(a.turns).toHaveLength(1);
+    expect(a.compactions).toHaveLength(1);
+  });
+
+  test("survives aggregate mode (the indexer path)", async () => {
+    const events = [boundary(5), summary(6)] as Parameters<typeof analyzeSession>[0];
+    const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+    expect(agg.compactions).toHaveLength(1);
+    expect(agg.compactions[0]?.preTokens).toBe(150_000);
+  });
+});

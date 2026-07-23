@@ -3,16 +3,17 @@ import {
   type AnalyticsResponse,
   api,
   type BashCommandRow,
+  type CompactionUsage,
   type NameUsageRow,
-  type SkillDayCount,
   type SkillUsageRow,
   type ToolUsageRow,
   type TurnDepthStats,
-  weekOf,
+  weeklySeries,
 } from "../api.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { SortTh } from "../SortTh.tsx";
+import { areaPath, linePath, xScale } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 
@@ -38,40 +39,20 @@ const NAME_SORT: Accessors<NameUsageRow> = {
 
 const rateClass = (r: number): string => (r >= 0.05 ? "rate-hi" : r >= 0.01 ? "rate-mid" : "muted");
 
-/** Dense weekly invocation totals across the skill's active span (gap weeks = 0). */
-function weeklySeries(daily: SkillDayCount[]): number[] {
-  if (daily.length === 0) return [];
-  const byWeek = new Map<string, number>();
-  for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
-  const keys = [...byWeek.keys()].sort();
-  const first = keys[0];
-  const last = keys[keys.length - 1];
-  if (first === undefined || last === undefined) return [];
-  const out: number[] = [];
-  const cur = new Date(`${first}T00:00:00Z`);
-  const end = new Date(`${last}T00:00:00Z`);
-  while (cur <= end) {
-    out.push(byWeek.get(cur.toISOString().slice(0, 10)) ?? 0);
-    cur.setUTCDate(cur.getUTCDate() + 7);
-  }
-  return out;
-}
-
 function SkillSpark({ values }: { values: number[] }) {
   const W = 640;
   const H = 64;
   const pad = 4;
   const max = Math.max(...values, 1e-9);
   const n = values.length;
-  const x = (i: number) => (n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad);
+  const x = xScale(n, W, pad);
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
-  const line = values.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-  const area = `M ${x(0).toFixed(1)},${H} ${line.join(" ").replace(/^M/, "L")} L ${x(n - 1).toFixed(1)},${H} Z`;
+  const line = linePath(values, x, y);
   return (
     <svg className="skillspark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
       <title>Invocations per week</title>
-      <path className="burn-area" d={area} />
-      <path className="burn-line" d={line.join(" ")} />
+      <path className="burn-area" d={areaPath(line, x, n, H)} />
+      <path className="burn-line" d={line} />
     </svg>
   );
 }
@@ -287,6 +268,42 @@ function FactsTable({ head, rows }: { head: string[]; rows: (string | number)[][
   );
 }
 
+/** Which projects chronically hit the context ceiling. Only a session's own
+ * main-chain compactions count — subagent compactions and boundaries inherited
+ * by continuation files are split out in the summary line. */
+function Compactions({ data }: { data: CompactionUsage }) {
+  const s = data.summary;
+  if (s.compactions === 0 && s.sidechain === 0 && s.inherited === 0) {
+    return <p className="muted">No compactions recorded. Reindex if this seems wrong.</p>;
+  }
+  return (
+    <>
+      <p className="muted">
+        <strong>{count(s.compactions)}</strong> compactions ({count(s.auto)} auto ·{" "}
+        {count(s.manual)} manual{s.unknown > 0 ? ` · ${count(s.unknown)} unknown trigger` : ""}) in{" "}
+        {count(s.sessions)} of {count(s.totalSessions)} sessions
+        {s.sidechain > 0 && ` · ${count(s.sidechain)} in subagents`}
+        {s.inherited > 0 && ` · ${count(s.inherited)} inherited from continued sessions`}
+      </p>
+      {data.byProject.length > 0 && (
+        <FactsTable
+          head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
+          rows={data.byProject.map((p) => [
+            shortPath(p.projectPath, p.projectId),
+            count(p.compactions),
+            `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
+            `${(p.share * 100).toFixed(0)}%`,
+          ])}
+        />
+      )}
+      <p className="muted spark-cap">
+        A high share means this project's sessions chronically overflow the context window —
+        consider smaller tasks or trimming CLAUDE.md.
+      </p>
+    </>
+  );
+}
+
 function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
@@ -349,6 +366,9 @@ export function Tools() {
 
       <h2 className="section-h">Turn depth · API calls per turn</h2>
       <DepthPanel depth={data.turnDepth} />
+
+      <h2 className="section-h">Compactions · context-window pressure</h2>
+      <Compactions data={data.compactions} />
 
       <h2 className="section-h">Skills · invocations, reach, reliability &amp; cost</h2>
       <SkillsTable skills={data.skills} />

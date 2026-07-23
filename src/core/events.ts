@@ -93,6 +93,8 @@ export const userEventSchema = z.looseObject({
   promptId: z.string().optional(),
   permissionMode: z.string().optional(),
   isMeta: z.boolean().optional(),
+  /** True on the synthetic summary prompt written right after a compaction. */
+  isCompactSummary: z.boolean().optional(),
   message: z.looseObject({
     role: z.literal("user").optional(),
     content: z.union([z.string(), z.array(contentBlockSchema)]),
@@ -106,6 +108,13 @@ export const systemEventSchema = z.looseObject({
   subtype: z.string().optional(),
   level: z.string().optional(),
   toolUseID: z.string().optional(),
+  /** Present on `subtype: "compact_boundary"` events (context compaction). */
+  compactMetadata: z
+    .looseObject({
+      trigger: z.string().optional(),
+      preTokens: z.number().optional(),
+    })
+    .optional(),
 });
 export type SystemEvent = z.infer<typeof systemEventSchema>;
 
@@ -172,6 +181,8 @@ export type SessionEvent =
  * Not a genuine prompt when:
  * - it's a sidechain (subagent) task prompt — belongs to the enclosing turn;
  * - it's system-injected (`isMeta`: caveats, command stdout, reminders);
+ * - it's the machine-written post-compaction summary (`isCompactSummary`) —
+ *   the interrupted turn continues after it, the user typed nothing;
  * - it carries only `tool_result` blocks (a loop continuation).
  *
  * Note: `promptId` is present on tool_result carriers too, so it can't be the
@@ -180,6 +191,7 @@ export type SessionEvent =
 export function isRealPrompt(e: UserEvent): boolean {
   if (e.isSidechain === true) return false;
   if (e.isMeta === true) return false;
+  if (e.isCompactSummary === true) return false;
   const content = e.message.content;
   if (typeof content === "string") return true;
   return content.some((b) => (b as ContentBlock).type !== "tool_result");

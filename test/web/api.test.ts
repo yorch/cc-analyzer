@@ -143,6 +143,37 @@ describe("web API", () => {
     expect(Array.isArray(body.subagents)).toBe(true);
   });
 
+  test("GET /api/projects/:id/trends returns project-scoped chart series", async () => {
+    const res = await api.request("/api/projects/proj-a/trends");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      daily: { day: string; cost: number }[];
+      modelMix: unknown[];
+      scatter: unknown[];
+      distribution: { sessions: number };
+      turnDepth: { turns: number };
+      tools: { tool: string }[];
+    };
+    expect(body.daily.length).toBeGreaterThan(0);
+    expect(body.modelMix.length).toBeGreaterThan(0);
+    expect(body.distribution.sessions).toBe(1);
+    expect(body.turnDepth.turns).toBeGreaterThan(0);
+    expect(body.tools.some((t) => t.tool === "Bash")).toBe(true);
+    // Unknown ids 404 before touching the memo cache — its keyspace must stay
+    // bounded by real projects, not by whatever ids clients probe.
+    const other = await api.request("/api/projects/nope/trends");
+    expect(other.status).toBe(404);
+  });
+
+  test("GET /api/analytics includes the compaction rollup", async () => {
+    const res = await api.request("/api/analytics");
+    const body = (await res.json()) as {
+      compactions: { summary: { totalSessions: number; compactions: number } };
+    };
+    expect(body.compactions.summary.totalSessions).toBeGreaterThan(0);
+    expect(body.compactions.summary.compactions).toBe(0); // fixture has none
+  });
+
   test("aggregate responses are cached until the index fingerprint changes", async () => {
     const first = await (await api.request("/api/analytics")).text();
     const again = await (await api.request("/api/analytics")).text();
