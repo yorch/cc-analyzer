@@ -70,6 +70,20 @@ export function App() {
         {route.name === "project" && <Project id={route.id} />}
         {route.name === "session" && <Session id={route.id} />}
       </main>
+      <footer className="site-footer">
+        <div className="site-footer-copy">
+          <span className="site-footer-label">cc-analyzer · open source</span>
+          <p>Data is read from your local Claude Code sessions and stays on this machine.</p>
+        </div>
+        <nav aria-label="Project links">
+          <a href="https://github.com/yorch/cc-analyzer" target="_blank" rel="noreferrer">
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
+          <a href="https://cc-analyzer.brnby.com/" target="_blank" rel="noreferrer">
+            Website <span aria-hidden="true">↗</span>
+          </a>
+        </nav>
+      </footer>
     </div>
   );
 }
