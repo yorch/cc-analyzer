@@ -244,7 +244,7 @@ describe("spa injection", () => {
     process.env.CC_ANALYZER_TELEMETRY_URL = "https://plausible.test";
     const cfg = spaTelemetryConfig();
     expect(cfg).toEqual({
-      domain: "web.cc-analyzer",
+      domain: "cc-analyzer-webui",
       endpoint: "https://plausible.test/api/event",
     });
   });
@@ -257,7 +257,7 @@ describe("spa injection", () => {
   test("injectSpaTelemetry inserts the config before </head> when enabled", () => {
     const out = injectSpaTelemetry("<head><title>x</title></head><body></body>");
     expect(out).toContain("window.__CC_TELEMETRY__=");
-    expect(out).toContain('"domain":"web.cc-analyzer"');
+    expect(out).toContain('"domain":"cc-analyzer-webui"');
     // config must land before </head> (so it runs before the deferred SPA bundle)
     expect(out.indexOf("__CC_TELEMETRY__")).toBeLessThan(out.indexOf("</head>"));
     // never emit an auto-capturing script src — pageviews are sanitized client-side

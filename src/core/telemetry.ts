@@ -16,14 +16,14 @@ import { VERSION } from "./version.ts";
  * telemetry is enabled). The docs site is a separate static lifecycle.
  */
 
-const WEB_DOMAIN = "web.cc-analyzer";
+const WEB_DOMAIN = "cc-analyzer-webui";
 
 /** Base URL of the Plausible instance (env-overridable for tests). */
 const plausibleUrl = (): string =>
   process.env.CC_ANALYZER_TELEMETRY_URL ?? "https://plausible.brnby.com";
 
 /** Plausible "site" id for CLI/TUI events (env-overridable for tests). */
-const cliDomain = (): string => process.env.CC_ANALYZER_TELEMETRY_DOMAIN ?? "cli.cc-analyzer";
+const cliDomain = (): string => process.env.CC_ANALYZER_TELEMETRY_DOMAIN ?? "cc-analyzer-tui";
 
 interface TelemetryConfig {
   enabled?: boolean;

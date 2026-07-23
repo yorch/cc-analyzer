@@ -27,8 +27,8 @@ and without compromising the tool's "read-only, privacy-first" identity.
 | --- | --- |
 | Plausible instance base URL | `https://plausible.brnby.com` |
 | Docs site domain (Plausible "site" id) | `cc-analyzer.brnby.com` |
-| Web SPA domain | `web.cc-analyzer` |
-| CLI/TUI domain | `cli.cc-analyzer` |
+| Web SPA domain | `cc-analyzer-webui` |
+| CLI/TUI domain | `cc-analyzer-tui` |
 
 All three "sites" must be registered in the Plausible instance before data appears.
 Domain ids are labels only — rename in Plausible + code if desired. The instance URL
@@ -106,7 +106,7 @@ Body:
 {
   "name":   "command",
   "url":    "app://cli/<name>",
-  "domain": "cli.cc-analyzer",
+  "domain": "cc-analyzer-tui",
   "props": {
     "name":            "<command>",     // index | stats | serve | tui | ...
     "version":         "<pkg version>",
@@ -155,7 +155,7 @@ sanitize the URL.
 - `injectSpaTelemetry()` (server): when enabled, inject a config into the served HTML
   before `</head>`:
   ```html
-  <script>window.__CC_TELEMETRY__={"domain":"web.cc-analyzer","endpoint":"https://plausible.brnby.com/api/event"}</script>
+  <script>window.__CC_TELEMETRY__={"domain":"cc-analyzer-webui","endpoint":"https://plausible.brnby.com/api/event"}</script>
   ```
   The inline classic script runs before the deferred module bundle, so the config is set
   before the SPA reads it; `<` in any value is escaped so it can't break out of the tag.
@@ -203,8 +203,8 @@ than SRI here.
 | Surface | Transport | Trigger | Domain |
 | --- | --- | --- | --- |
 | Docs site | `script.js` (browser) | pageview | `cc-analyzer.brnby.com` |
-| Web SPA | bundled tracker (browser) | sanitized pageview per view | `web.cc-analyzer` |
-| CLI/TUI | Events API POST (server-side) | per command run | `cli.cc-analyzer` |
+| Web SPA | bundled tracker (browser) | sanitized pageview per view | `cc-analyzer-webui` |
+| CLI/TUI | Events API POST (server-side) | per command run | `cc-analyzer-tui` |
 
 ## Error handling
 
