@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 
 /** SQL fragments summing the two token buckets shown next to cost. */
 const IO_TOKENS = "input_tokens + output_tokens";
@@ -14,6 +16,19 @@ export interface IndexedProject {
   lastActivityMs: number;
   /** Own main-chain compactions across the project's sessions (schema v7). */
   compactions: number;
+}
+
+export interface IndexedProjectMatch {
+  projectId: string;
+  projectPath: string;
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 export interface IndexedSession {
@@ -75,6 +90,33 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
     )
     .all() as IndexedProject[];
   return rows;
+}
+
+/**
+ * Resolve a working directory to the indexed project whose authoritative cwd
+ * is its closest ancestor. This intentionally never decodes a project id back
+ * into a path.
+ */
+export function indexedProjectForPath(
+  db: Database,
+  workingDirectory: string,
+): IndexedProjectMatch | undefined {
+  const cwd = canonicalPath(workingDirectory);
+  const rows = db
+    .query(
+      `SELECT project_id AS projectId, project_path AS projectPath
+      FROM sessions
+      WHERE project_path IS NOT NULL
+      GROUP BY project_id, project_path`,
+    )
+    .all() as IndexedProjectMatch[];
+
+  return rows
+    .filter((row) => {
+      const rel = relative(canonicalPath(row.projectPath), cwd);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    })
+    .sort((a, b) => canonicalPath(b.projectPath).length - canonicalPath(a.projectPath).length)[0];
 }
 
 /** Sessions within a project, most recent first. */

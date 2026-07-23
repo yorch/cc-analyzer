@@ -12,6 +12,7 @@ import { formatCount, formatDuration, formatTokens, formatUSD, table, truncate }
 
 export interface RenderOptions {
   color?: boolean;
+  projectPath?: string;
 }
 
 const ANSI = {
@@ -163,7 +164,7 @@ export interface PortfolioView extends PortfolioStats {
   concurrency: { peak: number; parallelDayShare: number };
 }
 
-/** Render portfolio-wide analytics as a text report. */
+/** Render portfolio-wide or project-scoped analytics as a text report. */
 export function renderStats(v: PortfolioView, options: RenderOptions = {}): string {
   const lines: string[] = [];
   const s = v.summary;
@@ -176,10 +177,20 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   const sc = v.sidechain;
   const ioTokens = s.inputTokens + s.outputTokens;
   const cacheTokens = s.cacheWriteTokens + s.cacheReadTokens;
-  lines.push(reportTitle("cc-analyzer · portfolio", options));
+  lines.push(
+    reportTitle(
+      options.projectPath ? `cc-analyzer · ${options.projectPath}` : "cc-analyzer · portfolio",
+      options,
+    ),
+  );
+  const sessionCount = `${s.sessions} ${s.sessions === 1 ? "session" : "sessions"}`;
+  const projectCount = `${s.projects} ${s.projects === 1 ? "project" : "projects"}`;
+  const scopeSummary = options.projectPath
+    ? `· ${sessionCount} · ${range}`
+    : `· ${sessionCount} · ${projectCount} · ${range}`;
   lines.push(
     `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total spend`)}  ` +
-      muted(`· ${s.sessions} sessions · ${s.projects} projects · ${range}`, options),
+      muted(scopeSummary, options),
   );
   lines.push(
     muted(

@@ -13,10 +13,20 @@ const tmpDir = join(tmpdir(), `cc-analyzer-cli-${process.pid}-${Date.now()}`);
 
 beforeAll(async () => {
   mkdirSync(join(tmpDir, "claude", "projects", "proj-a"), { recursive: true });
+  mkdirSync(join(tmpDir, "claude", "projects", "proj-b"), { recursive: true });
   mkdirSync(join(tmpDir, "state"), { recursive: true });
+  mkdirSync(join(tmpDir, "project", "web"), { recursive: true });
+  mkdirSync(join(tmpDir, "other-project"), { recursive: true });
+  const sample = await Bun.file(fixture).text();
   writeFileSync(
     join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"),
-    await Bun.file(fixture).text(),
+    sample.replaceAll("/Users/dev/proj", join(tmpDir, "project")),
+  );
+  writeFileSync(
+    join(tmpDir, "claude", "projects", "proj-b", "sess-2.jsonl"),
+    sample
+      .replaceAll("/Users/dev/proj", join(tmpDir, "other-project"))
+      .replaceAll("sess-1", "sess-2"),
   );
   // Seed a fresh pricing cache so no spawned CLI ever touches the network.
   writeFileSync(
@@ -37,8 +47,10 @@ afterAll(() => {
 async function run(
   args: string[],
   env: Record<string, string | undefined> = {},
+  cwd?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", cliPath, ...args], {
+    cwd,
     env: {
       ...process.env,
       CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "claude"),
@@ -62,7 +74,7 @@ async function run(
 describe("CLI dispatch & exit codes", () => {
   test("version prints the embedded version and exits 0", async () => {
     const r = await run(["version"]);
-    expect(r.code).toBe(0);
+    expect(r.code, r.stderr).toBe(0);
     expect(r.stdout.trim()).toBe(VERSION);
   });
 
@@ -106,10 +118,10 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.code).toBe(1);
   });
 
-  test("projects lists the fixture project", async () => {
+  test("projects lists the fixture projects", async () => {
     const r = await run(["projects"]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain("1 projects");
+    expect(r.stdout).toContain("2 projects");
   });
 
   test("a quick command lets its telemetry request settle before exiting", async () => {
@@ -144,5 +156,46 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stdout).toContain("▸ Efficiency & reliability");
     expect(r.stdout).toContain("✓ Read-only · session data stayed local");
     expect(r.stdout).not.toContain("\u001B[");
+  });
+
+  test("stats --current scopes the report from a nested working directory", async () => {
+    expect((await run(["index"])).code).toBe(0);
+    const portfolio = JSON.parse((await run(["stats", "--json"])).stdout) as {
+      scope: { type: string };
+      summary: { sessions: number; projects: number };
+    };
+    expect(portfolio.scope).toEqual({ type: "portfolio" });
+    expect(portfolio.summary).toMatchObject({ sessions: 2, projects: 2 });
+
+    const projectPath = join(tmpDir, "project");
+    const nested = join(projectPath, "web");
+    const r = await run(["stats", "--current", "--json"], {}, nested);
+    expect(r.code, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout) as {
+      scope: { type: string; projectId: string; projectPath: string };
+      summary: { sessions: number; projects: number };
+      byProject: { projectPath: string | null }[];
+    };
+    expect(parsed.scope).toEqual({
+      type: "project",
+      projectId: "proj-a",
+      projectPath,
+    });
+    expect(parsed.summary.sessions).toBe(1);
+    expect(parsed.summary.projects).toBe(1);
+    expect(parsed.byProject).toEqual([]);
+
+    const human = await run(["stats", "--current"], {}, nested);
+    expect(human.code, human.stderr).toBe(0);
+    expect(human.stdout).toContain(`◆ cc-analyzer · ${projectPath}`);
+    expect(human.stdout).toContain("· 1 session ·");
+    expect(human.stdout).not.toContain("Top projects by cost");
+  });
+
+  test("stats --current explains when the working directory is not indexed", async () => {
+    const r = await run(["stats", "--current"], {}, tmpDir);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("No indexed Claude Code project contains");
+    expect(r.stderr).toContain("cc-analyzer index");
   });
 });
