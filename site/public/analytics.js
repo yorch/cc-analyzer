@@ -1,4 +1,9 @@
 (() => {
+  const PLAUSIBLE_ORIGIN = "https://plausible.brnby.com";
+  // Opaque site tracker id from Plausible's installation snippet. Update this
+  // value if the tracker configuration is regenerated in Plausible.
+  const PLAUSIBLE_TRACKER_ID = "pa-ngd1ppRBUHfoOrHRCjEei";
+
   const dnt = navigator.doNotTrack || window.doNotTrack;
   if (dnt === "1" || dnt === "yes") return;
 
@@ -23,7 +28,7 @@
 
   const script = document.createElement("script");
   script.async = true;
-  script.src = "https://plausible.brnby.com/js/pa-ngd1ppRBUHfoOrHRCjEei.js";
+  script.src = `${PLAUSIBLE_ORIGIN}/js/${PLAUSIBLE_TRACKER_ID}.js`;
   document.head.append(script);
   plausible.init();
 })();
