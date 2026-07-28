@@ -117,6 +117,22 @@ describe("web API", () => {
     expect(body.projects[0]?.ratio).toBeCloseTo(9, 5);
   });
 
+  test("GET /api/insights carries the ranked portfolio diagnostics", async () => {
+    const res = await api.request("/api/insights");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      diagnostics: { code: string; severity: string; evidence: string; action: string }[];
+    };
+    expect(Array.isArray(body.diagnostics)).toBe(true);
+    // One tiny fixture session crosses no conservative threshold, and the
+    // warnings-first ordering must hold for whatever does fire.
+    const severities = body.diagnostics.map((d) => d.severity);
+    const firstInfo = severities.indexOf("info");
+    if (firstInfo !== -1) {
+      expect(severities.slice(firstInfo).every((s) => s === "info")).toBe(true);
+    }
+  });
+
   test("GET /api/insights/:id/sessions ranks a project's sessions by waste", async () => {
     const res = await api.request("/api/insights/proj-a/sessions");
     expect(res.status).toBe(200);

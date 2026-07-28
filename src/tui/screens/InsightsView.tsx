@@ -2,6 +2,11 @@ import type { Database } from "bun:sqlite";
 import { Box, Text } from "ink";
 import { useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
+import {
+  buildPortfolioDiagnostics,
+  type PortfolioDiagnostic,
+} from "../../core/portfolio-diagnostics.ts";
+import { assemblePortfolioSignals } from "../../core/portfolio-signals.ts";
 import type { PricingTable } from "../../core/pricing.ts";
 import {
   type CacheMetrics,
@@ -69,19 +74,27 @@ export function InsightsView({
   // presentation components below never touch the database.
   const tax = useMemo(() => contextTax(db), [db]);
   const whatIf = useMemo(() => whatIfRepricing(db, pricing), [db, pricing]);
+  const diagnostics = useMemo(
+    () => buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
+    [db, pricing],
+  );
   const [drilled, setDrilled] = useState<ProjectCacheRow | null>(null);
   const sessions = useMemo(
     () => (drilled ? cacheWasteBySession(db, drilled.projectId) : []),
     [db, drilled],
   );
 
-  const extraLines = 2; // context-tax + what-if summary lines
+  const shownFindings = diagnostics.slice(0, MAX_FINDING_LINES);
+  const overflow = diagnostics.length - shownFindings.length;
+  // context-tax + what-if summary lines, plus the compact findings block.
+  const extraLines = 2 + shownFindings.length + (overflow > 0 ? 1 : 0);
   const listSize = Math.max(3, pageSize - 1 - extraLines);
   const wastePct =
     summary.totalCost > 0 ? Math.round((summary.waste / summary.totalCost) * 100) : 0;
 
   const header = (
     <Box flexDirection="column">
+      <FindingLines findings={shownFindings} overflow={overflow} columns={columns} />
       <Text color={role.muted}>
         cache: <Text color={role.body}>{formatUSD(summary.writeCost)}</Text> written ·{" "}
         <Text color={role.cost}>{formatUSD(summary.waste)}</Text> un-amortized · {wastePct}% of
@@ -144,6 +157,43 @@ export function InsightsView({
         onOpen={setDrilled}
         onBack={onBack}
       />
+    </Box>
+  );
+}
+
+/** Header space is scarce: three findings keeps the hit-list usable. */
+const MAX_FINDING_LINES = 3;
+
+/**
+ * Compact portfolio findings (severity glyph + title, warnings first — the
+ * engine already ranks them). Titles only; the full evidence and actions live
+ * in `cc-analyzer insights` and the web Insights page.
+ */
+function FindingLines({
+  findings,
+  overflow,
+  columns,
+}: {
+  findings: PortfolioDiagnostic[];
+  overflow: number;
+  columns: number;
+}) {
+  if (findings.length === 0) return null;
+  return (
+    <Box flexDirection="column">
+      {findings.map((d) => (
+        <Text
+          key={`${d.code}:${d.projectId ?? ""}`}
+          color={d.severity === "warning" ? role.accent : role.muted}
+        >
+          {d.severity === "warning" ? "!" : "·"} {truncate(d.title, Math.max(16, columns - 6))}
+        </Text>
+      ))}
+      {overflow > 0 && (
+        <Text color={role.muted}>
+          {"  "}…{overflow} more — cc-analyzer insights
+        </Text>
+      )}
     </Box>
   );
 }

@@ -1,5 +1,9 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
+import {
+  PORTFOLIO_DIAGNOSTIC_CODES,
+  type PortfolioDiagnostic,
+} from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
@@ -238,6 +242,49 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
   }
 
   lines.push(`\n${muted(SETUP_AUDIT_CAVEAT, options)}`);
+  return lines.join("\n");
+}
+
+/**
+ * Render the portfolio insights: ranked findings from the bun-free rules
+ * engine, warnings first, each with its observed evidence and next action —
+ * the portfolio-wide sibling of the per-session "Actionable diagnostics".
+ */
+export function renderPortfolioInsights(
+  diagnostics: PortfolioDiagnostic[],
+  options: RenderOptions = {},
+): string {
+  const lines: string[] = [];
+  const ruleCount = PORTFOLIO_DIAGNOSTIC_CODES.length;
+
+  lines.push(reportTitle("cc-analyzer · portfolio insights", options));
+  lines.push(muted("Named heuristics over the whole indexed portfolio — not a score.", options));
+
+  lines.push(`\n${section("Findings", options)}`);
+  if (diagnostics.length === 0) {
+    lines.push(
+      healthy(
+        `No findings — the portfolio looks healthy by every rule (${ruleCount} rules checked).`,
+        options,
+      ),
+    );
+  } else {
+    for (const diagnostic of diagnostics) {
+      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
+      lines.push(`  ${diagnostic.evidence}`);
+      const project = diagnostic.projectPath ?? diagnostic.projectId;
+      if (project) lines.push(muted(`  Project: ${project}`, options));
+      lines.push(muted(`  Next: ${diagnostic.action}`, options));
+    }
+    lines.push(
+      muted(
+        `\n${diagnostics.length} of ${ruleCount} rules fired. Drill into sessions with ` +
+          "`cc-analyzer analyze <id>` or the web app (`cc-analyzer serve`).",
+        options,
+      ),
+    );
+  }
+
   return lines.join("\n");
 }
 

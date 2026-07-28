@@ -6,6 +6,7 @@
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
+import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import type { SetupAudit } from "../../src/core/setup-audit.ts";
 import type {
   AnalyticsRollup,
@@ -44,6 +45,9 @@ export type {
 // Runtime chart and diagnostic builders are bun-free core code, so the SPA
 // computes the same numbers and recommendations as the CLI and TUI.
 export * from "../../src/core/chart-series.ts";
+// Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
+// renders the same rule vocabulary the server computes findings with.
+export * from "../../src/core/portfolio-diagnostics.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/session-diagnostics.ts";
 // Setup-audit shapes, thresholds, and the mandatory caveat string — bun-free,
@@ -94,6 +98,8 @@ export interface InsightsResponse {
   projects: ProjectCacheRow[];
   ttl: CacheTtlSplit;
   idleBuckets: IdleCacheBucket[];
+  /** Ranked portfolio findings from the bun-free rules engine, warnings first. */
+  diagnostics: PortfolioDiagnostic[];
 }
 export interface TrendsResponse {
   daily: DayRow[];

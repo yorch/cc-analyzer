@@ -198,6 +198,26 @@ site prints the same words. Surfaces: `cc-analyzer audit` (+`--json`,
 the local day; the inventory rescans with the payload), and the web Tools
 view's Setup section. **No TUI screen** — the CLI and web cover it.
 
+**Portfolio insights: one bun-free rules engine, one signal assembler.**
+`portfolio-diagnostics.ts` generalizes the `session-diagnostics.ts` pattern
+portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
+`PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
+per-project waste, compactions, weekly error rate, context tax, what-if,
+optional setup audit) into ranked `PortfolioDiagnostic[]` findings — 12 named
+rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a threshold-rationale
+comment, warnings before infos and dollar-backed findings first within a
+severity; **not a score**. The module is **bun-free and pure** (no db/fs/
+`Date.now()` — "today" lives inside the data); the bun-side
+`assemblePortfolioSignals(db, pricing, opts?)` in `portfolio-signals.ts`
+assembles the signals (including the audit's filesystem inventory scan unless
+`{ audit: false }`) so the CLI `insights` command (`renderPortfolioInsights`,
+explicit "healthy by every rule" line when nothing fires), `GET /api/insights`
+(`diagnostics` field, memoized on fingerprint + local day like `/api/audit`),
+and the TUI Insights header (compact glyph+title list, computed at the screen
+boundary) all feed the rules identical inputs. None of the rules use the
+session-scoped correlational cost rollups; the idle-cache rule carries its
+"correlational, not causal" caveat in the finding text.
+
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`;
 `turnDepthStats()` is their standalone per-project counterpart, and all the

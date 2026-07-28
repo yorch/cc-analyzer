@@ -6,6 +6,8 @@ import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
+import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
+import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
@@ -30,7 +32,12 @@ import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
-import { renderSessionSummary, renderSetupAudit, renderStats } from "./render.ts";
+import {
+  renderPortfolioInsights,
+  renderSessionSummary,
+  renderSetupAudit,
+  renderStats,
+} from "./render.ts";
 
 const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
 
@@ -45,6 +52,7 @@ Usage:
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
   cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
+  cc-analyzer insights [--json]        Ranked, actionable findings across the whole portfolio
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
@@ -283,6 +291,33 @@ function cmdAudit(json: boolean): number {
   return 0;
 }
 
+/**
+ * Portfolio insights: every portfolio signal folded through the bun-free rules
+ * engine into ranked, explainable findings. Usage comes from the index; an
+ * empty index has no signals to diagnose — refuse, like `stats` and `audit`.
+ */
+async function cmdInsights(json: boolean): Promise<number> {
+  const db = openDb();
+  if (isIndexEmpty(db)) {
+    db.close();
+    console.error("Index is empty. Run `cc-analyzer index` first.");
+    return 1;
+  }
+  // The what-if signal needs live rates; `loadPricing` serves the cached table
+  // (bundled snapshot offline), the same one the index was priced with.
+  const { table: pricing } = await loadPricing();
+  const diagnostics = buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing));
+  db.close();
+  console.log(
+    json
+      ? JSON.stringify(diagnostics, null, 2)
+      : renderPortfolioInsights(diagnostics, {
+          color: process.stdout.isTTY && !process.env.NO_COLOR,
+        }),
+  );
+  return 0;
+}
+
 async function cmdPricingUpdate(): Promise<number> {
   const loaded = await loadPricing({ force: true });
   const count = Object.keys(loaded.table).length;
@@ -339,6 +374,7 @@ const NOTIFY_COMMANDS = new Set([
   "index",
   "stats",
   "audit",
+  "insights",
   "pricing",
 ]);
 
@@ -355,6 +391,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "index",
     "stats",
     "audit",
+    "insights",
     "serve",
     "pricing",
     "update",
@@ -381,6 +418,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdStats(json, rest.includes("--current"));
     case "audit":
       return cmdAudit(json);
+    case "insights":
+      return cmdInsights(json);
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

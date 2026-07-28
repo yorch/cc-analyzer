@@ -48,6 +48,8 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Setup audit** — The cross-reference of the setup inventory against observed usage from the index, produced by the Bun-free `buildSetupAudit(inventory, usage, today)`. It emits `session-diagnostics`-shaped findings: `unused-mcp-server` and `error-prone-skill` (warnings), `unused-skill`, `unused-agent`, `stale-skill`, and `missing-but-used` (info). Surfaced by `cc-analyzer audit`, `GET /api/audit`, and the web Tools view's Setup section. Machine-local and historical: sessions may predate the current setup, and project-scoped items live outside the config dir ([src/core/setup-audit.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/setup-audit.ts)).
 
+**Portfolio insights** — The ranked, explainable findings the Bun-free rules engine `buildPortfolioDiagnostics(signals)` folds out of every portfolio signal (cache, compactions, context tax, what-if repricing, retries, weekly error trend, spend concentration, pricing confidence, the setup audit, subagent balance). Findings follow the `session-diagnostics` shape — code, severity, evidence, action, plus a project pointer when scoped — with warnings ranked before infos and dollar-backed findings first within a severity. Deliberately named heuristics with documented thresholds, not a score. Surfaced by `cc-analyzer insights`, the `diagnostics` field of `GET /api/insights`, and the web/TUI Insights views; signals are assembled identically everywhere by `assemblePortfolioSignals(db, pricing)` ([src/core/portfolio-diagnostics.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-diagnostics.ts)).
+
 **Cache efficiency** — How well cache-write spend is amortized by later cache reads. The Insights view ranks projects and sessions by un-amortized cache-write spend (the "leakiest" work) ([src/core/stats.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1-L60)).
 
 **Estimated cost** — A cost flagged approximate because the model matched only by family heuristic (not an exact table entry) or could not be priced.
@@ -68,7 +70,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Chart series** — Plottable time-series and distributions built by the bun-free `chart-series.ts` module (e.g. spend burn, compaction, hot files), imported directly by both the TUI and the web SPA so the two frontends chart identical data ([src/core/chart-series.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/chart-series.ts#L1-L60)).
 
-**Bun-free module** — A core module (`stats-types.ts`, `chart-series.ts`) written without Bun-only APIs so the browser SPA can import it directly, keeping analytics logic single-sourced across frontends.
+**Bun-free module** — A core module (`stats-types.ts`, `chart-series.ts`, `session-diagnostics.ts`, `setup-audit.ts`, `portfolio-diagnostics.ts`) written without Bun-only APIs so the browser SPA can import it directly, keeping analytics logic single-sourced across frontends.
 
 **Trends** — The time-series view (TUI `TrendsView` / web `Trends`): spend and usage over time with metric and granularity toggles, rendered as braille charts in the terminal and SVG charts on the web.
 

@@ -128,6 +128,7 @@ cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
 cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
+cc-analyzer insights [--json]        # ranked, actionable findings across the whole portfolio
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
@@ -262,6 +263,22 @@ skills, subagents, and MCP servers live outside the Claude config dir — so tre
 them as prompts to look, not verdicts. The same audit is served at `/api/audit`
 and rendered on the web app's Tools view.
 
+### Portfolio insights
+
+`cc-analyzer insights` is the portfolio-wide counterpart of the per-session
+"actionable diagnostics": a bun-free rules engine folds every portfolio signal —
+cache efficiency, compaction pressure, context tax, what-if repricing, retry
+churn, weekly error trend, spend concentration, pricing confidence, the setup
+audit, and subagent balance — into a ranked list of explainable findings.
+Warnings rank before infos, and dollar-backed findings rank first within a
+severity. These are deliberately named heuristics with conservative,
+documented thresholds — **not a score**: every finding shows the observed
+numbers as evidence and suggests a concrete next action (e.g. "batch related
+work so the 5-minute cache TTL amortizes", "trim that project's CLAUDE.md").
+The same findings appear at the top of the web app's Insights page (via
+`/api/insights`) and as a compact list in the TUI insights view. The full rule
+table with thresholds lives in the wiki's Analytics & Insights page.
+
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run
 `cc-analyzer index` after upgrading.
@@ -275,7 +292,9 @@ tools), and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
-drills into the leakiest sessions; its header also carries the portfolio
+drills into the leakiest sessions; its header opens with a compact list of the
+top **portfolio insight** findings (severity glyph + title — the full evidence
+lives in `cc-analyzer insights`) and also carries the portfolio
 **context tax** (median/p90 tokens spent before you type) and the cheapest
 single model your token mix could have run on. The **trends** view is a two-panel
 time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
@@ -315,10 +334,13 @@ hosts. The server listens on loopback only (`127.0.0.1`) and rejects non-local `
 headers, since sessions contain full conversation transcripts; pass
 `--host=0.0.0.0` only if you deliberately want to expose it to your network.
 The UI ships a portfolio dashboard, project drill-down, a per-session view, an
-**Insights** page — the same cache-efficiency hit-list as the TUI (projects
-ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions), plus the **context tax** per project and the
-**what-if model repricing** table, each carrying its caveat inline — a
+**Insights** page — opening with the ranked **portfolio insight** findings
+(warnings first, each with evidence, a next action, and a project link when the
+signal is project-scoped), followed by the same cache-efficiency hit-list as
+the TUI (projects ranked by un-amortized cache-write spend, with a read:write
+verdict, drilling into the leakiest sessions), plus the **context tax** per
+project and the **what-if model repricing** table, each carrying its caveat
+inline — a
 **Trends** page with 30-day, peak-spend, and
 error-rate headlines plus burn, calendar, model-mix, activity, scatter,
 reliability, subagent, and concurrency charts — and a **Tools** page organized

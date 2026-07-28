@@ -4,6 +4,8 @@ import {
   type ContextTax,
   cacheVerdict,
   type IdleCacheBucket,
+  PORTFOLIO_DIAGNOSTIC_CODES,
+  type PortfolioDiagnostic,
   type ProjectCacheRow,
   type SessionCacheRow,
   type WhatIfRepricing,
@@ -50,11 +52,15 @@ export function Insights() {
   return (
     <>
       <header className="top">
-        <h1>Cache efficiency</h1>
+        <h1>Insights</h1>
         <span className="muted">
           {usd(s.writeCost)} written · {usd(s.waste)} un-amortized · {wastePct}% of spend
         </span>
       </header>
+
+      <PortfolioInsights diagnostics={data.diagnostics} />
+
+      <h2 className="section-h">Cache efficiency</h2>
       <p className="muted">
         Projects ranked by cache-write $ that wasn't read back — writes you paid a premium for but
         didn't reuse. A high read:write ratio means the writes amortized.
@@ -116,6 +122,48 @@ export function Insights() {
 
       <CostOptimization />
     </>
+  );
+}
+
+/** Ranked portfolio findings from the bun-free rules engine — the "coach"
+ * section: warnings first, each with observed evidence and a next action.
+ * Project-scoped findings link to their project page. */
+function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[] }) {
+  return (
+    <section>
+      <h2 className="section-h">Portfolio insights · what to do differently</h2>
+      <p className="muted">
+        Named heuristics folded over every portfolio signal — cache, compactions, context tax,
+        repricing, errors, and your setup. Not a score: every finding shows its evidence and a
+        suggested next step.
+      </p>
+      {diagnostics.length === 0 ? (
+        <p className="muted">
+          No findings — the portfolio looks healthy by every rule (
+          {PORTFOLIO_DIAGNOSTIC_CODES.length} rules checked).
+        </p>
+      ) : (
+        <div className="diagnostic-list">
+          {diagnostics.map((d) => (
+            <article
+              className={`diagnostic diagnostic-${d.severity}`}
+              key={`${d.code}:${d.projectId ?? ""}`}
+            >
+              <h3>{d.title}</h3>
+              <p>{d.evidence}</p>
+              {d.projectId && (
+                <p>
+                  <a href={link.project(d.projectId)}>{d.projectPath ?? d.projectId}</a>
+                </p>
+              )}
+              <p className="muted">
+                <strong>Next:</strong> {d.action}
+              </p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

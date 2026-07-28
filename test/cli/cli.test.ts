@@ -239,6 +239,24 @@ describe("CLI dispatch & exit codes", () => {
     }
   });
 
+  test("insights renders ranked portfolio findings, and --json is clean", async () => {
+    expect((await run(["index"])).code).toBe(0);
+
+    const human = await run(["insights"]);
+    expect(human.code, human.stderr).toBe(0);
+    expect(human.stdout).toContain("◆ cc-analyzer · portfolio insights");
+    expect(human.stdout).toContain("▸ Findings");
+    // Two tiny fixture sessions cross no conservative threshold.
+    expect(human.stdout).toContain("rules checked");
+    expect(human.stdout).not.toContain("[");
+
+    const parsed = JSON.parse((await run(["insights", "--json"])).stdout) as {
+      code: string;
+      severity: string;
+    }[];
+    expect(Array.isArray(parsed)).toBe(true);
+  });
+
   test("index --check reports exact stale counts without refreshing", async () => {
     expect((await run(["index", "--check"])).code).toBe(0);
     const added = join(tmpDir, "claude", "projects", "proj-b", "new-session.jsonl");

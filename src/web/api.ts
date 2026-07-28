@@ -5,6 +5,8 @@ import { analyzeSession } from "../core/analyze.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
+import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
+import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   listIndexedProjects,
@@ -83,15 +85,20 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
 
   // Cache-efficiency insights: projects ranked by un-amortized cache-write $,
   // plus a portfolio summary; drill into one project's sessions. The TTL split
-  // and idle-share buckets diagnose *why* writes didn't amortize.
-  api.get("/api/insights", (c) =>
-    cachedJson(c, "insights", fingerprint(), () => ({
+  // and idle-share buckets diagnose *why* writes didn't amortize. The ranked
+  // portfolio diagnostics ride along: their signals include the setup audit
+  // (a filesystem scan, like /api/audit), so the memo key mirrors the audit
+  // route's `fingerprint():today` — staleness rolls over at midnight.
+  api.get("/api/insights", (c) => {
+    const today = localDayOfMs(Date.now());
+    return cachedJson(c, "insights", `${fingerprint()}:${today}`, () => ({
       summary: cacheSummary(db),
       projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
       ttl: cacheTtlSplit(db),
       idleBuckets: idleVsCache(db),
-    })),
-  );
+      diagnostics: buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
+    }));
+  });
 
   api.get("/api/insights/:id/sessions", (c) =>
     c.json(cacheWasteBySession(db, c.req.param("id"), 200)),
