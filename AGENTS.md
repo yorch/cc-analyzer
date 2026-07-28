@@ -239,7 +239,18 @@ Cache accounting is where most real spend hides. `resolveModel()` matches a mode
 by exact → `anthropic/`-prefixed → family heuristic (opus/sonnet/haiku); a
 heuristic (non-exact) match flags the cost as `estimated`. Pricing comes from LiteLLM
 (remote, in `pricing-source.ts`), cached in the state dir, with `bundled-pricing.json`
-as offline fallback.
+as offline fallback. A dollar figure is always computed the same way regardless of
+how the user pays — `computeCost()` has no notion of billing plan. `cost-framing.ts`
+(bun-free, imported by the SPA) is the display-only layer on top: the `CostBasis`
+preference (`"api" | "subscription"`, persisted by `prefs.ts` under `<stateDir>/prefs.json`
+the same tolerant pattern as `telemetry.ts`, default `"api"`) never changes a computed
+number, only its wording — `"api"` reads the number as a bill, `"subscription"` (for
+flat-plan Pro/Max users) frames the identical number as API-equivalent value via one
+canonical sentence, `costFramingNote()`, rendered verbatim wherever it appears. Set with
+`cc-analyzer cost-basis api|subscription`; read at each surface's presentation boundary
+(CLI `cmdStats`, the TUI `App` component, and a `costBasis` field merged into `/api/stats`
+at the route level, read fresh per request rather than memoized with the rest of the
+payload) so flipping it never requires a reindex.
 
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at

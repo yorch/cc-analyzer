@@ -54,6 +54,8 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Estimated cost** — A cost flagged approximate because the model matched only by family heuristic (not an exact table entry) or could not be priced.
 
+**Cost basis** — A persisted display preference (`"api"` or `"subscription"`, default `"api"`), set with `cc-analyzer cost-basis` and stored in `<stateDir>/prefs.json` (`src/core/prefs.ts`). It never changes how a dollar figure is computed — costs are always tokens × the pricing table — only how it's framed: `"api"` reads it as a bill, `"subscription"` (for flat-plan Pro/Max users) frames the same number as API-equivalent value via one canonical sentence (`costFramingNote()` in the bun-free `src/core/cost-framing.ts`), rendered on the CLI `stats` report, the TUI portfolio lede, and the web Dashboard/Insights pages when set.
+
 **Family heuristic** — The model-resolution fallback: exact id → `anthropic/`-prefixed → `opus`/`sonnet`/`haiku` family, so newer versioned models still get a price (as an estimate).
 
 **SessionAnalysis** — The central per-session data structure produced by `analyzeSession()`: totals, per-turn breakdowns, per-model usage, tools, skills, subagents, and files touched ([src/core/analyze.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L1-L60)).

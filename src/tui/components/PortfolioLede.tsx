@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import { formatCount, formatDuration, formatTokens, formatUSD } from "../../cli/format.ts";
+import type { CostBasis } from "../../core/cost-framing.ts";
+import { costFramingNote } from "../../core/cost-framing.ts";
 import type {
   CostDistribution,
   DurationSummary,
@@ -18,13 +20,18 @@ export function PortfolioLede({
   duration,
   distribution,
   streaks,
+  costBasis,
 }: {
   summary: PortfolioSummary;
   months: MonthRow[];
   duration: DurationSummary;
   distribution: CostDistribution;
   streaks: StreakSummary;
+  /** Display-only cost framing preference (`getCostBasis()`), computed at the
+   *  App boundary — TUI presentation components never touch the state dir. */
+  costBasis: CostBasis;
 }) {
+  const framingNote = costFramingNote(costBasis);
   const io = summary.inputTokens + summary.outputTokens;
   const cache = summary.cacheWriteTokens + summary.cacheReadTokens;
   const range =
@@ -57,6 +64,7 @@ export function PortfolioLede({
           : ""}{" "}
         · streak {streaks.currentStreak}d (best {streaks.longestStreak}d)
       </Text>
+      {framingNote ? <Text color={role.muted}>{framingNote}</Text> : null}
     </Box>
   );
 }

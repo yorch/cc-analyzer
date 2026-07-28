@@ -1,4 +1,5 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
+import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
   PORTFOLIO_DIAGNOSTIC_CODES,
@@ -30,6 +31,9 @@ import {
 export interface RenderOptions {
   color?: boolean;
   projectPath?: string;
+  /** Display-only cost framing preference (`getCostBasis()`). Defaults to
+   *  "api" (dollars read as a bill) when omitted. */
+  costBasis?: CostBasis;
 }
 
 const ANSI = {
@@ -298,6 +302,7 @@ export interface PortfolioView extends PortfolioStats {
   concurrency: { peak: number; parallelDayShare: number };
   contextTax: ContextTax;
   whatIf: WhatIfRepricing;
+  costBasis: CostBasis;
 }
 
 /** Render portfolio-wide or project-scoped analytics as a text report. */
@@ -313,6 +318,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   const sc = v.sidechain;
   const ioTokens = s.inputTokens + s.outputTokens;
   const cacheTokens = s.cacheWriteTokens + s.cacheReadTokens;
+  const costBasis = options.costBasis ?? "api";
   lines.push(
     reportTitle(
       options.projectPath ? `cc-analyzer · ${options.projectPath}` : "cc-analyzer · portfolio",
@@ -325,7 +331,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     ? `· ${sessionCount} · ${range}`
     : `· ${sessionCount} · ${projectCount} · ${range}`;
   lines.push(
-    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total spend`)}  ` +
+    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total, est. cost (API rates)`)}  ` +
       muted(scopeSummary, options),
   );
   lines.push(
@@ -348,6 +354,8 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         )
       : muted(`Index refreshed ${refreshed}`, options),
   );
+  const framingNote = costFramingNote(costBasis);
+  if (framingNote) lines.push(muted(framingNote, options));
 
   lines.push(`\n${section("Activity", options)}`);
   lines.push(
@@ -384,7 +392,8 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         ],
         [
           `run rate (${rr.month})`,
-          `${formatUSD(rr.monthToDate)} to date → ~${formatUSD(rr.projected)} projected (prev month ${formatUSD(rr.prevMonthTotal)})`,
+          `${formatUSD(rr.monthToDate)} to date → ~${formatUSD(rr.projected)} projected ` +
+            `${costNoun(costBasis)} (prev month ${formatUSD(rr.prevMonthTotal)})`,
         ],
       ],
     ),

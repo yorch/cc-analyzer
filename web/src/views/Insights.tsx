@@ -3,6 +3,7 @@ import {
   api,
   type ContextTax,
   cacheVerdict,
+  costFramingNote,
   type IdleCacheBucket,
   PORTFOLIO_DIAGNOSTIC_CODES,
   type PortfolioDiagnostic,
@@ -33,6 +34,10 @@ const PROJECT_SORT: Accessors<ProjectCacheRow> = {
 
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), []);
+  // Cost basis lives on `/api/stats`, not `/api/insights` — a second, cheap
+  // (memoized server-side) fetch just to frame the dollar tables below.
+  const costBasis = useAsync(() => api.stats(), []).data?.costBasis;
+  const framingNote = costBasis ? costFramingNote(costBasis) : undefined;
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data?.projects ?? [];
@@ -57,6 +62,7 @@ export function Insights() {
           {usd(s.writeCost)} written · {usd(s.waste)} un-amortized · {wastePct}% of spend
         </span>
       </header>
+      {framingNote && <p className="muted">{framingNote}</p>}
 
       <PortfolioInsights diagnostics={data.diagnostics} />
 

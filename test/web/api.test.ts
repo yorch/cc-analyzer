@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
+import { setCostBasis } from "../../src/core/prefs.ts";
 import { createApi } from "../../src/web/api.ts";
 import { createApp, isLoopbackHost } from "../../src/web/server.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
@@ -45,6 +46,25 @@ describe("web API", () => {
     const body = (await res.json()) as { summary: { sessions: number }; byModel: unknown[] };
     expect(body.summary.sessions).toBe(1);
     expect(body.byModel.length).toBeGreaterThan(0);
+  });
+
+  test("GET /api/stats carries the cost-basis preference, read fresh each request", async () => {
+    const prevStateDir = process.env.CC_ANALYZER_STATE_DIR;
+    const stateDir = `${claude.dir}-state`;
+    mkdirSync(stateDir, { recursive: true });
+    process.env.CC_ANALYZER_STATE_DIR = stateDir;
+    try {
+      const before = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(before.costBasis).toBe("api");
+
+      setCostBasis("subscription");
+      const after = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(after.costBasis).toBe("subscription");
+    } finally {
+      if (prevStateDir === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prevStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   test("GET /api/index-status reports exact source freshness", async () => {

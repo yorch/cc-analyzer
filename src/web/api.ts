@@ -7,6 +7,7 @@ import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
+import { getCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   listIndexedProjects,
@@ -72,13 +73,28 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       "content-type": "application/json",
     });
   };
+  // Same idea as `cachedJson`, but keeps the built object (not its JSON string)
+  // so a caller can merge in something that changes independently of the index
+  // fingerprint — like the cost-basis preference below — without re-running
+  // the expensive rollup.
+  const objCache = new Map<string, { key: string; value: unknown }>();
+  const cachedValue = <T>(name: string, key: string, build: () => T): T => {
+    const hit = objCache.get(name);
+    if (hit?.key !== key) objCache.set(name, { key, value: build() });
+    return (objCache.get(name) as { value: T }).value;
+  };
 
   api.get("/api/stats", (c) => {
     const today = localDayOfMs(Date.now());
     // `today` is part of the key: streaks/run-rate must roll over at midnight.
-    return cachedJson(c, "stats", `${fingerprint()}:${today}`, () =>
+    const stats = cachedValue("stats", `${fingerprint()}:${today}`, () =>
       buildPortfolioStats(db, today, { projectLimit: MAX_PROJECT_ROWS, topLimit: 20 }),
     );
+    // costBasis is a display preference read fresh every request (it's not
+    // part of buildPortfolioStats — that stays a pure, core-only shape) so
+    // flipping it with `cc-analyzer cost-basis` is reflected immediately,
+    // even though the underlying rollup stays memoized.
+    return c.json({ ...stats, costBasis: getCostBasis() });
   });
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));

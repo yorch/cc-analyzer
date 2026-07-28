@@ -5,6 +5,7 @@
 // here.
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
+import type { CostBasis } from "../../src/core/cost-framing.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
 import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import type { SetupAudit } from "../../src/core/setup-audit.ts";
@@ -45,6 +46,10 @@ export type {
 // Runtime chart and diagnostic builders are bun-free core code, so the SPA
 // computes the same numbers and recommendations as the CLI and TUI.
 export * from "../../src/core/chart-series.ts";
+// Cost-basis framing — bun-free, so the SPA renders the exact same wording as
+// the CLI/TUI for the one preference that can turn "cost" into "spend" or vice
+// versa.
+export * from "../../src/core/cost-framing.ts";
 // Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
 // renders the same rule vocabulary the server computes findings with.
 export * from "../../src/core/portfolio-diagnostics.ts";
@@ -64,8 +69,10 @@ export interface TokenSplit {
   ioTokens: number;
   cacheTokens: number;
 }
-/** `/api/stats` returns the core-built portfolio shape verbatim. */
-export type StatsResponse = PortfolioStats;
+/** `/api/stats` returns the core-built portfolio shape plus the cost-basis
+ *  display preference, read fresh per request at the route level (not part of
+ *  `PortfolioStats` — that stays a pure, core-only shape). */
+export type StatsResponse = PortfolioStats & { costBasis: CostBasis };
 
 export interface IndexedProject extends TokenSplit {
   projectId: string;

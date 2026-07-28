@@ -3,6 +3,7 @@ import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type CostDistribution,
+  costFramingNote,
   type ModelRow,
   type MonthRow,
   type ProjectRow,
@@ -72,12 +73,13 @@ export function Dashboard() {
   const range =
     summary.firstDay && summary.lastDay ? `${summary.firstDay} → ${summary.lastDay}` : "—";
   const projectRows = pq ? projectSort.sorted : projectSort.sorted.slice(0, 15);
+  const framingNote = costFramingNote(data.costBasis);
 
   return (
     <>
       <section className="hero">
         <div className="hero-main">
-          <div className="hero-label">Total spend</div>
+          <div className="hero-label">Est. cost (API rates)</div>
           <div className="hero-figure">{usd(summary.cost)}</div>
           <div className="hero-sub">
             <span className="est">{pct}% estimated</span> · {tokens(totalIo, totalCache)} tokens
@@ -85,6 +87,7 @@ export function Dashboard() {
           <div className="hero-sub">
             {range} · {count(summary.sessions)} sessions
           </div>
+          {framingNote && <div className="hero-sub">{framingNote}</div>}
         </div>
         <dl className="hero-stats">
           <div>

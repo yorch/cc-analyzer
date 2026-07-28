@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { truncate } from "../cli/format.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
+import { getCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   type IndexedProject,
@@ -59,6 +60,9 @@ export function App({ db, pricing, indexStatus }: Props) {
   const duration = useMemo(() => durationSummary(db), [db]);
   const distribution = useMemo(() => costDistribution(db), [db]);
   const streakInfo = useMemo(() => streaks(db, localDayOfMs(Date.now())), [db]);
+  // Display-only preference, read once at the screen boundary — TUI
+  // presentation components never touch the state dir themselves.
+  const costBasis = useMemo(() => getCostBasis(), []);
   const { columns, rows } = useTermSize();
 
   const [view, setView] = useState<View>("portfolio");
@@ -252,6 +256,7 @@ export function App({ db, pricing, indexStatus }: Props) {
               duration={duration}
               distribution={distribution}
               streaks={streakInfo}
+              costBasis={costBasis}
             />
           ) : undefined
         }

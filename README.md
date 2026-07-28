@@ -25,6 +25,13 @@ separately, which is where most of the real spend hides.
 The tool is **read-only**: it never writes to `~/.claude`. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.
 
+**Cost basis.** Every dollar figure is always computed the same way — tokens ×
+API rates. If you're on a flat-plan subscription (Pro/Max) rather than
+pay-as-you-go API billing, those numbers are API-equivalent *value*, not a
+bill. Run `cc-analyzer cost-basis subscription` to frame them that way across
+the CLI, TUI, and web app (`cc-analyzer cost-basis` shows the current setting;
+`api` is the default).
+
 ## Install
 
 ### One-line install (recommended)
@@ -134,6 +141,8 @@ cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
+cc-analyzer cost-basis [api|subscription]
+                                     # view or change how dollar figures are framed
 ```
 
 The CLI checks for a newer release at most once a day and prints a one-line

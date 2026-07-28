@@ -209,6 +209,51 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stderr).toContain("cc-analyzer index");
   });
 
+  test('cost-basis shows "api" by default', async () => {
+    const r = await run(["cost-basis"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("api");
+  });
+
+  test("cost-basis sets and round-trips subscription, then resets to api", async () => {
+    try {
+      const set = await run(["cost-basis", "subscription"]);
+      expect(set.code, set.stderr).toBe(0);
+      expect(set.stdout).toContain("subscription");
+
+      const show = await run(["cost-basis"]);
+      expect(show.code).toBe(0);
+      expect(show.stdout).toContain("subscription");
+    } finally {
+      // Reset so later tests in this shared state dir see the default basis.
+      expect((await run(["cost-basis", "api"])).code).toBe(0);
+    }
+  });
+
+  test("cost-basis rejects an unknown value", async () => {
+    const r = await run(["cost-basis", "bogus"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("usage: cc-analyzer cost-basis");
+  });
+
+  test("stats carries the subscription framing note, and omits it for api", async () => {
+    expect((await run(["index"])).code).toBe(0);
+
+    const apiRun = await run(["stats"]);
+    expect(apiRun.code, apiRun.stderr).toBe(0);
+    expect(apiRun.stdout).not.toContain("API-equivalent value");
+
+    try {
+      expect((await run(["cost-basis", "subscription"])).code).toBe(0);
+      const subRun = await run(["stats"]);
+      expect(subRun.code, subRun.stderr).toBe(0);
+      expect(subRun.stdout).toContain("API-equivalent value");
+      expect(subRun.stdout).toContain("not a bill");
+    } finally {
+      expect((await run(["cost-basis", "api"])).code).toBe(0);
+    }
+  });
+
   test("audit reports the inventory and its findings, and --json is clean", async () => {
     // An installed setup that the fixture sessions never touch.
     mkdirSync(join(tmpDir, "claude", "skills", "tidy"), { recursive: true });

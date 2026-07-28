@@ -8,6 +8,7 @@ import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
+import { getCostBasis, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
@@ -60,6 +61,8 @@ Usage:
   cc-analyzer version                  Print the version
   cc-analyzer telemetry <on|off|status>
                                        View or change anonymous usage telemetry
+  cc-analyzer cost-basis [api|subscription]
+                                       View or change how dollar figures are framed
   cc-analyzer help                     Show this help
 
 Notes:
@@ -69,6 +72,12 @@ Telemetry:
   cc-analyzer reports anonymous, cookieless usage stats (no session content,
   paths, or personal data). Opt out with CC_ANALYZER_TELEMETRY=0, DO_NOT_TRACK,
   or \`cc-analyzer telemetry off\`.
+
+Cost basis:
+  Dollar figures are always tokens × API rates. "api" (default) reads that as
+  a bill. "subscription" is for flat-plan (Pro/Max) users: the same numbers
+  are framed as API-equivalent value, not money owed. Set with
+  \`cc-analyzer cost-basis subscription\`.
 `;
 
 function cmdTelemetry(action: string | undefined): number {
@@ -88,6 +97,33 @@ function cmdTelemetry(action: string | undefined): number {
     }
     default:
       console.error("usage: cc-analyzer telemetry <on|off|status>");
+      return 2;
+  }
+}
+
+function cmdCostBasis(action: string | undefined): number {
+  switch (action) {
+    case "api":
+    case "subscription":
+      setCostBasis(action);
+      console.log(
+        action === "subscription"
+          ? "Cost basis set to subscription. Dollar figures will read as API-equivalent " +
+              "value, not a bill."
+          : "Cost basis set to api. Dollar figures read as billed cost.",
+      );
+      return 0;
+    case undefined: {
+      const basis = getCostBasis();
+      console.log(
+        basis === "subscription"
+          ? "Cost basis is subscription (dollar figures shown as API-equivalent value)."
+          : "Cost basis is api (dollar figures shown as billed cost).",
+      );
+      return 0;
+    }
+    default:
+      console.error("usage: cc-analyzer cost-basis [api|subscription]");
       return 2;
   }
 }
@@ -237,6 +273,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
         projectPath: project.projectPath,
       }
     : { type: "portfolio" as const };
+  const costBasis = getCostBasis();
   const view = {
     scope,
     index: await inspectIndexStatus(db),
@@ -248,6 +285,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     concurrency: { peak, parallelDayShare },
     contextTax: contextTax(db, projectId),
     whatIf: whatIfRepricing(db, pricing, projectId),
+    costBasis,
   };
   db.close();
   console.log(
@@ -256,6 +294,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
       : renderStats(view, {
           color: process.stdout.isTTY && !process.env.NO_COLOR,
           projectPath: project?.projectPath,
+          costBasis,
         }),
   );
   return 0;
@@ -455,6 +494,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return 0;
     case "telemetry":
       return cmdTelemetry(positional[0]);
+    case "cost-basis":
+      return cmdCostBasis(positional[0]);
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
       return await runTui();
