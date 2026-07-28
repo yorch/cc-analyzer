@@ -120,6 +120,27 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stdout).toContain("No notable context or cost patterns");
   });
 
+  test("analyze reports parse coverage, not just skipped lines", async () => {
+    const r = await run(["analyze", join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl")]);
+    expect(r.code).toBe(0);
+    // The fixture parses cleanly but carries one future/unknown event type.
+    expect(r.stdout).toContain(
+      "(0 unparseable lines skipped, 1 kept as unknown events, of 10 lines)",
+    );
+  });
+
+  test("analyze --json carries the session's parse coverage", async () => {
+    const r = await run([
+      "analyze",
+      join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"),
+      "--json",
+    ]);
+    const parsed = JSON.parse(r.stdout) as {
+      parseCoverage: { lines: number; parseErrors: number; unknownEvents: number };
+    };
+    expect(parsed.parseCoverage).toEqual({ lines: 10, parseErrors: 0, unknownEvents: 1 });
+  });
+
   test("analyze with a missing session exits 1", async () => {
     const r = await run(["analyze", "does-not-exist"]);
     expect(r.code).toBe(1);
@@ -300,6 +321,14 @@ describe("CLI dispatch & exit codes", () => {
       severity: string;
     }[];
     expect(Array.isArray(parsed)).toBe(true);
+  });
+
+  test("index --check reports portfolio parse coverage from the indexed rows", async () => {
+    const r = await run(["index", "--check"]);
+    expect(r.code).toBe(0);
+    // Two fixture sessions × 10 lines, one unknown event type each.
+    expect(r.stdout).toContain("Parse coverage: 90.0% of 20 indexed lines fully parsed");
+    expect(r.stdout).toContain("(0 unreadable, 2 unknown events)");
   });
 
   test("index --check reports exact stale counts without refreshing", async () => {

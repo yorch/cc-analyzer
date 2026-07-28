@@ -22,6 +22,7 @@ import type {
   HotFileRow,
   IdleCacheBucket,
   ModelDayRow,
+  ParseCoverageStats,
   PortfolioStats,
   ProjectCacheRow,
   ProjectTrends,
@@ -126,6 +127,8 @@ export interface AnalyticsResponse extends AnalyticsRollup {
   compactions: CompactionUsage;
   contextTax: ContextTax;
   whatIf: WhatIfRepricing;
+  /** How much of the indexed JSONL this build of the parser understood. */
+  parseCoverage: ParseCoverageStats;
 }
 
 async function get<T>(url: string): Promise<T> {

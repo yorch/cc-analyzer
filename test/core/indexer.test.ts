@@ -7,6 +7,7 @@ import { reindex } from "../../src/core/indexer.ts";
 import {
   analyticsRollup,
   contextTax,
+  parseCoverage,
   portfolioSummary,
   spendByModel,
   spendByProject,
@@ -260,6 +261,51 @@ describe("reindex · turn-scoped skill cost (schema v10)", () => {
     const skill = analyticsRollup(db, "proj-b").skills.find((s) => s.name === "docx");
     expect(skill?.attributedTurns).toBe(1);
     expect(skill?.attributedCost).toBeCloseTo(attributed.docx?.cost as number, 12);
+    db.close();
+    rmSync(file, { force: true });
+  });
+});
+
+describe("reindex · parse coverage (schema v11)", () => {
+  test("round-trips the coverage counters and feeds parseCoverage()", async () => {
+    const file = join(claude.dir, "projects", "proj-b", "sess-drift.jsonl");
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-drift",
+          version: "9.9.9",
+          timestamp: "2026-07-04T10:00:00.000Z",
+          message: { role: "user", content: "hi" },
+        }),
+        "not json at all",
+        JSON.stringify({ type: "some-future-type", brandNewField: 1 }),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT parse_lines, parse_errors, unknown_events FROM sessions
+          WHERE session_id = 'sess-drift'`,
+      )
+      .get() as { parse_lines: number; parse_errors: number; unknown_events: number };
+    expect(row).toEqual({ parse_lines: 3, parse_errors: 1, unknown_events: 1 });
+
+    // …and the columns are what parseCoverage() reads: this session is the only
+    // one carrying version 9.9.9, so it owns that row entirely.
+    const drift = parseCoverage(db).byVersion.find((v) => v.version === "9.9.9");
+    expect(drift).toEqual({
+      version: "9.9.9",
+      sessions: 1,
+      lines: 3,
+      parseErrors: 1,
+      unknownEvents: 1,
+      unparsedShare: 2 / 3,
+    });
     db.close();
     rmSync(file, { force: true });
   });

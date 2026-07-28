@@ -5,6 +5,9 @@ import {
   type BashCommandRow,
   type CompactionUsage,
   type NameUsageRow,
+  PARSE_COVERAGE_MAX_UNPARSED_SHARE,
+  PARSE_COVERAGE_MIN_LINES,
+  type ParseCoverageStats,
   SETUP_AUDIT_CAVEAT,
   type SetupAudit,
   SKILL_COST_CAVEAT,
@@ -326,6 +329,58 @@ function Compactions({ data }: { data: CompactionUsage }) {
   );
 }
 
+/**
+ * How much of the indexed JSONL this build of the parser actually understood,
+ * per Claude Code version (newest first). The session format is undocumented
+ * and moves between releases; unparsed lines are excluded from every metric, so
+ * a rising share on the newest version means the numbers below it read low.
+ */
+function ParseCoverage({ data, query }: { data: ParseCoverageStats; query: string }) {
+  const s = data.summary;
+  if (s.lines === 0) {
+    return <p className="muted">No parse coverage recorded. Reindex if this seems wrong.</p>;
+  }
+  const q = query.trim().toLowerCase();
+  const rows = data.byVersion.filter((r) => !q || r.version.toLowerCase().includes(q));
+  const share = (v: number) => `${(v * 100).toFixed(2)}%`;
+  const newest = data.byVersion[0];
+  const behind =
+    newest !== undefined &&
+    newest.lines >= PARSE_COVERAGE_MIN_LINES &&
+    newest.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE;
+  return (
+    <>
+      <p className="muted">
+        <strong>{share(1 - s.unparsedShare)}</strong> of {count(s.lines)} indexed lines fully parsed
+        across {count(s.sessions)} sessions · {count(s.parseErrors)} unreadable ·{" "}
+        {count(s.unknownEvents)} kept as unknown events
+      </p>
+      {rows.length > 0 && (
+        <FactsTable
+          head={["Version", "Sessions", "Lines", "Unreadable", "Unknown", "Unparsed"]}
+          rows={rows
+            .slice(0, 15)
+            .map((r) => [
+              r.version,
+              count(r.sessions),
+              count(r.lines),
+              count(r.parseErrors),
+              count(r.unknownEvents),
+              share(r.unparsedShare),
+            ])}
+        />
+      )}
+      <p className="muted spark-cap">
+        {behind
+          ? `Claude Code ${newest?.version} sessions are ${share(newest?.unparsedShare ?? 0)} unparsed — run ` +
+            "`cc-analyzer update`; the session format may have moved ahead of this parser."
+          : "Unparsed lines are excluded from every metric. A version is attributed per session " +
+            "(the newest version the session ran under), so this is a best-effort split."}
+      </p>
+    </>
+  );
+}
+
 /** Inventory counts + findings from `/api/audit`. Fetched on its own so the
  * filesystem scan never blocks the usage analytics the rest of this page shows. */
 function SetupAuditPanel({ query }: { query: string }) {
@@ -609,6 +664,8 @@ export function Tools() {
               .slice(0, 15)
               .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
           />
+          <h2 className="section-h">Parse coverage · how much of the format we understand</h2>
+          <ParseCoverage data={data.parseCoverage} query={query} />
           <h2 className="section-h">Git branches · by sessions</h2>
           <FactsTable
             head={["Branch", "Sessions", "Session $"]}

@@ -155,6 +155,9 @@ Index-backed reports include the last successful refresh time. `index --check`
 compares source file metadata with the cache without parsing sessions and exits
 non-zero when it finds new, changed, or deleted files. The TUI, `stats`, and
 web app surface the same freshness status so an older cache is never silent.
+`index --check` also prints one line of **parse coverage** — the share of
+indexed lines this build of the parser fully understood — read from the index
+rows, so the no-parse guarantee holds.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.
@@ -175,6 +178,13 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   context pressure, large context jumps, cache rewrites after idle gaps,
   post-compaction refills, and concentrated per-turn spend. These are named
   heuristics, not a session-quality score.
+- **Parse coverage**: how much of the session file this build actually
+  understood — lines skipped as unreadable, and lines kept as tolerant
+  "unknown" events. The JSONL format is undocumented and changes between Claude
+  Code releases, so the parser is tolerant by design; this makes that tolerance
+  visible instead of silent. `cc-analyzer insights` warns (and points at
+  `cc-analyzer update`) when the newest Claude Code version's sessions stop
+  parsing cleanly.
 
 ## Configuration
 
@@ -280,7 +290,8 @@ and rendered on the web app's Tools view.
 "actionable diagnostics": a bun-free rules engine folds every portfolio signal —
 cache efficiency, compaction pressure, context tax, what-if repricing, retry
 churn, weekly error trend, spend concentration, pricing confidence, the setup
-audit, and subagent balance — into a ranked list of explainable findings.
+audit, subagent balance, and parse coverage — into a ranked list of explainable
+findings.
 Warnings rank before infos, and dollar-backed findings rank first within a
 severity. These are deliberately named heuristics with conservative,
 documented thresholds — **not a score**: every finding shows the observed

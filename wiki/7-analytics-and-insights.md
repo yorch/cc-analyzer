@@ -106,6 +106,16 @@ Two cost-optimization rollups answer the questions "what do I pay before I type?
 
 Sources: [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts) [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts) [src/core/pricing.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/pricing.ts)
 
+### Parse coverage
+
+Every metric in this page rests on a parser reading an **undocumented** file format that moves between Claude Code releases. `parseCoverage(db)` makes the resulting uncertainty measurable: it scans the `parse_lines`, `parse_errors`, and `unknown_events` columns (schema `v11`) and returns a portfolio `ParseCoverageSummary` plus one row per Claude Code version, each with `unparsedShare = (parseErrors + unknownEvents) / lines`, guarded against a zero-line denominator (an empty index, or rows written before v11). `parseErrors` counts lines that produced no event at all; `unknownEvents` counts lines kept only as tolerant "unknown" events — see [Session Parsing & Events](./2.1-session-parsing-and-events.md) for how the counters are produced.
+
+Version attribution is deliberately **best effort**: a session records every version it ran under (it can span an upgrade) and is attributed wholly to the newest of them, since that is the version most likely to have written the lines the parser choked on. Sessions with no recorded version count toward the summary but toward no version row. Rows are sorted newest version first (numerically, through `compareVersions`), so `byVersion[0]` is the version to judge the current parser by — which is exactly what the `parse-coverage-drop` rule reads.
+
+Surfaces: `cc-analyzer index --check` prints the portfolio line (one SQL scan, so `--check` still parses no sessions), `cc-analyzer analyze` reports the single session's counters under its report, `/api/analytics` carries the rollup as `parseCoverage`, and the web Tools → Environment tab renders the per-version table next to the Claude Code versions table.
+
+Sources: [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/stats.ts) [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/stats-types.ts) [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/parser.ts)
+
 ### Single-scan analytics rollup and project trends
 
 Full-table JSON parsing is expensive, so `analyticsRollup` folds every per-session JSON rollup in one table scan rather than scanning per metric ([src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305)). A single pass over the rows accumulates tool usage with error rates, rich per-skill analytics (invocations, reach, reliability, adoption, turn-scoped cost attribution, and session-scoped cost), subagent frequency, Bash command families, test runs, retries, permission modes, stop reasons, turn depth, Claude Code versions, and Git branches. Bash families and test runs are classified at query time from the raw command heads, so those heuristics can change without a reindex. The per-project variant `projectTrends` also runs a single project scan, feeding the shared `newToolFold`, `newDepthFold`, and `newModelMixFold` accumulators so the portfolio Tools view and the project pages can never disagree about error rates or bucket boundaries ([src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808)).
@@ -209,8 +219,8 @@ assemble it with `assemblePortfolioSignals(db, pricing)`
 ([src/core/portfolio-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-signals.ts)),
 which bundles `buildPortfolioStats`, `analyticsRollup`, the cache rollups
 (summary, TTL split, idle buckets, per-project waste), `compactionUsage`,
-`errorRateByWeek`, `contextTax`, `whatIfRepricing`, and (optionally — it is
-the one filesystem-touching input) the setup audit. "Today" is pinned at that
+`errorRateByWeek`, `contextTax`, `whatIfRepricing`, `parseCoverage`, and
+(optionally — it is the one filesystem-touching input) the setup audit. "Today" is pinned at that
 boundary, so the rules module never reads the clock. The engine ranks warnings
 before infos, and within a severity by addressable dollar impact (cache waste,
 repricing savings) with insertion order as the tiebreak. It deliberately does
@@ -233,6 +243,7 @@ The rules, with thresholds (each documented beside its code with a rationale):
 | `spend-concentration` | info | Top decile of sessions carries ≥ 60% of spend, over ≥ 20 sessions. |
 | `estimated-pricing-share` | info | ≥ 25% of computed spend used heuristic (family-matched) pricing. |
 | `setup-debt` | info | The setup audit (when supplied) contains ≥ 1 warning; names the top one and points at `cc-analyzer audit` / the Setup tab. |
+| `parse-coverage-drop` | warning | The newest Claude Code version's sessions have an unparsed share ≥ 1% over ≥ 10k lines. Judged per version rather than over a rolling window, because a format change ships with a release; the action is `cc-analyzer update`. |
 | `sidechain-imbalance` | info | Subagent spend share ≥ 50% (verify the delegation earns its keep), or exactly $0 of subagent spend over ≥ 50 sessions (worth trying). Only one side can fire. |
 
 The surfaces: `cc-analyzer insights` renders the ranked findings (with an

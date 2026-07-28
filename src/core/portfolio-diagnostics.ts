@@ -24,6 +24,7 @@ import type {
   ContextTax,
   ErrorWeekRow,
   IdleCacheBucket,
+  ParseCoverageStats,
   PortfolioStats,
   ProjectCacheRow,
   WhatIfRepricing,
@@ -41,7 +42,8 @@ export type PortfolioDiagnosticCode =
   | "spend-concentration"
   | "estimated-pricing-share"
   | "setup-debt"
-  | "sidechain-imbalance";
+  | "sidechain-imbalance"
+  | "parse-coverage-drop";
 
 /** Every implemented rule code — the "N rules checked" count on render sites. */
 export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
@@ -57,6 +59,7 @@ export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
   "estimated-pricing-share",
   "setup-debt",
   "sidechain-imbalance",
+  "parse-coverage-drop",
 ];
 
 export type PortfolioDiagnosticSeverity = "info" | "warning";
@@ -99,6 +102,9 @@ export interface PortfolioSignals {
   whatIf: WhatIfRepricing;
   /** `buildSetupAudit()` — optional: callers without filesystem access omit it. */
   audit?: SetupAudit;
+  /** `parseCoverage()` — optional: a caller on an older payload omits it, and
+   * the parse-coverage rule simply doesn't run. */
+  parseCoverage?: ParseCoverageStats;
 }
 
 /* ——— Thresholds (conservative, each with its rationale) ————————————— */
@@ -163,6 +169,15 @@ export const CONCENTRATION_SHARE = 0.6;
  * to flag; below that the totals are still directionally solid. */
 export const ESTIMATED_SHARE = 0.25;
 
+/** Parse coverage: 1% of a version's lines unreadable is well past noise (a
+ * healthy version parses at ~0%), and 10k lines is roughly a handful of real
+ * sessions — below that a single corrupt file would fire the rule. Judged on
+ * the NEWEST version rather than a rolling window: a format change ships with a
+ * release, and old sessions keep parsing exactly as well as they always did, so
+ * a 30-day window would dilute the very signal the rule is looking for. */
+export const PARSE_COVERAGE_MAX_UNPARSED_SHARE = 0.01;
+export const PARSE_COVERAGE_MIN_LINES = 10_000;
+
 /** Sidechain imbalance: half of spend on subagents merits a look at whether
  * delegation earns its keep; zero subagent use only becomes remarkable once
  * the portfolio is large enough (50+ sessions) that it's clearly a habit. */
@@ -197,7 +212,17 @@ interface Ranked extends PortfolioDiagnostic {
  * the finding text.
  */
 export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioDiagnostic[] {
-  const { stats, rollup, cache, compactions, errorWeekly, contextTax, whatIf, audit } = signals;
+  const {
+    stats,
+    rollup,
+    cache,
+    compactions,
+    errorWeekly,
+    contextTax,
+    whatIf,
+    audit,
+    parseCoverage,
+  } = signals;
   const findings: Ranked[] = [];
   const summary = stats.summary;
 
@@ -500,6 +525,33 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         action:
           "Subagents can offload bulk reading and exploration from the main context window " +
           "(reducing compactions and cache churn) — worth trying on large tasks.",
+        impact: 0,
+      });
+    }
+  }
+
+  // 13. parse-coverage-drop — the newest Claude Code version's sessions no
+  //     longer parse cleanly, i.e. the format has moved ahead of this build.
+  {
+    const newest = parseCoverage?.byVersion[0];
+    if (
+      newest &&
+      newest.lines >= PARSE_COVERAGE_MIN_LINES &&
+      newest.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE
+    ) {
+      findings.push({
+        code: "parse-coverage-drop",
+        severity: "warning",
+        title: "The newest Claude Code version's sessions don't fully parse",
+        evidence:
+          `${(newest.unparsedShare * 100).toFixed(1)}% of the ${tok(newest.lines)} lines written by ` +
+          `Claude Code ${newest.version} (${plural(newest.sessions, "session")}) were not fully ` +
+          `understood — ${tok(newest.parseErrors)} unreadable, ` +
+          `${tok(newest.unknownEvents)} kept as unknown events.`,
+        action:
+          "Update cc-analyzer (`cc-analyzer update`) — the session format may have moved ahead " +
+          "of this parser version. Unparsed lines are excluded from every metric, so totals for " +
+          "those sessions read low until the parser catches up.",
         impact: 0,
       });
     }

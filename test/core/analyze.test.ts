@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { analyzeSession, analyzeSessionStream } from "../../src/core/analyze.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
-import { parseSessionFile } from "../../src/core/parser.ts";
+import { parseSessionFile, streamSessionEvents } from "../../src/core/parser.ts";
 import { flatPricing as flat, samplePricing as pricing } from "../helpers/pricing.ts";
 
 /** Turn an array into an async iterable, to drive analyzeSessionStream. */
@@ -322,6 +322,30 @@ describe("analyzeSession · totals vs models", () => {
     expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(2);
     // totals must always agree with the per-model rollup.
     expect(a.totals.cost.total).toBeCloseTo(a.models["claude-opus-4-7"]?.cost.total ?? -1, 12);
+  });
+});
+
+describe("parse coverage plumbing", () => {
+  test("analyzeSession carries the coverage it is handed", async () => {
+    const { events, coverage } = await parseSessionFile(fixturePath);
+    expect(analyzeSession(events, pricing).parseCoverage).toBeUndefined();
+    expect(analyzeSession(events, pricing, { coverage }).parseCoverage).toEqual(coverage);
+  });
+
+  test("analyzeSessionStream captures the parser stream's returned coverage", async () => {
+    const { coverage } = await parseSessionFile(fixturePath);
+    const streamed = await analyzeSessionStream(streamSessionEvents(fixturePath), pricing, {
+      detail: false,
+    });
+    expect(streamed.parseCoverage).toEqual(coverage);
+    // The fixture carries one future/unknown event type.
+    expect(streamed.parseCoverage?.unknownEvents).toBe(1);
+  });
+
+  test("an iterable that returns nothing simply carries no coverage", async () => {
+    const { events } = await parseSessionFile(fixturePath);
+    const a = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+    expect(a.parseCoverage).toBeUndefined();
   });
 });
 

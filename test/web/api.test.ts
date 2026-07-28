@@ -240,6 +240,33 @@ describe("web API", () => {
     expect(body.whatIf.rows[0]?.alternatives.length).toBeGreaterThan(0);
   });
 
+  test("GET /api/analytics carries the parse-coverage rollup", async () => {
+    const res = await api.request("/api/analytics");
+    const body = (await res.json()) as {
+      parseCoverage: {
+        summary: { sessions: number; lines: number; unknownEvents: number; unparsedShare: number };
+        byVersion: { version: string; lines: number }[];
+      };
+    };
+    expect(body.parseCoverage.summary.sessions).toBe(1);
+    expect(body.parseCoverage.summary.lines).toBe(10);
+    // The fixture carries one future/unknown event type.
+    expect(body.parseCoverage.summary.unknownEvents).toBe(1);
+    expect(body.parseCoverage.summary.unparsedShare).toBeCloseTo(0.1, 10);
+    expect(body.parseCoverage.byVersion[0]?.version).toBe("1.3.0");
+  });
+
+  test("GET /api/sessions/:id carries the session's parse coverage", async () => {
+    const list = (await (await api.request("/api/projects/proj-a/sessions")).json()) as {
+      sessionId: string;
+    }[];
+    const id = list[0]?.sessionId as string;
+    const body = (await (await api.request(`/api/sessions/${id}`)).json()) as {
+      parseCoverage?: { lines: number; parseErrors: number; unknownEvents: number };
+    };
+    expect(body.parseCoverage).toEqual({ lines: 10, parseErrors: 0, unknownEvents: 1 });
+  });
+
   test("GET /api/audit cross-references the installed setup with usage", async () => {
     const res = await api.request("/api/audit");
     expect(res.status).toBe(200);

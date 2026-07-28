@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   retries INTEGER,
   compactions INTEGER,
   first_prompt_tokens INTEGER,
+  parse_lines INTEGER,
+  parse_errors INTEGER,
+  unknown_events INTEGER,
   models_json TEXT,
   tools_json TEXT,
   tool_errors_json TEXT,
@@ -96,7 +99,14 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // the surfaces now show. Same rationale as v8/v9: the incremental indexer skips
 // unchanged files, so rows written by v9 would carry no attribution forever and
 // every skill would report $0 — the bump forces the rebuild.
-export const SCHEMA_VERSION = "10";
+// v11: adds the parse-coverage columns — `parse_lines`, `parse_errors`,
+// `unknown_events` — the per-session record of how much of each JSONL file this
+// build of the parser actually understood, which `parseCoverage()` rolls up and
+// the `parse-coverage-drop` diagnostic watches. Same rationale as v8/v9/v10:
+// the incremental indexer skips unchanged files, so rows written by v10 would
+// report zero lines forever and the coverage share would read as a clean 0%
+// exactly when it matters most — the bump forces the rebuild.
+export const SCHEMA_VERSION = "11";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

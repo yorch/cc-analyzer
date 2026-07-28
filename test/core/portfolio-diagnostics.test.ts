@@ -10,6 +10,8 @@ import type {
   ContextTaxRow,
   ErrorWeekRow,
   IdleCacheBucket,
+  ParseCoverageSummary,
+  ParseCoverageVersionRow,
   ProjectCacheRow,
 } from "../../src/core/stats-types.ts";
 
@@ -127,6 +129,7 @@ type Overrides = {
   compactionsByProject?: CompactionProjectRow[];
   errorWeekly?: ErrorWeekRow[];
   taxByProject?: ContextTaxRow[];
+  parseCoverage?: PortfolioSignals["parseCoverage"];
   whatIfSummary?: Partial<PortfolioSignals["whatIf"]["summary"]>;
   audit?: SetupAudit;
 };
@@ -245,6 +248,7 @@ function signals(over: Overrides = {}): PortfolioSignals {
       rows: [],
     },
     ...(over.audit ? { audit: over.audit } : {}),
+    ...(over.parseCoverage ? { parseCoverage: over.parseCoverage } : {}),
   };
 }
 
@@ -258,7 +262,7 @@ describe("baseline", () => {
   });
 
   test("the exported code list covers every implemented rule", () => {
-    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(12);
+    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(13);
   });
 });
 
@@ -554,6 +558,95 @@ describe("sidechain-imbalance", () => {
 });
 
 /* ——— Ranking ————————————————————————————————————————————————————————— */
+
+describe("parse-coverage-drop", () => {
+  /** One version row, newest first (the rule only reads byVersion[0]). */
+  const coverage = (over: Partial<ParseCoverageVersionRow> = {}) => {
+    const row: ParseCoverageVersionRow = {
+      version: "2.4.0",
+      sessions: 40,
+      lines: 200_000,
+      parseErrors: 500,
+      unknownEvents: 1_500,
+      unparsedShare: 0.01,
+      ...over,
+    };
+    return { summary: { ...row } as ParseCoverageSummary, byVersion: [row] };
+  };
+
+  test("fires on the newest version once the unparsed share clears 1%", () => {
+    const out = buildPortfolioDiagnostics(signals({ parseCoverage: coverage() }));
+    const f = out.find((d) => d.code === "parse-coverage-drop");
+    expect(f?.severity).toBe("warning");
+    expect(f?.evidence).toContain("2.4.0");
+    expect(f?.evidence).toContain("1.0%");
+    expect(f?.evidence).toContain("200,000");
+    expect(f?.action).toContain("cc-analyzer update");
+  });
+
+  test("stays quiet just below the 1% share", () => {
+    expect(codes(signals({ parseCoverage: coverage({ unparsedShare: 0.0099 }) }))).not.toContain(
+      "parse-coverage-drop",
+    );
+  });
+
+  test("stays quiet below the 10k-line volume floor", () => {
+    expect(
+      codes(signals({ parseCoverage: coverage({ lines: 9_999, unparsedShare: 0.5 }) })),
+    ).not.toContain("parse-coverage-drop");
+  });
+
+  test("only the newest version is judged", () => {
+    const newest: ParseCoverageVersionRow = {
+      version: "2.4.0",
+      sessions: 10,
+      lines: 50_000,
+      parseErrors: 0,
+      unknownEvents: 0,
+      unparsedShare: 0,
+    };
+    const old: ParseCoverageVersionRow = {
+      version: "1.0.0",
+      sessions: 10,
+      lines: 50_000,
+      parseErrors: 5_000,
+      unknownEvents: 0,
+      unparsedShare: 0.1,
+    };
+    expect(
+      codes(
+        signals({
+          parseCoverage: {
+            summary: { ...newest } as ParseCoverageSummary,
+            byVersion: [newest, old],
+          },
+        }),
+      ),
+    ).not.toContain("parse-coverage-drop");
+  });
+
+  test("is safe when the signal is absent entirely", () => {
+    expect(signals().parseCoverage).toBeUndefined();
+    expect(codes(signals())).not.toContain("parse-coverage-drop");
+    // …and with an empty index there is no version row to judge.
+    expect(
+      codes(
+        signals({
+          parseCoverage: {
+            summary: {
+              sessions: 0,
+              lines: 0,
+              parseErrors: 0,
+              unknownEvents: 0,
+              unparsedShare: 0,
+            },
+            byVersion: [],
+          },
+        }),
+      ),
+    ).not.toContain("parse-coverage-drop");
+  });
+});
 
 describe("ranking", () => {
   test("warnings rank before infos, and dollar impact orders within severity", () => {

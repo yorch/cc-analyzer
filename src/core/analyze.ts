@@ -2,6 +2,7 @@ import {
   type AssistantEvent,
   type ContentBlock,
   isRealPrompt,
+  type ParseCoverage,
   type SessionEvent,
   type ToolUseBlock,
   type Usage,
@@ -197,6 +198,14 @@ export interface SessionAnalysis {
   firstPromptTokens?: number;
   /** Context compactions, in session order. Available in aggregate mode too. */
   compactions: Compaction[];
+  /**
+   * How much of the session file this build of the parser understood (lines
+   * seen, lines lost to invalid JSON, lines kept only as tolerant "unknown"
+   * events). The analyzer cannot derive this on its own — parse errors never
+   * reach it — so it is handed in by whoever did the parsing, and is
+   * `undefined` when the caller didn't supply it. Available in aggregate mode.
+   */
+  parseCoverage?: ParseCoverage;
 }
 
 export interface AnalyzeOptions {
@@ -206,6 +215,13 @@ export interface AnalyzeOptions {
    * indexer, which never reads `turns` (it uses `promptChars`/`turnDepths`).
    */
   detail?: boolean;
+  /**
+   * Parse coverage for these events, from the parse layer (`ParseResult.coverage`
+   * on the array paths; `streamSessionEvents`' return value on the streaming
+   * one, which `analyzeSessionStream` captures for itself). Passed in rather
+   * than derived because the analyzer never sees the lines that failed to parse.
+   */
+  coverage?: ParseCoverage;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -448,10 +464,18 @@ class SessionAnalyzer {
   private readonly stoppedKeys = new Set<string>();
   private readonly pending = new Map<string, PendingTool>();
 
+  // Handed in from the parse layer (the analyzer never sees unparseable lines).
+  private parseCoverage: ParseCoverage | undefined;
+
   constructor(
     private readonly pricing: PricingTable,
     private readonly detail: boolean,
   ) {}
+
+  /** Record the parse coverage of the events this analyzer is being fed. */
+  setParseCoverage(coverage: ParseCoverage | undefined): void {
+    this.parseCoverage = coverage;
+  }
 
   private touchTime(ts?: string): void {
     if (!ts) return;
@@ -930,15 +954,32 @@ class SessionAnalyzer {
       turnDepths: this.turnDepths,
       firstPromptTokens: this.firstPromptTokens,
       compactions: this.compactions,
+      parseCoverage: this.parseCoverage,
     };
   }
 }
 
-/** Analyze a session's events into per-turn and aggregate metrics. */
-export function analyzeSession(events: SessionEvent[], pricing: PricingTable): SessionAnalysis {
-  const analyzer = new SessionAnalyzer(pricing, true);
+/**
+ * Analyze a session's events into per-turn and aggregate metrics.
+ *
+ * `opts` is optional and additive (existing two-argument callers are
+ * unaffected): pass `coverage` — `ParseResult.coverage` from the parse that
+ * produced these events — to carry parse coverage into the analysis.
+ */
+export function analyzeSession(
+  events: SessionEvent[],
+  pricing: PricingTable,
+  opts: AnalyzeOptions = {},
+): SessionAnalysis {
+  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
+  analyzer.setParseCoverage(opts.coverage);
   for (const event of events) analyzer.push(event);
   return analyzer.finish();
+}
+
+/** Is this a generator's `ParseCoverage` return value (see below)? */
+function isParseCoverage(value: unknown): value is ParseCoverage {
+  return typeof value === "object" && value !== null && "lines" in value && "parseErrors" in value;
 }
 
 /**
@@ -947,6 +988,13 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
  * `detail: false` the per-turn timeline is skipped entirely (aggregates only);
  * `promptChars` and `turnDepths` still carry the turn-derived aggregates the
  * indexer needs.
+ *
+ * The iterator is driven by hand rather than with `for await` so that a
+ * generator's **return value** survives: `streamSessionEvents` returns its
+ * `ParseCoverage` that way, so the streaming path picks up coverage with no
+ * wiring at the call site (an explicit `opts.coverage` still wins). Any other
+ * iterable — a plain array turned async, a test helper — returns nothing, which
+ * `isParseCoverage` rejects, and the analysis simply carries no coverage.
  */
 export async function analyzeSessionStream(
   events: AsyncIterable<SessionEvent>,
@@ -954,6 +1002,24 @@ export async function analyzeSessionStream(
   opts: AnalyzeOptions = {},
 ): Promise<SessionAnalysis> {
   const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
-  for await (const event of events) analyzer.push(event);
+  analyzer.setParseCoverage(opts.coverage);
+  const it = events[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const next = await it.next();
+      if (next.done) {
+        // `AsyncIterable`'s return type is `any` by default (so every iterable
+        // is accepted); guard the value rather than trusting it.
+        if (!opts.coverage && isParseCoverage(next.value)) analyzer.setParseCoverage(next.value);
+        break;
+      }
+      analyzer.push(next.value);
+    }
+  } catch (err) {
+    // `for await` closes the iterator when the body throws; do the same so a
+    // failing analysis can't leave the file stream open.
+    await it.return?.();
+    throw err;
+  }
   return analyzer.finish();
 }

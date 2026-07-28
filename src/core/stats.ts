@@ -3,6 +3,7 @@ import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type { PricingTable, TokenCounts } from "./pricing.ts";
 import { cacheTokens, computeCost, ioTokens, resolveModel, zeroTokens } from "./pricing.ts";
+import { compareVersions } from "./release.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -25,6 +26,8 @@ import type {
   ModelDayRow,
   ModelRow,
   MonthRow,
+  ParseCoverageStats,
+  ParseCoverageSummary,
   PortfolioStats,
   PortfolioSummary,
   ProjectCacheRow,
@@ -1067,6 +1070,82 @@ export function errorRateByWeek(db: Database): ErrorWeekRow[] {
       errorRate: a.calls > 0 ? a.errors / a.calls : 0,
     }))
     .sort((a, b) => (a.week < b.week ? -1 : 1));
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Parse coverage
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** Coverage counters + the derived share, guarded for a zero-line denominator
+ * (an empty index, or sessions indexed before schema v11). */
+function coverageRow(a: {
+  sessions: number;
+  lines: number;
+  parseErrors: number;
+  unknownEvents: number;
+}): ParseCoverageSummary {
+  return { ...a, unparsedShare: a.lines > 0 ? (a.parseErrors + a.unknownEvents) / a.lines : 0 };
+}
+
+/**
+ * How much of the indexed session files this build of the parser understood,
+ * portfolio-wide and per Claude Code version (schema v11 columns).
+ *
+ * The format is undocumented and changes between releases, so a rising
+ * unparsed share on the newest version is the signal that this parser has
+ * fallen behind — see the `parse-coverage-drop` diagnostic.
+ *
+ * Version attribution is **best effort**: a session records every version it
+ * ran under (it can span an upgrade), and the whole session is attributed to
+ * the newest of them — the version most likely to have written the lines the
+ * parser choked on. Sessions with no recorded version contribute to the
+ * summary but to no version row (there is nothing to blame). Rows are sorted
+ * newest version first, so the first row is the one to judge the parser by.
+ */
+export function parseCoverage(db: Database): ParseCoverageStats {
+  const rows = db
+    .query(
+      `SELECT COALESCE(parse_lines, 0) AS lines,
+          COALESCE(parse_errors, 0) AS parseErrors,
+          COALESCE(unknown_events, 0) AS unknownEvents,
+          versions_json AS versions
+        FROM sessions`,
+    )
+    .all() as {
+    lines: number;
+    parseErrors: number;
+    unknownEvents: number;
+    versions: string | null;
+  }[];
+
+  const total = { sessions: 0, lines: 0, parseErrors: 0, unknownEvents: 0 };
+  const byVersion = new Map<string, typeof total>();
+  for (const r of rows) {
+    total.sessions += 1;
+    total.lines += r.lines;
+    total.parseErrors += r.parseErrors;
+    total.unknownEvents += r.unknownEvents;
+
+    let newest: string | undefined;
+    for (const v of parseJson<string[]>(r.versions, [])) {
+      if (!v) continue;
+      if (newest === undefined || compareVersions(v, newest) > 0) newest = v;
+    }
+    if (newest === undefined) continue;
+    const a = byVersion.get(newest) ?? { sessions: 0, lines: 0, parseErrors: 0, unknownEvents: 0 };
+    a.sessions += 1;
+    a.lines += r.lines;
+    a.parseErrors += r.parseErrors;
+    a.unknownEvents += r.unknownEvents;
+    byVersion.set(newest, a);
+  }
+
+  return {
+    summary: coverageRow(total),
+    byVersion: [...byVersion.entries()]
+      .map(([version, a]) => ({ version, ...coverageRow(a) }))
+      .sort((a, b) => compareVersions(b.version, a.version)),
+  };
 }
 
 /* ————————————————————————————————————————————————————————————————————————

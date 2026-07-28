@@ -2,6 +2,7 @@ import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
+  PARSE_COVERAGE_MAX_UNPARSED_SHARE,
   PORTFOLIO_DIAGNOSTIC_CODES,
   type PortfolioDiagnostic,
 } from "../core/portfolio-diagnostics.ts";
@@ -12,6 +13,7 @@ import type {
   BashCommandRow,
   CacheTtlSplit,
   ContextTax,
+  ParseCoverageSummary,
   PortfolioStats,
   RetryStats,
   TestRunSummary,
@@ -298,6 +300,24 @@ export function renderPortfolioInsights(
   }
 
   return lines.join("\n");
+}
+
+/**
+ * One line of portfolio parse coverage for the freshness surfaces
+ * (`cc-analyzer index --check`). Read straight off the indexed rows — no
+ * session file is re-parsed to produce it.
+ */
+export function renderParseCoverageLine(c: ParseCoverageSummary): string {
+  if (c.lines === 0) return "Parse coverage: no indexed lines yet.";
+  const clean = ((1 - c.unparsedShare) * 100).toFixed(1);
+  const tail =
+    c.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE
+      ? " — run `cc-analyzer update`; the session format may have moved ahead of this parser."
+      : "";
+  return (
+    `Parse coverage: ${clean}% of ${formatCount(c.lines)} indexed lines fully parsed ` +
+    `(${formatCount(c.parseErrors)} unreadable, ${formatCount(c.unknownEvents)} unknown events)${tail}`
+  );
 }
 
 /** The shared portfolio shape plus the CLI's terminal-only extras. */

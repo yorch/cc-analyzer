@@ -146,6 +146,85 @@ describe("parseSessionFile · streaming", () => {
   });
 });
 
+describe("parse coverage", () => {
+  const write = (name: string, content: string): string => {
+    const p = join(tmpdir(), `cc-analyzer-coverage-${process.pid}-${name}`);
+    writeFileSync(p, content);
+    return p;
+  };
+
+  // 3 clean lines, 1 malformed, 1 scalar, 1 unknown type, 1 drifted known type
+  // (an `assistant` line with no `message`), plus a blank line that must not
+  // count as content.
+  const MIXED = [
+    '{"type":"ai-title","sessionId":"s","aiTitle":"a"}',
+    '{"type":"ai-title","sessionId":"s","aiTitle":"b"}',
+    '{"type":"ai-title","sessionId":"s","aiTitle":"c"}',
+    "not json",
+    "42",
+    '{"type":"some-future-type","brandNewField":1}',
+    '{"type":"assistant","uuid":"a1"}',
+    "",
+  ].join("\n");
+
+  /** 7 non-empty lines: 2 lost outright, 2 kept as tolerant unknowns. */
+  const expected = { lines: 7, parseErrors: 2, unknownEvents: 2 };
+
+  test("parseSessionText counts lines, hard errors and tolerant unknowns", () => {
+    const { events, errors, coverage } = parseSessionText(MIXED);
+    expect(coverage).toEqual(expected);
+    // The drifted line survives as an event, so it is not "skipped" — but it is
+    // recorded as a ParseError too, which is why errors.length ≠ parseErrors.
+    expect(events).toHaveLength(5);
+    expect(errors).toHaveLength(3);
+  });
+
+  test("all three entry points agree on the same content", async () => {
+    const p = write("mixed.jsonl", `${MIXED}\n`);
+    try {
+      const file = await parseSessionFile(p);
+      const text = parseSessionText(MIXED);
+      let streamed: unknown;
+      const it = streamSessionEvents(p)[Symbol.asyncIterator]();
+      for (;;) {
+        const next = await it.next();
+        if (next.done) {
+          streamed = next.value;
+          break;
+        }
+      }
+      expect(file.coverage).toEqual(expected);
+      expect(text.coverage).toEqual(expected);
+      expect(streamed).toEqual(expected);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("an empty file has zero coverage, not a divide-by-zero", async () => {
+    const p = write("empty.jsonl", "");
+    try {
+      const { coverage } = await parseSessionFile(p);
+      expect(coverage).toEqual({ lines: 0, parseErrors: 0, unknownEvents: 0 });
+      expect(parseSessionText("").coverage).toEqual(coverage);
+      expect(parseSessionText("\n\n\n").coverage.lines).toBe(0);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("a fully understood file reports no unparsed lines", async () => {
+    const clean = '{"type":"ai-title","sessionId":"s","aiTitle":"a"}\n';
+    const p = write("clean.jsonl", clean.repeat(3));
+    try {
+      const { coverage } = await parseSessionFile(p);
+      expect(coverage).toEqual({ lines: 3, parseErrors: 0, unknownEvents: 0 });
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+});
+
 describe("streamSessionEvents", () => {
   const write = (name: string, content: string): string => {
     const p = join(tmpdir(), `cc-analyzer-stream-${process.pid}-${name}`);

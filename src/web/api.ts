@@ -32,6 +32,7 @@ import {
   idleVsCache,
   localDayOfMs,
   modelMixByDay,
+  parseCoverage,
   projectTrends,
   sessionScatter,
   sidechainByDay,
@@ -141,7 +142,8 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // one table scan via analyticsRollup instead of one per metric. The cost
   // optimization rollups (context tax, what-if repricing) ride along: they are
   // portfolio-wide aggregates on the same fingerprint, so memoizing them here
-  // costs one payload instead of two more round trips.
+  // costs one payload instead of two more round trips. Parse coverage rides
+  // along for the same reason — it is one more scan of the same rows.
   api.get("/api/analytics", (c) =>
     cachedJson(c, "analytics", fingerprint(), () => ({
       ...analyticsRollup(db),
@@ -150,6 +152,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       compactions: compactionUsage(db),
       contextTax: contextTax(db),
       whatIf: whatIfRepricing(db, pricing),
+      parseCoverage: parseCoverage(db),
     })),
   );
 
@@ -206,7 +209,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     if (!path) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
-    return c.json(analyzeSession(parsed.events, pricing));
+    return c.json(analyzeSession(parsed.events, pricing, { coverage: parsed.coverage }));
   });
 
   api.get("/api/sessions/:id/transcript", async (c) => {

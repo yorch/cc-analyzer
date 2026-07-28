@@ -222,9 +222,9 @@ view's Setup section. **No TUI screen** — the CLI and web cover it.
 portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
 `PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
 per-project waste, compactions, weekly error rate, context tax, what-if,
-optional setup audit) into ranked `PortfolioDiagnostic[]` findings — 12 named
-rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a threshold-rationale
-comment, warnings before infos and dollar-backed findings first within a
+optional setup audit, parse coverage) into ranked `PortfolioDiagnostic[]`
+findings — 13 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
+threshold-rationale comment, warnings before infos and dollar-backed findings first within a
 severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side
 `assemblePortfolioSignals(db, pricing, opts?)` in `portfolio-signals.ts`
@@ -285,14 +285,41 @@ name under `~/.claude/projects/`. `decodeProjectLabel()` is best-effort display 
 the authoritative project path comes from the session's `cwd` field, not by decoding
 the id. Never round-trip a real path through the encoded id.
 
-**The parser never throws.** `parser.ts` is tolerant: invalid JSON → recorded
-`ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
-tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
+**The parser never throws — and its tolerance is measured, not silent.**
+`parser.ts` is tolerant: invalid JSON → recorded `ParseError` and skipped; a
+known event type whose Zod schema drifted → kept as a tolerant "unknown" event
+so counts stay consistent. Event schemas live in `events.ts`.
 `parseSessionFile` streams the file line by line (sessions can be hundreds of MB);
 `parseSessionText` is the in-memory path; `streamSessionEvents` yields events one
 at a time for bulk consumers. All three share `parseLineOutcome` (per line) and
 `readLines` (byte streaming), so their behavior can't drift. (Only file I/O — e.g.
 a missing file — throws.)
+
+Because the JSONL format is undocumented and moves between Claude Code
+releases, that tolerance is **counted**: `countLine` folds every outcome into a
+`ParseCoverage` (`{ lines, parseErrors, unknownEvents }`, declared in
+`events.ts` so `analyze.ts` — and through it the SPA — can name the shape
+without pulling the Bun-only reader into the browser typecheck graph).
+`parseErrors` counts lines that produced **no** event; `unknownEvents` counts
+lines kept as tolerant unknowns — schema-drifted known types *and* unrecognized
+types in one counter, because they are one actionable signal. The array paths
+return it on `ParseResult`; `streamSessionEvents` returns it as the
+**generator's return value**, which `analyzeSessionStream` captures by driving
+the iterator by hand (a `for await` discards it) — so the streaming path stays
+constant-memory and no call site can forget to wire it. It lands on
+`SessionAnalysis.parseCoverage` (handed in via `AnalyzeOptions.coverage` on the
+array paths; the analyzer never sees unparseable lines), flattens to the
+`parse_lines` / `parse_errors` / `unknown_events` columns (**schema v11**), and
+rolls up in `parseCoverage()`: a portfolio summary plus per-Claude-Code-version
+rows sorted newest first, each with `unparsedShare = (parseErrors +
+unknownEvents) / lines`. Version attribution is best effort — a session is
+attributed to the newest version it ran under, and version-less sessions count
+only toward the summary. Surfaces: `cc-analyzer index --check` (one SQL scan —
+`--check` still parses nothing), the CLI `analyze` footer, `/api/analytics` →
+the web Tools → Environment section, and the `parse-coverage-drop` portfolio
+rule (warning when the newest version's `unparsedShare ≥ 1%` over ≥ 10k lines —
+judged per version, not per rolling window, because a format change ships with
+a release).
 
 **Tool results resolve in one pass.** `analyzeSession`/`analyzeSessionStream` don't
 pre-scan for `tool_result`s. A `tool_use` registers in a small `pending` map and is

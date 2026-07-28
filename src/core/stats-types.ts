@@ -626,6 +626,37 @@ export interface CompactionUsage {
   byProject: CompactionProjectRow[];
 }
 
+/* ——— Parse coverage ——————————————————————————————————————————————————
+ * How much of the indexed JSONL this build of the parser understood. The
+ * session format is undocumented and moves between Claude Code releases, and
+ * the parser is deliberately tolerant (invalid JSON is skipped, a drifted
+ * schema is kept as an "unknown" event) — this is what makes that tolerance
+ * visible instead of silent. Split by Claude Code version, because a format
+ * change lands with a version. */
+
+export interface ParseCoverageSummary {
+  /** Indexed sessions the counters were summed over. */
+  sessions: number;
+  lines: number;
+  /** Lines that produced no event at all (invalid JSON / non-object). */
+  parseErrors: number;
+  /** Lines kept only as tolerant "unknown" events (drifted or unknown type). */
+  unknownEvents: number;
+  /** (parseErrors + unknownEvents) / lines; 0 when no lines are indexed. */
+  unparsedShare: number;
+}
+
+export interface ParseCoverageVersionRow extends ParseCoverageSummary {
+  /** The Claude Code version the session is attributed to (best effort). */
+  version: string;
+}
+
+export interface ParseCoverageStats {
+  summary: ParseCoverageSummary;
+  /** Newest version first — the first row is the version to judge the parser by. */
+  byVersion: ParseCoverageVersionRow[];
+}
+
 /* ——— Context tax ————————————————————————————————————————————————————
  * What a session costs before the user types anything: the prompt-side tokens
  * of its first main-chain API call (system prompt + CLAUDE.md + MCP tool
