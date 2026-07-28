@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
+import type { PricingTable, TokenCounts } from "./pricing.ts";
+import { cacheTokens, computeCost, ioTokens, resolveModel, zeroTokens } from "./pricing.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -8,6 +10,8 @@ import type {
   CompactionProjectRow,
   CompactionUsage,
   ConcurrencySummary,
+  ContextTax,
+  ContextTaxRow,
   CostBucket,
   CostDistribution,
   DayRow,
@@ -38,6 +42,8 @@ import type {
   TurnDepthStats,
   WebToolsProjectRow,
   WebToolsSummary,
+  WhatIfRepricing,
+  WhatIfRow,
 } from "./stats-types.ts";
 import { bucketSeries, localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
 
@@ -169,42 +175,58 @@ interface JsonTokens {
   cacheReadTokens?: number;
 }
 
-/** Aggregate per-model spend across all sessions (models live in a JSON column). */
-export function spendByModel(db: Database, projectId?: string): ModelRow[] {
-  const rows = scopedAll<{ models_json: string }>(
+/** Per-model totals folded out of `models_json`: calls, indexed cost, and the
+ * full four-category token mix (what repricing needs). */
+interface ModelTotals {
+  calls: number;
+  cost: number;
+  tokens: TokenCounts;
+}
+
+/** Fold one row's `models_json` into per-model totals. Shared by `spendByModel`
+ * and `whatIfRepricing` so the two can never disagree about a model's mix. */
+function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | null): void {
+  const models = parseJson<
+    Record<string, { apiCalls?: number; cost?: { total?: number }; tokens?: JsonTokens }>
+  >(modelsJson, {});
+  for (const [model, usage] of Object.entries(models)) {
+    let m = acc.get(model);
+    if (!m) {
+      m = { calls: 0, cost: 0, tokens: zeroTokens() };
+      acc.set(model, m);
+    }
+    m.calls += usage.apiCalls ?? 0;
+    m.cost += usage.cost?.total ?? 0;
+    const t = usage.tokens ?? {};
+    m.tokens.inputTokens += t.inputTokens ?? 0;
+    m.tokens.outputTokens += t.outputTokens ?? 0;
+    m.tokens.cacheWrite5mTokens += t.cacheWrite5mTokens ?? 0;
+    m.tokens.cacheWrite1hTokens += t.cacheWrite1hTokens ?? 0;
+    m.tokens.cacheReadTokens += t.cacheReadTokens ?? 0;
+  }
+}
+
+/** Every model's totals across the (optionally project-scoped) index. */
+function modelTotals(db: Database, projectId?: string): Map<string, ModelTotals> {
+  const rows = scopedAll<{ models_json: string | null }>(
     db,
     `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
     projectId,
   );
-  const totals = new Map<string, { calls: number; cost: number; io: number; cache: number }>();
-  for (const row of rows) {
-    let models: Record<
-      string,
-      { apiCalls?: number; cost?: { total?: number }; tokens?: JsonTokens }
-    >;
-    try {
-      models = JSON.parse(row.models_json ?? "{}");
-    } catch {
-      continue;
-    }
-    for (const [model, usage] of Object.entries(models)) {
-      const acc = totals.get(model) ?? { calls: 0, cost: 0, io: 0, cache: 0 };
-      acc.calls += usage.apiCalls ?? 0;
-      acc.cost += usage.cost?.total ?? 0;
-      const t = usage.tokens ?? {};
-      acc.io += (t.inputTokens ?? 0) + (t.outputTokens ?? 0);
-      acc.cache +=
-        (t.cacheWrite5mTokens ?? 0) + (t.cacheWrite1hTokens ?? 0) + (t.cacheReadTokens ?? 0);
-      totals.set(model, acc);
-    }
-  }
-  return [...totals.entries()]
+  const acc = new Map<string, ModelTotals>();
+  for (const row of rows) addModelTotalsRow(acc, row.models_json);
+  return acc;
+}
+
+/** Aggregate per-model spend across all sessions (models live in a JSON column). */
+export function spendByModel(db: Database, projectId?: string): ModelRow[] {
+  return [...modelTotals(db, projectId).entries()]
     .map(([model, v]) => ({
       model,
       calls: v.calls,
       cost: v.cost,
-      ioTokens: v.io,
-      cacheTokens: v.cache,
+      ioTokens: ioTokens(v.tokens),
+      cacheTokens: cacheTokens(v.tokens),
     }))
     .sort((a, b) => b.cost - a.cost);
 }
@@ -1045,6 +1067,156 @@ export function errorRateByWeek(db: Database): ErrorWeekRow[] {
       errorRate: a.calls > 0 ? a.errors / a.calls : 0,
     }))
     .sort((a, b) => (a.week < b.week ? -1 : 1));
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+ * Context tax & what-if repricing
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/**
+ * The fixed context overhead each project's sessions pay before the user types
+ * anything, from the `first_prompt_tokens` baseline (schema v9): per project,
+ * the median / p90 / mean across its sessions, ranked by median.
+ *
+ * Percentiles, not a mean alone: one session opened with a giant paste (or a
+ * continuation session resuming from an inherited compaction summary) inflates
+ * the average, while the median still shows the recurring floor. Sessions with
+ * no main-chain API call carry no baseline and are excluded entirely — a NULL
+ * is "unknown", not zero.
+ */
+export function contextTax(db: Database, projectId?: string, limit = 30): ContextTax {
+  const rows = scopedAll<{ projectId: string; projectPath: string | null; tokens: number }>(
+    db,
+    `SELECT project_id AS projectId, project_path AS projectPath,
+        first_prompt_tokens AS tokens
+      FROM sessions
+      WHERE first_prompt_tokens IS NOT NULL ${projectScope(projectId)}`,
+    projectId,
+  );
+
+  const byProject = new Map<string, { path: string | null; values: number[] }>();
+  const all: number[] = [];
+  for (const r of rows) {
+    all.push(r.tokens);
+    let p = byProject.get(r.projectId);
+    if (!p) {
+      p = { path: r.projectPath, values: [] };
+      byProject.set(r.projectId, p);
+    }
+    // A project's rows can disagree on project_path (the encoded id is the
+    // stable key); first non-null wins, like the other per-project rollups.
+    p.path ??= r.projectPath;
+    p.values.push(r.tokens);
+  }
+  all.sort((a, b) => a - b);
+
+  const projects: ContextTaxRow[] = [...byProject.entries()].map(([id, p]) => {
+    const values = p.values.sort((a, b) => a - b);
+    const total = values.reduce((s, v) => s + v, 0);
+    return {
+      projectId: id,
+      projectPath: p.path,
+      sessions: values.length,
+      avgTokens: values.length ? total / values.length : 0,
+      medianTokens: percentile(values, 0.5),
+      p90Tokens: percentile(values, 0.9),
+    };
+  });
+  projects.sort((a, b) => b.medianTokens - a.medianTokens);
+
+  return {
+    summary: {
+      sessions: all.length,
+      medianTokens: percentile(all, 0.5),
+      p90Tokens: percentile(all, 0.9),
+    },
+    byProject: projects.slice(0, limit),
+  };
+}
+
+/**
+ * Alternatives to compare against when the portfolio itself doesn't contain at
+ * least two priceable models — one model per family, the newest of each present
+ * in the bundled pricing snapshot. Filtered at use to ids the live pricing
+ * table can actually resolve, so a snapshot that drifts ahead of (or behind)
+ * LiteLLM degrades to whatever does resolve instead of inventing a rate.
+ */
+export const FALLBACK_WHATIF_MODELS = ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"];
+
+/**
+ * Replay each model's ACTUAL token mix at the other models' rates — the
+ * "should I have routed this work somewhere cheaper?" signal.
+ *
+ * Alternatives are the other models the user actually ran (that's the realistic
+ * comparison set), falling back to `FALLBACK_WHATIF_MODELS` when fewer than two
+ * of their models can be priced. All four token categories and both cache-write
+ * TTLs are repriced through `computeCost`, so cache accounting — where most of
+ * the spend hides — is not silently dropped.
+ *
+ * Strictly a rate comparison, and the caveat must survive to every render site:
+ * a different model would produce a different number of tokens (and different
+ * output quality); neither is priced in here.
+ */
+export function whatIfRepricing(
+  db: Database,
+  pricing: PricingTable,
+  projectId?: string,
+): WhatIfRepricing {
+  // Only models the pricing table can resolve can be repriced at all; an
+  // unresolvable id would silently price at $0 and read as a huge saving.
+  const actual = [...modelTotals(db, projectId).entries()].filter(
+    ([model, v]) => v.calls > 0 && resolveModel(pricing, model) !== undefined,
+  );
+
+  const used = actual.map(([model]) => model);
+  const fallbackAlternatives = used.length < 2;
+  const candidates = fallbackAlternatives
+    ? FALLBACK_WHATIF_MODELS.filter((m) => resolveModel(pricing, m) !== undefined)
+    : used;
+
+  const rows: WhatIfRow[] = actual
+    .map(([model, v]) => ({
+      model,
+      calls: v.calls,
+      cost: v.cost,
+      alternatives: candidates
+        .filter((c) => c !== model)
+        .map((c) => {
+          const cost = computeCost(v.tokens, resolveModel(pricing, c)?.pricing).total;
+          return { model: c, cost, delta: cost - v.cost };
+        })
+        .sort((a, b) => a.cost - b.cost),
+    }))
+    .sort((a, b) => b.cost - a.cost);
+
+  // Headline: if EVERY repriced model's mix had run on one model, which is
+  // cheapest? A model's own rows keep their actual cost in its own total.
+  const actualCost = rows.reduce((s, r) => s + r.cost, 0);
+  let bestModel: string | null = null;
+  let bestCost = 0;
+  for (const c of candidates) {
+    const total = rows.reduce(
+      (s, r) =>
+        s + (r.model === c ? r.cost : (r.alternatives.find((a) => a.model === c)?.cost ?? 0)),
+      0,
+    );
+    if (bestModel === null || total < bestCost) {
+      bestModel = c;
+      bestCost = total;
+    }
+  }
+  if (rows.length === 0) bestModel = null;
+
+  return {
+    summary: {
+      actualCost,
+      bestModel,
+      bestCost: bestModel === null ? 0 : bestCost,
+      bestDelta: bestModel === null ? 0 : bestCost - actualCost,
+      fallbackAlternatives,
+    },
+    rows,
+  };
 }
 
 /* ————————————————————————————————————————————————————————————————————————

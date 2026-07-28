@@ -4,16 +4,23 @@ import { openDb } from "../core/db.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
+import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
+import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
+import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
+import { getCostBasis, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
-import { indexedProjectForPath } from "../core/queries.ts";
+import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
+import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
   buildPortfolioStats,
   cacheTtlSplit,
   concurrency,
+  contextTax,
   localDayOfMs,
+  whatIfRepricing,
 } from "../core/stats.ts";
 import {
   flushTelemetry,
@@ -26,7 +33,12 @@ import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
-import { renderSessionSummary, renderStats } from "./render.ts";
+import {
+  renderPortfolioInsights,
+  renderSessionSummary,
+  renderSetupAudit,
+  renderStats,
+} from "./render.ts";
 
 const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
 
@@ -40,6 +52,8 @@ Usage:
                                        Build, refresh, or check the session index
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
+  cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
+  cc-analyzer insights [--json]        Ranked, actionable findings across the whole portfolio
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
@@ -47,6 +61,8 @@ Usage:
   cc-analyzer version                  Print the version
   cc-analyzer telemetry <on|off|status>
                                        View or change anonymous usage telemetry
+  cc-analyzer cost-basis [api|subscription]
+                                       View or change how dollar figures are framed
   cc-analyzer help                     Show this help
 
 Notes:
@@ -56,6 +72,12 @@ Telemetry:
   cc-analyzer reports anonymous, cookieless usage stats (no session content,
   paths, or personal data). Opt out with CC_ANALYZER_TELEMETRY=0, DO_NOT_TRACK,
   or \`cc-analyzer telemetry off\`.
+
+Cost basis:
+  Dollar figures are always tokens × API rates. "api" (default) reads that as
+  a bill. "subscription" is for flat-plan (Pro/Max) users: the same numbers
+  are framed as API-equivalent value, not money owed. Set with
+  \`cc-analyzer cost-basis subscription\`.
 `;
 
 function cmdTelemetry(action: string | undefined): number {
@@ -75,6 +97,33 @@ function cmdTelemetry(action: string | undefined): number {
     }
     default:
       console.error("usage: cc-analyzer telemetry <on|off|status>");
+      return 2;
+  }
+}
+
+function cmdCostBasis(action: string | undefined): number {
+  switch (action) {
+    case "api":
+    case "subscription":
+      setCostBasis(action);
+      console.log(
+        action === "subscription"
+          ? "Cost basis set to subscription. Dollar figures will read as API-equivalent " +
+              "value, not a bill."
+          : "Cost basis set to api. Dollar figures read as billed cost.",
+      );
+      return 0;
+    case undefined: {
+      const basis = getCostBasis();
+      console.log(
+        basis === "subscription"
+          ? "Cost basis is subscription (dollar figures shown as API-equivalent value)."
+          : "Cost basis is api (dollar figures shown as billed cost).",
+      );
+      return 0;
+    }
+    default:
+      console.error("usage: cc-analyzer cost-basis [api|subscription]");
       return 2;
   }
 }
@@ -214,6 +263,9 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
   const analytics = analyticsRollup(db, projectId);
   // The CLI reports only the concurrency headline, not the per-day series.
   const { peak, parallelDayShare } = concurrency(db, projectId);
+  // What-if repricing needs live rates; `loadPricing` serves the cached table
+  // (bundled snapshot offline), the same one the index was priced with.
+  const { table: pricing } = await loadPricing();
   const scope = project
     ? {
         type: "project" as const,
@@ -221,6 +273,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
         projectPath: project.projectPath,
       }
     : { type: "portfolio" as const };
+  const costBasis = getCostBasis();
   const view = {
     scope,
     index: await inspectIndexStatus(db),
@@ -230,6 +283,9 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     tests: analytics.tests,
     retries: analytics.retries,
     concurrency: { peak, parallelDayShare },
+    contextTax: contextTax(db, projectId),
+    whatIf: whatIfRepricing(db, pricing, projectId),
+    costBasis,
   };
   db.close();
   console.log(
@@ -238,6 +294,64 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
       : renderStats(view, {
           color: process.stdout.isTTY && !process.env.NO_COLOR,
           projectPath: project?.projectPath,
+          costBasis,
+        }),
+  );
+  return 0;
+}
+
+/**
+ * Cross-reference the installed setup (skills, subagents, plugins, MCP servers,
+ * hooks, permission rules) with what the indexed sessions actually used.
+ *
+ * The inventory is read live off the Claude dir; usage comes from the index, so
+ * an empty index would report the whole setup as unused — refuse instead.
+ */
+function cmdAudit(json: boolean): number {
+  const db = openDb();
+  if (isIndexEmpty(db)) {
+    db.close();
+    console.error(
+      "Index is empty, so every installed skill and server would look unused. " +
+        "Run `cc-analyzer index` first.",
+    );
+    return 1;
+  }
+  const usage = analyticsRollup(db);
+  db.close();
+  const audit = buildSetupAudit(scanInventory(), usage, localDayOfMs(Date.now()));
+  console.log(
+    json
+      ? JSON.stringify(audit, null, 2)
+      : renderSetupAudit(audit, {
+          color: process.stdout.isTTY && !process.env.NO_COLOR,
+        }),
+  );
+  return 0;
+}
+
+/**
+ * Portfolio insights: every portfolio signal folded through the bun-free rules
+ * engine into ranked, explainable findings. Usage comes from the index; an
+ * empty index has no signals to diagnose — refuse, like `stats` and `audit`.
+ */
+async function cmdInsights(json: boolean): Promise<number> {
+  const db = openDb();
+  if (isIndexEmpty(db)) {
+    db.close();
+    console.error("Index is empty. Run `cc-analyzer index` first.");
+    return 1;
+  }
+  // The what-if signal needs live rates; `loadPricing` serves the cached table
+  // (bundled snapshot offline), the same one the index was priced with.
+  const { table: pricing } = await loadPricing();
+  const diagnostics = buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing));
+  db.close();
+  console.log(
+    json
+      ? JSON.stringify(diagnostics, null, 2)
+      : renderPortfolioInsights(diagnostics, {
+          color: process.stdout.isTTY && !process.env.NO_COLOR,
         }),
   );
   return 0;
@@ -292,7 +406,16 @@ async function cmdUpdate(checkOnly: boolean): Promise<number> {
 }
 
 /** Commands that emit a passive "update available" notice when appropriate. */
-const NOTIFY_COMMANDS = new Set(["projects", "sessions", "analyze", "index", "stats", "pricing"]);
+const NOTIFY_COMMANDS = new Set([
+  "projects",
+  "sessions",
+  "analyze",
+  "index",
+  "stats",
+  "audit",
+  "insights",
+  "pricing",
+]);
 
 async function runCommand(command: string | undefined, rest: string[]): Promise<number> {
   const json = rest.includes("--json");
@@ -306,6 +429,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "analyze",
     "index",
     "stats",
+    "audit",
+    "insights",
     "serve",
     "pricing",
     "update",
@@ -330,6 +455,10 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdIndex(rest.includes("--rebuild"), rest.includes("--check"));
     case "stats":
       return cmdStats(json, rest.includes("--current"));
+    case "audit":
+      return cmdAudit(json);
+    case "insights":
+      return cmdInsights(json);
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;
@@ -365,6 +494,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return 0;
     case "telemetry":
       return cmdTelemetry(positional[0]);
+    case "cost-basis":
+      return cmdCostBasis(positional[0]);
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
       return await runTui();

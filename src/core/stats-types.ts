@@ -608,6 +608,76 @@ export interface CompactionUsage {
   byProject: CompactionProjectRow[];
 }
 
+/* ——— Context tax ————————————————————————————————————————————————————
+ * What a session costs before the user types anything: the prompt-side tokens
+ * of its first main-chain API call (system prompt + CLAUDE.md + MCP tool
+ * schemas). Per project, because that overhead is a property of the project's
+ * configuration. A heuristic — see `SessionAnalysis.firstPromptTokens`. */
+
+export interface ContextTaxRow {
+  projectId: string;
+  projectPath: string | null;
+  /** Sessions carrying a baseline (a main-chain API call). */
+  sessions: number;
+  avgTokens: number;
+  medianTokens: number;
+  p90Tokens: number;
+}
+
+export interface ContextTaxSummary {
+  /** Sessions carrying a baseline, portfolio-wide. */
+  sessions: number;
+  medianTokens: number;
+  p90Tokens: number;
+}
+
+export interface ContextTax {
+  summary: ContextTaxSummary;
+  byProject: ContextTaxRow[];
+}
+
+/* ——— What-if model repricing ————————————————————————————————————————
+ * Each model's ACTUAL token mix, replayed at another model's rates. Strictly a
+ * rate comparison: a different model would have produced a different number of
+ * tokens (and different quality), neither of which is priced in here. Carry
+ * that caveat to every render site. */
+
+export interface WhatIfAlternative {
+  model: string;
+  /** The actual mix priced at this model's rates. */
+  cost: number;
+  /** cost − the actual cost; negative means the alternative is cheaper. */
+  delta: number;
+}
+
+export interface WhatIfRow {
+  model: string;
+  calls: number;
+  /** What this model's mix actually cost (as indexed). */
+  cost: number;
+  /** Cheapest alternative first. */
+  alternatives: WhatIfAlternative[];
+}
+
+export interface WhatIfSummary {
+  /** Σ actual cost over the models that could be repriced. */
+  actualCost: number;
+  /** The single model that would be cheapest if EVERY repriced model's mix ran
+   * on it. Null when there is nothing to compare against. */
+  bestModel: string | null;
+  bestCost: number;
+  /** bestCost − actualCost; negative means routing everything there is cheaper. */
+  bestDelta: number;
+  /** True when the alternatives came from the canonical fallback ladder rather
+   * than from models the user actually ran. */
+  fallbackAlternatives: boolean;
+}
+
+export interface WhatIfRepricing {
+  summary: WhatIfSummary;
+  rows: WhatIfRow[];
+}
+
 export interface ConcurrencyDayRow {
   day: string;
   maxConcurrent: number;

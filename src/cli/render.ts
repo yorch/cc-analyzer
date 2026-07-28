@@ -1,13 +1,21 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
+import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
+import {
+  PORTFOLIO_DIAGNOSTIC_CODES,
+  type PortfolioDiagnostic,
+} from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
+import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
 import type {
   BashCommandRow,
   CacheTtlSplit,
+  ContextTax,
   PortfolioStats,
   RetryStats,
   TestRunSummary,
+  WhatIfRepricing,
 } from "../core/stats.ts";
 import { topEntries } from "../core/stats-types.ts";
 import {
@@ -23,6 +31,9 @@ import {
 export interface RenderOptions {
   color?: boolean;
   projectPath?: string;
+  /** Display-only cost framing preference (`getCostBasis()`). Defaults to
+   *  "api" (dollars read as a bill) when omitted. */
+  costBasis?: CostBasis;
 }
 
 const ANSI = {
@@ -179,6 +190,108 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
   return lines.join("\n");
 }
 
+/**
+ * Render the setup audit: an inventory summary block, then the findings with
+ * warnings first. The audit compares live config against historical sessions,
+ * so the caveat line is part of the report, not decoration.
+ */
+export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {}): string {
+  const lines: string[] = [];
+  const c = audit.counts;
+  const inv = audit.inventory;
+
+  lines.push(reportTitle("cc-analyzer · setup audit", options));
+  lines.push(muted(`${inv.claudeDir}${inv.present ? "" : " (not found)"}`, options));
+
+  lines.push(`\n${section("Inventory", options)}`);
+  const mcpScope =
+    c.mcpServers > 0 ? ` (${c.mcpGlobal} global, ${c.mcpProject} project-scoped)` : "";
+  lines.push(
+    table(
+      ["item", "installed"],
+      [
+        ["skills", String(c.skills)],
+        ["subagents", String(c.agents)],
+        [
+          "plugins",
+          c.plugins > 0 ? `${c.plugins} (${inv.plugins.map((p) => p.name).join(", ")})` : "0",
+        ],
+        ["mcp servers", `${c.mcpServers}${mcpScope}`],
+        [
+          "hooks",
+          c.hooks > 0
+            ? `${c.hooks} across ${c.hookEvents} ${c.hookEvents === 1 ? "event" : "events"}`
+            : "0",
+        ],
+        [
+          "permission rules",
+          `${c.permissionAllow} allow · ${c.permissionDeny} deny · ${c.permissionAsk} ask`,
+        ],
+        ["model", inv.model ?? "(not pinned)"],
+      ],
+    ),
+  );
+
+  lines.push(`\n${section("Findings", options)}`);
+  if (audit.findings.length === 0) {
+    lines.push(
+      healthy("Everything installed is in use, and nothing crossed a threshold.", options),
+    );
+  } else {
+    for (const finding of audit.findings) {
+      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
+      lines.push(`  ${finding.evidence}`);
+      lines.push(muted(`  Next: ${finding.action}`, options));
+    }
+  }
+
+  lines.push(`\n${muted(SETUP_AUDIT_CAVEAT, options)}`);
+  return lines.join("\n");
+}
+
+/**
+ * Render the portfolio insights: ranked findings from the bun-free rules
+ * engine, warnings first, each with its observed evidence and next action —
+ * the portfolio-wide sibling of the per-session "Actionable diagnostics".
+ */
+export function renderPortfolioInsights(
+  diagnostics: PortfolioDiagnostic[],
+  options: RenderOptions = {},
+): string {
+  const lines: string[] = [];
+  const ruleCount = PORTFOLIO_DIAGNOSTIC_CODES.length;
+
+  lines.push(reportTitle("cc-analyzer · portfolio insights", options));
+  lines.push(muted("Named heuristics over the whole indexed portfolio — not a score.", options));
+
+  lines.push(`\n${section("Findings", options)}`);
+  if (diagnostics.length === 0) {
+    lines.push(
+      healthy(
+        `No findings — the portfolio looks healthy by every rule (${ruleCount} rules checked).`,
+        options,
+      ),
+    );
+  } else {
+    for (const diagnostic of diagnostics) {
+      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
+      lines.push(`  ${diagnostic.evidence}`);
+      const project = diagnostic.projectPath ?? diagnostic.projectId;
+      if (project) lines.push(muted(`  Project: ${project}`, options));
+      lines.push(muted(`  Next: ${diagnostic.action}`, options));
+    }
+    lines.push(
+      muted(
+        `\n${diagnostics.length} of ${ruleCount} rules fired. Drill into sessions with ` +
+          "`cc-analyzer analyze <id>` or the web app (`cc-analyzer serve`).",
+        options,
+      ),
+    );
+  }
+
+  return lines.join("\n");
+}
+
 /** The shared portfolio shape plus the CLI's terminal-only extras. */
 export interface PortfolioView extends PortfolioStats {
   index: IndexStatus;
@@ -187,6 +300,9 @@ export interface PortfolioView extends PortfolioStats {
   tests: TestRunSummary;
   retries: RetryStats;
   concurrency: { peak: number; parallelDayShare: number };
+  contextTax: ContextTax;
+  whatIf: WhatIfRepricing;
+  costBasis: CostBasis;
 }
 
 /** Render portfolio-wide or project-scoped analytics as a text report. */
@@ -202,6 +318,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   const sc = v.sidechain;
   const ioTokens = s.inputTokens + s.outputTokens;
   const cacheTokens = s.cacheWriteTokens + s.cacheReadTokens;
+  const costBasis = options.costBasis ?? "api";
   lines.push(
     reportTitle(
       options.projectPath ? `cc-analyzer · ${options.projectPath}` : "cc-analyzer · portfolio",
@@ -214,7 +331,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     ? `· ${sessionCount} · ${range}`
     : `· ${sessionCount} · ${projectCount} · ${range}`;
   lines.push(
-    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total spend`)}  ` +
+    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total, est. cost (API rates)`)}  ` +
       muted(scopeSummary, options),
   );
   lines.push(
@@ -237,6 +354,8 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         )
       : muted(`Index refreshed ${refreshed}`, options),
   );
+  const framingNote = costFramingNote(costBasis);
+  if (framingNote) lines.push(muted(framingNote, options));
 
   lines.push(`\n${section("Activity", options)}`);
   lines.push(
@@ -273,7 +392,8 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         ],
         [
           `run rate (${rr.month})`,
-          `${formatUSD(rr.monthToDate)} to date → ~${formatUSD(rr.projected)} projected (prev month ${formatUSD(rr.prevMonthTotal)})`,
+          `${formatUSD(rr.monthToDate)} to date → ~${formatUSD(rr.projected)} projected ` +
+            `${costNoun(costBasis)} (prev month ${formatUSD(rr.prevMonthTotal)})`,
         ],
       ],
     ),
@@ -376,6 +496,84 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
           formatTokens(m.ioTokens, m.cacheTokens),
         ]),
         { align: ["left", "right", "right", "right"] },
+      ),
+    );
+  }
+
+  if (v.whatIf.rows.length && v.whatIf.rows.some((r) => r.alternatives.length)) {
+    const w = v.whatIf;
+    lines.push(`\n${section("What-if · same tokens, other model's rates", options)}`);
+    lines.push(
+      table(
+        ["model", "alternative", "repriced", "delta"],
+        w.rows.flatMap((r) =>
+          r.alternatives.map((a) => [
+            r.model,
+            a.model,
+            formatUSD(a.cost),
+            `${a.delta < 0 ? "-" : "+"}${formatUSD(Math.abs(a.delta))}`,
+          ]),
+        ),
+        { align: ["left", "left", "right", "right"] },
+      ),
+    );
+    if (w.summary.bestModel && w.summary.bestDelta < 0) {
+      lines.push(
+        muted(
+          `All of it on ${w.summary.bestModel}: ${formatUSD(w.summary.bestCost)} vs ` +
+            `${formatUSD(w.summary.actualCost)} actual (${formatUSD(-w.summary.bestDelta)} lower).`,
+          options,
+        ),
+      );
+    }
+    if (w.summary.fallbackAlternatives) {
+      lines.push(
+        muted(
+          "Fewer than two priceable models used — compared against one model per family.",
+          options,
+        ),
+      );
+    }
+    lines.push(
+      muted(
+        "Your actual token mix at other rates. A different model would produce different " +
+          "tokens, and quality is not priced in.",
+        options,
+      ),
+    );
+  }
+
+  if (v.contextTax.summary.sessions > 0) {
+    const ct = v.contextTax;
+    lines.push(`\n${section("Context tax · tokens before you type", options)}`);
+    lines.push(
+      table(
+        ["median", "p90", "avg", "sessions", "project"],
+        ct.byProject
+          .slice(0, 10)
+          .map((p) => [
+            formatCount(Math.round(p.medianTokens)),
+            formatCount(Math.round(p.p90Tokens)),
+            formatCount(Math.round(p.avgTokens)),
+            String(p.sessions),
+            truncate(p.projectPath ?? p.projectId, 44),
+          ]),
+        { align: ["right", "right", "right", "right", "left"] },
+      ),
+    );
+    lines.push(
+      muted(
+        `Portfolio median ${formatCount(Math.round(ct.summary.medianTokens))} · ` +
+          `p90 ${formatCount(Math.round(ct.summary.p90Tokens))} over ${ct.summary.sessions} ` +
+          `${ct.summary.sessions === 1 ? "session" : "sessions"}. ` +
+          "First main-chain call's prompt side: system prompt + CLAUDE.md + MCP tool schemas.",
+        options,
+      ),
+    );
+    lines.push(
+      muted(
+        "Heuristic: continuation sessions and big opening pastes inflate it — read the median.",
+        options,
       ),
     );
   }

@@ -1,10 +1,15 @@
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  type ContextTax,
   cacheVerdict,
+  costFramingNote,
   type IdleCacheBucket,
+  PORTFOLIO_DIAGNOSTIC_CODES,
+  type PortfolioDiagnostic,
   type ProjectCacheRow,
   type SessionCacheRow,
+  type WhatIfRepricing,
 } from "../api.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
@@ -29,6 +34,10 @@ const PROJECT_SORT: Accessors<ProjectCacheRow> = {
 
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), []);
+  // Cost basis lives on `/api/stats`, not `/api/insights` — a second, cheap
+  // (memoized server-side) fetch just to frame the dollar tables below.
+  const costBasis = useAsync(() => api.stats(), []).data?.costBasis;
+  const framingNote = costBasis ? costFramingNote(costBasis) : undefined;
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data?.projects ?? [];
@@ -48,11 +57,16 @@ export function Insights() {
   return (
     <>
       <header className="top">
-        <h1>Cache efficiency</h1>
+        <h1>Insights</h1>
         <span className="muted">
           {usd(s.writeCost)} written · {usd(s.waste)} un-amortized · {wastePct}% of spend
         </span>
       </header>
+      {framingNote && <p className="muted">{framingNote}</p>}
+
+      <PortfolioInsights diagnostics={data.diagnostics} />
+
+      <h2 className="section-h">Cache efficiency</h2>
       <p className="muted">
         Projects ranked by cache-write $ that wasn't read back — writes you paid a premium for but
         didn't reuse. A high read:write ratio means the writes amortized.
@@ -111,7 +125,185 @@ export function Insights() {
         </table>
       </div>
       {rows.length === 0 && <EmptyNotice>No cache-active projects match this filter.</EmptyNotice>}
+
+      <CostOptimization />
     </>
+  );
+}
+
+/** Ranked portfolio findings from the bun-free rules engine — the "coach"
+ * section: warnings first, each with observed evidence and a next action.
+ * Project-scoped findings link to their project page. */
+function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[] }) {
+  return (
+    <section>
+      <h2 className="section-h">Portfolio insights · what to do differently</h2>
+      <p className="muted">
+        Named heuristics folded over every portfolio signal — cache, compactions, context tax,
+        repricing, errors, and your setup. Not a score: every finding shows its evidence and a
+        suggested next step.
+      </p>
+      {diagnostics.length === 0 ? (
+        <p className="muted">
+          No findings — the portfolio looks healthy by every rule (
+          {PORTFOLIO_DIAGNOSTIC_CODES.length} rules checked).
+        </p>
+      ) : (
+        <div className="diagnostic-list">
+          {diagnostics.map((d) => (
+            <article
+              className={`diagnostic diagnostic-${d.severity}`}
+              key={`${d.code}:${d.projectId ?? ""}`}
+            >
+              <h3>{d.title}</h3>
+              <p>{d.evidence}</p>
+              {d.projectId && (
+                <p>
+                  <a href={link.project(d.projectId)}>{d.projectPath ?? d.projectId}</a>
+                </p>
+              )}
+              <p className="muted">
+                <strong>Next:</strong> {d.action}
+              </p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Context tax + what-if repricing, from `/api/analytics`. Fetched separately
+ * from the cache data so a slow (or failing) analytics scan never blocks the
+ * cache hit-list this page is primarily about. */
+function CostOptimization() {
+  const { data } = useAsync(() => api.analytics(), []);
+  if (!data) return null;
+  return (
+    <>
+      <ContextTaxPanel tax={data.contextTax} />
+      <WhatIfPanel whatIf={data.whatIf} />
+    </>
+  );
+}
+
+/** The tokens every session in a project pays for before the user types. */
+function ContextTaxPanel({ tax }: { tax: ContextTax }) {
+  if (tax.summary.sessions === 0) return null;
+  return (
+    <section>
+      <h2 className="section-h">Context tax · what a session costs before you type</h2>
+      <p className="muted">
+        Prompt-side tokens of each session's first main-chain API call — the system prompt, your
+        CLAUDE.md, and every MCP tool schema, loaded before your first word. Portfolio median{" "}
+        <strong>{count(Math.round(tax.summary.medianTokens))}</strong> · p90{" "}
+        <strong>{count(Math.round(tax.summary.p90Tokens))}</strong> tokens across{" "}
+        {count(tax.summary.sessions)} {tax.summary.sessions === 1 ? "session" : "sessions"}.
+      </p>
+      <p className="muted">
+        A heuristic baseline, not a measurement: a continuation session (resumed from a compaction
+        summary) or one opened with a large paste inflates its own number, so read the median as the
+        recurring floor and p90 as the bad case.
+      </p>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="num">Median</th>
+              <th className="num">p90</th>
+              <th className="num">Average</th>
+              <th className="num">Sessions</th>
+              <th>Project</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tax.byProject.map((p) => (
+              <tr key={p.projectId}>
+                <td className="num">{count(Math.round(p.medianTokens))}</td>
+                <td className="num">{count(Math.round(p.p90Tokens))}</td>
+                <td className="num">{count(Math.round(p.avgTokens))}</td>
+                <td className="num">{p.sessions}</td>
+                <td>
+                  <a href={link.project(p.projectId)}>{p.projectPath ?? p.projectId}</a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** Each model's actual token mix replayed at the other models' rates. */
+function WhatIfPanel({ whatIf }: { whatIf: WhatIfRepricing }) {
+  if (whatIf.rows.length === 0) return null;
+  const s = whatIf.summary;
+  return (
+    <section>
+      <h2 className="section-h">What-if · the same tokens at another model's rates</h2>
+      <p className="muted">
+        Every model's actual token mix — input, output, both cache-write TTLs, and cache-read —
+        priced at the rates of{" "}
+        {s.fallbackAlternatives
+          ? "a canonical model per family"
+          : "the other models you actually ran"}
+        .
+        {s.bestModel && s.bestDelta < 0 && (
+          <>
+            {" "}
+            Running all of it on <strong>{s.bestModel}</strong> would have priced out at{" "}
+            <strong>{usd(s.bestCost)}</strong> instead of {usd(s.actualCost)} —{" "}
+            <strong>{usd(-s.bestDelta)}</strong> lower.
+          </>
+        )}
+      </p>
+      <p className="insight-callout">
+        <strong>Caveat:</strong> these are your actual token counts replayed at other models' rates.
+        A different model would produce a different number of tokens — usually more of them on a
+        smaller model — and quality is not priced in at all. Treat it as a rate comparison, not a
+        forecast.
+      </p>
+      {s.fallbackAlternatives && (
+        <p className="muted">
+          You've run fewer than two priceable models, so the comparison uses a canonical model per
+          family rather than your own mix.
+        </p>
+      )}
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th className="num">Calls</th>
+              <th className="num">Actual $</th>
+              <th>Repriced at</th>
+            </tr>
+          </thead>
+          <tbody>
+            {whatIf.rows.map((r) => (
+              <tr key={r.model}>
+                <td>{r.model}</td>
+                <td className="num">{count(r.calls)}</td>
+                <td className="num">{usd(r.cost)}</td>
+                <td>
+                  {r.alternatives.map((a) => (
+                    <div key={a.model}>
+                      {a.model}: {usd(a.cost)}{" "}
+                      <span className={a.delta < 0 ? "delta-down" : "delta-up"}>
+                        {a.delta < 0 ? "−" : "+"}
+                        {usd(Math.abs(a.delta))}
+                      </span>
+                    </div>
+                  ))}
+                  {r.alternatives.length === 0 && <span className="muted">no alternatives</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

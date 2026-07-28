@@ -40,6 +40,7 @@ export interface SessionRow {
   prompt_chars: number;
   retries: number;
   compactions: number;
+  first_prompt_tokens: number | null;
   models_json: string;
   tools_json: string;
   tool_errors_json: string;
@@ -115,6 +116,9 @@ export function toSessionRow(
     retries: analysis.retries,
     // Own main-chain compactions only — the countable rollup signal.
     compactions: analysis.compactions.filter((c) => !c.isSidechain && !c.inherited).length,
+    // Null (not 0) when the session made no main-chain API call — there is no
+    // baseline to report, and 0 would drag every percentile down.
+    first_prompt_tokens: analysis.firstPromptTokens ?? null,
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
     tool_errors_json: JSON.stringify(analysis.toolErrors),
@@ -170,6 +174,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "prompt_chars",
   "retries",
   "compactions",
+  "first_prompt_tokens",
   "models_json",
   "tools_json",
   "tool_errors_json",

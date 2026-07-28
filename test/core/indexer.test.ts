@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
-import { portfolioSummary, spendByModel, spendByProject } from "../../src/core/stats.ts";
+import {
+  contextTax,
+  portfolioSummary,
+  spendByModel,
+  spendByProject,
+} from "../../src/core/stats.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
@@ -121,6 +126,69 @@ describe("reindex · compactions (schema v7)", () => {
     expect(detail.filter((c) => c.isSidechain)).toHaveLength(1);
     db.close();
     rmSync(file, { force: true });
+  });
+});
+
+describe("reindex · context tax (schema v9)", () => {
+  test("round-trips the first main-chain call's prompt tokens, NULL without one", async () => {
+    const call = (uuid: string, sidechain: boolean, input: number, cacheRead: number) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid,
+        isSidechain: sidechain,
+        sessionId: "sess-tax",
+        timestamp: "2026-07-02T10:00:00.000Z",
+        requestId: `req-${uuid}`,
+        message: {
+          id: `m-${uuid}`,
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "ok" }],
+          usage: {
+            input_tokens: input,
+            output_tokens: 10,
+            cache_read_input_tokens: cacheRead,
+            cache_creation: { ephemeral_5m_input_tokens: 500, ephemeral_1h_input_tokens: 0 },
+          },
+        },
+      });
+    const withCall = join(claude.dir, "projects", "proj-b", "sess-tax.jsonl");
+    // Subagent call first: it must not become the baseline.
+    writeFileSync(
+      withCall,
+      [call("s1", true, 999_999, 0), call("a1", false, 100, 8400)].join("\n"),
+    );
+    // A session that never reached the model at all.
+    const noCall = join(claude.dir, "projects", "proj-b", "sess-notax.jsonl");
+    writeFileSync(
+      noCall,
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        sessionId: "sess-notax",
+        timestamp: "2026-07-02T10:00:00.000Z",
+        message: { role: "user", content: "hi" },
+      }),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const rows = db
+      .query(
+        `SELECT session_id, first_prompt_tokens FROM sessions
+          WHERE session_id IN ('sess-tax', 'sess-notax')`,
+      )
+      .all() as { session_id: string; first_prompt_tokens: number | null }[];
+    const byId = new Map(rows.map((r) => [r.session_id, r.first_prompt_tokens]));
+    // 100 input + 8400 cache-read + 500 cache-write 5m; the sidechain is skipped.
+    expect(byId.get("sess-tax")).toBe(9000);
+    expect(byId.get("sess-notax")).toBeNull();
+
+    // …and the column is what contextTax reads.
+    expect(contextTax(db, "proj-b").summary.sessions).toBeGreaterThan(0);
+    db.close();
+    rmSync(withCall, { force: true });
+    rmSync(noCall, { force: true });
   });
 });
 

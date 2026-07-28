@@ -765,6 +765,14 @@ th.num {
 .rate-mid {
   color: var(--signal);
 }
+/* What-if repricing deltas: an alternative that would have cost less reads as
+   the positive signal (teal), one that would have cost more as the warning. */
+.delta-down {
+  color: var(--teal);
+}
+.delta-up {
+  color: var(--red);
+}
 .est {
   color: var(--signal);
 }

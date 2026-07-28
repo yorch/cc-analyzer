@@ -5,6 +5,8 @@ import {
   type BashCommandRow,
   type CompactionUsage,
   type NameUsageRow,
+  SETUP_AUDIT_CAVEAT,
+  type SetupAudit,
   type SkillUsageRow,
   type ToolUsageRow,
   type TurnDepthStats,
@@ -322,6 +324,90 @@ function Compactions({ data }: { data: CompactionUsage }) {
   );
 }
 
+/** Inventory counts + findings from `/api/audit`. Fetched on its own so the
+ * filesystem scan never blocks the usage analytics the rest of this page shows. */
+function SetupAuditPanel({ query }: { query: string }) {
+  const { data, error, loading } = useAsync(() => api.audit(), []);
+  if (loading) return <LoadingNotice>Scanning your setup…</LoadingNotice>;
+  if (error || !data) return <p className="muted">Couldn’t load the setup audit.</p>;
+  return <SetupAuditBody audit={data} query={query} />;
+}
+
+function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) {
+  const c = audit.counts;
+  const inv = audit.inventory;
+  const q = query.trim().toLowerCase();
+  const findings = q
+    ? audit.findings.filter((f) => `${f.subject} ${f.code} ${f.title}`.toLowerCase().includes(q))
+    : audit.findings;
+  return (
+    <>
+      <h2 className="section-h">Setup audit · what’s installed vs what you use</h2>
+      <p className="muted">
+        Installed under <code>{inv.claudeDir}</code>
+        {inv.present ? "" : " (not found)"}
+        {inv.model ? ` · model pinned to ${inv.model}` : ""}
+      </p>
+      <div className="cards compact-cards">
+        <div className="card">
+          <div className="label">Skills</div>
+          <div className="value">{count(c.skills)}</div>
+        </div>
+        <div className="card">
+          <div className="label">Subagents</div>
+          <div className="value">{count(c.agents)}</div>
+        </div>
+        <div className="card">
+          <div className="label">Plugins</div>
+          <div className="value">{count(c.plugins)}</div>
+        </div>
+        <div className="card">
+          <div className="label">MCP Servers</div>
+          <div className="value">{count(c.mcpServers)}</div>
+        </div>
+        <div className="card">
+          <div className="label">Hooks</div>
+          <div className="value">{count(c.hooks)}</div>
+        </div>
+        <div className="card">
+          <div className="label">Permission Rules</div>
+          <div className="value">
+            {count(c.permissionAllow + c.permissionDeny + c.permissionAsk)}
+          </div>
+        </div>
+      </div>
+      <p className="muted">
+        {c.mcpGlobal} global · {c.mcpProject} project-scoped MCP servers · hooks on {c.hookEvents}{" "}
+        {c.hookEvents === 1 ? "event" : "events"} · {c.permissionAllow} allow / {c.permissionDeny}{" "}
+        deny / {c.permissionAsk} ask
+      </p>
+      {findings.length === 0 ? (
+        <p className="muted">
+          {audit.findings.length === 0
+            ? "Everything installed is in use, and nothing crossed a threshold."
+            : "No findings match this filter."}
+        </p>
+      ) : (
+        <div className="diagnostic-list">
+          {findings.map((f) => (
+            <article
+              className={`diagnostic diagnostic-${f.severity}`}
+              key={`${f.code}:${f.subject}`}
+            >
+              <h3>{f.title}</h3>
+              <p>{f.evidence}</p>
+              <p className="muted">
+                <strong>Next:</strong> {f.action}
+              </p>
+            </article>
+          ))}
+        </div>
+      )}
+      <p className="muted spark-cap">{SETUP_AUDIT_CAVEAT}</p>
+    </>
+  );
+}
+
 function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
@@ -367,6 +453,7 @@ export function Tools() {
     "compactions",
     "skills",
     "agents",
+    "setup",
     "environment",
   ] as const;
   type ToolView = (typeof toolViews)[number];
@@ -483,6 +570,12 @@ export function Tools() {
               />
             </>
           )}
+        </ViewPanel>
+      )}
+
+      {view === "setup" && (
+        <ViewPanel id="analytics" view={view}>
+          <SetupAuditPanel query={query} />
         </ViewPanel>
       )}
 

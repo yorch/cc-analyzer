@@ -25,6 +25,13 @@ separately, which is where most of the real spend hides.
 The tool is **read-only**: it never writes to `~/.claude`. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.
 
+**Cost basis.** Every dollar figure is always computed the same way — tokens ×
+API rates. If you're on a flat-plan subscription (Pro/Max) rather than
+pay-as-you-go API billing, those numbers are API-equivalent *value*, not a
+bill. Run `cc-analyzer cost-basis subscription` to frame them that way across
+the CLI, TUI, and web app (`cc-analyzer cost-basis` shows the current setting;
+`api` is the default).
+
 ## Install
 
 ### One-line install (recommended)
@@ -127,11 +134,15 @@ cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
+cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
+cc-analyzer insights [--json]        # ranked, actionable findings across the whole portfolio
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
+cc-analyzer cost-basis [api|subscription]
+                                     # view or change how dollar figures are framed
 ```
 
 The CLI checks for a newer release at most once a day and prints a one-line
@@ -223,7 +234,16 @@ metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, and the most expensive sessions. Human-readable reports
+month/project/model, and the most expensive sessions. Two cost-optimization
+sections round it out: **what-if model repricing** replays each model's actual
+token mix — all four categories, both cache-write TTLs — at the rates of the
+other models you ran, and **context tax** reports the median/p90 tokens each
+project's sessions pay before you type anything (system prompt + CLAUDE.md +
+MCP tool schemas, taken from the first main-chain API call). Both are
+heuristics: repricing is a rate comparison only — a different model would
+produce different tokens, and quality is not priced in — and the context-tax
+baseline is inflated by continuation sessions and large opening pastes, so read
+the median rather than any single session. Human-readable reports
 use a compact headline, grouped activity/reliability sections, and aligned
 numeric tables; terminals receive restrained color while pipes, redirects,
 `NO_COLOR`, and `--json` stay automation-safe. JSON reports include a
@@ -234,6 +254,39 @@ Run `cc-analyzer stats --current` from a project—or any directory beneath
 it—to scope every metric to that project's indexed sessions. Project matching
 uses the authoritative session `cwd`; if it is missing from the cache, refresh
 it with `cc-analyzer index`.
+
+### Setup audit
+
+`cc-analyzer audit` reads your *setup* — skills, subagents, plugins, MCP
+servers, hooks, and permission rules under `~/.claude` (plus the `~/.claude.json`
+MCP config) — and cross-references it with what the indexed sessions actually
+used. It reports an inventory summary and findings such as an **unused MCP
+server** (a warning: its tool schemas are re-sent to the model every turn, so an
+unused one is pure context tax), an **unused skill or subagent**, an
+**error-prone skill** (≥25% errors over ≥5 invocations), a **stale skill**
+(unused for 30+ days), and skills or subagents that sessions used but that are
+no longer installed. The scan is read-only and tolerant: a missing or malformed
+config file is skipped, never fatal. Findings are machine-local and historical —
+the index can cover sessions that predate the current setup, and project-scoped
+skills, subagents, and MCP servers live outside the Claude config dir — so treat
+them as prompts to look, not verdicts. The same audit is served at `/api/audit`
+and rendered on the web app's Tools view.
+
+### Portfolio insights
+
+`cc-analyzer insights` is the portfolio-wide counterpart of the per-session
+"actionable diagnostics": a bun-free rules engine folds every portfolio signal —
+cache efficiency, compaction pressure, context tax, what-if repricing, retry
+churn, weekly error trend, spend concentration, pricing confidence, the setup
+audit, and subagent balance — into a ranked list of explainable findings.
+Warnings rank before infos, and dollar-backed findings rank first within a
+severity. These are deliberately named heuristics with conservative,
+documented thresholds — **not a score**: every finding shows the observed
+numbers as evidence and suggests a concrete next action (e.g. "batch related
+work so the 5-minute cache TTL amortizes", "trim that project's CLAUDE.md").
+The same findings appear at the top of the web app's Insights page (via
+`/api/insights`) and as a compact list in the TUI insights view. The full rule
+table with thresholds lives in the wiki's Analytics & Insights page.
 
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run
@@ -248,7 +301,11 @@ tools), and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
-drills into the leakiest sessions. The **trends** view is a two-panel
+drills into the leakiest sessions; its header opens with a compact list of the
+top **portfolio insight** findings (severity glyph + title — the full evidence
+lives in `cc-analyzer insights`) and also carries the portfolio
+**context tax** (median/p90 tokens spent before you type) and the cheapest
+single model your token mix could have run on. The **trends** view is a two-panel
 time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
 time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
@@ -286,9 +343,14 @@ hosts. The server listens on loopback only (`127.0.0.1`) and rejects non-local `
 headers, since sessions contain full conversation transcripts; pass
 `--host=0.0.0.0` only if you deliberately want to expose it to your network.
 The UI ships a portfolio dashboard, project drill-down, a per-session view, an
-**Insights** page — the same cache-efficiency hit-list as the TUI (projects
-ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions) — a **Trends** page with 30-day, peak-spend, and
+**Insights** page — opening with the ranked **portfolio insight** findings
+(warnings first, each with evidence, a next action, and a project link when the
+signal is project-scoped), followed by the same cache-efficiency hit-list as
+the TUI (projects ranked by un-amortized cache-write spend, with a read:write
+verdict, drilling into the leakiest sessions), plus the **context tax** per
+project and the **what-if model repricing** table, each carrying its caveat
+inline — a
+**Trends** page with 30-day, peak-spend, and
 error-rate headlines plus burn, calendar, model-mix, activity, scatter,
 reliability, subagent, and concurrency charts — and a **Tools** page organized
 into Tools, Reliability, Compactions, Skills, Agents, and Environment views.

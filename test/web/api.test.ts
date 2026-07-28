@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
+import { setCostBasis } from "../../src/core/prefs.ts";
 import { createApi } from "../../src/web/api.ts";
 import { createApp, isLoopbackHost } from "../../src/web/server.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
@@ -20,6 +21,13 @@ beforeAll(async () => {
   const content = await Bun.file(fixture).text();
   mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
   writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), content);
+  // A minimal installed setup so /api/audit has something to cross-reference.
+  mkdirSync(join(claude.dir, "skills", "tidy"), { recursive: true });
+  writeFileSync(join(claude.dir, "skills", "tidy", "SKILL.md"), "# tidy\n");
+  writeFileSync(
+    `${claude.dir}.json`,
+    JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
+  );
   db = openDb(":memory:");
   await reindex(db, { pricing });
   api = createApi(db, pricing);
@@ -27,6 +35,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   db.close();
+  rmSync(`${claude.dir}.json`, { force: true });
   claude.cleanup();
 });
 
@@ -37,6 +46,25 @@ describe("web API", () => {
     const body = (await res.json()) as { summary: { sessions: number }; byModel: unknown[] };
     expect(body.summary.sessions).toBe(1);
     expect(body.byModel.length).toBeGreaterThan(0);
+  });
+
+  test("GET /api/stats carries the cost-basis preference, read fresh each request", async () => {
+    const prevStateDir = process.env.CC_ANALYZER_STATE_DIR;
+    const stateDir = `${claude.dir}-state`;
+    mkdirSync(stateDir, { recursive: true });
+    process.env.CC_ANALYZER_STATE_DIR = stateDir;
+    try {
+      const before = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(before.costBasis).toBe("api");
+
+      setCostBasis("subscription");
+      const after = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(after.costBasis).toBe("subscription");
+    } finally {
+      if (prevStateDir === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prevStateDir;
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   test("GET /api/index-status reports exact source freshness", async () => {
@@ -107,6 +135,22 @@ describe("web API", () => {
     expect(body.projects[0]?.projectId).toBe("proj-a");
     // fixture: 1000 written, 9000 read → ratio 9, well amortized
     expect(body.projects[0]?.ratio).toBeCloseTo(9, 5);
+  });
+
+  test("GET /api/insights carries the ranked portfolio diagnostics", async () => {
+    const res = await api.request("/api/insights");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      diagnostics: { code: string; severity: string; evidence: string; action: string }[];
+    };
+    expect(Array.isArray(body.diagnostics)).toBe(true);
+    // One tiny fixture session crosses no conservative threshold, and the
+    // warnings-first ordering must hold for whatever does fire.
+    const severities = body.diagnostics.map((d) => d.severity);
+    const firstInfo = severities.indexOf("info");
+    if (firstInfo !== -1) {
+      expect(severities.slice(firstInfo).every((s) => s === "info")).toBe(true);
+    }
   });
 
   test("GET /api/insights/:id/sessions ranks a project's sessions by waste", async () => {
@@ -180,6 +224,35 @@ describe("web API", () => {
     };
     expect(body.compactions.summary.totalSessions).toBeGreaterThan(0);
     expect(body.compactions.summary.compactions).toBe(0); // fixture has none
+  });
+
+  test("GET /api/analytics carries the context-tax and what-if rollups", async () => {
+    const res = await api.request("/api/analytics");
+    const body = (await res.json()) as {
+      contextTax: { summary: { sessions: number }; byProject: { projectId: string }[] };
+      whatIf: { rows: { model: string; alternatives: { model: string }[] }[] };
+    };
+    // The fixture session makes main-chain calls, so it carries a baseline.
+    expect(body.contextTax.summary.sessions).toBe(1);
+    expect(body.contextTax.byProject[0]?.projectId).toBe("proj-a");
+    // Both fixture models are priceable, so each is the other's alternative.
+    expect(body.whatIf.rows.length).toBeGreaterThan(0);
+    expect(body.whatIf.rows[0]?.alternatives.length).toBeGreaterThan(0);
+  });
+
+  test("GET /api/audit cross-references the installed setup with usage", async () => {
+    const res = await api.request("/api/audit");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      inventory: { present: boolean; skills: { name: string }[] };
+      counts: { skills: number; mcpServers: number };
+      findings: { code: string; subject: string; severity: string }[];
+    };
+    expect(body.inventory.present).toBe(true);
+    expect(body.counts).toMatchObject({ skills: 1, mcpServers: 1 });
+    // The fixture session uses neither the installed skill nor the MCP server.
+    expect(body.findings.map((f) => f.code)).toEqual(["unused-mcp-server", "unused-skill"]);
+    expect(body.findings[0]?.subject).toBe("github");
   });
 
   test("aggregate responses are cached until the index fingerprint changes", async () => {

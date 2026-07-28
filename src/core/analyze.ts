@@ -157,6 +157,21 @@ export interface SessionAnalysis {
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
    * even in aggregate mode, where `turns` is empty. */
   turnDepths: number[];
+  /**
+   * Prompt-side tokens (input + cache-read + both cache-write TTLs) of the
+   * session's FIRST main-chain API call — a heuristic for the fixed context
+   * overhead every session pays before the user's own work adds anything:
+   * system prompt + CLAUDE.md + MCP tool schemas. Sidechains run in their own
+   * context windows, so subagent calls are skipped; the value is taken from
+   * the de-duplicated call, so a streamed response's continuation lines can't
+   * shift it. Undefined when the session made no main-chain API call.
+   *
+   * It is a baseline, not a measurement: a continuation session (which starts
+   * from an inherited compaction summary) or a session opened with a huge
+   * paste inflates it, so read it as a floor per project, not per session.
+   * Available in aggregate mode.
+   */
+  firstPromptTokens?: number;
   /** Context compactions, in session order. Available in aggregate mode too. */
   compactions: Compaction[];
 }
@@ -363,6 +378,9 @@ class SessionAnalyzer {
   private sidechainApiCalls = 0;
   private sidechainCost = 0;
   private promptChars = 0;
+  // Prompt-side tokens of the first main-chain call (see `firstPromptTokens`).
+  // `undefined` until one is seen, so a genuinely zero-token call still sticks.
+  private firstPromptTokens: number | undefined;
   private totalTokens = zeroTokens();
   private totalCost = zeroCost();
   private current?: Turn;
@@ -734,6 +752,16 @@ class SessionAnalyzer {
 
     this.apiCallCount += 1;
     const isSidechain = event.isSidechain === true;
+    // Context-tax baseline: the first main-chain call's prompt side. This runs
+    // on the de-duplicated call (continuation lines returned above), so a
+    // streamed response can't overwrite it with a repeat of the same usage.
+    if (!isSidechain && this.firstPromptTokens === undefined) {
+      this.firstPromptTokens =
+        tokens.inputTokens +
+        tokens.cacheReadTokens +
+        tokens.cacheWrite5mTokens +
+        tokens.cacheWrite1hTokens;
+    }
     if (isSidechain) {
       this.sidechainApiCalls += 1;
       this.sidechainCost += cost.total;
@@ -838,6 +866,7 @@ class SessionAnalyzer {
       retriesByTool: this.retriesByTool,
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
+      firstPromptTokens: this.firstPromptTokens,
       compactions: this.compactions,
     };
   }

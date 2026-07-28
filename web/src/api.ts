@@ -5,13 +5,17 @@
 // here.
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
+import type { CostBasis } from "../../src/core/cost-framing.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
+import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
+import type { SetupAudit } from "../../src/core/setup-audit.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
   CacheTtlSplit,
   CompactionUsage,
   ConcurrencySummary,
+  ContextTax,
   DayRow,
   ErrorWeekRow,
   HeatCell,
@@ -28,6 +32,7 @@ import type {
   SidechainSummary,
   WebToolsProjectRow,
   WebToolsSummary,
+  WhatIfRepricing,
 } from "../../src/core/stats-types.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
 
@@ -41,8 +46,18 @@ export type {
 // Runtime chart and diagnostic builders are bun-free core code, so the SPA
 // computes the same numbers and recommendations as the CLI and TUI.
 export * from "../../src/core/chart-series.ts";
+// Cost-basis framing — bun-free, so the SPA renders the exact same wording as
+// the CLI/TUI for the one preference that can turn "cost" into "spend" or vice
+// versa.
+export * from "../../src/core/cost-framing.ts";
+// Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
+// renders the same rule vocabulary the server computes findings with.
+export * from "../../src/core/portfolio-diagnostics.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/session-diagnostics.ts";
+// Setup-audit shapes, thresholds, and the mandatory caveat string — bun-free,
+// so the SPA renders the same audit vocabulary as the CLI.
+export * from "../../src/core/setup-audit.ts";
 export * from "../../src/core/stats-types.ts";
 export type { StepKind, TurnStep } from "../../src/core/steps.ts";
 export type { TranscriptItem } from "../../src/core/transcript.ts";
@@ -54,8 +69,10 @@ export interface TokenSplit {
   ioTokens: number;
   cacheTokens: number;
 }
-/** `/api/stats` returns the core-built portfolio shape verbatim. */
-export type StatsResponse = PortfolioStats;
+/** `/api/stats` returns the core-built portfolio shape plus the cost-basis
+ *  display preference, read fresh per request at the route level (not part of
+ *  `PortfolioStats` — that stays a pure, core-only shape). */
+export type StatsResponse = PortfolioStats & { costBasis: CostBasis };
 
 export interface IndexedProject extends TokenSplit {
   projectId: string;
@@ -88,6 +105,8 @@ export interface InsightsResponse {
   projects: ProjectCacheRow[];
   ttl: CacheTtlSplit;
   idleBuckets: IdleCacheBucket[];
+  /** Ranked portfolio findings from the bun-free rules engine, warnings first. */
+  diagnostics: PortfolioDiagnostic[];
 }
 export interface TrendsResponse {
   daily: DayRow[];
@@ -100,11 +119,13 @@ export interface TrendsResponse {
 }
 
 /** `/api/analytics` is the single-scan rollup plus the web-tool, sidechain,
- * and compaction SQL aggregates. */
+ * compaction, and cost-optimization aggregates. */
 export interface AnalyticsResponse extends AnalyticsRollup {
   webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
   compactions: CompactionUsage;
+  contextTax: ContextTax;
+  whatIf: WhatIfRepricing;
 }
 
 async function get<T>(url: string): Promise<T> {
@@ -133,4 +154,5 @@ export const api = {
     get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
+  audit: () => get<SetupAudit>("/api/audit"),
 };
