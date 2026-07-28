@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
-import { setCostBasis } from "../../src/core/prefs.ts";
+import { getCostBasis, setCostBasis } from "../../src/core/prefs.ts";
 import { createApi } from "../../src/web/api.ts";
 import { createApp, isLoopbackHost } from "../../src/web/server.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
@@ -39,6 +39,23 @@ afterAll(() => {
   claude.cleanup();
 });
 
+/** Run `fn` against a fresh, empty `CC_ANALYZER_STATE_DIR` (so prefs.json
+ *  starts unset) and restore the previous env var + clean up afterwards —
+ *  the same pattern the pre-existing cost-basis test used inline. */
+async function withStateDir<T>(fn: () => Promise<T> | T): Promise<T> {
+  const prevStateDir = process.env.CC_ANALYZER_STATE_DIR;
+  const stateDir = `${claude.dir}-state-${Math.random().toString(36).slice(2)}`;
+  mkdirSync(stateDir, { recursive: true });
+  process.env.CC_ANALYZER_STATE_DIR = stateDir;
+  try {
+    return await fn();
+  } finally {
+    if (prevStateDir === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+    else process.env.CC_ANALYZER_STATE_DIR = prevStateDir;
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+}
+
 describe("web API", () => {
   test("GET /api/stats returns a portfolio view", async () => {
     const res = await api.request("/api/stats");
@@ -65,6 +82,81 @@ describe("web API", () => {
       else process.env.CC_ANALYZER_STATE_DIR = prevStateDir;
       rmSync(stateDir, { recursive: true, force: true });
     }
+  });
+
+  test("GET /api/prefs returns the current cost-basis preference (default api)", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ costBasis: "api" });
+    });
+  });
+
+  test("PUT /api/prefs persists a valid cost basis and echoes it back", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ costBasis: "subscription" }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ costBasis: "subscription" });
+      expect(getCostBasis()).toBe("subscription"); // persisted, not just echoed
+    });
+  });
+
+  test("PUT /api/prefs rejects an unknown cost basis with 400, preference unchanged", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ costBasis: "yolo" }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()) as { error: string }).toMatchObject({
+        error: expect.stringContaining('"api" or "subscription"'),
+      });
+      expect(getCostBasis()).toBe("api"); // untouched
+    });
+  });
+
+  test("PUT /api/prefs rejects malformed JSON with 400", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: "not json",
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  test("POST /api/prefs is accepted as an alias for PUT", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ costBasis: "subscription" }),
+      });
+      expect(res.status).toBe(200);
+      expect(getCostBasis()).toBe("subscription");
+    });
+  });
+
+  test("a cost-basis change via PUT /api/prefs is reflected on the next /api/stats fetch", async () => {
+    await withStateDir(async () => {
+      const before = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(before.costBasis).toBe("api");
+
+      await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ costBasis: "subscription" }),
+      });
+
+      const after = (await (await api.request("/api/stats")).json()) as { costBasis: string };
+      expect(after.costBasis).toBe("subscription");
+    });
   });
 
   test("GET /api/index-status reports exact source freshness", async () => {

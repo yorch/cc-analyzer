@@ -276,10 +276,14 @@ the same tolerant pattern as `telemetry.ts`, default `"api"`) never changes a co
 number, only its wording — `"api"` reads the number as a bill, `"subscription"` (for
 flat-plan Pro/Max users) frames the identical number as API-equivalent value via one
 canonical sentence, `costFramingNote()`, rendered verbatim wherever it appears. Set with
-`cc-analyzer cost-basis api|subscription`; read at each surface's presentation boundary
-(CLI `cmdStats`, the TUI `App` component, and a `costBasis` field merged into `/api/stats`
-at the route level, read fresh per request rather than memoized with the rest of the
-payload) so flipping it never requires a reindex.
+`cc-analyzer cost-basis api|subscription`, or, for web-only users, the `Seg` toggle on the
+web Dashboard hero — `GET`/`PUT` (`POST` accepted too) `/api/prefs` in `src/web/api.ts`,
+the API's only write route, which persists only to `<stateDir>/prefs.json` and never
+touches `~/.claude`; the SPA calls it then re-triggers its `useAsync` fetch, no reload.
+Read at each surface's presentation boundary (CLI `cmdStats`, the TUI `App` component, and
+a `costBasis` field merged into `/api/stats` at the route level, read fresh per request
+rather than memoized with the rest of the payload) so flipping it — from either surface —
+never requires a reindex.
 
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at

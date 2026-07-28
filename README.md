@@ -30,7 +30,8 @@ API rates. If you're on a flat-plan subscription (Pro/Max) rather than
 pay-as-you-go API billing, those numbers are API-equivalent *value*, not a
 bill. Run `cc-analyzer cost-basis subscription` to frame them that way across
 the CLI, TUI, and web app (`cc-analyzer cost-basis` shows the current setting;
-`api` is the default).
+`api` is the default) — or, in the web app, flip the toggle beside the
+Dashboard's cost figure.
 
 ## Install
 

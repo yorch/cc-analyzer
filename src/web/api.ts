@@ -2,12 +2,13 @@ import type { Database } from "bun:sqlite";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
+import type { CostBasis } from "../core/cost-framing.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
-import { getCostBasis } from "../core/prefs.ts";
+import { getCostBasis, setCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   listIndexedProjects,
@@ -96,6 +97,32 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     // flipping it with `cc-analyzer cost-basis` is reflected immediately,
     // even though the underlying rollup stays memoized.
     return c.json({ ...stats, costBasis: getCostBasis() });
+  });
+
+  // Cost-basis preference: the only write endpoint in this API. It never
+  // touches ~/.claude — it persists to cc-analyzer's own prefs.json in the
+  // state dir (see prefs.ts), so the tool's read-only guarantee over Claude
+  // data is untouched. It's safe as a plain, unauthenticated write because the
+  // server binds to loopback by default (runServe in server.ts) and is meant
+  // for a single local user; the DNS-rebinding Host-header guard in
+  // createApp still applies on top when loopback-only.
+  api.get("/api/prefs", (c) => c.json({ costBasis: getCostBasis() }));
+  // PUT is the primary write verb (replacing the whole prefs resource); POST
+  // is accepted too since a JSON body handler is trivial to share in Hono and
+  // it saves SPA callers from caring which verb to use.
+  api.on(["PUT", "POST"], "/api/prefs", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const costBasis = (body as { costBasis?: unknown } | null)?.costBasis;
+    if (costBasis !== "api" && costBasis !== "subscription") {
+      return c.json({ error: 'costBasis must be "api" or "subscription"' }, 400);
+    }
+    setCostBasis(costBasis satisfies CostBasis);
+    return c.json({ costBasis });
   });
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
