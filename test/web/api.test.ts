@@ -182,6 +182,20 @@ describe("web API", () => {
     expect(body.compactions.summary.compactions).toBe(0); // fixture has none
   });
 
+  test("GET /api/analytics carries the context-tax and what-if rollups", async () => {
+    const res = await api.request("/api/analytics");
+    const body = (await res.json()) as {
+      contextTax: { summary: { sessions: number }; byProject: { projectId: string }[] };
+      whatIf: { rows: { model: string; alternatives: { model: string }[] }[] };
+    };
+    // The fixture session makes main-chain calls, so it carries a baseline.
+    expect(body.contextTax.summary.sessions).toBe(1);
+    expect(body.contextTax.byProject[0]?.projectId).toBe("proj-a");
+    // Both fixture models are priceable, so each is the other's alternative.
+    expect(body.whatIf.rows.length).toBeGreaterThan(0);
+    expect(body.whatIf.rows[0]?.alternatives.length).toBeGreaterThan(0);
+  });
+
   test("aggregate responses are cached until the index fingerprint changes", async () => {
     const first = await (await api.request("/api/analytics")).text();
     const again = await (await api.request("/api/analytics")).text();

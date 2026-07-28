@@ -13,7 +13,9 @@ import {
   buildPortfolioStats,
   cacheTtlSplit,
   concurrency,
+  contextTax,
   localDayOfMs,
+  whatIfRepricing,
 } from "../core/stats.ts";
 import {
   flushTelemetry,
@@ -214,6 +216,9 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
   const analytics = analyticsRollup(db, projectId);
   // The CLI reports only the concurrency headline, not the per-day series.
   const { peak, parallelDayShare } = concurrency(db, projectId);
+  // What-if repricing needs live rates; `loadPricing` serves the cached table
+  // (bundled snapshot offline), the same one the index was priced with.
+  const { table: pricing } = await loadPricing();
   const scope = project
     ? {
         type: "project" as const,
@@ -230,6 +235,8 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     tests: analytics.tests,
     retries: analytics.retries,
     concurrency: { peak, parallelDayShare },
+    contextTax: contextTax(db, projectId),
+    whatIf: whatIfRepricing(db, pricing, projectId),
   };
   db.close();
   console.log(

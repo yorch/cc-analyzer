@@ -21,6 +21,7 @@ import {
   cacheWasteBySession,
   compactionUsage,
   concurrency,
+  contextTax,
   errorRateByWeek,
   hotFiles,
   idleVsCache,
@@ -33,6 +34,7 @@ import {
   sidechainSummary,
   spendByDay,
   webToolUsage,
+  whatIfRepricing,
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
 
@@ -111,13 +113,18 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
 
   // Tool/skill/subagent usage analytics plus shell commands, retries, web
   // tools, permission modes, stop reasons, turn depth, versions, branches —
-  // one table scan via analyticsRollup instead of one per metric.
+  // one table scan via analyticsRollup instead of one per metric. The cost
+  // optimization rollups (context tax, what-if repricing) ride along: they are
+  // portfolio-wide aggregates on the same fingerprint, so memoizing them here
+  // costs one payload instead of two more round trips.
   api.get("/api/analytics", (c) =>
     cachedJson(c, "analytics", fingerprint(), () => ({
       ...analyticsRollup(db),
       webTools: webToolUsage(db),
       sidechain: { summary: sidechainSummary(db), byProject: sidechainByProject(db) },
       compactions: compactionUsage(db),
+      contextTax: contextTax(db),
+      whatIf: whatIfRepricing(db, pricing),
     })),
   );
 

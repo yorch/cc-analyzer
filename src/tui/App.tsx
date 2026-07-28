@@ -215,6 +215,7 @@ export function App({ db, pricing, indexStatus }: Props) {
     body = (
       <InsightsView
         db={db}
+        pricing={pricing}
         columns={columns}
         pageSize={listPageSize}
         isActive={bodyActive}

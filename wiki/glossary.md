@@ -40,6 +40,10 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Cache-write (5m / 1h TTL) / Cache-read** — Tokens written into the prompt cache (priced by time-to-live) and tokens served from it (priced well below input). Cache accounting is where most real spend hides ([src/core/pricing.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/pricing.ts#L1-L60)).
 
+**Context tax** — The tokens a session pays before the user types anything: system prompt + `CLAUDE.md` + MCP tool schemas, approximated by the prompt-side tokens of the session's first main-chain API call (`SessionAnalysis.firstPromptTokens`, index column `first_prompt_tokens`, schema v9). `contextTax()` reports it per project as median / p90 / average. A heuristic baseline — continuation sessions and large opening pastes inflate individual sessions, so the median is the honest read ([src/core/stats.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1-L60)).
+
+**What-if repricing** — `whatIfRepricing()`, which replays each model's actual token mix (all four categories, both cache-write TTLs) at the rates of the other models the user ran — falling back to a canonical model per family when fewer than two of theirs are priceable. Strictly a rate comparison: a different model would produce different tokens, and quality is not priced in ([src/core/stats.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1-L60)).
+
 **Cache efficiency** — How well cache-write spend is amortized by later cache reads. The Insights view ranks projects and sessions by un-amortized cache-write spend (the "leakiest" work) ([src/core/stats.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1-L60)).
 
 **Estimated cost** — A cost flagged approximate because the model matched only by family heuristic (not an exact table entry) or could not be priced.
@@ -52,7 +56,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Index** — A disposable SQLite cache at `~/.config/cc-analyzer/index.db` holding one flattened row per session; rebuildable from the JSONL files at any time ([src/core/db.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L1-L60)).
 
-**Schema version** — A `schema_version` stored in the index's `meta` table (currently v8, `SCHEMA_VERSION`). Bumping it invalidates and rebuilds the disposable cache — never a breaking change for users ([src/core/db.ts:L86-L108](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L86-L108)).
+**Schema version** — A `schema_version` stored in the index's `meta` table (currently v9, `SCHEMA_VERSION`). Bumping it invalidates and rebuilds the disposable cache — never a breaking change for users ([src/core/db.ts:L86-L108](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L86-L108)).
 
 **Incremental indexing** — Re-parsing only files changed by size + mtime, pruning rows for deleted files.
 

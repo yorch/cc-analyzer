@@ -12,6 +12,7 @@ import type {
   CacheTtlSplit,
   CompactionUsage,
   ConcurrencySummary,
+  ContextTax,
   DayRow,
   ErrorWeekRow,
   HeatCell,
@@ -28,6 +29,7 @@ import type {
   SidechainSummary,
   WebToolsProjectRow,
   WebToolsSummary,
+  WhatIfRepricing,
 } from "../../src/core/stats-types.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
 
@@ -100,11 +102,13 @@ export interface TrendsResponse {
 }
 
 /** `/api/analytics` is the single-scan rollup plus the web-tool, sidechain,
- * and compaction SQL aggregates. */
+ * compaction, and cost-optimization aggregates. */
 export interface AnalyticsResponse extends AnalyticsRollup {
   webTools: { summary: WebToolsSummary; byProject: WebToolsProjectRow[] };
   sidechain: { summary: SidechainSummary; byProject: SidechainProjectRow[] };
   compactions: CompactionUsage;
+  contextTax: ContextTax;
+  whatIf: WhatIfRepricing;
 }
 
 async function get<T>(url: string): Promise<T> {

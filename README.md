@@ -223,7 +223,16 @@ metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, and the most expensive sessions. Human-readable reports
+month/project/model, and the most expensive sessions. Two cost-optimization
+sections round it out: **what-if model repricing** replays each model's actual
+token mix — all four categories, both cache-write TTLs — at the rates of the
+other models you ran, and **context tax** reports the median/p90 tokens each
+project's sessions pay before you type anything (system prompt + CLAUDE.md +
+MCP tool schemas, taken from the first main-chain API call). Both are
+heuristics: repricing is a rate comparison only — a different model would
+produce different tokens, and quality is not priced in — and the context-tax
+baseline is inflated by continuation sessions and large opening pastes, so read
+the median rather than any single session. Human-readable reports
 use a compact headline, grouped activity/reliability sections, and aligned
 numeric tables; terminals receive restrained color while pipes, redirects,
 `NO_COLOR`, and `--json` stay automation-safe. JSON reports include a
@@ -248,7 +257,9 @@ tools), and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
-drills into the leakiest sessions. The **trends** view is a two-panel
+drills into the leakiest sessions; its header also carries the portfolio
+**context tax** (median/p90 tokens spent before you type) and the cheapest
+single model your token mix could have run on. The **trends** view is a two-panel
 time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
 time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
@@ -288,7 +299,9 @@ headers, since sessions contain full conversation transcripts; pass
 The UI ships a portfolio dashboard, project drill-down, a per-session view, an
 **Insights** page — the same cache-efficiency hit-list as the TUI (projects
 ranked by un-amortized cache-write spend, with a read:write verdict, drilling
-into the leakiest sessions) — a **Trends** page with 30-day, peak-spend, and
+into the leakiest sessions), plus the **context tax** per project and the
+**what-if model repricing** table, each carrying its caveat inline — a
+**Trends** page with 30-day, peak-spend, and
 error-rate headlines plus burn, calendar, model-mix, activity, scatter,
 reliability, subagent, and concurrency charts — and a **Tools** page organized
 into Tools, Reliability, Compactions, Skills, Agents, and Environment views.

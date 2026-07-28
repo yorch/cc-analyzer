@@ -1,15 +1,21 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text } from "ink";
 import { useMemo, useState } from "react";
-import { formatUSD, truncate } from "../../cli/format.ts";
+import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
+import type { PricingTable } from "../../core/pricing.ts";
 import {
   type CacheMetrics,
+  type ContextTaxRow,
+  type ContextTaxSummary,
   cacheSummary,
   cacheVerdict,
   cacheWasteByProject,
   cacheWasteBySession,
+  contextTax,
   type ProjectCacheRow,
   type SessionCacheRow,
+  type WhatIfSummary,
+  whatIfRepricing,
 } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { CachePreview } from "../components/previews.tsx";
@@ -32,6 +38,8 @@ const SESSION_SORT: SortField<SessionCacheRow>[] = [
 
 interface Props {
   db: Database;
+  /** Rates for the what-if repricing summary line. */
+  pricing: PricingTable;
   columns: number;
   pageSize: number;
   isActive: boolean;
@@ -46,24 +54,42 @@ interface Props {
  * drilling into a project's sessions. Self-contained two-level drill (like the
  * detail screen) so App only routes to it.
  */
-export function InsightsView({ db, columns, pageSize, isActive, onOpenSession, onBack }: Props) {
+export function InsightsView({
+  db,
+  pricing,
+  columns,
+  pageSize,
+  isActive,
+  onOpenSession,
+  onBack,
+}: Props) {
   const summary = useMemo(() => cacheSummary(db), [db]);
   const projects = useMemo(() => cacheWasteByProject(db), [db]);
+  // Computed at the screen boundary and passed down as plain props — the
+  // presentation components below never touch the database.
+  const tax = useMemo(() => contextTax(db), [db]);
+  const whatIf = useMemo(() => whatIfRepricing(db, pricing), [db, pricing]);
   const [drilled, setDrilled] = useState<ProjectCacheRow | null>(null);
   const sessions = useMemo(
     () => (drilled ? cacheWasteBySession(db, drilled.projectId) : []),
     [db, drilled],
   );
 
-  const listSize = Math.max(3, pageSize - 1); // reserve the summary header line
+  const extraLines = 2; // context-tax + what-if summary lines
+  const listSize = Math.max(3, pageSize - 1 - extraLines);
   const wastePct =
     summary.totalCost > 0 ? Math.round((summary.waste / summary.totalCost) * 100) : 0;
 
   const header = (
-    <Text color={role.muted}>
-      cache: <Text color={role.body}>{formatUSD(summary.writeCost)}</Text> written ·{" "}
-      <Text color={role.cost}>{formatUSD(summary.waste)}</Text> un-amortized · {wastePct}% of spend
-    </Text>
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        cache: <Text color={role.body}>{formatUSD(summary.writeCost)}</Text> written ·{" "}
+        <Text color={role.cost}>{formatUSD(summary.waste)}</Text> un-amortized · {wastePct}% of
+        spend
+      </Text>
+      <ContextTaxLine summary={tax.summary} top={tax.byProject[0]} />
+      <WhatIfLine summary={whatIf.summary} />
+    </Box>
   );
 
   if (drilled) {
@@ -119,6 +145,43 @@ export function InsightsView({ db, columns, pageSize, isActive, onOpenSession, o
         onBack={onBack}
       />
     </Box>
+  );
+}
+
+/**
+ * Context tax: the tokens every session pays before the user types (system
+ * prompt + CLAUDE.md + MCP tool schemas). Heuristic — median, not mean, because
+ * continuation sessions and big opening pastes inflate individual sessions.
+ */
+function ContextTaxLine({
+  summary,
+  top,
+}: {
+  summary: ContextTaxSummary;
+  top: ContextTaxRow | undefined;
+}) {
+  if (summary.sessions === 0) return null;
+  return (
+    <Text color={role.muted}>
+      context tax: <Text color={role.body}>{formatCount(Math.round(summary.medianTokens))}</Text>{" "}
+      median · {formatCount(Math.round(summary.p90Tokens))} p90 tokens before you type
+      {top ? ` · heaviest ${truncate(top.projectPath ?? top.projectId, 28)}` : ""}
+    </Text>
+  );
+}
+
+/**
+ * What-if: the cheapest single model to have run everything on. Rate comparison
+ * only — a different model produces different tokens, and quality isn't priced.
+ */
+function WhatIfLine({ summary }: { summary: WhatIfSummary }) {
+  if (!summary.bestModel || summary.bestDelta >= 0) return null;
+  return (
+    <Text color={role.muted}>
+      what-if: all tokens on <Text color={role.body}>{summary.bestModel}</Text> ={" "}
+      <Text color={role.cost}>{formatUSD(summary.bestCost)}</Text> vs{" "}
+      {formatUSD(summary.actualCost)} actual · same tokens, other rates (quality not priced)
+    </Text>
   );
 }
 

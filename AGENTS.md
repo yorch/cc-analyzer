@@ -140,6 +140,35 @@ compactions (sidechain + inherited excluded, so one compaction never counts in
 two rows), with full detail in `compactions_json`; `compactionUsage()` rolls up
 portfolio pressure for `/api/analytics` and the web Tools view.
 
+**Context tax and what-if repricing are the two cost-optimization rollups.**
+*Context tax* is what a session pays before the user types: `analyze.ts`
+records `SessionAnalysis.firstPromptTokens` — the prompt-side tokens (input +
+cache-read + both cache-write TTLs) of the **first main-chain** API call, read
+off the de-duplicated call so streamed continuation lines can't shift it, and
+populated in aggregate mode like `promptChars`/`turnDepths`. Sidechains are
+skipped (subagents have their own context window). It flattens to the
+`first_prompt_tokens` INT column — NULL, not 0, when the session made no
+main-chain call, since absent ≠ zero — and **schema v9** forces the rebuild
+that fills it (the incremental indexer skips unchanged files, so v8 rows would
+stay NULL forever). `contextTax()` groups by project and takes median / p90 /
+mean through the same `percentile` helper as `costDistribution`; it is a
+heuristic baseline, so keep the "continuation sessions and big opening pastes
+inflate it — read the median" caveat at every render site.
+*What-if repricing* (`whatIfRepricing()`) replays each model's actual token mix
+at other models' rates. It folds `models_json` through `modelTotals()` — the
+same accumulator `spendByModel()` uses, so the two can't disagree — and prices
+through the existing `computeCost`, covering all four categories and both
+cache-write TTLs. Alternatives are the *other models the user actually ran*,
+capped to ids `resolveModel()` can price (an unresolvable id would cost $0 and
+read as a huge saving), falling back to `FALLBACK_WHATIF_MODELS` (one model per
+family, newest in the bundled snapshot) when fewer than two of theirs resolve.
+It is a **rate comparison only**: a different model would produce different
+tokens, and quality is not priced in — that caveat is mandatory wherever it
+renders. Both ride on `/api/analytics` (memoized on the same fingerprint), both
+are sections of `cc-analyzer stats` (and its `--json`), the web Insights view
+renders both as tables, and the TUI Insights header carries them as two summary
+lines computed at the screen boundary.
+
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`;
 `turnDepthStats()` is their standalone per-project counterpart, and all the

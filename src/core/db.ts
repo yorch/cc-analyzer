@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   prompt_chars INTEGER,
   retries INTEGER,
   compactions INTEGER,
+  first_prompt_tokens INTEGER,
   models_json TEXT,
   tools_json TEXT,
   tool_errors_json TEXT,
@@ -83,7 +84,13 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // `compactionUsage()` dedupes on portfolio-wide. The incremental indexer skips
 // unchanged files, so rows written by v7 would keep uuid-less records forever
 // and the dedupe would silently no-op — the bump forces the rebuild.
-export const SCHEMA_VERSION = "8";
+// v9: adds `first_prompt_tokens` — the prompt-side tokens of a session's first
+// main-chain API call, the context-tax baseline `contextTax()` takes
+// percentiles over. NULL when the session made no main-chain call. Same
+// rationale as v8: the incremental indexer skips unchanged files, so rows
+// written by v8 would keep the column NULL forever and every established
+// project would report no baseline — the bump forces the rebuild.
+export const SCHEMA_VERSION = "9";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

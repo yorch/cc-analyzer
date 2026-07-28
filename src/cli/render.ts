@@ -5,9 +5,11 @@ import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import type {
   BashCommandRow,
   CacheTtlSplit,
+  ContextTax,
   PortfolioStats,
   RetryStats,
   TestRunSummary,
+  WhatIfRepricing,
 } from "../core/stats.ts";
 import { topEntries } from "../core/stats-types.ts";
 import {
@@ -187,6 +189,8 @@ export interface PortfolioView extends PortfolioStats {
   tests: TestRunSummary;
   retries: RetryStats;
   concurrency: { peak: number; parallelDayShare: number };
+  contextTax: ContextTax;
+  whatIf: WhatIfRepricing;
 }
 
 /** Render portfolio-wide or project-scoped analytics as a text report. */
@@ -376,6 +380,84 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
           formatTokens(m.ioTokens, m.cacheTokens),
         ]),
         { align: ["left", "right", "right", "right"] },
+      ),
+    );
+  }
+
+  if (v.whatIf.rows.length && v.whatIf.rows.some((r) => r.alternatives.length)) {
+    const w = v.whatIf;
+    lines.push(`\n${section("What-if · same tokens, other model's rates", options)}`);
+    lines.push(
+      table(
+        ["model", "alternative", "repriced", "delta"],
+        w.rows.flatMap((r) =>
+          r.alternatives.map((a) => [
+            r.model,
+            a.model,
+            formatUSD(a.cost),
+            `${a.delta < 0 ? "-" : "+"}${formatUSD(Math.abs(a.delta))}`,
+          ]),
+        ),
+        { align: ["left", "left", "right", "right"] },
+      ),
+    );
+    if (w.summary.bestModel && w.summary.bestDelta < 0) {
+      lines.push(
+        muted(
+          `All of it on ${w.summary.bestModel}: ${formatUSD(w.summary.bestCost)} vs ` +
+            `${formatUSD(w.summary.actualCost)} actual (${formatUSD(-w.summary.bestDelta)} lower).`,
+          options,
+        ),
+      );
+    }
+    if (w.summary.fallbackAlternatives) {
+      lines.push(
+        muted(
+          "Fewer than two priceable models used — compared against one model per family.",
+          options,
+        ),
+      );
+    }
+    lines.push(
+      muted(
+        "Your actual token mix at other rates. A different model would produce different " +
+          "tokens, and quality is not priced in.",
+        options,
+      ),
+    );
+  }
+
+  if (v.contextTax.summary.sessions > 0) {
+    const ct = v.contextTax;
+    lines.push(`\n${section("Context tax · tokens before you type", options)}`);
+    lines.push(
+      table(
+        ["median", "p90", "avg", "sessions", "project"],
+        ct.byProject
+          .slice(0, 10)
+          .map((p) => [
+            formatCount(Math.round(p.medianTokens)),
+            formatCount(Math.round(p.p90Tokens)),
+            formatCount(Math.round(p.avgTokens)),
+            String(p.sessions),
+            truncate(p.projectPath ?? p.projectId, 44),
+          ]),
+        { align: ["right", "right", "right", "right", "left"] },
+      ),
+    );
+    lines.push(
+      muted(
+        `Portfolio median ${formatCount(Math.round(ct.summary.medianTokens))} · ` +
+          `p90 ${formatCount(Math.round(ct.summary.p90Tokens))} over ${ct.summary.sessions} ` +
+          `${ct.summary.sessions === 1 ? "session" : "sessions"}. ` +
+          "First main-chain call's prompt side: system prompt + CLAUDE.md + MCP tool schemas.",
+        options,
+      ),
+    );
+    lines.push(
+      muted(
+        "Heuristic: continuation sessions and big opening pastes inflate it — read the median.",
+        options,
       ),
     );
   }
