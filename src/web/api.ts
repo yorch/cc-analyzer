@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
+import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
@@ -11,6 +12,7 @@ import {
   searchSessions,
   sessionPathById,
 } from "../core/queries.ts";
+import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   activityHeatmap,
   analyticsRollup,
@@ -127,6 +129,18 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       whatIf: whatIfRepricing(db, pricing),
     })),
   );
+
+  // Setup audit: the installed inventory (scanned live off the Claude dir)
+  // cross-referenced with observed usage from the index. It depends on the
+  // filesystem too, but the inventory scan is cheap — memoizing on the index
+  // fingerprint plus `today` (staleness rolls over at midnight) rebuilds the
+  // whole payload, inventory included, whenever the index changes.
+  api.get("/api/audit", (c) => {
+    const today = localDayOfMs(Date.now());
+    return cachedJson(c, "audit", `${fingerprint()}:${today}`, () =>
+      buildSetupAudit(scanInventory(), analyticsRollup(db), today),
+    );
+  });
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
 

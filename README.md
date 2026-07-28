@@ -127,6 +127,7 @@ cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
+cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
@@ -243,6 +244,23 @@ Run `cc-analyzer stats --current` from a project—or any directory beneath
 it—to scope every metric to that project's indexed sessions. Project matching
 uses the authoritative session `cwd`; if it is missing from the cache, refresh
 it with `cc-analyzer index`.
+
+### Setup audit
+
+`cc-analyzer audit` reads your *setup* — skills, subagents, plugins, MCP
+servers, hooks, and permission rules under `~/.claude` (plus the `~/.claude.json`
+MCP config) — and cross-references it with what the indexed sessions actually
+used. It reports an inventory summary and findings such as an **unused MCP
+server** (a warning: its tool schemas are re-sent to the model every turn, so an
+unused one is pure context tax), an **unused skill or subagent**, an
+**error-prone skill** (≥25% errors over ≥5 invocations), a **stale skill**
+(unused for 30+ days), and skills or subagents that sessions used but that are
+no longer installed. The scan is read-only and tolerant: a missing or malformed
+config file is skipped, never fatal. Findings are machine-local and historical —
+the index can cover sessions that predate the current setup, and project-scoped
+skills, subagents, and MCP servers live outside the Claude config dir — so treat
+them as prompts to look, not verdicts. The same audit is served at `/api/audit`
+and rendered on the web app's Tools view.
 
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run

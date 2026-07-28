@@ -6,6 +6,7 @@
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
+import type { SetupAudit } from "../../src/core/setup-audit.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -45,6 +46,9 @@ export type {
 export * from "../../src/core/chart-series.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/session-diagnostics.ts";
+// Setup-audit shapes, thresholds, and the mandatory caveat string — bun-free,
+// so the SPA renders the same audit vocabulary as the CLI.
+export * from "../../src/core/setup-audit.ts";
 export * from "../../src/core/stats-types.ts";
 export type { StepKind, TurnStep } from "../../src/core/steps.ts";
 export type { TranscriptItem } from "../../src/core/transcript.ts";
@@ -137,4 +141,5 @@ export const api = {
     get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
+  audit: () => get<SetupAudit>("/api/audit"),
 };

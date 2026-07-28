@@ -169,6 +169,35 @@ are sections of `cc-analyzer stats` (and its `--json`), the web Insights view
 renders both as tables, and the TUI Insights header carries them as two summary
 lines computed at the screen boundary.
 
+**Setup audit is the one surface that reads config, not transcripts.**
+`inventory.ts` (`node:fs`, read-only, never throws) scans the configured
+Claude dir for `settings.json` (permission rule counts, hook events, a pinned
+`model`, any `mcpServers`), `skills/<name>/SKILL.md`, `agents/<name>.md`, and a
+best-effort walk of `plugins/` — a dir counts as a plugin when it declares
+`.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`, and its own
+skills/agents are recorded against it — plus the sibling `<claudeDir>.json`
+(computed as `claudeDir() + ".json"` so `CC_ANALYZER_CLAUDE_DIR` keeps tests
+hermetic): its top-level `mcpServers` are global, `projects.<path>.mcpServers`
+are project-scoped. Every read is wrapped; a missing dir or malformed JSON
+shrinks the inventory instead of throwing, because this is user-editable config
+whose shape moves between Claude Code releases. `setup-audit.ts` is the
+**bun-free** half (the SPA imports its types): `buildSetupAudit(inventory,
+usage, today)` — `today` is a parameter, never `Date.now()` — folds
+`analyticsRollup`'s `skills`/`subagents`/`tools` against the inventory and
+emits `session-diagnostics`-shaped findings: `unused-mcp-server` and
+`error-prone-skill` (≥25% errors over ≥5 invocations) as warnings,
+`unused-skill`, `unused-agent`, `stale-skill` (≥30 days), and
+`missing-but-used` as info. Name matching is deliberately loose — a plugin
+skill may be invoked qualified (`plugin:skill`) or bare, so either form counts
+as used; a loose match is a false negative, which beats accusing a
+daily-driver skill of being unused. The audit is machine-local and historical
+(sessions can predate the setup; project-scoped items live outside the config
+dir) — that caveat ships as the exported `SETUP_AUDIT_CAVEAT` so every render
+site prints the same words. Surfaces: `cc-analyzer audit` (+`--json`,
+`renderSetupAudit`), `GET /api/audit` (memoized on the index fingerprint plus
+the local day; the inventory rescans with the payload), and the web Tools
+view's Setup section. **No TUI screen** — the CLI and web cover it.
+
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`;
 `turnDepthStats()` is their standalone per-project counterpart, and all the

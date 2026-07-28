@@ -20,6 +20,13 @@ beforeAll(async () => {
   const content = await Bun.file(fixture).text();
   mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
   writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), content);
+  // A minimal installed setup so /api/audit has something to cross-reference.
+  mkdirSync(join(claude.dir, "skills", "tidy"), { recursive: true });
+  writeFileSync(join(claude.dir, "skills", "tidy", "SKILL.md"), "# tidy\n");
+  writeFileSync(
+    `${claude.dir}.json`,
+    JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
+  );
   db = openDb(":memory:");
   await reindex(db, { pricing });
   api = createApi(db, pricing);
@@ -27,6 +34,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   db.close();
+  rmSync(`${claude.dir}.json`, { force: true });
   claude.cleanup();
 });
 
@@ -194,6 +202,21 @@ describe("web API", () => {
     // Both fixture models are priceable, so each is the other's alternative.
     expect(body.whatIf.rows.length).toBeGreaterThan(0);
     expect(body.whatIf.rows[0]?.alternatives.length).toBeGreaterThan(0);
+  });
+
+  test("GET /api/audit cross-references the installed setup with usage", async () => {
+    const res = await api.request("/api/audit");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      inventory: { present: boolean; skills: { name: string }[] };
+      counts: { skills: number; mcpServers: number };
+      findings: { code: string; subject: string; severity: string }[];
+    };
+    expect(body.inventory.present).toBe(true);
+    expect(body.counts).toMatchObject({ skills: 1, mcpServers: 1 });
+    // The fixture session uses neither the installed skill nor the MCP server.
+    expect(body.findings.map((f) => f.code)).toEqual(["unused-mcp-server", "unused-skill"]);
+    expect(body.findings[0]?.subject).toBe("github");
   });
 
   test("aggregate responses are cached until the index fingerprint changes", async () => {

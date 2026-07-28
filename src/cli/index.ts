@@ -4,10 +4,12 @@ import { openDb } from "../core/db.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
+import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { loadPricing } from "../core/pricing-source.ts";
-import { indexedProjectForPath } from "../core/queries.ts";
+import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
+import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
   buildPortfolioStats,
@@ -28,7 +30,7 @@ import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
-import { renderSessionSummary, renderStats } from "./render.ts";
+import { renderSessionSummary, renderSetupAudit, renderStats } from "./render.ts";
 
 const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
 
@@ -42,6 +44,7 @@ Usage:
                                        Build, refresh, or check the session index
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
+  cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
@@ -250,6 +253,36 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
   return 0;
 }
 
+/**
+ * Cross-reference the installed setup (skills, subagents, plugins, MCP servers,
+ * hooks, permission rules) with what the indexed sessions actually used.
+ *
+ * The inventory is read live off the Claude dir; usage comes from the index, so
+ * an empty index would report the whole setup as unused — refuse instead.
+ */
+function cmdAudit(json: boolean): number {
+  const db = openDb();
+  if (isIndexEmpty(db)) {
+    db.close();
+    console.error(
+      "Index is empty, so every installed skill and server would look unused. " +
+        "Run `cc-analyzer index` first.",
+    );
+    return 1;
+  }
+  const usage = analyticsRollup(db);
+  db.close();
+  const audit = buildSetupAudit(scanInventory(), usage, localDayOfMs(Date.now()));
+  console.log(
+    json
+      ? JSON.stringify(audit, null, 2)
+      : renderSetupAudit(audit, {
+          color: process.stdout.isTTY && !process.env.NO_COLOR,
+        }),
+  );
+  return 0;
+}
+
 async function cmdPricingUpdate(): Promise<number> {
   const loaded = await loadPricing({ force: true });
   const count = Object.keys(loaded.table).length;
@@ -299,7 +332,15 @@ async function cmdUpdate(checkOnly: boolean): Promise<number> {
 }
 
 /** Commands that emit a passive "update available" notice when appropriate. */
-const NOTIFY_COMMANDS = new Set(["projects", "sessions", "analyze", "index", "stats", "pricing"]);
+const NOTIFY_COMMANDS = new Set([
+  "projects",
+  "sessions",
+  "analyze",
+  "index",
+  "stats",
+  "audit",
+  "pricing",
+]);
 
 async function runCommand(command: string | undefined, rest: string[]): Promise<number> {
   const json = rest.includes("--json");
@@ -313,6 +354,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "analyze",
     "index",
     "stats",
+    "audit",
     "serve",
     "pricing",
     "update",
@@ -337,6 +379,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdIndex(rest.includes("--rebuild"), rest.includes("--check"));
     case "stats":
       return cmdStats(json, rest.includes("--current"));
+    case "audit":
+      return cmdAudit(json);
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

@@ -7,6 +7,8 @@
 - [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts)
 - [src/core/chart-series.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/chart-series.ts)
 - [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts)
+- [src/core/inventory.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/inventory.ts)
+- [src/core/setup-audit.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/setup-audit.ts)
 - [src/core/queries.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/queries.ts)
 - [src/tui/charts.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts)
 - [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx)
@@ -45,6 +47,10 @@ flowchart LR
     types --> webCharts[trend-charts.tsx / SessionCharts.tsx]
     series --> webCharts
     webCharts --> webViews[Insights / Trends / Tools]
+
+    inventory[inventory.ts fs scan] --> audit[setup-audit.ts rules]
+    rollup --> audit
+    audit --> webViews
 ```
 
 The database sits on the left; the middle tier is the core computation in `stats.ts`, `queries.ts`, and the two Bun-free modules; the right tier is the two renderers. Solid arrows carry data; dashed arrows mark the shared type and helper dependency. `stats-types.ts` and `chart-series.ts` are the pivot: both frontends and the core layer import them, which is what keeps the two renderers charting identical numbers.
@@ -57,6 +63,8 @@ The database sits on the left; the middle tier is the core computation in `stats
 | chart-series | `src/core/chart-series.ts` | Bun-free per-session chart builders (context/burn/turn) |
 | stats | `src/core/stats.ts` | SQL metric computations, single-scan rollups, portfolio bundle |
 | queries | `src/core/queries.ts` | Row-level session/project listings and search |
+| inventory | `src/core/inventory.ts` | Tolerant, read-only scan of the installed Claude setup |
+| setup-audit | `src/core/setup-audit.ts` | Bun-free setup shapes and the inventory-vs-usage rules |
 | tui/charts | `src/tui/charts.ts` | Braille/ASCII chart primitives for the TUI |
 | tui screens | `src/tui/screens/{Insights,Trends,Tools}View.tsx` | TUI analytics panels |
 | web charts | `web/src/{trend-charts,SessionCharts}.tsx` | SVG chart building blocks |
@@ -138,6 +146,53 @@ heuristic: diagnostics do not produce an opaque quality score, infer account-wid
 subscription usage, or claim to know which tool payload caused a context jump.
 The module is Bun-free so all three presentation layers derive identical results
 without adding fields to the disposable aggregate index.
+
+### Setup audit: inventory vs observed usage
+
+The setup audit is the only analytics surface whose input is *configuration*
+rather than transcripts. `scanInventory()` in
+[src/core/inventory.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/inventory.ts)
+reads the configured Claude dir — `settings.json` (permission rule counts, hook
+events, a pinned `model`, any `mcpServers`), `skills/<name>/SKILL.md`,
+`agents/<name>.md`, a best-effort walk of `plugins/` (a dir counts as a plugin
+when it declares `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`,
+and the plugin's own skills and agents are recorded with it) — plus the sibling
+`<claudeDir>.json`, whose top-level `mcpServers` are global and whose
+`projects.<path>.mcpServers` are project-scoped. Every read is wrapped: a missing
+dir, an unfamiliar layout, or malformed JSON is skipped silently, because this is
+user-editable config whose shape changes between Claude Code releases.
+
+`buildSetupAudit(inventory, usage, today)` in
+[src/core/setup-audit.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/setup-audit.ts)
+is Bun-free and pure — `today` is passed in, never read from the clock — and
+takes its usage side straight from `analyticsRollup`: `skills`, `subagents`, and
+`tools` (MCP calls appear as `mcp__<server>__<tool>`). It emits findings in the
+`session-diagnostics` shape (`code`, `severity`, `title`, `evidence`, `action`,
+plus the `subject` the finding is about), warnings first:
+
+| Code | Severity | Rule and rationale |
+| ---- | -------- | ------------------ |
+| `unused-mcp-server` | warning | A configured server with no `mcp__<server>__*` call. A warning because every configured server's tool schemas are re-sent with each turn — an unused one is pure context tax. The evidence names global vs project scope. |
+| `error-prone-skill` | warning | Error rate ≥ 25% over ≥ 5 invocations. One in four failing is past flaky; the floor of five keeps a single bad run out of two from being called error-prone. |
+| `unused-skill` | info | An installed skill with zero matching invocations; the evidence names the install source (user dir or plugin). |
+| `unused-agent` | info | An installed subagent never named by a `Task`/`Agent` call. |
+| `stale-skill` | info | Previously used, but last used ≥ 30 days before `today` — one month covers a normal work cycle, and anything shorter would flag genuinely monthly skills. |
+| `missing-but-used` | info | Skills or subagents observed in sessions but absent from the inventory, aggregated into one finding per kind. Suppressed entirely when there is no Claude dir to compare against. |
+
+Name matching is deliberately loose. A plugin skill may be invoked qualified
+(`my-plugin:review`) or bare, so an installed item counts as used when an
+observed name matches either the fully qualified form or the bare name after the
+last `:`. A loose match yields a false negative — the audit stays quiet — which
+is strictly better than accusing a daily-driver skill of being unused.
+
+The whole result is machine-local and historical: the index can cover sessions
+that predate the current setup, and project-scoped skills, subagents, and MCP
+servers live outside the Claude config dir. That caveat ships as the exported
+`SETUP_AUDIT_CAVEAT` string so `cc-analyzer audit`, `/api/audit`, and the web
+Tools view all print the same words. The TUI intentionally has no audit screen;
+the CLI and web cover it.
+
+Sources: [src/core/inventory.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/inventory.ts) [src/core/setup-audit.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/setup-audit.ts) [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) [web/src/views/Tools.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Tools.tsx)
 
 ### Frontend chart primitives
 

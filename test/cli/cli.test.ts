@@ -209,6 +209,36 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stderr).toContain("cc-analyzer index");
   });
 
+  test("audit reports the inventory and its findings, and --json is clean", async () => {
+    // An installed setup that the fixture sessions never touch.
+    mkdirSync(join(tmpDir, "claude", "skills", "tidy"), { recursive: true });
+    writeFileSync(join(tmpDir, "claude", "skills", "tidy", "SKILL.md"), "# tidy\n");
+    mkdirSync(join(tmpDir, "claude", "agents"), { recursive: true });
+    writeFileSync(join(tmpDir, "claude", "agents", "reviewer.md"), "# reviewer\n");
+    try {
+      expect((await run(["index"])).code).toBe(0);
+
+      const human = await run(["audit"]);
+      expect(human.code, human.stderr).toBe(0);
+      expect(human.stdout).toContain("◆ cc-analyzer · setup audit");
+      expect(human.stdout).toContain("▸ Inventory");
+      expect(human.stdout).toContain("▸ Findings");
+      expect(human.stdout).toContain("Machine-local and historical");
+      expect(human.stdout).not.toContain("[");
+
+      const parsed = JSON.parse((await run(["audit", "--json"])).stdout) as {
+        counts: { skills: number; agents: number };
+        findings: { code: string; subject: string }[];
+      };
+      expect(parsed.counts).toMatchObject({ skills: 1, agents: 1 });
+      expect(parsed.findings.map((f) => f.code).sort()).toEqual(["unused-agent", "unused-skill"]);
+    } finally {
+      rmSync(join(tmpDir, "claude", "skills"), { recursive: true, force: true });
+      rmSync(join(tmpDir, "claude", "agents"), { recursive: true, force: true });
+      rmSync(join(tmpDir, "claude", "agents.tmp"), { force: true });
+    }
+  });
+
   test("index --check reports exact stale counts without refreshing", async () => {
     expect((await run(["index", "--check"])).code).toBe(0);
     const added = join(tmpDir, "claude", "projects", "proj-b", "new-session.jsonl");

@@ -2,6 +2,7 @@ import type { SessionAnalysis } from "../core/analyze.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
+import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
 import type {
   BashCommandRow,
   CacheTtlSplit,
@@ -178,6 +179,65 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
     ),
   );
 
+  return lines.join("\n");
+}
+
+/**
+ * Render the setup audit: an inventory summary block, then the findings with
+ * warnings first. The audit compares live config against historical sessions,
+ * so the caveat line is part of the report, not decoration.
+ */
+export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {}): string {
+  const lines: string[] = [];
+  const c = audit.counts;
+  const inv = audit.inventory;
+
+  lines.push(reportTitle("cc-analyzer · setup audit", options));
+  lines.push(muted(`${inv.claudeDir}${inv.present ? "" : " (not found)"}`, options));
+
+  lines.push(`\n${section("Inventory", options)}`);
+  const mcpScope =
+    c.mcpServers > 0 ? ` (${c.mcpGlobal} global, ${c.mcpProject} project-scoped)` : "";
+  lines.push(
+    table(
+      ["item", "installed"],
+      [
+        ["skills", String(c.skills)],
+        ["subagents", String(c.agents)],
+        [
+          "plugins",
+          c.plugins > 0 ? `${c.plugins} (${inv.plugins.map((p) => p.name).join(", ")})` : "0",
+        ],
+        ["mcp servers", `${c.mcpServers}${mcpScope}`],
+        [
+          "hooks",
+          c.hooks > 0
+            ? `${c.hooks} across ${c.hookEvents} ${c.hookEvents === 1 ? "event" : "events"}`
+            : "0",
+        ],
+        [
+          "permission rules",
+          `${c.permissionAllow} allow · ${c.permissionDeny} deny · ${c.permissionAsk} ask`,
+        ],
+        ["model", inv.model ?? "(not pinned)"],
+      ],
+    ),
+  );
+
+  lines.push(`\n${section("Findings", options)}`);
+  if (audit.findings.length === 0) {
+    lines.push(
+      healthy("Everything installed is in use, and nothing crossed a threshold.", options),
+    );
+  } else {
+    for (const finding of audit.findings) {
+      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
+      lines.push(`  ${finding.evidence}`);
+      lines.push(muted(`  Next: ${finding.action}`, options));
+    }
+  }
+
+  lines.push(`\n${muted(SETUP_AUDIT_CAVEAT, options)}`);
   return lines.join("\n");
 }
 
