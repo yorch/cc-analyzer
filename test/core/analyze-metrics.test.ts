@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ACTIVE_GAP_MS,
   analyzeSession,
+  analyzeSessionStream,
   commandFamily,
   commandHead,
   isTestCommand,
@@ -294,5 +295,108 @@ describe("analyzeSession new metrics", () => {
     // A repeating its own read on its own chain is exactly one retry.
     expect(a.retries).toBe(1);
     expect(a.retriesByTool).toEqual({ Read: 1 });
+  });
+});
+
+describe("turn-scoped skill cost attribution", () => {
+  const skill = (id: string, name: string) => toolUse(id, "Skill", { skill: name });
+  const prompt = (uuid: string, min: number) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    message: { content: `prompt ${uuid}` },
+  });
+
+  test("charges a skill the whole turn it ran in, subagent burst included", () => {
+    const a = analyze([
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1, content: [skill("t1", "docx")] }),
+      // The subagent the turn spawned bills to that turn too.
+      assistant({ id: "2", min: 2, sidechain: true }),
+    ]);
+    const turnCost = a.turns[0]?.cost.total as number;
+    expect(turnCost).toBeGreaterThan(0);
+    expect(a.skillTurnCosts).toEqual({ docx: { turns: 1, cost: turnCost } });
+    // The single turn holds every call, so it equals the session total here.
+    expect(turnCost).toBeCloseTo(a.totals.cost.total, 12);
+    expect(a.totals.sidechainCost).toBeGreaterThan(0);
+  });
+
+  test("two skills in one turn each get the full turn cost", () => {
+    const a = analyze([
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1, content: [skill("t1", "docx"), skill("t2", "pdf")] }),
+      assistant({ id: "2", min: 2 }),
+    ]);
+    const turnCost = a.turns[0]?.cost.total as number;
+    expect(a.skillTurnCosts).toEqual({
+      docx: { turns: 1, cost: turnCost },
+      pdf: { turns: 1, cost: turnCost },
+    });
+    // Correlational at the margin: the two attributions sum past the session.
+    const attributed = Object.values(a.skillTurnCosts).reduce((s, v) => s + v.cost, 0);
+    expect(attributed).toBeCloseTo(2 * a.totals.cost.total, 12);
+  });
+
+  test("repeat invocations inside one turn count that turn once", () => {
+    const a = analyze([
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1, content: [skill("t1", "docx")] }),
+      assistant({ id: "2", min: 2, content: [skill("t2", "docx")] }),
+    ]);
+    expect(a.skills).toEqual({ docx: 2 });
+    expect(a.skillTurnCosts.docx?.turns).toBe(1);
+    expect(a.skillTurnCosts.docx?.cost).toBeCloseTo(a.turns[0]?.cost.total as number, 12);
+  });
+
+  test("a skill used in turn 2 of 3 carries only turn 2's cost", () => {
+    const a = analyze([
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1 }),
+      prompt("u2", 2),
+      assistant({ id: "2", min: 3, content: [skill("t1", "docx")] }),
+      assistant({ id: "3", min: 4 }),
+      prompt("u3", 5),
+      assistant({ id: "4", min: 6 }),
+    ]);
+    const turn2 = a.turns[1]?.cost.total as number;
+    expect(a.turns).toHaveLength(3);
+    expect(a.skillTurnCosts).toEqual({ docx: { turns: 1, cost: turn2 } });
+    expect(turn2).toBeLessThan(a.totals.cost.total);
+  });
+
+  test("a skill invoked in several turns accumulates their costs", () => {
+    const a = analyze([
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1, content: [skill("t1", "docx")] }),
+      prompt("u2", 2),
+      assistant({ id: "2", min: 3, content: [skill("t2", "docx")] }),
+    ]);
+    const expected = (a.turns[0]?.cost.total as number) + (a.turns[1]?.cost.total as number);
+    expect(a.skillTurnCosts.docx?.turns).toBe(2);
+    expect(a.skillTurnCosts.docx?.cost).toBeCloseTo(expected, 12);
+  });
+
+  test("a session with no skills attributes nothing", () => {
+    const a = analyze([prompt("u1", 0), assistant({ id: "1", min: 1 })]);
+    expect(a.skillTurnCosts).toEqual({});
+  });
+
+  test("aggregate mode attributes exactly like detail mode", async () => {
+    const events = [
+      prompt("u1", 0),
+      assistant({ id: "1", min: 1, content: [skill("t1", "docx")] }),
+      assistant({ id: "2", min: 2, sidechain: true }),
+      prompt("u2", 3),
+      assistant({ id: "3", min: 4, content: [skill("t2", "pdf"), skill("t3", "docx")] }),
+    ];
+    const full = analyze(events);
+    async function* stream() {
+      for (const e of events) yield e as Events[number];
+    }
+    const agg = await analyzeSessionStream(stream(), pricing, { detail: false });
+    expect(agg.turns).toEqual([]);
+    expect(agg.skillTurnCosts).toEqual(full.skillTurnCosts);
+    expect(agg.skillTurnCosts.docx?.turns).toBe(2);
   });
 });

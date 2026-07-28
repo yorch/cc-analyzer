@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   tool_errors_json TEXT,
   skills_json TEXT,
   skill_errors_json TEXT,
+  skill_turn_costs_json TEXT,
   subagents_json TEXT,
   turn_depths_json TEXT,
   permission_modes_json TEXT,
@@ -90,7 +91,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // rationale as v8: the incremental indexer skips unchanged files, so rows
 // written by v8 would keep the column NULL forever and every established
 // project would report no baseline — the bump forces the rebuild.
-export const SCHEMA_VERSION = "9";
+// v10: adds `skill_turn_costs_json` — per-skill turn-scoped cost attribution
+// (the cost of the turns that invoked a skill), the primary skill-cost number
+// the surfaces now show. Same rationale as v8/v9: the incremental indexer skips
+// unchanged files, so rows written by v9 would carry no attribution forever and
+// every skill would report $0 — the bump forces the rebuild.
+export const SCHEMA_VERSION = "10";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

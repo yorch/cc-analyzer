@@ -298,7 +298,8 @@ export interface SkillDayCount {
 }
 
 /** Rich per-skill analytics: invocation depth, reach, reliability, adoption, and
- * (session-scoped, correlational) cost. */
+ * cost at two scopes — turn-scoped attribution (the primary number) plus the
+ * session-scoped upper bound. */
 export interface SkillUsageRow {
   name: string;
   /** Total `Skill` invocations across all sessions. */
@@ -314,13 +315,30 @@ export interface SkillUsageRow {
   /** Earliest / latest day (YYYY-MM-DD) the skill was used, or null if undated. */
   firstUsed: string | null;
   lastUsed: string | null;
-  /** Σ cost_total over sessions that used the skill. Correlational, not causal:
-   * a session using N skills counts its full cost toward each of them. */
+  /** Turns (across all sessions) that invoked the skill, and Σ cost of those
+   * turns — the turn-scoped attribution, which is the primary cost number.
+   * Tighter than `totalCost`, but still correlational at the margin: a turn
+   * invoking several skills counts its full cost toward each. */
+  attributedTurns: number;
+  attributedCost: number;
+  /** Σ cost_total over sessions that used the skill — the whole-session upper
+   * bound. Correlational, not causal: a session using N skills counts its full
+   * cost toward each of them. */
   totalCost: number;
   avgCostPerSession: number;
   /** Per-day invocation counts, oldest first, for the adoption sparkline. */
   daily: SkillDayCount[];
 }
+
+/**
+ * The caveat every skill-cost surface must print, verbatim — the two scopes
+ * mean different things and neither is causal, so the wording cannot drift
+ * between the CLI, the TUI and the web app.
+ */
+export const SKILL_COST_CAVEAT =
+  "Turn-scoped cost is the cost of the turns that invoked the skill (a turn invoking several " +
+  "skills counts its full cost toward each); session-scoped is the whole-session upper bound. " +
+  "Correlational, not causal.";
 
 export interface DurationSummary {
   /** Sessions carrying a positive duration. */

@@ -17,7 +17,7 @@ import type {
   TestRunSummary,
   WhatIfRepricing,
 } from "../core/stats.ts";
-import { topEntries } from "../core/stats-types.ts";
+import { SKILL_COST_CAVEAT, type SkillUsageRow, topEntries } from "../core/stats-types.ts";
 import {
   formatCount,
   formatDuration,
@@ -137,12 +137,20 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
     lines.push(table(["tool", "count"], toolRows, { align: ["left", "right"] }));
   }
 
-  if (Object.keys(a.skills).length) {
+  const skillEntries = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
+  if (skillEntries.length) {
+    lines.push(`\n${section("Skills", options)}`);
     lines.push(
-      `\nSkills: ${Object.entries(a.skills)
-        .map(([s, n]) => `${s}:${n}`)
-        .join(", ")}`,
+      table(
+        ["skill", "uses", "turns", "turn $"],
+        skillEntries.map(([s, n]) => {
+          const attributed = a.skillTurnCosts[s];
+          return [s, String(n), String(attributed?.turns ?? 0), formatUSD(attributed?.cost ?? 0)];
+        }),
+        { align: ["left", "right", "right", "right"] },
+      ),
     );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
   }
   if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
@@ -297,6 +305,7 @@ export interface PortfolioView extends PortfolioStats {
   index: IndexStatus;
   ttl: CacheTtlSplit;
   bash: BashCommandRow[];
+  skills: SkillUsageRow[];
   tests: TestRunSummary;
   retries: RetryStats;
   concurrency: { peak: number; parallelDayShare: number };
@@ -608,6 +617,25 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         { align: ["left", "right", "right", "right"] },
       ),
     );
+  }
+
+  if (v.skills.length) {
+    lines.push(`\n${section("Skills · cost of the turns that invoked them", options)}`);
+    lines.push(
+      table(
+        ["skill", "invoc", "turns", "turn $", "session $", "err %"],
+        v.skills.map((s) => [
+          truncate(s.name, 28),
+          formatCount(s.invocations),
+          formatCount(s.attributedTurns),
+          formatUSD(s.attributedCost),
+          formatUSD(s.totalCost),
+          `${(s.errorRate * 100).toFixed(1)}%`,
+        ]),
+        { align: ["left", "right", "right", "right", "right", "right"] },
+      ),
+    );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
   }
 
   if (v.retries.byTool.length) {

@@ -7,6 +7,7 @@ import {
   type NameUsageRow,
   SETUP_AUDIT_CAVEAT,
   type SetupAudit,
+  SKILL_COST_CAVEAT,
   type SkillUsageRow,
   type ToolUsageRow,
   type TurnDepthStats,
@@ -35,6 +36,7 @@ const SKILL_SORT: Accessors<SkillUsageRow> = {
   sessions: (r) => r.sessions,
   projects: (r) => r.projects,
   errorRate: (r) => r.errorRate,
+  attributedCost: (r) => r.attributedCost,
   totalCost: (r) => r.totalCost,
 };
 const NAME_SORT: Accessors<NameUsageRow> = {
@@ -76,8 +78,9 @@ function SkillDetail({ skill }: { skill: SkillUsageRow }) {
         <strong>{skill.name}</strong>
         <span className="muted">
           first {skill.firstUsed ?? "—"} · last {skill.lastUsed ?? "—"} · {skill.projects} project
-          {skill.projects === 1 ? "" : "s"} · avg {usd(skill.avgCostPerSession)}/session · total{" "}
-          {usd(skill.totalCost)}
+          {skill.projects === 1 ? "" : "s"} · {count(skill.attributedTurns)} attributed turn
+          {skill.attributedTurns === 1 ? "" : "s"} · {usd(skill.attributedCost)} turn-scoped ·{" "}
+          {usd(skill.totalCost)} session-scoped
         </span>
       </div>
       {series.length > 0 ? (
@@ -108,7 +111,8 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
               <SortTh label="Sessions" col="sessions" sort={sort} className="num" />
               <SortTh label="Projects" col="projects" sort={sort} className="num" />
               <SortTh label="Err %" col="errorRate" sort={sort} className="num" />
-              <SortTh label="Total $" col="totalCost" sort={sort} className="num" />
+              <SortTh label="Turn $" col="attributedCost" sort={sort} className="num" />
+              <SortTh label="Session $" col="totalCost" sort={sort} className="num" />
             </tr>
           </thead>
           <tbody>
@@ -130,17 +134,15 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
                 <td className={`num ${rateClass(r.errorRate)}`}>
                   {(r.errorRate * 100).toFixed(1)}%
                 </td>
-                <td className="num">{usd(r.totalCost)}</td>
+                <td className="num">{usd(r.attributedCost)}</td>
+                <td className="num muted">{usd(r.totalCost)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {sel && <SkillDetail skill={sel} />}
-      <p className="muted spark-cap">
-        Cost is session-scoped: a session using several skills counts its full cost toward each —
-        correlational, not causal.
-      </p>
+      <p className="muted spark-cap">{SKILL_COST_CAVEAT}</p>
     </>
   );
 }

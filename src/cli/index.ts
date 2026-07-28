@@ -280,6 +280,8 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     ...portfolio,
     ttl: cacheTtlSplit(db, projectId),
     bash: analytics.bash.slice(0, 10),
+    // Ranked by turn-scoped cost — the primary skill-cost number.
+    skills: [...analytics.skills].sort((a, b) => b.attributedCost - a.attributedCost).slice(0, 10),
     tests: analytics.tests,
     retries: analytics.retries,
     concurrency: { peak, parallelDayShare },

@@ -5,6 +5,7 @@ import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import {
   analyticsRollup,
   type NameUsageRow,
+  SKILL_COST_CAVEAT,
   type SkillUsageRow,
   type ToolUsageRow,
 } from "../../core/stats.ts";
@@ -33,7 +34,11 @@ const SKILL_SORTS = [
   { key: "sessions", cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.sessions - a.sessions },
   { key: "projects", cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.projects - a.projects },
   { key: "err%", cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.errorRate - a.errorRate },
-  { key: "cost", cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.totalCost - a.totalCost },
+  {
+    key: "turn $",
+    cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.attributedCost - a.attributedCost,
+  },
+  { key: "session $", cmp: (a: SkillUsageRow, b: SkillUsageRow) => b.totalCost - a.totalCost },
   { key: "name", cmp: (a: SkillUsageRow, b: SkillUsageRow) => a.name.localeCompare(b.name) },
 ] as const;
 
@@ -73,8 +78,9 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
   const list: (ToolUsageRow | SkillUsageRow | NameUsageRow)[] =
     panel === "tools" ? sortedTools : panel === "skills" ? sortedSkills : subagents;
 
-  // The skills panel reserves rows for the adoption detail strip below the table.
-  const detailRows = panel === "skills" ? 4 : 0;
+  // The skills panel reserves rows for the adoption detail strip below the
+  // table (divider + head + sparkline + cost caveat, plus its top margin).
+  const detailRows = panel === "skills" ? 5 : 0;
   const pageSize = Math.max(3, rows - 10 - detailRows);
 
   // Clamp cursor + window: switching panel/sort or shrinking the terminal can
@@ -110,11 +116,11 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
     { isActive },
   );
 
-  // Body width minus the rail and 2-char cursor. The skills panel has 5 number
+  // Body width minus the rail and 2-char cursor. The skills panel has 6 number
   // columns, tools 4, the subagents panel just one — so name budgets differ.
   const nameW =
     panel === "skills"
-      ? Math.max(10, columns - 48)
+      ? Math.max(10, columns - 52)
       : panel === "tools"
         ? Math.max(10, columns - 54)
         : Math.max(10, columns - 28);
@@ -173,7 +179,8 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
             <Text color={role.muted}>
               {"  "}
               {"SKILL".padEnd(nameW)} {"INVOC".padStart(7)} {"SESS".padStart(6)}{" "}
-              {"PROJ".padStart(5)} {"ERR%".padStart(6)} {"TOTAL $".padStart(10)}
+              {"PROJ".padStart(5)} {"ERR%".padStart(6)} {"TURN $".padStart(9)}{" "}
+              {"SESS $".padStart(9)}
             </Text>
             {(visible as SkillUsageRow[]).map((r, i) => (
               <Text key={r.name}>
@@ -187,7 +194,8 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
                 <Text color={rateColor(r.errorRate)}>
                   {`${(r.errorRate * 100).toFixed(1)}%`.padStart(6)}
                 </Text>{" "}
-                <Text color={role.cost}>{formatUSD(r.totalCost).padStart(10)}</Text>
+                <Text color={role.cost}>{formatUSD(r.attributedCost).padStart(9)}</Text>{" "}
+                <Text color={role.muted}>{formatUSD(r.totalCost).padStart(9)}</Text>
               </Text>
             ))}
           </>
@@ -215,9 +223,10 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
           <Text>
             <Text color={palette.amber}>{selSkill.name}</Text>
             <Text color={role.muted}>
-              {"  ·  "}first {selSkill.firstUsed ?? "—"} · last {selSkill.lastUsed ?? "—"} · avg{" "}
-              {formatUSD(selSkill.avgCostPerSession)}/session · total{" "}
-              {formatUSD(selSkill.totalCost)}
+              {"  ·  "}first {selSkill.firstUsed ?? "—"} · last {selSkill.lastUsed ?? "—"} ·{" "}
+              {`${formatUSD(selSkill.attributedCost)} over ${selSkill.attributedTurns} ` +
+                `${selSkill.attributedTurns === 1 ? "turn" : "turns"} · ` +
+                `${formatUSD(selSkill.totalCost)} session-scoped`}
             </Text>
           </Text>
           <Text>
@@ -229,6 +238,7 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
             </Text>
             <Text color={role.muted}> invocations / week</Text>
           </Text>
+          <Text color={role.muted}>{truncate(SKILL_COST_CAVEAT, Math.max(20, columns - 2))}</Text>
         </Box>
       )}
     </Box>

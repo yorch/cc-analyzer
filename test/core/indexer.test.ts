@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import {
+  analyticsRollup,
   contextTax,
   portfolioSummary,
   spendByModel,
@@ -189,6 +190,78 @@ describe("reindex · context tax (schema v9)", () => {
     db.close();
     rmSync(withCall, { force: true });
     rmSync(noCall, { force: true });
+  });
+});
+
+describe("reindex · turn-scoped skill cost (schema v10)", () => {
+  test("round-trips per-skill turn attribution into skill_turn_costs_json", async () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const call = (uuid: string, minute: number, content: unknown[], sidechain = false) =>
+      line({
+        type: "assistant",
+        uuid,
+        isSidechain: sidechain,
+        sessionId: "sess-skill",
+        timestamp: `2026-07-03T10:0${minute}:00.000Z`,
+        requestId: `req-${uuid}`,
+        message: {
+          id: `m-${uuid}`,
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content,
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      });
+    const file = join(claude.dir, "projects", "proj-b", "sess-skill.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-skill",
+          timestamp: "2026-07-03T10:00:00.000Z",
+          message: { role: "user", content: "write the doc" },
+        }),
+        call("a1", 1, [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "docx" } }]),
+        // The subagent this turn spawned bills to the same turn.
+        call("s1", 2, [{ type: "text", text: "sub" }], true),
+        line({
+          type: "user",
+          uuid: "u2",
+          sessionId: "sess-skill",
+          timestamp: "2026-07-03T10:03:00.000Z",
+          message: { role: "user", content: "now something else" },
+        }),
+        call("a2", 4, [{ type: "text", text: "done" }]),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT cost_total, skills_json, skill_turn_costs_json FROM sessions
+          WHERE session_id = 'sess-skill'`,
+      )
+      .get() as { cost_total: number; skills_json: string; skill_turn_costs_json: string };
+    expect(JSON.parse(row.skills_json)).toEqual({ docx: 1 });
+    const attributed = JSON.parse(row.skill_turn_costs_json) as Record<
+      string,
+      { turns: number; cost: number }
+    >;
+    expect(attributed.docx?.turns).toBe(1);
+    // Turn 1 (main call + subagent call) — strictly less than the session, which
+    // also paid for turn 2.
+    expect(attributed.docx?.cost).toBeGreaterThan(0);
+    expect(attributed.docx?.cost).toBeLessThan(row.cost_total);
+
+    // …and the column is what analyticsRollup reads.
+    const skill = analyticsRollup(db, "proj-b").skills.find((s) => s.name === "docx");
+    expect(skill?.attributedTurns).toBe(1);
+    expect(skill?.attributedCost).toBeCloseTo(attributed.docx?.cost as number, 12);
+    db.close();
+    rmSync(file, { force: true });
   });
 });
 

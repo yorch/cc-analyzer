@@ -36,6 +36,8 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Skill / Subagent** — A named capability invoked via the `Skill` tool, and a delegated agent launched via the `Task` tool (`subagent_type`); both are recorded per session and surfaced in the tools analytics.
 
+**Turn-scoped skill cost** — The primary skill-cost number: the total cost of the *turns* that invoked a skill (the turn's API calls, its tool loop, and any subagent burst inside it), accumulated per session in `SessionAnalysis.skillTurnCosts`, stored in the index column `skill_turn_costs_json` (schema v10), and summed across sessions into `SkillUsageRow.attributedTurns` / `attributedCost`. Tighter than the session-scoped `totalCost` (a session's whole cost charged to every skill it touched, kept as an upper bound), but still correlational, not causal: a turn invoking several skills counts its full cost toward each. Every surface prints the shared `SKILL_COST_CAVEAT` ([src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts), [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts)).
+
 **Token categories** — The four separately-priced kinds of tokens: input, output, cache-write, and cache-read ([src/core/pricing.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/pricing.ts#L1-L60)).
 
 **Cache-write (5m / 1h TTL) / Cache-read** — Tokens written into the prompt cache (priced by time-to-live) and tokens served from it (priced well below input). Cache accounting is where most real spend hides ([src/core/pricing.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/pricing.ts#L1-L60)).
@@ -76,7 +78,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Trends** — The time-series view (TUI `TrendsView` / web `Trends`): spend and usage over time with metric and granularity toggles, rendered as braille charts in the terminal and SVG charts on the web.
 
-**Tools analytics** — The tool/skill/subagent usage view (TUI `ToolsView` / web `Tools`): which tools, skills, and subagents are used, how often, and at what cost.
+**Tools analytics** — The tool/skill/subagent usage view (TUI `ToolsView` / web `Tools`): which tools, skills, and subagents are used, how often, and at what cost (skills at both the turn and session scope).
 
 **Compaction tracking** — Analytics that follow context-compaction events across a session/project, surfaced in the session and project charts ([src/core/stats.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1-L60)).
 

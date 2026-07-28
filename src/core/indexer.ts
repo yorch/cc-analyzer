@@ -46,6 +46,7 @@ export interface SessionRow {
   tool_errors_json: string;
   skills_json: string;
   skill_errors_json: string;
+  skill_turn_costs_json: string;
   subagents_json: string;
   turn_depths_json: string;
   permission_modes_json: string;
@@ -124,6 +125,7 @@ export function toSessionRow(
     tool_errors_json: JSON.stringify(analysis.toolErrors),
     skills_json: JSON.stringify(analysis.skills),
     skill_errors_json: JSON.stringify(analysis.skillErrors),
+    skill_turn_costs_json: JSON.stringify(analysis.skillTurnCosts),
     subagents_json: JSON.stringify(analysis.subagents),
     turn_depths_json: JSON.stringify(analysis.turnDepths),
     permission_modes_json: JSON.stringify(analysis.permissionModes),
@@ -180,6 +182,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "tool_errors_json",
   "skills_json",
   "skill_errors_json",
+  "skill_turn_costs_json",
   "subagents_json",
   "turn_depths_json",
   "permission_modes_json",

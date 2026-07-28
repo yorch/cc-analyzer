@@ -167,7 +167,8 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
 - **Tokens alongside cost** everywhere the Web UI and TUI show a cost figure —
   shown as input+output with the (much larger) cache volume broken out, e.g.
   `213M +52B cache`.
-- **Tools**, **skills**, and **subagents** used; files touched.
+- **Tools**, **skills**, and **subagents** used; files touched. Skills carry the
+  cost of the turns that invoked them (turn-scoped attribution).
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for
@@ -234,7 +235,8 @@ metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, and the most expensive sessions. Two cost-optimization
+month/project/model, the most expensive sessions, and your **skills ranked by
+the cost of the turns that invoked them**. Two cost-optimization
 sections round it out: **what-if model repricing** replays each model's actual
 token mix — all four categories, both cache-write TTLs — at the rates of the
 other models you ran, and **context tax** reports the median/p90 tokens each
@@ -311,11 +313,15 @@ time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
 hour (`m` toggles to cost). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
 **tools** by invocations with an error count and error rate (`s` sorts); goes
-deeper on **skills** — invocations, sessions, distinct projects, error rate, and
-session-scoped cost (`s` sorts), with an adoption detail strip (first/last used +
-a weekly invocation sparkline) for the selected skill; and lists **subagents** by
-how many sessions used each. (Skill cost is *correlational*: a session using
-several skills counts its full cost toward each.) Opening a session
+deeper on **skills** — invocations, sessions, distinct projects, error rate,
+turn-scoped cost and session-scoped cost (`s` sorts), with an adoption detail
+strip (first/last used + a weekly invocation sparkline) for the selected skill;
+and lists **subagents** by how many sessions used each. (Skill cost is reported
+at two scopes: *turn-scoped* — the cost of the turns that invoked the skill,
+including any subagent burst inside them — is the primary number, and
+*session-scoped* is the whole-session upper bound. Both are correlational, not
+causal: a turn or session touching several skills counts its full cost toward
+each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and

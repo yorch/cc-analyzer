@@ -57,6 +57,14 @@ export interface Turn {
   toolCounts: Record<string, number>;
 }
 
+/** Turn-scoped cost attributed to one skill (see `SessionAnalysis.skillTurnCosts`). */
+export interface SkillTurnCost {
+  /** Turns in which the skill was invoked at least once. */
+  turns: number;
+  /** Σ cost of those turns (every API call in them, subagents included). */
+  cost: number;
+}
+
 export interface ModelUsage {
   apiCalls: number;
   tokens: TokenCounts;
@@ -131,6 +139,21 @@ export interface SessionAnalysis {
   skills: Record<string, number>;
   /** Per-skill count of `Skill` invocations whose result was an error. */
   skillErrors: Record<string, number>;
+  /**
+   * Turn-scoped cost attribution per skill: for each skill, how many turns
+   * invoked it and the total cost of those turns — every API call made in the
+   * turn, sidechains included, because a subagent burst belongs to the turn
+   * that spawned it. Attribution keys off the `Skill` tool_use (the
+   * invocation), not its later tool_result.
+   *
+   * This is tighter than the session-scoped rollup (which charges a skill the
+   * whole session), but it is still **correlational, not causal**: a turn
+   * invoking N distinct skills counts its FULL cost toward each of them, so
+   * summing across skills can exceed the session's cost. Turns are attributed
+   * only from the first real prompt onward; anything before it belongs to no
+   * turn. Empty when the session invoked no skills. Available in aggregate mode.
+   */
+  skillTurnCosts: Record<string, SkillTurnCost>;
   subagents: string[];
   filesTouched: string[];
   /** Count of API calls per stop_reason (end_turn, tool_use, max_tokens, …). */
@@ -345,6 +368,7 @@ class SessionAnalyzer {
   private readonly toolErrors: Record<string, number> = {};
   private readonly skills: Record<string, number> = {};
   private readonly skillErrors: Record<string, number> = {};
+  private readonly skillTurnCosts: Record<string, SkillTurnCost> = {};
   private readonly subagents = new Set<string>();
   private readonly filesTouched = new Set<string>();
   private readonly stopReasons: Record<string, number> = {};
@@ -390,6 +414,13 @@ class SessionAnalyzer {
   // never built).
   private hasTurn = false;
   private currentDepth = 0;
+
+  // Turn-scoped skill attribution, tracked the same way (no materialized turn
+  // needed): the open turn's total cost — every call in it, sidechain bursts
+  // included — and the distinct skills it invoked, folded into
+  // `skillTurnCosts` at each turn boundary.
+  private currentTurnCost = 0;
+  private readonly currentTurnSkills = new Set<string>();
 
   // One retry cursor per chain, reset at each new turn: a user-requested
   // re-run or an interleaved call from a *different* subagent must not read
@@ -456,6 +487,26 @@ class SessionAnalyzer {
       this.stoppedKeys.add(key);
     }
     this.stopReasons[reason] = (this.stopReasons[reason] ?? 0) + 1;
+  }
+
+  /**
+   * Close the open turn's skill attribution: charge its full cost to every
+   * skill invoked in it, then reset the accumulators. `attribute` is false
+   * before the first real prompt — those events belong to no turn, the same
+   * rule `turnDepths` applies — so their cost is dropped, never folded into
+   * the turn that follows.
+   */
+  private closeTurnSkills(attribute: boolean): void {
+    if (attribute) {
+      for (const name of this.currentTurnSkills) {
+        const acc = this.skillTurnCosts[name] ?? { turns: 0, cost: 0 };
+        acc.turns += 1;
+        acc.cost += this.currentTurnCost;
+        this.skillTurnCosts[name] = acc;
+      }
+    }
+    this.currentTurnSkills.clear();
+    this.currentTurnCost = 0;
   }
 
   /** Attach a tool_result to its pending tool_use: count errors, patch the step. */
@@ -558,8 +609,10 @@ class SessionAnalyzer {
       if (isRealPrompt(event)) {
         const prompt = promptPreview(content);
         this.promptChars += prompt.length;
-        // Finalize the previous turn's depth before opening this one.
+        // Finalize the previous turn's depth and skill attribution before
+        // opening this one.
         if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+        this.closeTurnSkills(this.hasTurn);
         this.hasTurn = true;
         this.currentDepth = 0;
         this.turnCount += 1;
@@ -665,7 +718,11 @@ class SessionAnalyzer {
       let skillName: string | undefined;
       if (tu.name === "Skill") {
         skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
-        if (skillName) this.skills[skillName] = (this.skills[skillName] ?? 0) + 1;
+        if (skillName) {
+          this.skills[skillName] = (this.skills[skillName] ?? 0) + 1;
+          // Attribution is per turn, so repeat invocations in one turn collapse.
+          this.currentTurnSkills.add(skillName);
+        }
       } else if (tu.name === "Task" || tu.name === "Agent") {
         const t = stringField(tu.input, "subagent_type");
         if (t) this.subagents.add(t);
@@ -770,6 +827,9 @@ class SessionAnalyzer {
     }
     this.totalTokens = addTokens(this.totalTokens, tokens);
     this.totalCost = addCost(this.totalCost, cost);
+    // Every call in the open turn — main chain and the subagents it spawned —
+    // counts toward the skills that turn invoked.
+    this.currentTurnCost += cost.total;
     if (model) {
       let mu = this.models[model];
       if (!mu) {
@@ -806,8 +866,9 @@ class SessionAnalyzer {
   }
 
   finish(): SessionAnalysis {
-    // Finalize the last open turn's depth.
+    // Finalize the last open turn's depth and skill attribution.
     if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+    this.closeTurnSkills(this.hasTurn);
 
     // Active time: sum gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
     // (longer gaps are the session sitting idle). Sorting first makes the sum
@@ -852,6 +913,7 @@ class SessionAnalyzer {
       toolErrors: this.toolErrors,
       skills: this.skills,
       skillErrors: this.skillErrors,
+      skillTurnCosts: this.skillTurnCosts,
       subagents: [...this.subagents],
       filesTouched: [...this.filesTouched],
       stopReasons: this.stopReasons,

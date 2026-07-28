@@ -1242,6 +1242,7 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     tool_errors_json: string | null;
     skills_json: string | null;
     skill_errors_json: string | null;
+    skill_turn_costs_json: string | null;
     subagents_json: string | null;
     commands_json: string | null;
     command_errors_json: string | null;
@@ -1257,6 +1258,7 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
+        skill_turn_costs_json,
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
@@ -1273,6 +1275,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     projects: Set<string>;
     firstUsed: string | null;
     lastUsed: string | null;
+    attributedTurns: number;
+    attributedCost: number;
     totalCost: number;
     daily: Map<string, number>;
   }
@@ -1287,6 +1291,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         projects: new Set(),
         firstUsed: null,
         lastUsed: null,
+        attributedTurns: 0,
+        attributedCost: 0,
         totalCost: 0,
         daily: new Map(),
       };
@@ -1347,6 +1353,15 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
       parseJson<Record<string, number>>(r.skill_errors_json, {}),
     )) {
       skillOf(name).errors += n;
+    }
+    // Turn-scoped attribution (schema v10): the cost of the turns that invoked
+    // the skill, summed across sessions — the primary skill-cost number.
+    for (const [name, v] of Object.entries(
+      parseJson<Record<string, { turns?: number; cost?: number }>>(r.skill_turn_costs_json, {}),
+    )) {
+      const a = skillOf(name);
+      a.attributedTurns += v.turns ?? 0;
+      a.attributedCost += v.cost ?? 0;
     }
 
     for (const name of new Set(parseJson<string[]>(r.subagents_json, []))) {
@@ -1441,6 +1456,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         errorRate: a.invocations > 0 ? a.errors / a.invocations : 0,
         firstUsed: a.firstUsed,
         lastUsed: a.lastUsed,
+        attributedTurns: a.attributedTurns,
+        attributedCost: a.attributedCost,
         totalCost: a.totalCost,
         avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
         daily: [...a.daily.entries()]

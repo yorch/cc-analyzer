@@ -104,9 +104,28 @@ shared by `cc-analyzer stats` and `/api/stats` is assembled only by
 index fingerprint (row count + newest `indexed_at`). The pure shapes and date
 helpers live in `stats-types.ts`, a bun-free module the web SPA imports directly
 so client and server types cannot drift. Several rollups are **session-scoped
-and correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cache
+and correlational** (permission-mode cost, branch cost, idle-vs-cache
 buckets): a session counts its full cost toward each label it carries. Keep the
 "correlational, not causal" caveat wherever they're rendered.
+
+**Skill cost is turn-scoped first.** The session-scoped number was too weak to
+act on, so `analyze.ts` attributes each skill the cost of the *turns* that
+invoked it: the `SessionAnalyzer` accumulates the open turn's total cost (every
+API call in it — sidechains included, since a subagent burst belongs to the turn
+that spawned it) plus the set of skills invoked in it, and folds them into
+`SessionAnalysis.skillTurnCosts` (`{ turns, cost }` per skill) at the *same*
+turn boundary `turnDepths` uses — so it works in aggregate mode, with no
+materialized turns. Attribution keys off the `Skill` tool_use, not its
+later-arriving tool_result, and pre-first-prompt events belong to no turn. It
+flattens to the `skill_turn_costs_json` column (**schema v10** forces the
+rebuild — the incremental indexer would otherwise leave v9 rows unattributed
+forever) and sums in `analyticsRollup()` into `SkillUsageRow.attributedTurns` /
+`attributedCost`, the **primary** cost columns everywhere (CLI `stats` and the
+single-session report, TUI skills panel, web Tools). Session-scoped
+`totalCost`/`avgCostPerSession` stay beside them as the whole-session upper
+bound. Turn scope is tighter but still **not causal** — a turn invoking N
+skills counts its full cost toward each — so every render site prints the
+shared `SKILL_COST_CAVEAT` from `stats-types.ts` verbatim.
 
 **Compactions and session charts.** `analyze.ts` records context compactions
 (`SessionAnalysis.compactions`) from `system`/`compact_boundary` events (trigger +
@@ -215,7 +234,7 @@ explicit "healthy by every rule" line when nothing fires), `GET /api/insights`
 (`diagnostics` field, memoized on fingerprint + local day like `/api/audit`),
 and the TUI Insights header (compact glyph+title list, computed at the screen
 boundary) all feed the rules identical inputs. None of the rules use the
-session-scoped correlational cost rollups; the idle-cache rule carries its
+correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
 
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
