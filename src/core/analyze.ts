@@ -176,6 +176,33 @@ export interface SessionAnalysis {
   /** Consecutive tool calls with identical tool + input (churn / wasted loops). */
   retries: number;
   retriesByTool: Record<string, number>;
+  /**
+   * Longest run of consecutive *failing* test invocations on one chain — the
+   * edit→test→fail loop signal. A test invocation is a Bash call satisfying
+   * `isTestCommand()`; "failing" means its tool_result was an error. A passing
+   * test run resets the streak; non-test tool calls between the failures do
+   * NOT (the loop is edit→test→fail→edit→test→fail — the edits sit between the
+   * failures). Chains are independent (a parallel subagent gets its own
+   * cursor), and every cursor resets at each new turn, like retry detection.
+   * Unlike raw command heads, this bakes the `isTestCommand()` classification
+   * into the index and needs a reindex to evolve — accepted, the same
+   * trade-off `testRuns` already makes. Available in aggregate mode.
+   */
+  testFailStreak: number;
+  /**
+   * Redundant `Read` invocations: per chain, reads of the same `file_path`
+   * beyond the SECOND — re-reading a file once is often legitimate (it changed
+   * after an edit), so redundancy starts at the third read
+   * (Σ per chain+file of max(0, reads − 2)). Reads with different
+   * `offset`/`limit` params still count as reads of the file — a deliberate
+   * simplification, since they are usually re-pagination of the same content.
+   * Not reset per turn (re-reading across turns is exactly the cost pattern),
+   * but chains stay isolated. Available in aggregate mode.
+   */
+  redundantReads: number;
+  /** Files some chain read ≥ 3 times, ordered by total session-wide reads
+   * (most re-read first), capped at 20 entries. */
+  rereadFiles: string[];
   /** Total characters across every turn's prompt (survives aggregate mode). */
   promptChars: number;
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
@@ -351,6 +378,8 @@ function stringField(input: unknown, key: string): string | undefined {
 /** A tool_use awaiting its (later-arriving) tool_result. */
 interface PendingTool {
   toolName: string;
+  /** Chain the tool_use ran on ("" = main) — for the per-chain fail streak. */
+  chain: string;
   skillName?: string;
   /** Bash command family, if this was a Bash call — for deferred `bashErrors`. */
   bashFamily?: string;
@@ -437,6 +466,21 @@ class SessionAnalyzer {
   // `skillTurnCosts` at each turn boundary.
   private currentTurnCost = 0;
   private readonly currentTurnSkills = new Set<string>();
+
+  // Test-fail streaks (edit→test→fail loops): one running streak per chain,
+  // bumped when a test invocation's result errors, zeroed when one passes —
+  // non-test calls in between leave it alone (the loop's edits sit between the
+  // failures). Reset at each new turn, like the retry cursors below.
+  private testFailStreak = 0;
+  private readonly testStreakByChain = new Map<string, number>();
+
+  // Redundant reads: per chain+file read counts (never reset — re-reading
+  // across turns is the cost pattern), plus session-wide per-file totals to
+  // order `rereadFiles` by. Bounded by the number of distinct files read.
+  private readonly readsByChainFile = new Map<string, number>();
+  private readonly readsByFile = new Map<string, number>();
+  private readonly rereadFiles = new Set<string>();
+  private redundantReads = 0;
 
   // One retry cursor per chain, reset at each new turn: a user-requested
   // re-run or an interleaved call from a *different* subagent must not read
@@ -547,6 +591,17 @@ class SessionAnalyzer {
         this.commandHeadErrors[head] = (this.commandHeadErrors[head] ?? 0) + 1;
       }
     }
+    // Test-fail streak: a failing test run extends its chain's streak, a
+    // passing one breaks it; non-test results never touch it.
+    if (p.isTest) {
+      if (isError) {
+        const streak = (this.testStreakByChain.get(p.chain) ?? 0) + 1;
+        this.testStreakByChain.set(p.chain, streak);
+        if (streak > this.testFailStreak) this.testFailStreak = streak;
+      } else {
+        this.testStreakByChain.set(p.chain, 0);
+      }
+    }
     if (this.detail && p.step) {
       const text = resultToText(rawContent);
       const capped = capDetail(text);
@@ -643,8 +698,10 @@ class SessionAnalyzer {
         const mode = event.permissionMode ?? "default";
         this.permissionModes[mode] = (this.permissionModes[mode] ?? 0) + 1;
         // A new turn is a fresh start: repeating the previous turn's last call
-        // (e.g. the user asked to run it again) is not churn.
+        // (e.g. the user asked to run it again) is not churn, and a failing
+        // streak the user stepped into does not span the intervention.
         this.prevToolByChain.clear();
+        this.testStreakByChain.clear();
         if (this.detail) {
           this.current = {
             index: this.turns.length,
@@ -756,6 +813,24 @@ class SessionAnalyzer {
         if (fp) this.filesTouched.add(fp);
       }
 
+      // Redundant reads: keyed by chain + file_path only, so a re-read with a
+      // different offset/limit still counts (usually re-pagination of the same
+      // content — a deliberate simplification). The third read of a file on
+      // one chain is the first redundant one.
+      if (tu.name === "Read") {
+        const fp = stringField(tu.input, "file_path");
+        if (fp) {
+          const key = `${chain}\u0000${fp}`;
+          const reads = (this.readsByChainFile.get(key) ?? 0) + 1;
+          this.readsByChainFile.set(key, reads);
+          this.readsByFile.set(fp, (this.readsByFile.get(fp) ?? 0) + 1);
+          if (reads >= 3) {
+            this.redundantReads += 1;
+            this.rereadFiles.add(fp);
+          }
+        }
+      }
+
       // Bash command families + test runs + raw command heads (counted now;
       // error/failure attribution deferred to the tool_result via `pending`).
       let bashFamily: string | undefined;
@@ -795,7 +870,15 @@ class SessionAnalyzer {
         };
         steps.push(step);
       }
-      this.pending.set(tu.id, { toolName: tu.name, skillName, bashFamily, isTest, heads, step });
+      this.pending.set(tu.id, {
+        toolName: tu.name,
+        chain,
+        skillName,
+        bashFamily,
+        isTest,
+        heads,
+        step,
+      });
     }
 
     // A continuation line of an already-counted API call: keep its steps on the
@@ -950,6 +1033,16 @@ class SessionAnalyzer {
       testFailures: this.testFailures,
       retries: this.retries,
       retriesByTool: this.retriesByTool,
+      testFailStreak: this.testFailStreak,
+      redundantReads: this.redundantReads,
+      // Most re-read first (by total session-wide reads), so the first entry
+      // is the file to name in diagnostics; ties break alphabetically.
+      rereadFiles: [...this.rereadFiles]
+        .sort(
+          (a, b) =>
+            (this.readsByFile.get(b) ?? 0) - (this.readsByFile.get(a) ?? 0) || (a < b ? -1 : 1),
+        )
+        .slice(0, 20),
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
       firstPromptTokens: this.firstPromptTokens,

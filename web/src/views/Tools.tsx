@@ -468,6 +468,7 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
 function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
+  const th = data.thrash;
   return (
     <>
       <p className="muted">
@@ -497,6 +498,39 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
             .slice(0, 10)
             .map((row) => [row.tool, count(row.retries), count(row.sessions)])}
         />
+      )}
+      <h2 className="section-h">Thrash · edit-test loops &amp; redundant re-reads</h2>
+      <p className="muted">
+        Edit-test loops:{" "}
+        {th.testThrashSessions > 0 ? (
+          <>
+            <strong>{count(th.testThrashSessions)}</strong> sessions hit 3+ consecutive failing test
+            runs (worst streak: {count(th.worstTestFailStreak)})
+          </>
+        ) : (
+          "none detected"
+        )}
+        {" · "}Redundant reads (3rd+ read of a file on one chain):{" "}
+        {th.redundantReads > 0 ? (
+          <>
+            <strong>{count(th.redundantReads)}</strong> across {count(th.rereadSessions)} sessions
+            with 4 or more
+          </>
+        ) : (
+          "none"
+        )}
+      </p>
+      {th.topRereadFiles.length > 0 && (
+        <>
+          <FactsTable
+            head={["Most re-read file", "Sessions"]}
+            rows={th.topRereadFiles.map((row) => [shortPath(row.file), count(row.sessions)])}
+          />
+          <p className="muted">
+            Every re-read pays the whole file into context again — hot reference files belong in a
+            CLAUDE.md summary or a subagent.
+          </p>
+        </>
       )}
     </>
   );

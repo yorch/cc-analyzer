@@ -536,6 +536,42 @@ export interface RetryToolRow {
   sessions: number;
 }
 
+/* ——— Thrash: edit→test→fail loops and redundant same-file re-reads ——————
+ * Both signals come off the schema v12 columns (`test_fail_streak`,
+ * `redundant_reads`, `reread_files_json`). The per-session cutoffs live here,
+ * beside the shape, so the rollup, the session diagnostics, and the portfolio
+ * rules count a "thrashing session" identically. */
+
+/** A session counts as edit-test thrashing at this many consecutive failing
+ * test runs without a pass. Two fails in a row is a normal debugging step;
+ * three is the loop repeating without progress. */
+export const THRASH_STREAK_MIN = 3;
+
+/** A session counts as reread-heavy at this many redundant reads (3rd+ read of
+ * a file on one chain). One or two redundant reads happen in any long session;
+ * four means whole files are being re-paid into context repeatedly. */
+export const THRASH_REREAD_MIN = 4;
+
+/** A file portfolio-wide and how many sessions re-read it (≥ 3 reads). */
+export interface RereadFileRow {
+  file: string;
+  sessions: number;
+}
+
+/** Portfolio thrash rollup (part of `AnalyticsRollup`). */
+export interface ThrashStats {
+  /** Sessions whose longest consecutive-failing-test streak ≥ THRASH_STREAK_MIN. */
+  testThrashSessions: number;
+  /** The worst such streak anywhere in the portfolio. */
+  worstTestFailStreak: number;
+  /** Σ redundant Read invocations across all sessions. */
+  redundantReads: number;
+  /** Sessions with ≥ THRASH_REREAD_MIN redundant reads. */
+  rereadSessions: number;
+  /** Most re-read files by session count, top 10. */
+  topRereadFiles: RereadFileRow[];
+}
+
 /** The portfolio overview shared by `cc-analyzer stats` and `/api/stats` —
  * assembled only by `buildPortfolioStats`, so the two surfaces cannot drift. */
 export interface PortfolioStats {
@@ -560,6 +596,7 @@ export interface AnalyticsRollup {
   bash: BashCommandRow[];
   tests: TestRunSummary;
   retries: RetryStats;
+  thrash: ThrashStats;
   permissionModes: PermissionModeRow[];
   stopReasons: StopReasonRow[];
   turnDepth: TurnDepthStats;

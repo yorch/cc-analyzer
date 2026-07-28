@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   parse_lines INTEGER,
   parse_errors INTEGER,
   unknown_events INTEGER,
+  test_fail_streak INTEGER,
+  redundant_reads INTEGER,
+  reread_files_json TEXT,
   models_json TEXT,
   tools_json TEXT,
   tool_errors_json TEXT,
@@ -106,7 +109,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // the incremental indexer skips unchanged files, so rows written by v10 would
 // report zero lines forever and the coverage share would read as a clean 0%
 // exactly when it matters most — the bump forces the rebuild.
-export const SCHEMA_VERSION = "11";
+// v12: adds the thrash columns — `test_fail_streak` (longest run of
+// consecutive failing test runs on one chain, the edit→test→fail loop signal),
+// `redundant_reads` (Read invocations beyond the second of the same file on
+// one chain), and `reread_files_json` (the files read ≥ 3 times, most re-read
+// first) — what the thrash session diagnostics and the `test-thrash-pattern` /
+// `reread-heavy` insight rules read. Same rationale as v8–v11: the incremental
+// indexer skips unchanged files, so rows written by v11 would report zero
+// thrash forever — the bump forces the rebuild.
+export const SCHEMA_VERSION = "12";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

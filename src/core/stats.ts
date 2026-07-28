@@ -48,7 +48,14 @@ import type {
   WhatIfRepricing,
   WhatIfRow,
 } from "./stats-types.ts";
-import { bucketSeries, localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
+import {
+  bucketSeries,
+  localDayOfMs,
+  shiftDay,
+  THRASH_REREAD_MIN,
+  THRASH_STREAK_MIN,
+  weekOf,
+} from "./stats-types.ts";
 
 export * from "./stats-types.ts";
 
@@ -1317,6 +1324,9 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     month: string | null;
     cost: number | null;
     retriesN: number;
+    testFailStreakN: number;
+    redundantReadsN: number;
+    reread_files_json: string | null;
     tools_json: string | null;
     tool_errors_json: string | null;
     skills_json: string | null;
@@ -1336,6 +1346,9 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     db,
     `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
+        COALESCE(test_fail_streak, 0) AS testFailStreakN,
+        COALESCE(redundant_reads, 0) AS redundantReadsN,
+        reread_files_json,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
         skill_turn_costs_json,
         subagents_json, commands_json, command_errors_json, retries_json,
@@ -1399,6 +1412,14 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
   let retryTotal = 0;
   let retrySessions = 0;
   const retryAcc = new Map<string, { retries: number; sessions: number }>();
+
+  // Thrash (schema v12 columns): cheap column folds plus one JSON fold for the
+  // portfolio-wide top re-read files (per-session deduped, like hotFiles).
+  let testThrashSessions = 0;
+  let worstTestFailStreak = 0;
+  let redundantReadsTotal = 0;
+  let rereadSessions = 0;
+  const rereadFileAcc = new Map<string, number>();
 
   const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
   const reasonAcc = new Map<string, { count: number; sessions: number }>();
@@ -1476,6 +1497,14 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
 
     retryTotal += r.retriesN;
     if (r.retriesN > 0) retrySessions += 1;
+
+    if (r.testFailStreakN >= THRASH_STREAK_MIN) testThrashSessions += 1;
+    if (r.testFailStreakN > worstTestFailStreak) worstTestFailStreak = r.testFailStreakN;
+    redundantReadsTotal += r.redundantReadsN;
+    if (r.redundantReadsN >= THRASH_REREAD_MIN) rereadSessions += 1;
+    for (const file of new Set(parseJson<string[]>(r.reread_files_json, []))) {
+      rereadFileAcc.set(file, (rereadFileAcc.get(file) ?? 0) + 1);
+    }
     for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.retries_json, {}))) {
       const a = retryAcc.get(tool) ?? { retries: 0, sessions: 0 };
       a.retries += n;
@@ -1569,6 +1598,16 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
       byTool: [...retryAcc.entries()]
         .map(([tool, a]) => ({ tool, ...a }))
         .sort((a, b) => b.retries - a.retries),
+    },
+    thrash: {
+      testThrashSessions,
+      worstTestFailStreak,
+      redundantReads: redundantReadsTotal,
+      rereadSessions,
+      topRereadFiles: [...rereadFileAcc.entries()]
+        .map(([file, sessions]) => ({ file, sessions }))
+        .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
+        .slice(0, 10),
     },
     permissionModes: [...modeAcc.entries()]
       .map(([mode, a]) => ({

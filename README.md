@@ -176,7 +176,9 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for
   context pressure, large context jumps, cache rewrites after idle gaps,
-  post-compaction refills, and concentrated per-turn spend. These are named
+  post-compaction refills, concentrated per-turn spend, edit-test thrash
+  (consecutive failing test runs without a pass), and repeated re-reads of the
+  same file (each re-read pays the file into context again). These are named
   heuristics, not a session-quality score.
 - **Parse coverage**: how much of the session file this build actually
   understood — lines skipped as unreadable, and lines kept as tolerant
@@ -289,9 +291,9 @@ and rendered on the web app's Tools view.
 `cc-analyzer insights` is the portfolio-wide counterpart of the per-session
 "actionable diagnostics": a bun-free rules engine folds every portfolio signal —
 cache efficiency, compaction pressure, context tax, what-if repricing, retry
-churn, weekly error trend, spend concentration, pricing confidence, the setup
-audit, subagent balance, and parse coverage — into a ranked list of explainable
-findings.
+churn, edit-test thrash, redundant file re-reads, weekly error trend, spend
+concentration, pricing confidence, the setup audit, subagent balance, and parse
+coverage — into a ranked list of explainable findings.
 Warnings rank before infos, and dollar-backed findings rank first within a
 severity. These are deliberately named heuristics with conservative,
 documented thresholds — **not a score**: every finding shows the observed

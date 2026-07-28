@@ -19,7 +19,13 @@ import type {
   TestRunSummary,
   WhatIfRepricing,
 } from "../core/stats.ts";
-import { SKILL_COST_CAVEAT, type SkillUsageRow, topEntries } from "../core/stats-types.ts";
+import {
+  SKILL_COST_CAVEAT,
+  type SkillUsageRow,
+  THRASH_REREAD_MIN,
+  THRASH_STREAK_MIN,
+  topEntries,
+} from "../core/stats-types.ts";
 import {
   formatCount,
   formatDuration,
@@ -106,6 +112,25 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
           a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected",
         ],
         ["tool-call churn", a.retries > 0 ? `${a.retries} repeated identical calls` : "none"],
+        // One thrash line, only when a signal is non-trivial (the "Actionable
+        // diagnostics" section below carries the evidence and next step).
+        ...(a.testFailStreak >= THRASH_STREAK_MIN || a.redundantReads >= THRASH_REREAD_MIN
+          ? [
+              [
+                "thrash",
+                [
+                  a.testFailStreak >= THRASH_STREAK_MIN
+                    ? `${a.testFailStreak} failing test runs in a row`
+                    : "",
+                  a.redundantReads >= THRASH_REREAD_MIN
+                    ? `${a.redundantReads} redundant file reads`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+              ],
+            ]
+          : []),
       ],
     ),
   );

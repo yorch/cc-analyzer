@@ -91,7 +91,17 @@ same series through the indexer's aggregate mode); *retries* (a tool call
 identical to the immediately
 preceding one on the same chain — chain identity resolves through `parentUuid`,
 so parallel subagents get independent cursors, and every cursor resets at each
-new turn). For shell commands the index stores a **raw signal, not a
+new turn); and the two **thrash** signals (schema v12) — *test-fail streak*
+(`testFailStreak`: the longest run of consecutive failing test runs on one
+chain; a pass resets it, non-test calls in between don't, new turn resets — the
+edit→test→fail loop; unlike command heads this bakes `isTestCommand()` into the
+index and needs a reindex to evolve, the trade-off `testRuns` already makes)
+and *redundant reads* (`redundantReads`/`rereadFiles`: per chain, `Read`s of
+the same `file_path` beyond the second — the third read is the first redundant
+one; different offset/limit still counts, chains stay isolated, turns don't
+reset). Both feed the `edit-test-thrash`/`repeated-file-reads` session
+diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. For
+shell commands the index stores a **raw signal, not a
 classification**: normalized per-segment command heads (`commandHead()`, schema
 v6). Command families and test-run detection (`isTestCommand()`) classify those
 heads **at query time** in `stats.ts`, so the heuristics can evolve without a
@@ -222,8 +232,8 @@ view's Setup section. **No TUI screen** — the CLI and web cover it.
 portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
 `PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
 per-project waste, compactions, weekly error rate, context tax, what-if,
-optional setup audit, parse coverage) into ranked `PortfolioDiagnostic[]`
-findings — 13 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
+optional setup audit, parse coverage, thrash) into ranked `PortfolioDiagnostic[]`
+findings — 15 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
 threshold-rationale comment, warnings before infos and dollar-backed findings first within a
 severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side

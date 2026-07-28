@@ -311,6 +311,87 @@ describe("reindex · parse coverage (schema v11)", () => {
   });
 });
 
+describe("reindex · thrash (schema v12)", () => {
+  test("round-trips the streak, redundant reads, and re-read files; rollup folds them", async () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const toolUse = (uuid: string, name: string, input: unknown) =>
+      line({
+        type: "assistant",
+        uuid,
+        sessionId: "sess-thrash",
+        timestamp: "2026-07-05T10:00:00.000Z",
+        requestId: `req-${uuid}`,
+        message: {
+          id: `m-${uuid}`,
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "tool_use", id: `t-${uuid}`, name, input }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      });
+    const result = (uuid: string, forUuid: string, isError: boolean) =>
+      line({
+        type: "user",
+        uuid,
+        sessionId: "sess-thrash",
+        timestamp: "2026-07-05T10:00:01.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: `t-${forUuid}`, is_error: isError }],
+        },
+      });
+    const file = join(claude.dir, "projects", "proj-b", "sess-thrash.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-thrash",
+          timestamp: "2026-07-05T10:00:00.000Z",
+          message: { role: "user", content: "fix the tests" },
+        }),
+        // Three failing test runs in a row, edits in between.
+        toolUse("b1", "Bash", { command: "bun test" }),
+        result("x1", "b1", true),
+        toolUse("e1", "Edit", { file_path: "/p/x.ts" }),
+        result("x2", "e1", false),
+        toolUse("b2", "Bash", { command: "bun test" }),
+        result("x3", "b2", true),
+        toolUse("b3", "Bash", { command: "bun test" }),
+        result("x4", "b3", true),
+        // Four reads of the same file: 2 redundant.
+        toolUse("r1", "Read", { file_path: "/p/hot.md" }),
+        toolUse("r2", "Read", { file_path: "/p/hot.md" }),
+        toolUse("r3", "Read", { file_path: "/p/hot.md", offset: 10 }),
+        toolUse("r4", "Read", { file_path: "/p/hot.md" }),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT test_fail_streak, redundant_reads, reread_files_json FROM sessions
+          WHERE session_id = 'sess-thrash'`,
+      )
+      .get() as { test_fail_streak: number; redundant_reads: number; reread_files_json: string };
+    expect(row.test_fail_streak).toBe(3);
+    expect(row.redundant_reads).toBe(2);
+    expect(JSON.parse(row.reread_files_json)).toEqual(["/p/hot.md"]);
+
+    // …and the columns are what the rollup folds.
+    const thrash = analyticsRollup(db).thrash;
+    expect(thrash.testThrashSessions).toBe(1);
+    expect(thrash.worstTestFailStreak).toBe(3);
+    expect(thrash.redundantReads).toBe(2);
+    expect(thrash.rereadSessions).toBe(0); // 2 < the 4-redundant-read session floor
+    expect(thrash.topRereadFiles).toEqual([{ file: "/p/hot.md", sessions: 1 }]);
+    db.close();
+    rmSync(file, { force: true });
+  });
+});
+
 describe("reindex · rebuild", () => {
   test("rebuild re-parses everything and still prunes deleted files", async () => {
     const content = await Bun.file(fixture).text();

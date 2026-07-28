@@ -384,6 +384,181 @@ describe("analyzeSessionStream", () => {
   });
 });
 
+describe("analyzeSession · thrash detection", () => {
+  let seq = 0;
+  const prompt = (text = "go") => ({
+    type: "user",
+    uuid: `u-${++seq}`,
+    message: { role: "user", content: text },
+  });
+  const toolUse = (
+    id: string,
+    name: string,
+    input: unknown,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    type: "assistant",
+    uuid: `a-${++seq}`,
+    ...extra,
+    message: {
+      id: `msg-${++seq}`,
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "tool_use", id, name, input }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  const result = (id: string, isError: boolean, extra: Record<string, unknown> = {}) => ({
+    type: "user",
+    uuid: `r-${++seq}`,
+    ...extra,
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "out" }],
+    },
+  });
+  const testRun = (id: string, extra: Record<string, unknown> = {}) =>
+    toolUse(id, "Bash", { command: "bun test" }, extra);
+  const read = (id: string, file: string, params: Record<string, unknown> = {}) =>
+    toolUse(id, "Read", { file_path: file, ...params });
+
+  test("counts the longest run of consecutive failing test runs", () => {
+    const a = analyzeLines([
+      prompt(),
+      testRun("t1"),
+      result("t1", true),
+      testRun("t2"),
+      result("t2", true),
+      testRun("t3"),
+      result("t3", false), // a pass breaks the streak
+      testRun("t4"),
+      result("t4", true),
+    ]);
+    expect(a.testFailStreak).toBe(2);
+    expect(a.testRuns).toBe(4);
+    expect(a.testFailures).toBe(3);
+  });
+
+  test("edits between the failures do not reset the streak", () => {
+    const a = analyzeLines([
+      prompt(),
+      testRun("t1"),
+      result("t1", true),
+      toolUse("e1", "Edit", { file_path: "/p/x.ts", old_string: "a", new_string: "b" }),
+      result("e1", false),
+      testRun("t2"),
+      result("t2", true),
+      toolUse("e2", "Edit", { file_path: "/p/x.ts", old_string: "b", new_string: "c" }),
+      result("e2", false),
+      testRun("t3"),
+      result("t3", true),
+    ]);
+    expect(a.testFailStreak).toBe(3);
+  });
+
+  test("a new turn resets the streak (consistent with retry cursors)", () => {
+    const a = analyzeLines([
+      prompt(),
+      testRun("t1"),
+      result("t1", true),
+      testRun("t2"),
+      result("t2", true),
+      prompt("try something else"),
+      testRun("t3"),
+      result("t3", true),
+    ]);
+    expect(a.testFailStreak).toBe(2);
+  });
+
+  test("a parallel sidechain keeps its own streak cursor", () => {
+    // Main chain fails twice; a subagent's single failure interleaves. If the
+    // chains shared a cursor the interleaved streak would read 3.
+    const side = { isSidechain: true, parentUuid: null };
+    const a = analyzeLines([
+      prompt(),
+      testRun("m1"),
+      result("m1", true),
+      testRun("s1", { ...side, uuid: "sc-1" }),
+      result("s1", true, { isSidechain: true, parentUuid: "sc-1" }),
+      testRun("m2"),
+      result("m2", true),
+    ]);
+    expect(a.testFailStreak).toBe(2);
+  });
+
+  test("redundant reads start at the third read of a file on one chain", () => {
+    const a = analyzeLines([
+      prompt(),
+      read("r1", "/p/big.md"),
+      read("r2", "/p/big.md"),
+      read("r3", "/p/big.md"), // 3rd read: first redundant one
+      read("r4", "/p/other.md"),
+      read("r5", "/p/other.md"), // 2nd read: still legitimate
+    ]);
+    expect(a.redundantReads).toBe(1);
+    expect(a.rereadFiles).toEqual(["/p/big.md"]);
+  });
+
+  test("re-reads with different offset/limit still count, and turns don't reset", () => {
+    const a = analyzeLines([
+      prompt(),
+      read("r1", "/p/big.md"),
+      prompt("next"),
+      read("r2", "/p/big.md", { offset: 100, limit: 50 }),
+      read("r3", "/p/big.md", { offset: 200 }),
+      read("r4", "/p/big.md"),
+    ]);
+    expect(a.redundantReads).toBe(2);
+  });
+
+  test("chains are isolated: a subagent re-reading the main chain's file is fresh", () => {
+    const lines: unknown[] = [prompt(), read("m1", "/p/big.md"), read("m2", "/p/big.md")];
+    // The subagent reads the same file twice on its own chain — neither chain
+    // reaches a third read, so nothing is redundant.
+    lines.push(
+      toolUse("s1", "Read", { file_path: "/p/big.md" }, { isSidechain: true, uuid: "sc-1" }),
+      toolUse("s2", "Read", { file_path: "/p/big.md" }, { isSidechain: true, parentUuid: "sc-1" }),
+    );
+    const a = analyzeLines(lines);
+    expect(a.redundantReads).toBe(0);
+    expect(a.rereadFiles).toEqual([]);
+  });
+
+  test("rereadFiles is ordered most-read first and capped at 20", () => {
+    const lines: unknown[] = [prompt()];
+    for (let f = 0; f < 25; f++) {
+      const file = `/p/f-${String(f).padStart(2, "0")}.ts`;
+      // f-24 is read the most, f-0 the least (but all ≥ 3 reads).
+      for (let n = 0; n < 3 + f; n++) lines.push(read(`rd-${f}-${n}`, file));
+    }
+    const a = analyzeLines(lines);
+    expect(a.rereadFiles).toHaveLength(20);
+    expect(a.rereadFiles[0]).toBe("/p/f-24.ts");
+    expect(a.rereadFiles.includes("/p/f-04.ts")).toBe(false); // the 5 least-read fell off
+  });
+
+  test("both signals survive aggregate mode identically", async () => {
+    const lines = [
+      prompt(),
+      testRun("t1"),
+      result("t1", true),
+      testRun("t2"),
+      result("t2", true),
+      read("r1", "/p/big.md"),
+      read("r2", "/p/big.md"),
+      read("r3", "/p/big.md"),
+    ];
+    const { events } = parseSessionText(lines.map((l) => JSON.stringify(l)).join("\n"));
+    const full = analyzeSession(events, pricing);
+    const agg = await analyzeSessionStream(iterate(events), pricing, { detail: false });
+    expect(agg.testFailStreak).toBe(full.testFailStreak);
+    expect(agg.redundantReads).toBe(full.redundantReads);
+    expect(agg.rereadFiles).toEqual(full.rereadFiles);
+    expect(full.testFailStreak).toBe(2);
+    expect(full.redundantReads).toBe(1);
+  });
+});
+
 describe("compaction capture", () => {
   const boundary = (second: number, trigger = "auto", preTokens = 150_000) => ({
     type: "system",
