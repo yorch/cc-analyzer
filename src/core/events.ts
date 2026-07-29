@@ -220,3 +220,115 @@ export function isRealPrompt(e: UserEvent): boolean {
   if (typeof content === "string") return true;
   return content.some((b) => (b as ContentBlock).type !== "tool_result");
 }
+
+/**
+ * Is this user-message text the machine-written interruption marker?
+ *
+ * When the user interrupts a response mid-flight (Esc), Claude Code writes a
+ * literal user message — observed verbatim in real transcripts as
+ * `[Request interrupted by user]`, or `[Request interrupted by user for tool
+ * use]` when a pending tool call was cancelled. Matched by prefix (after
+ * trimming) so trailing whitespace or a future suffix variant still counts;
+ * the bracketed prefix is distinctive enough that a human prompt will not
+ * start with it.
+ */
+export function isInterruptionMarker(text: string): boolean {
+  return text.trimStart().startsWith("[Request interrupted by user");
+}
+
+/** Only this leading window of a prompt is scanned for correction markers —
+ * a phrase buried deep in a long prompt is context, not how the prompt opens. */
+const CORRECTION_WINDOW = 120;
+
+/* ——— Correction markers —————————————————————————————————————————————————
+ * ⚠ These two lists ARE the `correction_turns` index column: `isCorrectionPrompt`
+ * runs at index time and only the verdict is stored, exactly like
+ * `isTestCommand()` behind `test_fail_streak`. Editing a pattern therefore
+ * changes what already-indexed rows would have said — bump `SCHEMA_VERSION` in
+ * `db.ts` so the index is rebuilt, or the two heuristics coexist in one table.
+ * The pinning test in `test/core/events.test.ts` fails on any edit here and
+ * repeats that instruction.
+ *
+ * Two tiers, because the phrases differ in how much they mean on their own.
+ */
+
+/**
+ * Tier 1 — outcome and miscommunication phrases. These state that the previous
+ * turn went wrong, and they say so specifically enough that position inside the
+ * opening window doesn't change the meaning ("hold on — that's not what I
+ * meant"). Matched anywhere in the window.
+ */
+const CORRECTION_OUTCOME_PATTERNS: readonly RegExp[] = [
+  /\bthat'?s not what i\b/,
+  /\bnot what i (?:meant|asked|wanted)\b/,
+  /\bi didn'?t mean\b/,
+  /\byou misunderstood\b/,
+  /\bstill (?:broken|failing|doesn'?t|not working)\b/,
+  /\b(?:didn'?t|doesn'?t) work\b/,
+  /\bsame error\b/,
+];
+
+/**
+ * Tier 2 — imperative and ambiguous phrases. Every one of these is also
+ * ordinary product language in the middle of a feature request ("add a back
+ * button so users can go back to the list view", "if the request fails, try
+ * again with exponential backoff", "show a banner when the network is not
+ * working"). They only count as corrections when the prompt *opens* with them,
+ * so they are anchored with `^` — leading whitespace is already trimmed off.
+ */
+const CORRECTION_OPENING_PATTERNS: readonly RegExp[] = [
+  // Leading rejection. "no"/"nope" only when punctuation follows ("no, the
+  // other file"), so "no tests needed" never matches — and the ASCII hyphen is
+  // deliberately NOT in the class, or "No-op the migration" and "no-cache
+  // headers" would read as rejections.
+  /^(?:no|nope)\s*[,.!;:—]/,
+  /^(?:not that|wrong)\b/,
+  // Explicit undo/redo — the verbs still need an object ("undo that"), so
+  // "undo stack implementation" never matches even at a prompt start.
+  /^(?:please )?(?:undo|revert) (?:that|this|it|the last)\b/,
+  /^(?:please )?roll (?:that |this |it )?back\b/,
+  /^go back to\b/,
+  /^i meant\b/,
+  // Non-working outcome, in its ambiguous bare form.
+  /^(?:it'?s |it |that'?s |that )?not working\b/,
+  // Re-ask — the user repeats what they already asked for.
+  /^(?:please )?try (?:that |it |this )?again\b/,
+  /^(?:please )?do it again\b/,
+  /^as i said\b/,
+  /^like i asked\b/,
+];
+
+/**
+ * Every correction pattern's source, outcome tier first — the exact heuristic
+ * baked into the index. Exported only so the pinning test can hash it; see the
+ * warning above before changing anything it covers.
+ */
+export const CORRECTION_PATTERN_SOURCE: readonly string[] = [
+  ...CORRECTION_OUTCOME_PATTERNS,
+  ...CORRECTION_OPENING_PATTERNS,
+].map(String);
+
+/**
+ * Does this REAL user prompt open by correcting the previous turn?
+ *
+ * A conservative, **English-only keyword heuristic** — biased and imperfect by
+ * construction. It only inspects the first `CORRECTION_WINDOW` characters
+ * (lowercased) and anchors every marker to a phrase start: outcome phrases may
+ * sit anywhere in that window, ambiguous imperative ones only at the very
+ * start of the prompt (see the two pattern lists). Slash commands and
+ * machine-looking prompts (starting with `<`, `/`, or `[` — XML payloads,
+ * commands, bracketed markers like the interruption message) never match.
+ * Non-English corrections are missed entirely, and plenty of English ones
+ * will be too: prefer missing corrections to inventing them, because the
+ * downstream diagnostics accuse prompts of causing rework.
+ */
+export function isCorrectionPrompt(text: string): boolean {
+  const trimmed = text.trimStart();
+  const first = trimmed[0];
+  if (first === "<" || first === "/" || first === "[") return false;
+  const head = trimmed.slice(0, CORRECTION_WINDOW).toLowerCase();
+  return (
+    CORRECTION_OUTCOME_PATTERNS.some((re) => re.test(head)) ||
+    CORRECTION_OPENING_PATTERNS.some((re) => re.test(head))
+  );
+}

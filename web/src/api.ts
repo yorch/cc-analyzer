@@ -6,6 +6,7 @@
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type { CostBasis } from "../../src/core/cost-framing.ts";
+import type { WeeklyDigest } from "../../src/core/digest.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
 import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import type { SetupAudit } from "../../src/core/setup-audit.ts";
@@ -51,6 +52,15 @@ export * from "../../src/core/chart-series.ts";
 // the CLI/TUI for the one preference that can turn "cost" into "spend" or vice
 // versa.
 export * from "../../src/core/cost-framing.ts";
+// Weekly-digest shapes, period math, and the markdown builder — bun-free, so
+// the SPA's "copy as markdown" button produces byte-identical output to
+// `cc-analyzer report --md` with no extra endpoint.
+export * from "../../src/core/digest.ts";
+// The shared number formatters behind the digest's markdown — so a number in
+// the web digest card reads exactly as it does in the copied markdown and in
+// `cc-analyzer report`. (The SPA's own `format.ts` keeps the locale-aware
+// `Intl` helpers for everything else.)
+export * from "../../src/core/format-shared.ts";
 // Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
 // renders the same rule vocabulary the server computes findings with.
 export * from "../../src/core/portfolio-diagnostics.ts";
@@ -178,4 +188,14 @@ export const api = {
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
   audit: () => get<SetupAudit>("/api/audit"),
+  /** One week's digest. `insights: false` asks the server to skip the
+   * current-state insight snapshot — the dashboard card renders none of it, and
+   * assembling those signals is the expensive half of the response. */
+  report: (week?: string, opts: { insights?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (week) params.set("week", week);
+    if (opts.insights === false) params.set("insights", "0");
+    const query = params.toString();
+    return get<WeeklyDigest>(query ? `/api/report?${query}` : "/api/report");
+  },
 };

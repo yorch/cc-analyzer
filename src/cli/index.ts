@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import { analyzeSession } from "../core/analyze.ts";
 import { openDb } from "../core/db.ts";
+import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
+import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
@@ -42,6 +44,7 @@ import {
   renderSessionSummary,
   renderSetupAudit,
   renderStats,
+  renderWeeklyDigest,
 } from "./render.ts";
 
 const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
@@ -58,6 +61,8 @@ Usage:
                                        Portfolio or current-project analytics (needs an index)
   cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
   cc-analyzer insights [--json]        Ranked, actionable findings across the whole portfolio
+  cc-analyzer report [--week YYYY-MM-DD] [--md|--json]
+                                       Weekly digest: last complete week vs the week before
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
@@ -300,6 +305,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     skills: [...analytics.skills].sort((a, b) => b.attributedCost - a.attributedCost).slice(0, 10),
     tests: analytics.tests,
     retries: analytics.retries,
+    corrections: analytics.corrections,
     concurrency: { peak, parallelDayShare },
     contextTax: contextTax(db, projectId),
     whatIf: whatIfRepricing(db, pricing, projectId),
@@ -375,6 +381,70 @@ async function cmdInsights(json: boolean): Promise<number> {
   return 0;
 }
 
+/**
+ * Weekly digest: one week of usage, what changed against the week before, and
+ * the current-state insight snapshot. `--md` prints paste-ready markdown to
+ * stdout (never a file — users redirect); `--json` prints the plain digest.
+ *
+ * An empty index has nothing to report, so it exits 1 like `stats`/`insights`.
+ * A period with zero sessions is NOT an error: "you didn't use Claude Code last
+ * week" is a legitimate answer, and the prior week still renders.
+ */
+async function cmdReport(
+  json: boolean,
+  md: boolean,
+  week: string | null | undefined,
+): Promise<number> {
+  if (week === null) {
+    console.error("error: missing value for --week (expected a YYYY-MM-DD day inside the week).");
+    return 2;
+  }
+  if (week !== undefined && !isDayString(week)) {
+    console.error(`error: invalid --week '${week}' (expected a YYYY-MM-DD day inside the week).`);
+    return 2;
+  }
+  const db = openDb();
+  if (isIndexEmpty(db)) {
+    db.close();
+    console.error("Index is empty. Run `cc-analyzer index` first.");
+    return 1;
+  }
+  // The insight snapshot needs live rates for what-if repricing; `loadPricing`
+  // serves the cached table (bundled snapshot offline).
+  const { table: pricing } = await loadPricing();
+  // Cost framing is read here, at the CLI's presentation boundary — the digest
+  // builder never touches the prefs file.
+  const digest = buildWeeklyDigest(db, pricing, { week, costBasis: getCostBasis() });
+  db.close();
+  if (json) console.log(JSON.stringify(digest, null, 2));
+  else if (md) console.log(buildDigestMarkdown(digest));
+  else
+    console.log(
+      renderWeeklyDigest(digest, {
+        color: process.stdout.isTTY && !process.env.NO_COLOR,
+      }),
+    );
+  return 0;
+}
+
+/**
+ * `--week=YYYY-MM-DD` or `--week YYYY-MM-DD`. `undefined` when the flag is
+ * absent, `null` when it is present without a value — nothing follows it, or
+ * the next token is another flag, since `report --week --md` must report a
+ * missing week rather than swallow `--md` as its value.
+ */
+function weekArg(rest: string[]): string | null | undefined {
+  const inline = rest.find((a) => a.startsWith("--week="));
+  if (inline) {
+    const value = inline.slice("--week=".length);
+    return value.length > 0 ? value : null;
+  }
+  const i = rest.indexOf("--week");
+  if (i === -1) return undefined;
+  const next = rest[i + 1];
+  return next !== undefined && !next.startsWith("-") ? next : null;
+}
+
 async function cmdPricingUpdate(): Promise<number> {
   const loaded = await loadPricing({ force: true });
   const count = Object.keys(loaded.table).length;
@@ -432,6 +502,7 @@ const NOTIFY_COMMANDS = new Set([
   "stats",
   "audit",
   "insights",
+  "report",
   "pricing",
 ]);
 
@@ -449,6 +520,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "stats",
     "audit",
     "insights",
+    "report",
     "serve",
     "pricing",
     "update",
@@ -477,6 +549,15 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdAudit(json);
     case "insights":
       return cmdInsights(json);
+    case "report": {
+      const md = rest.includes("--md");
+      // Two different renderings of the same digest — asking for both hides one.
+      if (md && json) {
+        console.error("error: --md and --json cannot be used together.");
+        return 2;
+      }
+      return cmdReport(json, md, weekArg(rest));
+    }
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

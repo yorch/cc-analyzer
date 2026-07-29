@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildPluginUsage,
   buildSetupAudit,
   daysBetween,
   ERROR_PRONE_MIN_INVOCATIONS,
   type InventoryItem,
   mcpServerFromTool,
+  type PluginEntry,
   type SetupInventory,
   type SetupUsage,
   STALE_SKILL_DAYS,
@@ -62,6 +64,12 @@ const toolRow = (tool: string): ToolUsageRow => ({
 });
 
 const user = (name: string): InventoryItem => ({ name, source: "user" });
+const plugin = (over: Partial<PluginEntry> & { name: string }): PluginEntry => ({
+  skills: [],
+  agents: [],
+  mcpServers: [],
+  ...over,
+});
 const codes = (findings: { code: string }[]): string[] => findings.map((f) => f.code);
 
 describe("helpers", () => {
@@ -98,7 +106,7 @@ describe("unused-skill", () => {
   test("a plugin skill matches its qualified invocation name", () => {
     const inv = inventory({
       skills: [{ name: "deploy", source: "plugin:toolkit" }],
-      plugins: [{ name: "toolkit", skills: ["deploy"], agents: [] }],
+      plugins: [plugin({ name: "toolkit", skills: ["deploy"] })],
     });
     const qualified = buildSetupAudit(
       inv,
@@ -160,6 +168,27 @@ describe("error-prone-skill", () => {
     );
     expect(codes(audit.findings)).toContain("error-prone-skill");
     expect(audit.findings[0]?.evidence).toContain("2 of 5 invocations");
+  });
+
+  test("a user skill shadowing a plugin's copy reports the finding once", () => {
+    // One observed bare row, two installed skills of that name. It belongs to
+    // the user's own skill (the plugin's copy is shadowed for bare
+    // invocations), so exactly one error-prone finding is reported — and the
+    // plugin, having claimed none of it, stays eligible for `unused-plugin`.
+    const inv = inventory({
+      skills: [user("deploy"), { name: "deploy", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["deploy"] })],
+    });
+    const audit = buildSetupAudit(
+      inv,
+      usage({
+        skills: [skillRow({ name: "deploy", invocations: ERROR_PRONE_MIN_INVOCATIONS, errors: 3 })],
+      }),
+      TODAY,
+    );
+    expect(codes(audit.findings)).toEqual(["error-prone-skill", "unused-plugin"]);
+    expect(audit.findings[0]?.evidence).toContain("3 of 5 invocations");
+    expect(audit.findings[1]?.subject).toBe("toolkit");
   });
 
   test("does not fire below the invocation floor or below the rate", () => {
@@ -238,7 +267,7 @@ describe("audit assembly", () => {
     const inv = inventory({
       skills: [user("tidy"), { name: "deploy", source: "plugin:toolkit" }],
       agents: [user("reviewer")],
-      plugins: [{ name: "toolkit", skills: ["deploy"], agents: [] }],
+      plugins: [plugin({ name: "toolkit", skills: ["deploy"] })],
       mcpServers: [
         { name: "github", scope: "global", projects: 0 },
         { name: "linear", scope: "project", projects: 2 },
@@ -266,8 +295,256 @@ describe("audit assembly", () => {
     // Two unused MCP servers (warnings) come before the info-level findings.
     expect(audit.findings.slice(0, 2).every((f) => f.severity === "warning")).toBe(true);
     expect(codes(audit.findings).slice(0, 2)).toEqual(["unused-mcp-server", "unused-mcp-server"]);
+    // The plugin's own unused skill rolls into one `unused-plugin` finding; the
+    // user's skill and subagent still report individually.
     expect(new Set(codes(audit.findings).slice(2))).toEqual(
-      new Set(["unused-skill", "unused-agent"]),
+      new Set(["unused-skill", "unused-agent", "unused-plugin"]),
     );
+  });
+});
+
+describe("buildPluginUsage", () => {
+  const toolkit = plugin({ name: "toolkit", skills: ["fmt"], agents: ["shipper"] });
+  const pluginItem = (name: string): InventoryItem => ({ name, source: "plugin:toolkit" });
+
+  test("an inventory with no plugins rolls up to nothing", () => {
+    expect(buildPluginUsage(inventory(), usage())).toEqual([]);
+  });
+
+  test("sums both observed name forms of one plugin skill into one row", () => {
+    // `fmt` and `toolkit:fmt` are distinct rows in the index — the same skill
+    // logged under two name forms. Both are summed into the single plugin row.
+    const rows = buildPluginUsage(
+      inventory({ skills: [pluginItem("fmt")], plugins: [toolkit] }),
+      usage({
+        skills: [
+          skillRow({
+            name: "fmt",
+            invocations: 3,
+            attributedTurns: 2,
+            attributedCost: 1,
+            lastUsed: "2026-07-01",
+          }),
+          skillRow({
+            name: "toolkit:fmt",
+            invocations: 4,
+            attributedTurns: 3,
+            attributedCost: 2.5,
+            lastUsed: "2026-07-20",
+          }),
+        ],
+      }),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      plugin: "toolkit",
+      skillsShipped: 1,
+      skillsUsed: 1,
+      invocations: 7,
+      attributedTurns: 5,
+      attributedCost: 3.5,
+      // The latest day across every matched row, not the first one seen.
+      lastUsed: "2026-07-20",
+    });
+  });
+
+  test("counts agent sessions and MCP servers the plugin ships", () => {
+    const inv = inventory({
+      plugins: [plugin({ name: "toolkit", agents: ["shipper", "idle"], mcpServers: ["deployer"] })],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({
+        subagents: [{ name: "shipper", sessions: 4 }],
+        tools: [toolRow("mcp__Deployer__go")],
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      agentsShipped: 2,
+      agentsUsed: 1,
+      agentSessions: 4,
+      mcpServers: 1,
+      mcpServersUsed: 1,
+    });
+  });
+
+  test("a bare row shipped by two plugins inflates neither's numbers", () => {
+    // Only one of them actually ran `fmt`, and the row cannot say which. Both
+    // count it as *used* (calling both unused would be a certain false
+    // accusation), neither claims the invocations or the dollars.
+    const inv = inventory({
+      skills: [
+        { name: "fmt", source: "plugin:toolkit" },
+        { name: "fmt", source: "plugin:tidy" },
+      ],
+      plugins: [
+        plugin({ name: "toolkit", skills: ["fmt"] }),
+        plugin({ name: "tidy", skills: ["fmt"] }),
+      ],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "fmt", invocations: 6, attributedCost: 4 })] }),
+    );
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({ skillsUsed: 1, invocations: 0, attributedCost: 0 });
+      expect(row.lastUsed).toBeNull();
+    }
+    // And neither is accused of being unused.
+    const audit = buildSetupAudit(inv, usage({ skills: [skillRow({ name: "fmt" })] }), TODAY);
+    expect(codes(audit.findings)).toEqual([]);
+  });
+
+  test("a user skill of the same name shadows the plugin's copy", () => {
+    // A bare `fmt` invocation resolves to the user's own skill, so the plugin
+    // claims none of it — and stays eligible for `unused-plugin`.
+    const inv = inventory({
+      skills: [user("fmt"), { name: "fmt", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["fmt"] })],
+    });
+    const observed = usage({
+      skills: [skillRow({ name: "fmt", invocations: 5, attributedTurns: 4, attributedCost: 8 })],
+    });
+    expect(buildPluginUsage(inv, observed)[0]).toMatchObject({
+      plugin: "toolkit",
+      skillsUsed: 0,
+      invocations: 0,
+      attributedTurns: 0,
+      attributedCost: 0,
+    });
+    expect(codes(buildSetupAudit(inv, observed, TODAY).findings)).toEqual(["unused-plugin"]);
+  });
+
+  test("a qualified row always attributes to the plugin it names", () => {
+    const inv = inventory({
+      plugins: [
+        plugin({ name: "toolkit", skills: ["fmt"] }),
+        plugin({ name: "tidy", skills: ["fmt"] }),
+      ],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "toolkit:fmt", invocations: 6, attributedCost: 4 })] }),
+    );
+    expect(rows.find((r) => r.plugin === "toolkit")).toMatchObject({
+      invocations: 6,
+      attributedCost: 4,
+      skillsUsed: 1,
+    });
+    expect(rows.find((r) => r.plugin === "tidy")).toMatchObject({
+      invocations: 0,
+      attributedCost: 0,
+      skillsUsed: 0,
+    });
+  });
+
+  test("an unambiguous bare row attributes in full", () => {
+    const rows = buildPluginUsage(
+      inventory({ plugins: [plugin({ name: "toolkit", skills: ["fmt"] })] }),
+      usage({
+        skills: [skillRow({ name: "fmt", invocations: 6, attributedTurns: 3, attributedCost: 4 })],
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      invocations: 6,
+      attributedTurns: 3,
+      attributedCost: 4,
+      skillsUsed: 1,
+      lastUsed: TODAY,
+    });
+  });
+
+  test("subagent sessions follow the same attribution rule", () => {
+    const inv = inventory({
+      plugins: [
+        plugin({ name: "toolkit", agents: ["shipper"] }),
+        plugin({ name: "tidy", agents: ["shipper"] }),
+      ],
+    });
+    const rows = buildPluginUsage(inv, usage({ subagents: [{ name: "shipper", sessions: 4 }] }));
+    for (const row of rows) expect(row).toMatchObject({ agentsUsed: 1, agentSessions: 0 });
+    const qualified = buildPluginUsage(
+      inv,
+      usage({ subagents: [{ name: "toolkit:shipper", sessions: 4 }] }),
+    );
+    expect(qualified.find((r) => r.plugin === "toolkit")).toMatchObject({ agentSessions: 4 });
+    expect(qualified.find((r) => r.plugin === "tidy")).toMatchObject({ agentSessions: 0 });
+  });
+
+  test("sorts by attributed cost, then invocations", () => {
+    const inv = inventory({
+      plugins: [
+        plugin({ name: "cheap", skills: ["a"] }),
+        plugin({ name: "pricey", skills: ["b"] }),
+        plugin({ name: "busy", skills: ["c"] }),
+      ],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({
+        skills: [
+          skillRow({ name: "a", invocations: 1, attributedCost: 0 }),
+          skillRow({ name: "b", invocations: 1, attributedCost: 9 }),
+          skillRow({ name: "c", invocations: 50, attributedCost: 0 }),
+        ],
+      }),
+    );
+    expect(rows.map((r) => r.plugin)).toEqual(["pricey", "busy", "cheap"]);
+  });
+});
+
+describe("unused-plugin", () => {
+  const dead = plugin({ name: "toolkit", skills: ["deploy"], agents: ["shipper"] });
+  const deadInventory = inventory({
+    skills: [{ name: "deploy", source: "plugin:toolkit" }],
+    agents: [{ name: "shipper", source: "plugin:toolkit" }],
+    plugins: [dead],
+  });
+
+  test("fires once and suppresses the per-component findings", () => {
+    const audit = buildSetupAudit(deadInventory, usage(), TODAY);
+    expect(codes(audit.findings)).toEqual(["unused-plugin"]);
+    expect(audit.findings[0]?.subject).toBe("toolkit");
+    expect(audit.findings[0]?.severity).toBe("info");
+    expect(audit.findings[0]?.evidence).toContain("1 skill, 1 subagent");
+  });
+
+  test("partial usage keeps the per-component findings instead", () => {
+    const audit = buildSetupAudit(
+      deadInventory,
+      usage({ skills: [skillRow({ name: "toolkit:deploy" })] }),
+      TODAY,
+    );
+    expect(codes(audit.findings)).toEqual(["unused-agent"]);
+  });
+
+  test("a plugin with nothing discoverable is never called unused", () => {
+    const audit = buildSetupAudit(
+      inventory({ plugins: [plugin({ name: "opaque" })] }),
+      usage(),
+      TODAY,
+    );
+    expect(codes(audit.findings)).toEqual([]);
+  });
+
+  test("the audit carries the per-plugin rollup alongside its findings", () => {
+    const audit = buildSetupAudit(deadInventory, usage(), TODAY);
+    expect(audit.plugins).toEqual([
+      {
+        plugin: "toolkit",
+        skillsShipped: 1,
+        skillsUsed: 0,
+        agentsShipped: 1,
+        agentsUsed: 0,
+        mcpServers: 0,
+        mcpServersUsed: 0,
+        invocations: 0,
+        agentSessions: 0,
+        attributedTurns: 0,
+        attributedCost: 0,
+        lastUsed: null,
+      },
+    ]);
   });
 });

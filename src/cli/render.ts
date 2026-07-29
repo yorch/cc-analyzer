@@ -1,5 +1,11 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
+import {
+  digestSummaryRows,
+  formatDigestDelta,
+  isEmptyPeriod,
+  type WeeklyDigest,
+} from "../core/digest.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
@@ -20,6 +26,8 @@ import type {
   WhatIfRepricing,
 } from "../core/stats.ts";
 import {
+  CORRECTION_CAVEAT,
+  type CorrectionStats,
   SKILL_COST_CAVEAT,
   type SkillUsageRow,
   THRASH_REREAD_MIN,
@@ -30,6 +38,7 @@ import {
   formatCount,
   formatDuration,
   formatRelativeTime,
+  formatSignedCount,
   formatTokens,
   formatUSD,
   table,
@@ -72,6 +81,35 @@ function healthy(value: string, options: RenderOptions): string {
   return paint(options.color === true, ANSI.green, value);
 }
 
+/** The shape every findings block renders: the `session-diagnostics.ts` house
+ * style, shared by session diagnostics, portfolio insights, and audit findings. */
+interface FindingLike {
+  severity: "info" | "warning";
+  title: string;
+  evidence: string;
+  action: string;
+}
+
+/**
+ * Append a findings block: severity glyph + title, the evidence, then the next
+ * action. `project` is the optional middle line the portfolio insights add for
+ * project-scoped findings; the other surfaces omit it.
+ */
+function pushFindings<T extends FindingLike>(
+  lines: string[],
+  findings: readonly T[],
+  options: RenderOptions,
+  project?: (finding: T) => string | null | undefined,
+): void {
+  for (const finding of findings) {
+    lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
+    lines.push(`  ${finding.evidence}`);
+    const scope = project?.(finding);
+    if (scope) lines.push(muted(`  Project: ${scope}`, options));
+    lines.push(muted(`  Next: ${finding.action}`, options));
+  }
+}
+
 function totalTokens(t: TokenCounts): number {
   return (
     t.inputTokens + t.outputTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens
@@ -112,6 +150,28 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
           a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected",
         ],
         ["tool-call churn", a.retries > 0 ? `${a.retries} repeated identical calls` : "none"],
+        // One corrections line when either counter fired; the shared
+        // CORRECTION_CAVEAT prints right under the table.
+        ...(a.correctionTurns > 0 || a.interruptionTurns > 0
+          ? [
+              [
+                "corrections",
+                [
+                  a.correctionTurns > 0
+                    ? `${a.correctionTurns} correction turn${a.correctionTurns === 1 ? "" : "s"}` +
+                      (a.totals.turns > 0
+                        ? ` (${Math.round((a.correctionTurns / a.totals.turns) * 100)}%)`
+                        : "")
+                    : "",
+                  a.interruptionTurns > 0
+                    ? `${a.interruptionTurns} interruption${a.interruptionTurns === 1 ? "" : "s"}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+              ],
+            ]
+          : []),
         // One thrash line, only when a signal is non-trivial (the "Actionable
         // diagnostics" section below carries the evidence and next step).
         ...(a.testFailStreak >= THRASH_STREAK_MIN || a.redundantReads >= THRASH_REREAD_MIN
@@ -134,6 +194,9 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
       ],
     ),
   );
+  if (a.correctionTurns > 0 || a.interruptionTurns > 0) {
+    lines.push(muted(CORRECTION_CAVEAT, options));
+  }
 
   lines.push(`\n${section("Cost by token category", options)}`);
   lines.push(
@@ -200,11 +263,7 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
       healthy("No notable context or cost patterns crossed the current thresholds.", options),
     );
   } else {
-    for (const diagnostic of diagnostics) {
-      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
-      lines.push(`  ${diagnostic.evidence}`);
-      lines.push(muted(`  Next: ${diagnostic.action}`, options));
-    }
+    pushFindings(lines, diagnostics, options);
   }
 
   lines.push(`\n${section("Turns", options)}`);
@@ -267,17 +326,34 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
     ),
   );
 
+  // Per-plugin rollup: what each installed plugin actually did. Only worth a
+  // table when at least one plugin is installed.
+  if (audit.plugins.length > 0) {
+    lines.push(`\n${section("Plugins", options)}`);
+    lines.push(
+      table(
+        ["plugin", "skills", "subagents", "invocations", "turn $", "last used"],
+        audit.plugins.map((p) => [
+          truncate(p.plugin, 28),
+          `${p.skillsUsed}/${p.skillsShipped}`,
+          `${p.agentsUsed}/${p.agentsShipped}`,
+          formatCount(p.invocations),
+          formatUSD(p.attributedCost),
+          p.lastUsed ?? "—",
+        ]),
+        { align: ["left", "right", "right", "right", "right", "left"] },
+      ),
+    );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
+  }
+
   lines.push(`\n${section("Findings", options)}`);
   if (audit.findings.length === 0) {
     lines.push(
       healthy("Everything installed is in use, and nothing crossed a threshold.", options),
     );
   } else {
-    for (const finding of audit.findings) {
-      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
-      lines.push(`  ${finding.evidence}`);
-      lines.push(muted(`  Next: ${finding.action}`, options));
-    }
+    pushFindings(lines, audit.findings, options);
   }
 
   lines.push(`\n${muted(SETUP_AUDIT_CAVEAT, options)}`);
@@ -308,13 +384,7 @@ export function renderPortfolioInsights(
       ),
     );
   } else {
-    for (const diagnostic of diagnostics) {
-      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
-      lines.push(`  ${diagnostic.evidence}`);
-      const project = diagnostic.projectPath ?? diagnostic.projectId;
-      if (project) lines.push(muted(`  Project: ${project}`, options));
-      lines.push(muted(`  Next: ${diagnostic.action}`, options));
-    }
+    pushFindings(lines, diagnostics, options, (d) => d.projectPath ?? d.projectId);
     lines.push(
       muted(
         `\n${diagnostics.length} of ${ruleCount} rules fired. Drill into sessions with ` +
@@ -324,6 +394,158 @@ export function renderPortfolioInsights(
     );
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * Render the weekly digest as a terminal report: the period headline with
+ * signed deltas against the prior period, then the period-scoped sections, then
+ * the current-state insight snapshot. `cc-analyzer report --md` prints the
+ * markdown from `buildDigestMarkdown` instead; both read the same digest object,
+ * so the two renderings cannot disagree about a number.
+ */
+export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {}): string {
+  const lines: string[] = [];
+  const h = d.headline;
+  const change = formatDigestDelta;
+
+  lines.push(reportTitle("cc-analyzer · weekly digest", options));
+  lines.push(
+    muted(`${d.period.start} → ${d.period.end} · vs ${d.prior.start} → ${d.prior.end}`, options),
+  );
+  const framingNote = costFramingNote(d.costBasis);
+  if (framingNote) lines.push(muted(framingNote, options));
+
+  lines.push(`\n${section("Summary", options)}`);
+  if (isEmptyPeriod(d)) {
+    lines.push("No sessions in this period.");
+    if (h.sessions.prior > 0) {
+      lines.push(
+        muted(
+          `Prior period: ${h.sessions.prior} ${h.sessions.prior === 1 ? "session" : "sessions"} · ` +
+            `${formatUSD(h.cost.prior)}.`,
+          options,
+        ),
+      );
+    }
+  } else {
+    lines.push(
+      table(
+        ["metric", "this period", "prior", "change"],
+        digestSummaryRows(d, [
+          costNoun(d.costBasis),
+          "sessions",
+          "active time",
+          "tokens (in+out)",
+          "cache tokens",
+        ]),
+        { align: ["left", "right", "right", "right"] },
+      ),
+    );
+
+    if (d.projects.length) {
+      lines.push(`\n${section("Top projects", options)}`);
+      lines.push(
+        table(
+          ["cost", "sessions", "change", "project"],
+          d.projects.map((p) => [
+            formatUSD(p.cost),
+            String(p.sessions),
+            change(p.delta, formatUSD),
+            truncate(p.projectPath ?? p.projectId, 44),
+          ]),
+          { align: ["right", "right", "right", "left"] },
+        ),
+      );
+    }
+
+    if (d.models.length) {
+      lines.push(`\n${section("Models", options)}`);
+      lines.push(
+        table(
+          ["model", "calls", "cost", "prior"],
+          d.models.map((m) => [
+            truncate(m.model, 32),
+            formatSignedCount(m.calls),
+            formatUSD(m.cost),
+            formatUSD(m.priorCost),
+          ]),
+          { align: ["left", "right", "right", "right"] },
+        ),
+      );
+    }
+
+    const r = d.reliability;
+    lines.push(`\n${section("Cache & reliability", options)}`);
+    lines.push(
+      table(
+        ["signal", "value"],
+        [
+          [
+            "cache",
+            `${formatUSD(d.cache.writeCost)} written · ${formatUSD(d.cache.readCost)} read · ` +
+              `${formatUSD(d.cache.waste)} never read back`,
+          ],
+          [
+            "tool calls",
+            `${formatSignedCount(r.toolCalls)} (${formatSignedCount(r.toolErrors)} errors, ` +
+              `${(r.toolErrorRate * 100).toFixed(1)}%)`,
+          ],
+          [
+            "test runs",
+            r.testRuns > 0
+              ? `${formatSignedCount(r.testRuns)} (${formatSignedCount(r.testFailures)} failed) · ` +
+                `worst streak ${r.worstTestFailStreak}`
+              : "none detected",
+          ],
+          [
+            "churn",
+            `${formatSignedCount(r.retries)} repeated calls · ${formatSignedCount(r.redundantReads)} redundant reads`,
+          ],
+          [
+            "corrections",
+            `${formatSignedCount(r.correctionTurns)} of ${formatSignedCount(r.turns)} turns ` +
+              `(${(r.correctionShare * 100).toFixed(0)}%) · ` +
+              `${formatSignedCount(r.interruptionTurns)} interrupted`,
+          ],
+        ],
+      ),
+    );
+    lines.push(muted(CORRECTION_CAVEAT, options));
+
+    if (d.skills.length) {
+      lines.push(`\n${section("Skills · cost of the turns that invoked them", options)}`);
+      lines.push(
+        table(
+          ["skill", "invoc", "turns", "turn $"],
+          d.skills.map((s) => [
+            truncate(s.name, 28),
+            formatSignedCount(s.invocations),
+            formatSignedCount(s.attributedTurns),
+            formatUSD(s.attributedCost),
+          ]),
+          { align: ["left", "right", "right", "right"] },
+        ),
+      );
+      lines.push(muted(SKILL_COST_CAVEAT, options));
+    }
+  }
+
+  lines.push(`\n${section("Insights · current state, whole portfolio", options)}`);
+  if (d.insights.length === 0) {
+    lines.push(healthy("No findings — the portfolio looks healthy by every rule.", options));
+  } else {
+    pushFindings(lines, d.insights, options);
+  }
+
+  lines.push(
+    `\n${muted(
+      "Sessions are attributed to their start day; insights above are current state, not " +
+        "period-scoped.",
+      options,
+    )}`,
+  );
+  lines.push(muted("Paste-ready markdown: cc-analyzer report --md", options));
   return lines.join("\n");
 }
 
@@ -353,6 +575,7 @@ export interface PortfolioView extends PortfolioStats {
   skills: SkillUsageRow[];
   tests: TestRunSummary;
   retries: RetryStats;
+  corrections: CorrectionStats;
   concurrency: { peak: number; parallelDayShare: number };
   contextTax: ContextTax;
   whatIf: WhatIfRepricing;
@@ -483,12 +706,23 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             : "none",
         ],
         [
+          "corrections",
+          v.corrections.correctionTurns > 0 || v.corrections.interruptionTurns > 0
+            ? `${formatCount(v.corrections.correctionTurns)} correction turns ` +
+              `(${(v.corrections.correctionShare * 100).toFixed(0)}% of ${formatCount(v.corrections.turns)} turns) · ` +
+              `${formatCount(v.corrections.interruptionTurns)} interrupted`
+            : "none detected",
+        ],
+        [
           "parallel sessions",
           `peak ${v.concurrency.peak} · ${(v.concurrency.parallelDayShare * 100).toFixed(0)}% of days overlapped`,
         ],
       ],
     ),
   );
+  if (v.corrections.correctionTurns > 0 || v.corrections.interruptionTurns > 0) {
+    lines.push(muted(CORRECTION_CAVEAT, options));
+  }
 
   if (dist.buckets.some((b) => b.count > 0)) {
     lines.push(`\n${section("Session cost distribution", options)}`);

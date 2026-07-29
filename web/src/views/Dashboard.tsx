@@ -1,18 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  buildDigestMarkdown,
+  CORRECTION_CAVEAT,
   type CostBasis,
   type CostDistribution,
   costFramingNote,
+  formatDigestDelta,
+  formatUSD,
+  isEmptyPeriod,
   type ModelRow,
   type MonthRow,
   type ProjectRow,
   type SessionRankRow,
   type SessionWithProject,
   type StatsResponse,
+  type WeeklyDigest,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import { copyText } from "../clipboard.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
@@ -146,6 +153,8 @@ export function Dashboard() {
       </section>
 
       <GlobalSearch />
+
+      <WeeklyDigestCard costBasis={data.costBasis} />
 
       <StatCards data={data} />
 
@@ -320,6 +329,95 @@ export function Dashboard() {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * Compact weekly digest: last complete week at a glance, plus a "copy as
+ * markdown" button. The markdown is built client-side with the same bun-free
+ * `buildDigestMarkdown` the CLI's `report --md` uses — identical output, no
+ * extra endpoint. The full report lives in `cc-analyzer report`.
+ */
+function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
+  // Refetch when the hero's cost-basis toggle flips: the digest carries the
+  // framing sentence, and the copied markdown must not go out with the old one.
+  // `insights: false` keeps first paint cheap — the card below renders no
+  // finding; only the copied markdown has an insights section, and that pays
+  // for the full report at click time.
+  const { data, error, loading } = useAsync(
+    () => api.report(undefined, { insights: false }),
+    [costBasis],
+  );
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+  // The full digest, fetched once per cost basis and reused across clicks.
+  const full = useRef<{ basis: CostBasis; digest: WeeklyDigest } | null>(null);
+
+  if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
+  if (error || !data) return null;
+
+  const h = data.headline;
+  const topProject = data.projects[0];
+  const r = data.reliability;
+  // `copyText` feature-detects `navigator.clipboard` (absent outside a secure
+  // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
+  // on the LAN) and reports failure rather than throwing.
+  const copy = () => {
+    void (async () => {
+      try {
+        if (full.current?.basis !== costBasis) {
+          full.current = { basis: costBasis, digest: await api.report() };
+        }
+        setCopied((await copyText(buildDigestMarkdown(full.current.digest))) ? "ok" : "failed");
+      } catch {
+        setCopied("failed");
+      }
+    })();
+  };
+
+  return (
+    <section>
+      <h2>Weekly digest</h2>
+      <p className="muted">
+        {data.period.start} → {data.period.end} · vs {data.prior.start} → {data.prior.end} ·
+        sessions are attributed to their start day
+      </p>
+      {isEmptyPeriod(data) ? (
+        <EmptyNotice>No sessions in this period.</EmptyNotice>
+      ) : (
+        <div className="cards">
+          <Card
+            label="Cost"
+            value={usd(h.cost.current)}
+            sub={formatDigestDelta(h.cost, formatUSD)}
+          />
+          <Card
+            label="Sessions"
+            value={String(h.sessions.current)}
+            sub={formatDigestDelta(h.sessions, (n) => String(n))}
+          />
+          <Card
+            label="Top project"
+            value={topProject ? shortPath(topProject.projectPath, topProject.projectId) : "—"}
+            sub={topProject ? usd(topProject.cost) : undefined}
+          />
+          <Card
+            label="Corrections"
+            value={`${(r.correctionShare * 100).toFixed(0)}%`}
+            sub={`${count(r.correctionTurns)} of ${count(r.turns)} turns`}
+          />
+        </div>
+      )}
+      {!isEmptyPeriod(data) && <p className="muted spark-cap">{CORRECTION_CAVEAT}</p>}
+      <div className="digest-actions">
+        <button type="button" onClick={copy}>
+          Copy as markdown
+        </button>
+        <span className="status" role="status" aria-live="polite">
+          {copied === "ok" && "Copied to the clipboard."}
+          {copied === "failed" && "Couldn’t copy — the browser blocked clipboard access."}
+        </span>
+      </div>
+    </section>
   );
 }
 

@@ -15,6 +15,7 @@ import type {
   ContextTaxRow,
   CostBucket,
   CostDistribution,
+  DayRange,
   DayRow,
   DepthBucket,
   DurationSummary,
@@ -59,8 +60,16 @@ import {
 
 export * from "./stats-types.ts";
 
-const IO_TOKENS = "input_tokens + output_tokens";
-const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+/** The two token roll-ups every table scan sums. Exported so period-scoped
+ * consumers (the weekly digest) reuse the exact expression instead of keeping a
+ * copy that could drift from the column list. */
+export const IO_TOKENS = "input_tokens + output_tokens";
+export const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+
+/** `AND day BETWEEN ? AND ?` when a period is given — pair with the period's
+ * two bind values, appended after any project scope. */
+const periodScope = (period?: DayRange): string => (period ? "AND day BETWEEN ? AND ?" : "");
+const periodBinds = (period?: DayRange): string[] => (period ? [period.start, period.end] : []);
 
 /** `AND project_id = ?` when scoped — pair with `scopedAll` so the bind list
  * can't drift from the SQL fragment across the two branches. */
@@ -145,7 +154,10 @@ export function spendByMonth(db: Database, projectId?: string): MonthRow[] {
   );
 }
 
-export function spendByProject(db: Database, limit = 20): ProjectRow[] {
+/** Projects ranked by spend, optionally restricted to one day range (a session
+ * counts toward the period containing its start day — the weekly digest's
+ * attribution, and the only one the index supports). */
+export function spendByProject(db: Database, limit = 20, period?: DayRange): ProjectRow[] {
   return db
     .query(
       `SELECT project_id AS projectId,
@@ -154,10 +166,10 @@ export function spendByProject(db: Database, limit = 20): ProjectRow[] {
         COUNT(*) AS sessions,
         SUM(${IO_TOKENS}) AS ioTokens,
         SUM(${CACHE_TOKENS}) AS cacheTokens
-      FROM sessions
+      FROM sessions WHERE 1 = 1 ${periodScope(period)}
       GROUP BY project_id ORDER BY cost DESC LIMIT ?`,
     )
-    .all(limit) as ProjectRow[];
+    .all(...periodBinds(period), limit) as ProjectRow[];
 }
 
 export function topSessions(db: Database, limit = 10, projectId?: string): SessionRankRow[] {
@@ -187,15 +199,16 @@ interface JsonTokens {
 
 /** Per-model totals folded out of `models_json`: calls, indexed cost, and the
  * full four-category token mix (what repricing needs). */
-interface ModelTotals {
+export interface ModelTotals {
   calls: number;
   cost: number;
   tokens: TokenCounts;
 }
 
-/** Fold one row's `models_json` into per-model totals. Shared by `spendByModel`
- * and `whatIfRepricing` so the two can never disagree about a model's mix. */
-function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | null): void {
+/** Fold one row's `models_json` into per-model totals. Shared by `spendByModel`,
+ * `whatIfRepricing`, and the period-scoped digest model mix so none of them can
+ * disagree about a model's mix. */
+export function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | null): void {
   const models = parseJson<
     Record<string, { apiCalls?: number; cost?: { total?: number }; tokens?: JsonTokens }>
   >(modelsJson, {});
@@ -216,12 +229,22 @@ function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | n
   }
 }
 
-/** Every model's totals across the (optionally project-scoped) index. */
-function modelTotals(db: Database, projectId?: string): Map<string, ModelTotals> {
+/**
+ * Every model's totals across the index, optionally scoped to one project
+ * and/or one period. `spendByModel`, `whatIfRepricing`, and the weekly digest's
+ * model mix all read it, so a model's calls/cost/token mix is folded in exactly
+ * one place no matter which surface asks.
+ */
+export function modelTotals(
+  db: Database,
+  projectId?: string,
+  period?: DayRange,
+): Map<string, ModelTotals> {
   const rows = scopedAll<{ models_json: string | null }>(
     db,
-    `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)} ${periodScope(period)}`,
     projectId,
+    ...periodBinds(period),
   );
   const acc = new Map<string, ModelTotals>();
   for (const row of rows) addModelTotalsRow(acc, row.models_json);
@@ -242,8 +265,10 @@ export function spendByModel(db: Database, projectId?: string): ModelRow[] {
 }
 
 const CACHE_WRITE = "cache_write_5m + cache_write_1h";
-/** Per-session un-amortized cache-write cost: the write $ not read back. */
-const WASTE_EXPR = `cost_cache_write * max(0.0, 1.0 - min(1.0, CASE
+/** Per-session un-amortized cache-write cost: the write $ not read back.
+ * Exported so period-scoped consumers (the weekly digest) reuse the exact same
+ * SQL expression instead of re-deriving "waste" a second way. */
+export const CACHE_WASTE_EXPR = `cost_cache_write * max(0.0, 1.0 - min(1.0, CASE
   WHEN (${CACHE_WRITE}) > 0 THEN CAST(cache_read AS REAL) / (${CACHE_WRITE})
   ELSE 1.0 END))`;
 
@@ -254,17 +279,19 @@ const withRatio = <T extends { writeTokens: number; readTokens: number }>(
   ratio: r.writeTokens > 0 ? r.readTokens / r.writeTokens : 0,
 });
 
-/** Portfolio-wide cache totals for the insights header. */
-export function cacheSummary(db: Database): CacheSummary {
+/** Portfolio-wide cache totals for the insights header — or one period's, when
+ * a day range is given (the weekly digest's cache section is this same query
+ * with the `day` filter, so the two can't disagree about waste). */
+export function cacheSummary(db: Database, period?: DayRange): CacheSummary {
   return db
     .query(
       `SELECT COALESCE(SUM(cost_cache_write), 0) AS writeCost,
         COALESCE(SUM(cost_cache_read), 0) AS readCost,
-        COALESCE(SUM(${WASTE_EXPR}), 0) AS waste,
+        COALESCE(SUM(${CACHE_WASTE_EXPR}), 0) AS waste,
         COALESCE(SUM(cost_total), 0) AS totalCost
-      FROM sessions`,
+      FROM sessions WHERE 1 = 1 ${periodScope(period)}`,
     )
-    .get() as CacheSummary;
+    .get(...periodBinds(period)) as CacheSummary;
 }
 
 /** Projects ranked by un-amortized cache-write spend (worst offenders first). */
@@ -281,7 +308,7 @@ export function cacheWasteByProject(db: Database, limit = 50): ProjectCacheRow[]
         SUM(cost_input) AS inputCost,
         SUM(cost_output) AS outputCost,
         SUM(cost_total) AS totalCost,
-        SUM(${WASTE_EXPR}) AS waste
+        SUM(${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       GROUP BY project_id
       HAVING SUM(${CACHE_WRITE}) > 0
@@ -311,7 +338,7 @@ export function cacheWasteBySession(
         cost_input AS inputCost,
         cost_output AS outputCost,
         cost_total AS totalCost,
-        (${WASTE_EXPR}) AS waste
+        (${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       WHERE project_id = ? AND (${CACHE_WRITE}) > 0
       ORDER BY waste DESC, cost_cache_write DESC
@@ -1033,7 +1060,7 @@ export function idleVsCache(db: Database): IdleCacheBucket[] {
         (${CACHE_WRITE}) AS w,
         cache_read AS r,
         cost_cache_write AS wc,
-        (${WASTE_EXPR}) AS waste
+        (${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       WHERE duration_ms > 0 AND (${CACHE_WRITE}) > 0`,
     )
@@ -1317,15 +1344,29 @@ export function whatIfRepricing(
  * from the raw command heads stored in the index (schema v6), so those
  * heuristics can change without a reindex.
  */
-export function analyticsRollup(db: Database, projectId?: string): AnalyticsRollup {
+/**
+ * Fold every per-session JSON blob into the portfolio rollup in one table scan.
+ * Optionally scoped to a project and/or an inclusive day range: the range
+ * filters on the `day` column (a session's START day), so a session counts
+ * wholly toward the period it began in — the attribution the weekly digest
+ * reports, and the only one the index supports.
+ */
+export function analyticsRollup(
+  db: Database,
+  projectId?: string,
+  period?: DayRange,
+): AnalyticsRollup {
   interface Row {
     project_id: string;
     day: string | null;
     month: string | null;
     cost: number | null;
     retriesN: number;
+    turnsN: number;
     testFailStreakN: number;
     redundantReadsN: number;
+    correctionTurnsN: number;
+    interruptionTurnsN: number;
     reread_files_json: string | null;
     tools_json: string | null;
     tool_errors_json: string | null;
@@ -1346,16 +1387,20 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     db,
     `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
+        COALESCE(turns, 0) AS turnsN,
         COALESCE(test_fail_streak, 0) AS testFailStreakN,
         COALESCE(redundant_reads, 0) AS redundantReadsN,
+        COALESCE(correction_turns, 0) AS correctionTurnsN,
+        COALESCE(interruption_turns, 0) AS interruptionTurnsN,
         reread_files_json,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
         skill_turn_costs_json,
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
-      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)} ${periodScope(period)}`,
     projectId,
+    ...periodBinds(period),
   );
 
   const toolFold = newToolFold();
@@ -1420,6 +1465,15 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
   let redundantReadsTotal = 0;
   let rereadSessions = 0;
   const rereadFileAcc = new Map<string, number>();
+
+  // Corrections (schema v13 columns): plain column sums plus a weekly trend
+  // folded in this same scan (weeks keyed off each session's `day`; undated
+  // sessions count toward the totals but not the trend).
+  let correctionSessions = 0;
+  let correctionTurnsTotal = 0;
+  let interruptionTurnsTotal = 0;
+  let realPromptTurns = 0;
+  const correctionWeekAcc = new Map<string, { correctionTurns: number; turns: number }>();
 
   const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
   const reasonAcc = new Map<string, { count: number; sessions: number }>();
@@ -1504,6 +1558,18 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     if (r.redundantReadsN >= THRASH_REREAD_MIN) rereadSessions += 1;
     for (const file of new Set(parseJson<string[]>(r.reread_files_json, []))) {
       rereadFileAcc.set(file, (rereadFileAcc.get(file) ?? 0) + 1);
+    }
+
+    if (r.correctionTurnsN > 0) correctionSessions += 1;
+    correctionTurnsTotal += r.correctionTurnsN;
+    interruptionTurnsTotal += r.interruptionTurnsN;
+    realPromptTurns += r.turnsN;
+    if (r.day) {
+      const week = weekOf(r.day);
+      const w = correctionWeekAcc.get(week) ?? { correctionTurns: 0, turns: 0 };
+      w.correctionTurns += r.correctionTurnsN;
+      w.turns += r.turnsN;
+      correctionWeekAcc.set(week, w);
     }
     for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.retries_json, {}))) {
       const a = retryAcc.get(tool) ?? { retries: 0, sessions: 0 };
@@ -1608,6 +1674,17 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         .map(([file, sessions]) => ({ file, sessions }))
         .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
         .slice(0, 10),
+    },
+    corrections: {
+      sessions: correctionSessions,
+      correctionTurns: correctionTurnsTotal,
+      interruptionTurns: interruptionTurnsTotal,
+      turns: realPromptTurns,
+      correctionShare: realPromptTurns > 0 ? correctionTurnsTotal / realPromptTurns : 0,
+      interruptionShare: realPromptTurns > 0 ? interruptionTurnsTotal / realPromptTurns : 0,
+      weekly: [...correctionWeekAcc.entries()]
+        .map(([week, w]) => ({ week, ...w }))
+        .sort((a, b) => (a.week < b.week ? -1 : 1)),
     },
     permissionModes: [...modeAcc.entries()]
       .map(([mode, a]) => ({

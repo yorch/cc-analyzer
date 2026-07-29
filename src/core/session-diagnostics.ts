@@ -8,6 +8,7 @@
 
 import type { ApiCall, SessionAnalysis } from "./analyze.ts";
 import { buildContextSeries } from "./chart-series.ts";
+import { pct } from "./format-shared.ts";
 import { THRASH_REREAD_MIN, THRASH_STREAK_MIN } from "./stats-types.ts";
 
 /** Prompt-cache rewrites become interesting after the five-minute TTL boundary. */
@@ -25,6 +26,16 @@ const THRASH_REREAD_WARN = 8;
  * redundancy stays low (4 reads of one file = 2 redundant on one chain). */
 const SINGLE_FILE_READS = 4;
 
+/** Correction loops need at least three correction turns AND a quarter of the
+ * session's turns to fire — one or two "no, …" prompts are normal iteration,
+ * and the share floor keeps a long session's occasional corrections quiet.
+ * At 40% of turns the session is mostly redoing itself: warning. The counters
+ * come from the same `isCorrectionPrompt`/`isInterruptionMarker` heuristics
+ * the index stores, so this diagnostic and the indexed columns always agree. */
+const CORRECTION_LOOP_MIN = 3;
+const CORRECTION_LOOP_SHARE = 0.25;
+const CORRECTION_LOOP_WARN_SHARE = 0.4;
+
 export type SessionDiagnosticCode =
   | "context-pressure"
   | "context-jump"
@@ -32,7 +43,8 @@ export type SessionDiagnosticCode =
   | "post-compaction-refill"
   | "turn-cost-concentration"
   | "edit-test-thrash"
-  | "repeated-file-reads";
+  | "repeated-file-reads"
+  | "correction-loop";
 
 export type SessionDiagnosticSeverity = "info" | "warning";
 
@@ -45,8 +57,6 @@ export interface SessionDiagnostic {
   /** Zero-based turn index when the signal belongs to one turn. */
   turnIndex?: number;
 }
-
-const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
 interface TimedCall {
   call: ApiCall;
@@ -99,6 +109,8 @@ function mainCallsByTime(analysis: SessionAnalysis): TimedCall[] {
  *   four) — two fails in a row is a normal debugging step.
  * - Repeated reads start at four redundant reads, or one file read four times
  *   (warning at eight redundant) — a re-read or two happens in any session.
+ * - Correction loops start at three correction turns that are also a quarter
+ *   of the session's turns (warning at 40%) — a "no, …" or two is iteration.
  */
 export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagnostic[] {
   const diagnostics: SessionDiagnostic[] = [];
@@ -240,6 +252,31 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
         action:
           "Large files re-read every turn belong in a summary or a subagent; check whether " +
           "context was compacted away, forcing the re-reads.",
+      });
+    }
+  }
+
+  {
+    // The analyzer computed both counters with the shared `isCorrectionPrompt`
+    // / `isInterruptionMarker` heuristics (the same numbers the index stores),
+    // so the diagnostic cannot disagree with the indexed columns.
+    const corrections = analysis.correctionTurns;
+    const turns = analysis.totals.turns;
+    const share = turns > 0 ? corrections / turns : 0;
+    if (corrections >= CORRECTION_LOOP_MIN && share >= CORRECTION_LOOP_SHARE) {
+      const interruptions = analysis.interruptionTurns;
+      diagnostics.push({
+        code: "correction-loop",
+        severity: share >= CORRECTION_LOOP_WARN_SHARE ? "warning" : "info",
+        title: "Many prompts corrected the previous turn",
+        evidence:
+          `${corrections} of ${turns} turns (${pct(share)}) opened by correcting the previous ` +
+          `one${interruptions > 0 ? `; ${interruptions} turn${interruptions === 1 ? "" : "s"} interrupted mid-flight` : ""}. ` +
+          "English-only keyword heuristic — it undercounts.",
+        action:
+          "Invest in the first prompt: more context, constraints, and acceptance criteria up " +
+          "front. When a turn misfires, consider /clear plus a fresh, fuller prompt instead of " +
+          "iterating on the misfire.",
       });
     }
   }

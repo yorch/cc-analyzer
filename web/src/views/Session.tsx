@@ -10,6 +10,7 @@ import {
   topEntries,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
 import { SessionCharts } from "../SessionCharts.tsx";
@@ -142,20 +143,7 @@ function Summary({ a }: { a: SessionAnalysis }) {
             No notable context or cost patterns crossed the current diagnostic thresholds.
           </p>
         ) : (
-          <div className="diagnostic-list">
-            {diagnostics.map((diagnostic) => (
-              <article
-                className={`diagnostic diagnostic-${diagnostic.severity}`}
-                key={diagnostic.code}
-              >
-                <h3>{diagnostic.title}</h3>
-                <p>{diagnostic.evidence}</p>
-                <p className="muted">
-                  <strong>Next:</strong> {diagnostic.action}
-                </p>
-              </article>
-            ))}
-          </div>
+          <DiagnosticList items={diagnostics} keyOf={(d) => d.code} />
         )}
       </section>
       <div className="summary-grid">

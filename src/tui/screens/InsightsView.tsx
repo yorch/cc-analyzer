@@ -12,15 +12,11 @@ import {
   type CacheMetrics,
   type ContextTaxRow,
   type ContextTaxSummary,
-  cacheSummary,
   cacheVerdict,
-  cacheWasteByProject,
   cacheWasteBySession,
-  contextTax,
   type ProjectCacheRow,
   type SessionCacheRow,
   type WhatIfSummary,
-  whatIfRepricing,
 } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { CachePreview } from "../components/previews.tsx";
@@ -68,16 +64,17 @@ export function InsightsView({
   onOpenSession,
   onBack,
 }: Props) {
-  const summary = useMemo(() => cacheSummary(db), [db]);
-  const projects = useMemo(() => cacheWasteByProject(db), [db]);
-  // Computed at the screen boundary and passed down as plain props — the
-  // presentation components below never touch the database.
-  const tax = useMemo(() => contextTax(db), [db]);
-  const whatIf = useMemo(() => whatIfRepricing(db, pricing), [db, pricing]);
-  const diagnostics = useMemo(
-    () => buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
-    [db, pricing],
-  );
+  // One assembly at the screen boundary: the portfolio signals already carry
+  // every number this screen shows (cache summary + hit-list, context tax,
+  // what-if) as well as the inputs the rules fold, so computing them twice
+  // would only be a second chance to disagree. Everything below is a plain
+  // prop — the presentation components never touch the database.
+  const signals = useMemo(() => assemblePortfolioSignals(db, pricing), [db, pricing]);
+  const summary = signals.cache.summary;
+  const projects = signals.cache.projects;
+  const tax = signals.contextTax;
+  const whatIf = signals.whatIf;
+  const diagnostics = useMemo(() => buildPortfolioDiagnostics(signals), [signals]);
   const [drilled, setDrilled] = useState<ProjectCacheRow | null>(null);
   const sessions = useMemo(
     () => (drilled ? cacheWasteBySession(db, drilled.projectId) : []),

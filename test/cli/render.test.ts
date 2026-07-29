@@ -9,12 +9,13 @@ import {
   contextTax,
   whatIfRepricing,
 } from "../../src/core/stats.ts";
+import { clock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
 type Events = Parameters<typeof analyzeSession>[0];
 
-const at = (min: number): string => new Date(Date.UTC(2026, 6, 3, 12, min)).toISOString();
+const at = clock(2026, 7, 3, 12);
 
 function sessionWithSkill(): SessionAnalysis {
   const events = [
@@ -67,6 +68,7 @@ describe("renderStats · skills", () => {
       skills: analytics.skills,
       tests: analytics.tests,
       retries: analytics.retries,
+      corrections: analytics.corrections,
       concurrency: { peak: 1, parallelDayShare: 0 },
       contextTax: contextTax(db),
       whatIf: whatIfRepricing(db, pricing),

@@ -118,7 +118,7 @@ Sources: [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/main/src/
 
 ### Single-scan analytics rollup and project trends
 
-Full-table JSON parsing is expensive, so `analyticsRollup` folds every per-session JSON rollup in one table scan rather than scanning per metric ([src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305)). A single pass over the rows accumulates tool usage with error rates, rich per-skill analytics (invocations, reach, reliability, adoption, turn-scoped cost attribution, and session-scoped cost), subagent frequency, Bash command families, test runs, retries, thrash (sessions with a failing-test streak ≥ 3, total redundant reads, and the portfolio-wide top re-read files off the schema v12 columns), permission modes, stop reasons, turn depth, Claude Code versions, and Git branches. Bash families and test runs are classified at query time from the raw command heads, so those heuristics can change without a reindex. The per-project variant `projectTrends` also runs a single project scan, feeding the shared `newToolFold`, `newDepthFold`, and `newModelMixFold` accumulators so the portfolio Tools view and the project pages can never disagree about error rates or bucket boundaries ([src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808)).
+Full-table JSON parsing is expensive, so `analyticsRollup` folds every per-session JSON rollup in one table scan rather than scanning per metric ([src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305)). A single pass over the rows accumulates tool usage with error rates, rich per-skill analytics (invocations, reach, reliability, adoption, turn-scoped cost attribution, and session-scoped cost), subagent frequency, Bash command families, test runs, retries, thrash (sessions with a failing-test streak ≥ 3, total redundant reads, and the portfolio-wide top re-read files off the schema v12 columns), corrections (correction and interruption turns off the schema v13 columns, with the real-prompt turn total as denominator, per-share guards against zero turns, and a weekly `{week, correctionTurns, turns}` trend folded in the same scan — every corrections surface prints the shared `CORRECTION_CAVEAT`, because the detector is an English-only keyword heuristic that undercounts by design), permission modes, stop reasons, turn depth, Claude Code versions, and Git branches. Bash families and test runs are classified at query time from the raw command heads, so those heuristics can change without a reindex. The per-project variant `projectTrends` also runs a single project scan, feeding the shared `newToolFold`, `newDepthFold`, and `newModelMixFold` accumulators so the portfolio Tools view and the project pages can never disagree about error rates or bucket boundaries ([src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808)).
 
 The `SkillUsageRow` shape carries the invocation depth, project reach, error rate, first/last-used dates, a per-day series for the adoption sparkline, and skill cost at **two scopes** ([src/core/stats-types.ts:L302-L323](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts#L302-L323)). The primary number is turn-scoped: `attributedTurns` / `attributedCost` sum the per-session `skill_turn_costs_json` blob (schema v10), i.e. the cost of the *turns* that invoked the skill — the containing turn's API calls, its tool loop, and any subagent burst inside it. `totalCost` / `avgCostPerSession` remain as the session-scoped upper bound: a session's whole cost charged to every skill it touched. Neither is causal — a turn invoking several skills counts its full cost toward each — and the shared `SKILL_COST_CAVEAT` string, exported from the bun-free `stats-types.ts`, is what every surface prints so the wording cannot drift. Surfaces: the `Skills` section of `cc-analyzer stats` and of a single-session report (`turn $` beside `session $`), the TUI skills panel (`TURN $` / `SESS $` columns, both sortable), and the web Tools view's Skills table. The TUI `ToolsView` runs one rollup and switches between tools/skills/subagents panels, adding an adoption strip for the selected skill ([src/tui/screens/ToolsView.tsx:L55-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L55-L235)); the web `Tools` view renders the same rollup plus reliability, depth, compaction, web-tool, mode, stop-reason, version, and branch tables ([web/src/views/Tools.tsx:L344-L456](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Tools.tsx#L344-L456)).
 
@@ -155,7 +155,11 @@ consecutive failing test runs without a pass on one chain — info at 3, warning
 at 4; edits between the failures do not break the streak), and
 `repeated-file-reads` (at least four redundant reads — the 3rd+ read of a file
 on one chain — or any single file read four times; warning at eight redundant
-reads, naming the most re-read file). Each result includes the observed
+reads, naming the most re-read file), and `correction-loop` (at least three
+correction turns that are also ≥ 25% of the session's turns — warning at 40% —
+computed from the same `isCorrectionPrompt`/`isInterruptionMarker` heuristics
+the index stores, with the English-only-heuristic caveat inside the evidence
+text). Each result includes the observed
 evidence, affected turn when known, severity, and suggested next action.
 
 The thresholds are deliberately documented in code and the output remains
@@ -173,7 +177,10 @@ reads the configured Claude dir — `settings.json` (permission rule counts, hoo
 events, a pinned `model`, any `mcpServers`), `skills/<name>/SKILL.md`,
 `agents/<name>.md`, a best-effort walk of `plugins/` (a dir counts as a plugin
 when it declares `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`,
-and the plugin's own skills and agents are recorded with it) — plus the sibling
+and the plugin's own skills, agents, and MCP servers are recorded with it — the
+servers come from the plugin's own `.mcp.json` or an `mcpServers` field in its
+manifest, inline or by path, and are deliberately *not* folded into the
+user-configured server list) — plus the sibling
 `<claudeDir>.json`, whose top-level `mcpServers` are global and whose
 `projects.<path>.mcpServers` are project-scoped. Every read is wrapped: a missing
 dir, an unfamiliar layout, or malformed JSON is skipped silently, because this is
@@ -193,14 +200,60 @@ plus the `subject` the finding is about), warnings first:
 | `error-prone-skill` | warning | Error rate ≥ 25% over ≥ 5 invocations. One in four failing is past flaky; the floor of five keeps a single bad run out of two from being called error-prone. |
 | `unused-skill` | info | An installed skill with zero matching invocations; the evidence names the install source (user dir or plugin). |
 | `unused-agent` | info | An installed subagent never named by a `Task`/`Agent` call. |
+| `unused-plugin` | info | An installed plugin where *nothing* it ships was ever used — no skill invocation, no subagent session, no MCP tool call. Fires once for the plugin instead of one finding per dead component, and suppresses its components' own `unused-skill`/`unused-agent` findings. A plugin with nothing discoverable (known only by name, or commands-only) never fires it: "all zero components unused" is vacuously true. Worded "appears unused" because the matching is loose. |
 | `stale-skill` | info | Previously used, but last used ≥ 30 days before `today` — one month covers a normal work cycle, and anything shorter would flag genuinely monthly skills. |
 | `missing-but-used` | info | Skills or subagents observed in sessions but absent from the inventory, aggregated into one finding per kind. Suppressed entirely when there is no Claude dir to compare against. |
 
-Name matching is deliberately loose. A plugin skill may be invoked qualified
-(`my-plugin:review`) or bare, so an installed item counts as used when an
-observed name matches either the fully qualified form or the bare name after the
-last `:`. A loose match yields a false negative — the audit stays quiet — which
-is strictly better than accusing a daily-driver skill of being unused.
+Every name question — the findings above and the per-plugin numbers below —
+goes through the single classifier `attribute(observed, item, owners,
+userNames)`, and the two differ only in the strictness they accept. The
+findings ask it loosely (anything but `"none"` counts as used): a plugin skill
+may be invoked qualified (`my-plugin:review`) or bare, and either form counts,
+because a loose match yields a false negative — the audit stays quiet — which
+is strictly better than accusing a daily-driver skill of being unused. The one
+thing loose matching does *not* do is let two installed items claim the same
+observation: a user-installed skill owns bare invocations of its name, so a
+plugin shipping a same-named skill is shadowed (case 4 below) and one erroring
+`deploy` row produces one `error-prone-skill` finding, not one per copy.
+
+`buildPluginUsage(inventory, usage)` rolls that up one level, from per-skill to
+per-plugin, answering "what is this plugin doing for me, and what does it
+cost?". Each `PluginUsageRow` carries how many of the plugin's shipped skills,
+subagents, and MCP servers were used, its total skill invocations, the sessions
+its subagents ran in, the turn-scoped `attributedTurns`/`attributedCost` summed
+over its skills, and the latest day any of them ran. Rows sort by attributed
+cost, then invocations.
+
+A plugin row carries *numbers*, not just a yes/no, and there loose matching
+would not be silence but invention — the same bare `fmt` row would be summed
+into every plugin shipping an `fmt` skill, and a user's own `fmt` skill would
+have its dollars claimed by a plugin. So usedness stays loose while the numbers
+are attributed strictly, over the same four cases the classifier decides (a
+user-installed item is case 0: trivially its own owner, since nothing shadows
+a skill the user installed themselves):
+
+1. a **qualified** row (`toolkit:fmt`) names its owner — it counts for that
+   plugin, both as usedness and in every number;
+2. a **bare** row shipped by exactly one plugin and by no user-installed skill
+   of that name is unambiguous, and counts the same way (this is what keeps a
+   plugin skill logged under both name forms summed into one row);
+3. a **bare** row shipped by two or more plugins counts toward *usedness* for
+   each candidate — one of them really did run it, and accusing them all of
+   being unused would be a guaranteed false accusation — but toward the numbers
+   of none;
+4. a **bare** row whose name is also a user-installed skill is shadowed: a bare
+   invocation resolves to the user's own skill, so the plugin gets neither the
+   numbers nor the usedness and stays eligible for `unused-plugin`.
+
+Subagent sessions follow the same rule. `unused-plugin` keys off the loose
+usedness side, so case (3) suppresses it while case (4) does not.
+
+The costs are the same turn-scoped attribution the per-skill table uses, so
+`SKILL_COST_CAVEAT` is printed wherever the rollup renders. The rollup rides on
+`SetupAudit.plugins`, so `cc-analyzer audit` (a Plugins table, and `plugins` in
+`--json`), `GET /api/audit`, and the web Tools → Setup section all read the same
+numbers. Subagent sessions are an upper bound: the rollup only has per-name
+session counts, so one session dispatching two of a plugin's agents counts twice.
 
 The whole result is machine-local and historical: the index can cover sessions
 that predate the current setup, and project-scoped skills, subagents, and MCP
@@ -252,6 +305,7 @@ The rules, with thresholds (each documented beside its code with a rationale):
 | `sidechain-imbalance` | info | Subagent spend share ≥ 50% (verify the delegation earns its keep), or exactly $0 of subagent spend over ≥ 50 sessions (worth trying). Only one side can fire. |
 | `test-thrash-pattern` | warning | ≥ 3 sessions hit a streak of ≥ 3 consecutive failing test runs, AND those sessions are ≥ 10% of the sessions that ran tests (volume guard). Evidence carries the session count and worst streak; the action mirrors the `edit-test-thrash` session diagnostic. |
 | `reread-heavy` | info | ≥ 200 redundant reads portfolio-wide across ≥ 10 sessions with 4+ each; names the top re-read file. Action: put hot reference files in CLAUDE.md summaries or delegate bulk reading to subagents. |
+| `correction-heavy` | info | Portfolio correction share ≥ 15% over ≥ 200 real-prompt turns. Evidence carries the correction share, session count, interruption share, and the English-only-heuristic caveat; the action mirrors the `correction-loop` session diagnostic (invest in first prompts; `/clear` + a fresh, fuller prompt beats iterating on a misfire). |
 
 The surfaces: `cc-analyzer insights` renders the ranked findings (with an
 explicit "healthy by every rule" line and the rule count when nothing fires),
@@ -261,6 +315,59 @@ glyph-and-title list computed at the screen boundary. All three assemble
 signals through the same `assemblePortfolioSignals`, so they cannot disagree.
 
 Sources: [src/core/portfolio-diagnostics.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-diagnostics.ts) [src/core/portfolio-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-signals.ts) [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Insights.tsx) [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx)
+
+### Weekly digest: period-scoped vs current-state
+
+The digest (`cc-analyzer report`, `GET /api/report`, the web Dashboard card) is
+the one surface that reports a *window of time* rather than the whole portfolio,
+so it splits cleanly in two — and the split is printed in the output, not just
+documented here.
+
+**Period-scoped** (the sessions whose start day falls in the period): the
+headline (cost, sessions, active time, input+output tokens, cache tokens), the
+top projects, the model mix, cache write/read/un-amortized dollars, the
+reliability signals (tool calls and errors, test runs and failures, retries,
+worst failing-test streak, redundant reads, correction and interruption turns),
+and the top skills by turn-scoped cost. Each headline metric and each project
+carries a `DigestDelta` against the equally long period immediately before:
+`{ current, prior, absolute, share }`, where `share` is **null** when the prior
+period was empty — there is no percentage change from zero, and render sites
+print `new` instead.
+
+**Current state, not period-scoped**: the `insights` array is
+`buildPortfolioDiagnostics` over the whole indexed portfolio (see the rules table
+above). A single week rarely carries enough evidence to fire those conservative
+thresholds honestly, and the actionable question is "what should I fix now", not
+"what fired last week". Every render site labels the section accordingly.
+
+The two-layer split follows the house pattern: [src/core/digest.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest.ts) is bun-free
+(shapes, period math via the shared `weekOf`/`shiftDay` helpers, delta math, and
+`buildDigestMarkdown`), so the SPA imports it and its "copy as markdown" button
+emits exactly what `cc-analyzer report --md` prints; [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts)
+is the bun-side assembler that reads the index. It owns almost no SQL of its
+own: the rollups it needs already exist and take an optional `DayRange`, so
+period-scoped JSON-blob signals come from `analyticsRollup(db, undefined,
+period)` (the same single-scan folds the portfolio rollup uses, with a `day
+BETWEEN ? AND ?` filter), the cache section from `cacheSummary(db, period)` —
+which is why `DigestCache` is simply `CacheSummary` — and the top projects from
+`spendByProject(db, limit, period)`, the same ranking `cc-analyzer stats` shows.
+The model mix reuses `addModelTotalsRow` (shared with `spendByModel` and
+`whatIfRepricing`) and the headline's token sums the exported `IO_TOKENS` /
+`CACHE_TOKENS` expressions, so a digest number and the analytics number for the
+same span cannot disagree. Each shared function is called twice, once per period
+(current and prior); a single CASE-bucketed pass would save a scan and cost the
+reader the plain reading, which is not a trade this codebase makes.
+
+Attribution honesty: the index holds one row per session dated by its **start
+day**, so a session counts wholly toward the period it began in and one that ran
+past midnight is not split. The default period is the last **complete** ISO week
+(Monday–Sunday) relative to today, because a half-finished current week would
+always read as a decline; `--week` / `?week=` selects the week containing any
+given day. A period with zero sessions is a valid digest, not an error. The
+skills and corrections numbers carry the shared `SKILL_COST_CAVEAT` and
+`CORRECTION_CAVEAT` verbatim, as everywhere else.
+
+Sources: [src/core/digest.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest.ts) [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts) [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx)
 
 ### Frontend chart primitives
 

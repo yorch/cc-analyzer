@@ -8,6 +8,7 @@ import {
   isTestCommand,
   type SessionAnalysis,
 } from "../../src/core/analyze.ts";
+import { assistantEvent, clock, toolResultEvent, toolUseBlock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 type Events = Parameters<typeof analyzeSession>[0];
@@ -81,9 +82,7 @@ describe("isTestCommand", () => {
 });
 
 /** Minutes after a fixed origin, as an ISO timestamp. */
-const at = (min: number): string => new Date(Date.UTC(2026, 0, 1, 12, min)).toISOString();
-
-const usage = { input_tokens: 10, output_tokens: 20 };
+const at = clock(2026, 1, 1, 12);
 
 function assistant(opts: {
   id: string;
@@ -94,36 +93,23 @@ function assistant(opts: {
   content?: unknown[];
   model?: string;
 }) {
-  return {
-    type: "assistant",
+  return assistantEvent({
     uuid: `a-${opts.id}`,
     parentUuid: opts.parentId ? `a-${opts.parentId}` : undefined,
     timestamp: at(opts.min),
     isSidechain: opts.sidechain,
     requestId: `req-${opts.id}`,
-    message: {
-      id: `msg-${opts.id}`,
-      model: opts.model ?? "claude-opus-4-7",
-      stop_reason: opts.stopReason ?? null,
-      content: opts.content ?? [{ type: "text", text: "ok" }],
-      usage,
-    },
-  };
+    messageId: `msg-${opts.id}`,
+    model: opts.model,
+    stopReason: opts.stopReason ?? null,
+    content: opts.content,
+  });
 }
 
-const toolUse = (id: string, name: string, input: unknown) => ({
-  type: "tool_use",
-  id,
-  name,
-  input,
-});
+const toolUse = toolUseBlock;
 
-const toolResult = (id: string, isError: boolean) => ({
-  type: "user",
-  uuid: `r-${id}`,
-  timestamp: at(0),
-  message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "x" }] },
-});
+const toolResult = (id: string, isError: boolean) =>
+  toolResultEvent({ uuid: `r-${id}`, timestamp: at(0), toolUseId: id, isError, content: "x" });
 
 function analyze(events: unknown[]): SessionAnalysis {
   return analyzeSession(events as Events, pricing);
@@ -398,5 +384,172 @@ describe("turn-scoped skill cost attribution", () => {
     expect(agg.turns).toEqual([]);
     expect(agg.skillTurnCosts).toEqual(full.skillTurnCosts);
     expect(agg.skillTurnCosts.docx?.turns).toBe(2);
+  });
+});
+
+describe("correction and interruption turns", () => {
+  const prompt = (
+    uuid: string,
+    min: number,
+    text: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    ...extra,
+    message: { content: text },
+  });
+  const marker = (uuid: string, min: number, blocks = 1, extra: Record<string, unknown> = {}) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    ...extra,
+    message: {
+      content: Array.from({ length: blocks }, () => ({
+        type: "text",
+        text: "[Request interrupted by user]",
+      })),
+    },
+  });
+
+  test("counts an interrupted turn once, however many markers it carries", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      // One user message with two marker blocks: one turn, one interruption.
+      marker("u2", 2, 2),
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    // Turn segmentation is unchanged: the marker is still a real prompt.
+    expect(a.totals.turns).toBe(2);
+  });
+
+  test("a tool_result carrying the marker interrupts the open turn", () => {
+    // Esc during a pending tool call: the marker is the tool_result's content,
+    // as a plain string.
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: "[Request interrupted by user for tool use]",
+            },
+          ],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    // A tool_result carrier is not a real prompt: no new turn, no split.
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("a tool_result marker nested in content blocks counts too", () => {
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("an ordinary tool_result is not an interruption", () => {
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "migration applied" }],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(0);
+  });
+
+  test("counts corrections only on real prompts, and shares a turn denominator", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      prompt("u2", 2, "no, the other module"),
+      // Meta and sidechain copies of the same text are not real prompts.
+      prompt("u3", 3, "no, the other module", { isMeta: true }),
+      prompt("u4", 4, "no, the other module", { isSidechain: true }),
+    ]);
+    expect(a.correctionTurns).toBe(1);
+    expect(a.totals.turns).toBe(2);
+    expect(a.interruptionTurns).toBe(0);
+  });
+
+  test("sidechain interruption markers belong to the subagent, not the dialogue", () => {
+    const a = analyze([
+      prompt("u1", 0, "delegate it"),
+      assistant({ id: "1", min: 1, sidechain: true }),
+      marker("u2", 2, 1, { isSidechain: true }),
+    ]);
+    expect(a.interruptionTurns).toBe(0);
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("an interrupted turn and a correction prompt are independent counters", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      marker("u2", 2),
+      prompt("u3", 3, "that's not what i meant — smaller"),
+      assistant({ id: "2", min: 4 }),
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    expect(a.correctionTurns).toBe(1);
+    expect(a.totals.turns).toBe(3);
+  });
+
+  test("the interruption marker prompt itself is never a correction", () => {
+    const a = analyze([prompt("u1", 0, "go"), marker("u2", 1)]);
+    expect(a.correctionTurns).toBe(0);
+    expect(a.interruptionTurns).toBe(1);
+  });
+
+  test("aggregate mode counts exactly like detail mode", async () => {
+    const events = [
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      marker("u2", 2),
+      prompt("u3", 3, "undo that and use the flag"),
+      assistant({ id: "2", min: 4 }),
+    ];
+    const full = analyze(events);
+    async function* stream() {
+      for (const e of events) yield e as Events[number];
+    }
+    const agg = await analyzeSessionStream(stream(), pricing, { detail: false });
+    expect(agg.turns).toEqual([]);
+    expect(agg.correctionTurns).toBe(full.correctionTurns);
+    expect(agg.interruptionTurns).toBe(full.interruptionTurns);
+    expect(full.correctionTurns).toBe(1);
+    expect(full.interruptionTurns).toBe(1);
   });
 });

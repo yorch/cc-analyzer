@@ -7,12 +7,13 @@ import {
 } from "../../src/core/analyze.ts";
 import { openDb } from "../../src/core/db.ts";
 import { contextTax } from "../../src/core/stats.ts";
+import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
 type Events = Parameters<typeof analyzeSession>[0];
 
-const at = (min: number): string => new Date(Date.UTC(2026, 0, 1, 12, min)).toISOString();
+const at = clock(2026, 1, 1, 12);
 
 /** An assistant line with an explicit prompt-side usage mix. */
 function assistant(opts: {
@@ -24,31 +25,26 @@ function assistant(opts: {
   write5m?: number;
   write1h?: number;
 }) {
-  return {
-    type: "assistant",
+  return assistantEvent({
     uuid: `a-${opts.id}`,
     timestamp: at(opts.min),
     isSidechain: opts.sidechain,
     requestId: `req-${opts.id}`,
-    message: {
-      id: `msg-${opts.id}`,
-      model: "claude-opus-4-7",
-      stop_reason: null,
-      content: [{ type: "text", text: "ok" }],
-      usage: {
-        input_tokens: opts.input ?? 0,
-        output_tokens: 500,
-        cache_read_input_tokens: opts.cacheRead ?? 0,
-        cache_creation: {
-          ephemeral_5m_input_tokens: opts.write5m ?? 0,
-          ephemeral_1h_input_tokens: opts.write1h ?? 0,
-        },
+    messageId: `msg-${opts.id}`,
+    stopReason: null,
+    usage: {
+      input_tokens: opts.input ?? 0,
+      output_tokens: 500,
+      cache_read_input_tokens: opts.cacheRead ?? 0,
+      cache_creation: {
+        ephemeral_5m_input_tokens: opts.write5m ?? 0,
+        ephemeral_1h_input_tokens: opts.write1h ?? 0,
       },
     },
-  };
+  });
 }
 
-const prompt = { type: "user", uuid: "u1", timestamp: at(0), message: { content: "hi" } };
+const prompt = promptEvent("u1", at(0), "hi");
 
 const analyze = (events: unknown[]): SessionAnalysis => analyzeSession(events as Events, pricing);
 

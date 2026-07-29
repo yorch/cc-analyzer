@@ -3,11 +3,13 @@ import {
   type AnalyticsResponse,
   api,
   type BashCommandRow,
+  CORRECTION_CAVEAT,
   type CompactionUsage,
   type NameUsageRow,
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
   PARSE_COVERAGE_MIN_LINES,
   type ParseCoverageStats,
+  type PluginUsageRow,
   SETUP_AUDIT_CAVEAT,
   type SetupAudit,
   SKILL_COST_CAVEAT,
@@ -16,6 +18,7 @@ import {
   type TurnDepthStats,
   weeklySeries,
 } from "../api.ts";
+import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { useHashParam } from "../router.ts";
@@ -381,6 +384,58 @@ function ParseCoverage({ data, query }: { data: ParseCoverageStats; query: strin
   );
 }
 
+const PLUGIN_SORT: Accessors<PluginUsageRow> = {
+  plugin: (p) => p.plugin,
+  skillsUsed: (p) => p.skillsUsed,
+  agentsUsed: (p) => p.agentsUsed,
+  invocations: (p) => p.invocations,
+  attributedCost: (p) => p.attributedCost,
+  lastUsed: (p) => p.lastUsed ?? "",
+};
+
+/** What each installed plugin actually did: usage and turn-scoped cost rolled
+ *  up from the skills/subagents/MCP servers it ships. */
+function PluginsTable({ rows }: { rows: PluginUsageRow[] }) {
+  const sort = useSort(rows, PLUGIN_SORT, "attributedCost");
+  if (rows.length === 0) return null;
+  return (
+    <>
+      <h3 className="section-h">Plugins · what each one does for you</h3>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <SortTh label="Plugin" col="plugin" sort={sort} />
+              <SortTh label="Skills used" col="skillsUsed" sort={sort} className="num" />
+              <SortTh label="Subagents used" col="agentsUsed" sort={sort} className="num" />
+              <SortTh label="Invoc" col="invocations" sort={sort} className="num" />
+              <SortTh label="Turn $" col="attributedCost" sort={sort} className="num" />
+              <SortTh label="Last used" col="lastUsed" sort={sort} />
+            </tr>
+          </thead>
+          <tbody>
+            {sort.sorted.map((p) => (
+              <tr key={p.plugin}>
+                <td>{p.plugin}</td>
+                <td className="num">
+                  {p.skillsUsed}/{p.skillsShipped}
+                </td>
+                <td className="num">
+                  {p.agentsUsed}/{p.agentsShipped}
+                </td>
+                <td className="num">{count(p.invocations)}</td>
+                <td className="num">{usd(p.attributedCost)}</td>
+                <td className="muted">{p.lastUsed ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted spark-cap">{SKILL_COST_CAVEAT}</p>
+    </>
+  );
+}
+
 /** Inventory counts + findings from `/api/audit`. Fetched on its own so the
  * filesystem scan never blocks the usage analytics the rest of this page shows. */
 function SetupAuditPanel({ query }: { query: string }) {
@@ -438,6 +493,7 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
         {c.hookEvents === 1 ? "event" : "events"} · {c.permissionAllow} allow / {c.permissionDeny}{" "}
         deny / {c.permissionAsk} ask
       </p>
+      <PluginsTable rows={audit.plugins} />
       {findings.length === 0 ? (
         <p className="muted">
           {audit.findings.length === 0
@@ -445,20 +501,7 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
             : "No findings match this filter."}
         </p>
       ) : (
-        <div className="diagnostic-list">
-          {findings.map((f) => (
-            <article
-              className={`diagnostic diagnostic-${f.severity}`}
-              key={`${f.code}:${f.subject}`}
-            >
-              <h3>{f.title}</h3>
-              <p>{f.evidence}</p>
-              <p className="muted">
-                <strong>Next:</strong> {f.action}
-              </p>
-            </article>
-          ))}
-        </div>
+        <DiagnosticList items={findings} keyOf={(f) => `${f.code}:${f.subject}`} />
       )}
       <p className="muted spark-cap">{SETUP_AUDIT_CAVEAT}</p>
     </>
@@ -469,6 +512,7 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
   const th = data.thrash;
+  const co = data.corrections;
   return (
     <>
       <p className="muted">
@@ -532,6 +576,28 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
           </p>
         </>
       )}
+      <h2 className="section-h">Corrections · prompts that redo the previous turn</h2>
+      <p className="muted">
+        Correction turns:{" "}
+        {co.correctionTurns > 0 ? (
+          <>
+            <strong>{count(co.correctionTurns)}</strong> of {count(co.turns)} turns (
+            {(co.correctionShare * 100).toFixed(0)}%) across {count(co.sessions)} sessions
+          </>
+        ) : (
+          "none detected"
+        )}
+        {" · "}Interrupted mid-flight:{" "}
+        {co.interruptionTurns > 0 ? (
+          <>
+            <strong>{count(co.interruptionTurns)}</strong> turns (
+            {(co.interruptionShare * 100).toFixed(0)}%)
+          </>
+        ) : (
+          "none"
+        )}
+      </p>
+      <p className="muted">{CORRECTION_CAVEAT}</p>
     </>
   );
 }

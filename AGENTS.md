@@ -100,7 +100,32 @@ and *redundant reads* (`redundantReads`/`rereadFiles`: per chain, `Read`s of
 the same `file_path` beyond the second — the third read is the first redundant
 one; different offset/limit still counts, chains stay isolated, turns don't
 reset). Both feed the `edit-test-thrash`/`repeated-file-reads` session
-diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. For
+diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. The two
+**correction** signals (schema v13) measure prompts redoing the previous turn:
+*interruption turns* (`interruptionTurns`: turns whose events carry the literal
+machine-written `[Request interrupted by user…]` marker, `isInterruptionMarker()`
+in `events.ts` — once per turn, main chain only; it rides on the message text or
+inside a `tool_result` block's content (string or nested blocks) when the
+interrupt cancelled a pending tool call, and that carrier is *not* a real prompt
+so it marks the turn already open; a plain marker message IS a real prompt, so
+turn segmentation is unchanged and it usually opens its own short turn) and
+*correction turns* (`correctionTurns`: real prompts opening with a correction
+marker per `isCorrectionPrompt()` in `events.ts` — a conservative
+**English-only keyword heuristic** over the first ~120 chars in **two tiers**:
+outcome/miscommunication phrases ("that's not what i", "still broken", "same
+error") match anywhere in that window, imperative/ambiguous ones ("no, …",
+"undo that", "go back to", "try again", "not working") must open the prompt,
+because each is also ordinary product language mid-sentence ("add a back button
+so users can go back to the list view"); never matching `<`/`/`/`[`-leading
+prompts; false negatives are fine, false positives are the failure mode; like
+`testFailStreak` the phrase list is baked into the index and needs a reindex to
+evolve — a pinning test over the exported `CORRECTION_PATTERN_SOURCE` fails on
+any edit and says to bump `SCHEMA_VERSION`). The two counters are independent — an interrupted turn followed by a
+"no, …" prompt counts once in each. Share = `correctionTurns / totals.turns`
+(turns counts exactly the real prompts); every render site prints the shared
+`CORRECTION_CAVEAT` from `stats-types.ts`. They feed the `correction-loop`
+session diagnostic and the `correction-heavy` insight rule, and roll up (with a
+weekly trend) as `AnalyticsRollup.corrections`. For
 shell commands the index stores a **raw signal, not a
 classification**: normalized per-segment command heads (`commandHead()`, schema
 v6). Command families and test-run detection (`isTestCommand()`) classify those
@@ -204,7 +229,10 @@ Claude dir for `settings.json` (permission rule counts, hook events, a pinned
 `model`, any `mcpServers`), `skills/<name>/SKILL.md`, `agents/<name>.md`, and a
 best-effort walk of `plugins/` — a dir counts as a plugin when it declares
 `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`, and its own
-skills/agents are recorded against it — plus the sibling `<claudeDir>.json`
+skills/agents/MCP servers are recorded against it (servers from the plugin's own
+`.mcp.json` or a manifest `mcpServers` field, inline or by path; they stay on
+`PluginEntry` and are never merged into `SetupInventory.mcpServers`, which
+describes what the *user* configured) — plus the sibling `<claudeDir>.json`
 (computed as `claudeDir() + ".json"` so `CC_ANALYZER_CLAUDE_DIR` keeps tests
 hermetic): its top-level `mcpServers` are global, `projects.<path>.mcpServers`
 are project-scoped. Every read is wrapped; a missing dir or malformed JSON
@@ -215,11 +243,38 @@ usage, today)` — `today` is a parameter, never `Date.now()` — folds
 `analyticsRollup`'s `skills`/`subagents`/`tools` against the inventory and
 emits `session-diagnostics`-shaped findings: `unused-mcp-server` and
 `error-prone-skill` (≥25% errors over ≥5 invocations) as warnings,
-`unused-skill`, `unused-agent`, `stale-skill` (≥30 days), and
-`missing-but-used` as info. Name matching is deliberately loose — a plugin
-skill may be invoked qualified (`plugin:skill`) or bare, so either form counts
-as used; a loose match is a false negative, which beats accusing a
-daily-driver skill of being unused. The audit is machine-local and historical
+`unused-skill`, `unused-agent`, `unused-plugin`, `stale-skill` (≥30 days), and
+`missing-but-used` as info. **One classifier answers every name question**:
+`attribute(observed, item, owners, userNames)` in `setup-audit.ts` — findings
+ask it loosely (anything but `"none"` counts as used, because a loose match is
+a false negative, which beats accusing a daily-driver skill of being unused),
+the per-plugin numbers ask it strictly (`"owned"` only). A plugin skill may be
+invoked qualified (`plugin:skill`) or bare, so either form counts as used, but
+an observed **bare** row is owned by the user's own same-named skill when there
+is one: the plugin's copy is shadowed, so one erroring `deploy` row reports one
+`error-prone-skill` finding (the user's), not one per installed copy. **Usage also rolls up per plugin**:
+`buildPluginUsage(inventory, usage)` folds one level higher into a
+`PluginUsageRow` per plugin (skills/agents/MCP servers used of shipped,
+invocations, subagent sessions — an upper bound, since the rollup only has
+per-name counts — turn-scoped `attributedTurns`/`attributedCost` summed over its
+skills, and the latest last-used day), sorted by cost then invocations. Here
+**usedness stays loose but the numbers are attributed strictly**, because a
+loose match on a number is not silence but invention: a qualified row
+(`toolkit:fmt`) counts for the plugin it names; a bare row (`fmt`) counts only
+when unambiguous — no user-installed skill of that name AND exactly one plugin
+shipping it — which is what still sums one skill's two index rows (bare `fmt` +
+qualified `toolkit:fmt`) into one plugin row; a bare name shared by two plugins
+counts as *used* for each (one of them did run it) but is summed into neither;
+and a bare name that is also a user skill is shadowed, counting for no plugin at
+all, so that plugin stays eligible for `unused-plugin`. `deadPlugins` keys off
+the loose usedness side. The cost is the per-skill turn-scoped attribution, so
+`SKILL_COST_CAVEAT` prints at every render site. It rides on
+`SetupAudit.plugins`, which is why the CLI `--json` and `/api/audit` carry it for
+free. `unused-plugin` fires when *nothing* a plugin ships was used, and it
+**replaces** its components' `unused-skill`/`unused-agent` findings (one finding
+per dead plugin, not N — the skill/agent loops skip items whose source plugin is
+dead); a plugin with nothing discoverable never fires it, since "all zero
+components unused" is vacuously true. The audit is machine-local and historical
 (sessions can predate the setup; project-scoped items live outside the config
 dir) — that caveat ships as the exported `SETUP_AUDIT_CAVEAT` so every render
 site prints the same words. Surfaces: `cc-analyzer audit` (+`--json`,
@@ -232,20 +287,79 @@ view's Setup section. **No TUI screen** — the CLI and web cover it.
 portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
 `PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
 per-project waste, compactions, weekly error rate, context tax, what-if,
-optional setup audit, parse coverage, thrash) into ranked `PortfolioDiagnostic[]`
-findings — 15 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
+optional setup audit, parse coverage, thrash, corrections) into ranked `PortfolioDiagnostic[]`
+findings — 16 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
 threshold-rationale comment, warnings before infos and dollar-backed findings first within a
 severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side
 `assemblePortfolioSignals(db, pricing, opts?)` in `portfolio-signals.ts`
 assembles the signals (including the audit's filesystem inventory scan unless
-`{ audit: false }`) so the CLI `insights` command (`renderPortfolioInsights`,
+`{ audit: false }`, and reusing a caller's `{ rollup }` instead of re-scanning
+when it has one) so the CLI `insights` command (`renderPortfolioInsights`,
 explicit "healthy by every rule" line when nothing fires), `GET /api/insights`
 (`diagnostics` field, memoized on fingerprint + local day like `/api/audit`),
 and the TUI Insights header (compact glyph+title list, computed at the screen
-boundary) all feed the rules identical inputs. None of the rules use the
+boundary) all feed the rules identical inputs. The signals object is the
+**whole** surface: `serve` memoizes one per `fingerprint():today` and serves
+`/api/audit` out of its `audit` field while `/api/insights` reads its cache
+summary/TTL/idle buckets, and the TUI Insights screen assembles one and reads
+its cache, context tax, and what-if off it rather than recomputing them. None of the rules use the
 correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
+
+**The weekly digest is the one period-scoped surface.** Same two-layer split as
+the insights engine: bun-free `digest.ts` (shapes, period math on the shared
+`weekOf`/`shiftDay`, `digestDelta`, and `buildDigestMarkdown`) plus bun-side
+`digest-signals.ts` (`buildWeeklyDigest(db, pricing, { week?, today?, audit? })`).
+The default period is the **last complete ISO week** — a half-finished current
+week would always read as a decline — and `--week YYYY-MM-DD` / `?week=` picks
+the week containing any day (`isDayString` guards both). Period metrics are
+**session-day-scoped**: every query filters `day BETWEEN start AND end`, so a
+session counts wholly toward the period it *started* in and one running past
+midnight is not split; that sentence ships in the rendered footer, not just the
+docs. The digest owns **no query of its own** beyond its headline totals: the
+period-scoped rollups it needs already exist and take an optional `DayRange`
+(`analyticsRollup(db, projectId?, period?)` — the same single scan;
+`cacheSummary(db, period?)` — so `DigestCache` is literally `CacheSummary`;
+`spendByProject(db, limit, period?)` — the same project ranking `stats` shows),
+the model mix folds through the exported `addModelTotalsRow`, and the headline's
+token sums reuse the exported `IO_TOKENS` / `CACHE_TOKENS` expressions. So a
+digest number and an analytics number for the same span cannot disagree. Each
+takes two calls per period (current + prior) by choice: a CASE-bucketed
+single-pass query would save one scan and cost the reader the plain reading.
+Deltas are null-safe (`share: null` against an empty prior period → render
+"new"). The embedded `insights` are deliberately **not** period-scoped: they are
+`buildPortfolioDiagnostics` over the whole portfolio (current state), because one
+week rarely fires those conservative thresholds honestly — every render site says
+so. A zero-session period is **not** an error; an empty index is (exit 1, like
+`stats`/`insights`). The model table is the **union** of both periods' models
+(ranked by the larger of the two costs), so a model the user stopped running —
+the whole point of a weekly read — still shows, with 0 calls against its prior
+cost. Surfaces: `cc-analyzer report [--week] [--md|--json]`
+(`renderWeeklyDigest`; `--md` prints `buildDigestMarkdown` to stdout — no file
+writes; `--md` and `--json` are mutually exclusive and a valueless/flag-shaped
+`--week` both exit 2), `GET /api/report?week=` (the period is resolved *before*
+the memo, so each ISO week gets its own `report:<start>` slot keyed
+`fingerprint():today` like `/api/audit` — two days of one week share an entry
+and an old week can't evict the default one; the slot name is the one memo
+keyspace a client can enumerate, so it is capped at the most recent
+`MAX_REPORT_SLOTS` weeks. `costBasis` is read at the route boundary and passed
+in through `WeeklyDigestOptions.costBasis` — the core builder never touches
+`prefs.ts` — and rides in the memo *key* rather than being patched over a
+cached digest, since it is baked into the framing sentence and the copied
+markdown. `?insights=0` builds the digest with an empty snapshot for callers
+that render none of it, on its own slot; otherwise the snapshot is injected via
+`WeeklyDigestOptions.insights` from the same per-`fingerprint():today` memo
+`/api/insights` reads, so the two routes assemble those signals once between
+them; the CLI keeps assembling its own), and the web Dashboard's Weekly digest card, whose
+"copy as markdown" button imports the same bun-free `buildDigestMarkdown`
+instead of adding an endpoint (the card itself fetches `insights=0` and pays
+for the full report only on the first copy per cost basis; it refetches when
+the cost basis flips, and prints `CORRECTION_CAVEAT` beside its correction
+share).
+No TUI screen — the CLI and web cover it, and TUI Trends already charts burn.
+`SKILL_COST_CAVEAT`, `CORRECTION_CAVEAT`, and the cost-framing sentence print
+verbatim wherever their numbers appear.
 
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`;
@@ -420,6 +534,16 @@ interrupted.
   `types: ["vite/client"]`). Web code (`src/web` server aside) that touches the DOM
   belongs to the web config.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).
+- **One formatter family**: money, counts, and durations are formatted by the
+  bun-free `src/core/format-shared.ts` — `formatUSD`, `formatCount` (plus
+  `formatSignedCount` for deltas), `formatDuration` (terminal, with seconds) and
+  `formatCompactDuration` (whole minutes, for the digest and the web cards).
+  `src/cli/format.ts` re-exports them so terminal call sites keep one import
+  source; `digest.ts` and the SPA's digest card import them directly, so a number
+  reads the same in the terminal report, the copied markdown, and the browser.
+  `web/src/format.ts` keeps the SPA's locale-aware `Intl` helpers for everything
+  else. Never re-implement one locally: the copies drifted before (one printed
+  `1000.0k` where the other printed `1.0M`).
 - Formatting/linting is **Biome** (`biome.json`): 2-space indent, width 100, double
   quotes, semicolons, trailing commas. Biome excludes `web/dist` and the placeholder
   `src/web/spa.ts`.

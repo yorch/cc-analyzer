@@ -2,34 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { analyzeSession } from "../../src/core/analyze.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
 import { buildSessionDiagnostics } from "../../src/core/session-diagnostics.ts";
+import {
+  assistantEvent,
+  clock,
+  promptEvent,
+  toolResultEvent,
+  toolUseBlock,
+} from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
-const at = (minutes: number, seconds = 0): string =>
-  new Date(Date.UTC(2026, 6, 1, 10, minutes, seconds)).toISOString();
+const at = clock(2026, 7, 1, 10);
 
 const prompt = (id: string, minutes: number, text = id): SessionEvent =>
-  ({
-    type: "user",
-    uuid: id,
-    timestamp: at(minutes),
-    message: { role: "user", content: text },
-  }) as unknown as SessionEvent;
+  promptEvent(id, at(minutes), text);
 
-function assistant(id: string, minutes: number, usage: Record<string, number>): SessionEvent {
-  return {
-    type: "assistant",
-    uuid: id,
-    timestamp: at(minutes, 10),
-    message: {
-      id: `msg_${id}`,
-      role: "assistant",
-      model: "claude-opus-4-7",
-      stop_reason: "end_turn",
-      content: [{ type: "text", text: "ok" }],
-      usage,
-    },
-  } as unknown as SessionEvent;
-}
+const assistant = (id: string, minutes: number, usage: Record<string, number>): SessionEvent =>
+  assistantEvent({ uuid: id, timestamp: at(minutes, 10), stopReason: "end_turn", usage });
 
 describe("buildSessionDiagnostics", () => {
   test("reports context pressure and a large single-call jump with turn evidence", () => {
@@ -128,28 +116,20 @@ describe("buildSessionDiagnostics", () => {
 
 let seq = 0;
 const toolUse = (id: string, name: string, input: unknown): SessionEvent =>
-  ({
-    type: "assistant",
+  assistantEvent({
     uuid: `tu-${++seq}`,
     timestamp: at(0, Math.min(59, seq)),
-    message: {
-      id: `msg-tu-${seq}`,
-      role: "assistant",
-      model: "claude-opus-4-7",
-      content: [{ type: "tool_use", id, name, input }],
-      usage: { input_tokens: 1, output_tokens: 1 },
-    },
-  }) as unknown as SessionEvent;
+    messageId: `msg-tu-${seq}`,
+    content: [toolUseBlock(id, name, input)],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
 const toolResult = (id: string, isError: boolean): SessionEvent =>
-  ({
-    type: "user",
+  toolResultEvent({
     uuid: `tr-${++seq}`,
     timestamp: at(0, Math.min(59, seq)),
-    message: {
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "out" }],
-    },
-  }) as unknown as SessionEvent;
+    toolUseId: id,
+    isError,
+  });
 
 /** N failing test runs in a row (edit-test loop without the edits). */
 function failingRuns(n: number): SessionEvent[] {
@@ -215,5 +195,61 @@ describe("buildSessionDiagnostics · repeated-file-reads", () => {
   test("stays quiet when files are read at most 3 times and redundancy is low", () => {
     expect(diag({ "/p/a.md": 3, "/p/b.md": 3, "/p/c.md": 3 })).toBeUndefined();
     expect(diag({ "/p/a.md": 2, "/p/b.md": 2 })).toBeUndefined();
+  });
+});
+
+describe("correction-loop", () => {
+  /** A session with `total` real prompts, the last `corrections` of which open
+   * with a correction marker. Prompts are minutes apart to keep turns cheap. */
+  function sessionWith(corrections: number, total: number) {
+    const events: SessionEvent[] = [];
+    for (let i = 0; i < total; i++) {
+      const text = i >= total - corrections ? "no, use the other approach" : `step ${i}`;
+      events.push(prompt(`u${i}`, i, text));
+      events.push(assistant(`a${i}`, i, { input_tokens: 10, output_tokens: 1 }));
+    }
+    return analyzeSession(events, pricing);
+  }
+  const find = (corrections: number, total: number) =>
+    buildSessionDiagnostics(sessionWith(corrections, total)).find(
+      (d) => d.code === "correction-loop",
+    );
+
+  test("fires as info at 3 corrections making a quarter of the turns", () => {
+    const f = find(3, 12);
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("3 of 12 turns (25%)");
+    expect(f?.evidence).toContain("English-only");
+    expect(f?.action).toContain("first prompt");
+  });
+
+  test("escalates to warning at 40% of turns", () => {
+    expect(find(3, 7)?.severity).toBe("warning");
+  });
+
+  test("mentions interruptions in the evidence when present", () => {
+    const events: SessionEvent[] = [
+      prompt("u1", 0, "build it"),
+      assistant("a1", 0, { input_tokens: 10, output_tokens: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(1),
+        message: { content: [{ type: "text", text: "[Request interrupted by user]" }] },
+      } as unknown as SessionEvent,
+      prompt("u3", 2, "no, smaller"),
+      prompt("u4", 3, "still broken"),
+      prompt("u5", 4, "try again with the flag"),
+    ];
+    const f = buildSessionDiagnostics(analyzeSession(events, pricing)).find(
+      (d) => d.code === "correction-loop",
+    );
+    expect(f?.evidence).toContain("3 of 5 turns");
+    expect(f?.evidence).toContain("1 turn interrupted mid-flight");
+  });
+
+  test("stays quiet below 3 corrections or below a quarter of the turns", () => {
+    expect(find(2, 4)).toBeUndefined(); // 50% share, but only two corrections
+    expect(find(3, 13)).toBeUndefined(); // three corrections, 23% share
   });
 });

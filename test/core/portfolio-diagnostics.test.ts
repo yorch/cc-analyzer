@@ -105,6 +105,7 @@ function auditWith(findings: Partial<SetupAuditFinding>[]): SetupAudit {
       permissionDeny: 0,
       permissionAsk: 0,
     },
+    plugins: [],
     findings: findings.map((f) => ({
       code: "unused-mcp-server",
       severity: "warning",
@@ -125,6 +126,7 @@ type Overrides = {
   retries?: Partial<PortfolioSignals["rollup"]["retries"]>;
   tests?: Partial<PortfolioSignals["rollup"]["tests"]>;
   thrash?: Partial<PortfolioSignals["rollup"]["thrash"]>;
+  corrections?: Partial<PortfolioSignals["rollup"]["corrections"]>;
   cacheSummary?: Partial<PortfolioSignals["cache"]["summary"]>;
   cacheProjects?: ProjectCacheRow[];
   idleBuckets?: IdleCacheBucket[];
@@ -216,6 +218,16 @@ function signals(over: Overrides = {}): PortfolioSignals {
         topRereadFiles: [{ file: "/p/one/README.md", sessions: 2 }],
         ...over.thrash,
       },
+      corrections: {
+        sessions: 5,
+        correctionTurns: 10,
+        interruptionTurns: 4,
+        turns: 300,
+        correctionShare: 10 / 300,
+        interruptionShare: 4 / 300,
+        weekly: [],
+        ...over.corrections,
+      },
       permissionModes: [],
       stopReasons: [],
       turnDepth: { turns: 100, avgDepth: 3, maxDepth: 10, buckets: [], byMonth: [] },
@@ -272,7 +284,7 @@ describe("baseline", () => {
   });
 
   test("the exported code list covers every implemented rule", () => {
-    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(15);
+    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(16);
   });
 });
 
@@ -726,6 +738,47 @@ describe("reread-heavy", () => {
     expect(codes(signals({ thrash: { redundantReads: 500, rereadSessions: 9 } }))).not.toContain(
       "reread-heavy",
     );
+  });
+});
+
+describe("correction-heavy", () => {
+  test("fires at a 15% correction share over 200 turns, with the heuristic caveat", () => {
+    const out = buildPortfolioDiagnostics(
+      signals({
+        corrections: {
+          sessions: 12,
+          correctionTurns: 30,
+          interruptionTurns: 10,
+          turns: 200,
+          correctionShare: 0.15,
+          interruptionShare: 0.05,
+        },
+      }),
+    );
+    const f = out.find((d) => d.code === "correction-heavy");
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("30 of 200 turns (15%)");
+    expect(f?.evidence).toContain("12 sessions");
+    expect(f?.evidence).toContain("5% of turns were interrupted");
+    expect(f?.evidence).toContain("English-only");
+    expect(f?.action).toContain("first prompts");
+  });
+
+  test("stays quiet below the share or the turn-volume floor", () => {
+    expect(
+      codes(
+        signals({
+          corrections: { correctionTurns: 29, turns: 200, correctionShare: 29 / 200 },
+        }),
+      ),
+    ).not.toContain("correction-heavy");
+    expect(
+      codes(
+        signals({
+          corrections: { correctionTurns: 30, turns: 199, correctionShare: 30 / 199 },
+        }),
+      ),
+    ).not.toContain("correction-heavy");
   });
 });
 

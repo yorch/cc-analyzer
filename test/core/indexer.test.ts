@@ -410,3 +410,81 @@ describe("reindex · rebuild", () => {
     db.close();
   });
 });
+
+describe("reindex · corrections (schema v13)", () => {
+  test("round-trips both counters; the rollup folds shares and the weekly trend", async () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const prompt = (uuid: string, sec: number, content: unknown) =>
+      line({
+        type: "user",
+        uuid,
+        sessionId: "sess-correct",
+        timestamp: `2026-07-05T10:00:0${sec}.000Z`,
+        message: { role: "user", content },
+      });
+    const file = join(claude.dir, "projects", "proj-b", "sess-correct.jsonl");
+    writeFileSync(
+      file,
+      [
+        prompt("u1", 0, "add a feature"),
+        line({
+          type: "assistant",
+          uuid: "a1",
+          sessionId: "sess-correct",
+          timestamp: "2026-07-05T10:00:01.000Z",
+          requestId: "req-a1",
+          message: {
+            id: "m-a1",
+            role: "assistant",
+            model: "claude-opus-4-7",
+            content: [{ type: "text", text: "done" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+        // The user hits Esc (turn 2, machine-written marker), then corrects
+        // (turn 3, keyword heuristic).
+        prompt("u2", 2, [{ type: "text", text: "[Request interrupted by user]" }]),
+        prompt("u3", 3, "no, the other file"),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT turns, correction_turns, interruption_turns FROM sessions
+          WHERE session_id = 'sess-correct'`,
+      )
+      .get() as { turns: number; correction_turns: number; interruption_turns: number };
+    expect(row).toEqual({ turns: 3, correction_turns: 1, interruption_turns: 1 });
+
+    // …and the columns are what the rollup folds. The three base fixture
+    // sessions carry 2 turns each (and no corrections), so the portfolio
+    // denominator is 6 + 3 turns, all in the same ISO week.
+    const corrections = analyticsRollup(db).corrections;
+    expect(corrections.sessions).toBe(1);
+    expect(corrections.correctionTurns).toBe(1);
+    expect(corrections.interruptionTurns).toBe(1);
+    expect(corrections.turns).toBe(9);
+    expect(corrections.correctionShare).toBeCloseTo(1 / 9, 12);
+    expect(corrections.interruptionShare).toBeCloseTo(1 / 9, 12);
+    expect(corrections.weekly).toEqual([{ week: "2026-06-29", correctionTurns: 1, turns: 9 }]);
+    db.close();
+    rmSync(file, { force: true });
+  });
+
+  test("an empty index yields zero shares, not NaN", () => {
+    const db = openDb(":memory:");
+    const corrections = analyticsRollup(db).corrections;
+    expect(corrections).toEqual({
+      sessions: 0,
+      correctionTurns: 0,
+      interruptionTurns: 0,
+      turns: 0,
+      correctionShare: 0,
+      interruptionShare: 0,
+      weekly: [],
+    });
+    db.close();
+  });
+});
