@@ -356,6 +356,25 @@ is a **separate** static lifecycle — its opt-out is Do-Not-Track / `plausible_
 not the runtime switch. `trackCommand` is fire-and-forget (swallows all errors,
 never blocks); telemetry state lives in the state dir, never `~/.claude`.
 
+**CLI events are delivered by a detached child, not by the parent.** A quick
+command (`projects`, `sessions`, `audit` — the ones whose runtime is essentially
+all startup) exits within ~15ms of dispatch via `process.exit()`, which kills an
+in-flight socket — far short of a cold TLS handshake, so an in-process request
+was usually dead on arrival. Slow commands (`stats`, `insights`) were never
+affected; the fix is uniform because `trackCommand` is the single choke point.
+`trackCommand`
+instead re-invokes this executable (`posterArgv`, using `isCompiledBinary()` from
+`runtime.ts` to decide between `execPath` and `execPath + Bun.main`) with the
+hidden `POSTER_COMMAND` marker, the endpoint, and the already-built event body,
+`detached` with no stdio so it survives the parent and completes on its own time.
+The child's whole job is `runTelemetryPoster`, which re-checks the opt-out (the
+marker is reachable by hand) and always exits 0. The endpoint and payload travel
+in **argv**, not the environment, so the child posts exactly where the parent
+decided to and never re-opens the index to rebuild the body. A refused spawn
+falls back to the old in-process post, which is what the bounded
+`flushTelemetry()` at exit still exists to drain — on the normal path nothing is
+pending and it returns immediately.
+
 ## Self-update subsystem
 
 `version.ts` embeds the version by importing `package.json` (bundled by
@@ -364,8 +383,10 @@ never blocks); telemetry state lives in the state dir, never `~/.claude`.
 latest version by following the `/releases/latest` redirect (no API token/rate
 limit) and maps `process.platform`/`process.arch` to release asset names.
 
-`update.ts` self-updates only when running as a **compiled** binary (detected via
-the `$bunfs` marker in `import.meta.url`, with an `execPath`-basename fallback);
+`update.ts` self-updates only when running as a **compiled** binary (`runtime.ts`'s
+`isCompiledBinary()`: the `$bunfs` marker in `import.meta.url`, with an
+`execPath`-basename fallback — shared with the telemetry poster, which re-invokes
+the same executable);
 it downloads the asset (streamed via `pumpStream` to a `Bun.FileSink` with a
 live progress line and a per-chunk **stall timeout**, so the multi-MB download
 shows progress instead of looking hung and a true stall aborts rather than

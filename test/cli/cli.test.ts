@@ -152,12 +152,19 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stdout).toContain("2 projects");
   });
 
-  test("a quick command lets its telemetry request settle before exiting", async () => {
+  // A quick command exits in ~100ms, far too little for a cold TLS handshake,
+  // and `process.exit()` kills an in-flight socket outright. The event is
+  // therefore delivered by a detached child that outlives its parent — which is
+  // what the ordering assertion below pins down: an in-process request would
+  // necessarily have arrived *before* the parent exited, not after.
+  test("a quick command's telemetry outlives the process that fired it", async () => {
     let body: { props?: { name?: string } } | undefined;
+    let receivedAt = 0;
     const server = Bun.serve({
       port: 0,
       async fetch(req) {
         body = (await req.json()) as { props?: { name?: string } };
+        receivedAt = performance.now();
         return new Response("", { status: 202 });
       },
     });
@@ -168,11 +175,24 @@ describe("CLI dispatch & exit codes", () => {
         DO_NOT_TRACK: undefined,
         CI: undefined,
       });
+      const exitedAt = performance.now();
       expect(r.code).toBe(0);
+      // Nothing waits on the poster, so give it room to boot and connect.
+      for (let i = 0; i < 200 && !body; i++) await Bun.sleep(25);
       expect(body?.props?.name).toBe("projects");
+      expect(receivedAt).toBeGreaterThan(exitedAt);
     } finally {
       server.stop(true);
     }
+  });
+
+  test("the poster subcommand is hidden from help and prints nothing", async () => {
+    const help = await run(["help"]);
+    expect(help.stdout).not.toContain("__telemetry-post");
+    // Reachable by hand, but silent and successful — it is a beacon, not a command.
+    const r = await run(["__telemetry-post"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("");
   });
 
   test("stats presents a structured, ANSI-free report when piped", async () => {

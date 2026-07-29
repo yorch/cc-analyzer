@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { indexDbPath, telemetryConfigPath } from "./paths.ts";
+import { isCompiledBinary } from "./runtime.ts";
 import { VERSION } from "./version.ts";
 
 /**
@@ -136,19 +137,78 @@ export function buildEventBody(name: string, extraProps: Record<string, string> 
   return { name: "command", url: `app://cli/${name}`, domain: cliDomain(), props };
 }
 
-async function postEvent(body: EventBody): Promise<void> {
+async function postEvent(body: EventBody, url: string, timeoutMs: number): Promise<void> {
   try {
-    await fetch(`${plausibleUrl()}/api/event`, {
+    await fetch(`${url}/api/event`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": `cc-analyzer/${VERSION} (${process.platform}; ${process.arch})`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(1000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     // Fire-and-forget: network/timeout/non-2xx must never surface to the user.
+  }
+}
+
+/**
+ * Hidden argv marker that re-enters this binary as the detached poster (see
+ * `runTelemetryPoster`). Deliberately absent from `--help`: it is an internal
+ * re-entry point, not a command anyone should type.
+ */
+export const POSTER_COMMAND = "__telemetry-post";
+
+/** Timeout for the detached poster's request. Generous where the in-process
+ *  fallback must stay tight: nothing is waiting on this process. */
+const POSTER_TIMEOUT_MS = 10_000;
+
+/** Request timeout, and how long `flushTelemetry` may hold up a quick command
+ *  at exit, for the in-process fallback. Deliberately tight: here the user is
+ *  waiting, so an undelivered event is the cheaper loss. */
+const INLINE_TIMEOUT_MS = 1000;
+const INLINE_FLUSH_MS = 100;
+
+/**
+ * argv that re-invokes this program as the detached poster. A compiled binary
+ * re-runs itself; from source, `process.execPath` is the bun interpreter, so the
+ * entrypoint has to be passed along. The endpoint travels in argv rather than
+ * being re-derived from the environment so the child posts exactly where the
+ * parent decided to — and the payload is the already-built body, so the child
+ * never touches the index or the session data to reconstruct it. Exposed for tests.
+ */
+export function posterArgv(url: string, body: EventBody): string[] {
+  const payload = JSON.stringify(body);
+  const self = isCompiledBinary() ? [process.execPath] : [process.execPath, Bun.main];
+  return [...self, POSTER_COMMAND, url, payload];
+}
+
+/**
+ * Hand the event to a detached child that outlives this process, and report
+ * whether that worked.
+ *
+ * A short command (`projects`, `sessions`) fires its event at dispatch and then
+ * exits ~10ms later via `process.exit()`, which kills an in-flight socket
+ * outright. That budget does not cover a cold TLS handshake to the Plausible
+ * host, so an in-process request is usually dead on arrival. The child starts a
+ * new session (`setsid`) with no stdio tying it to the parent's terminal, so it
+ * survives the exit and completes the handshake on its own time.
+ */
+function spawnPoster(body: EventBody): boolean {
+  try {
+    Bun.spawn({
+      cmd: posterArgv(plausibleUrl(), body),
+      // Ignored stdio is what lets the parent exit without waiting on the child
+      // (and keeps a stray beacon from ever writing to the user's terminal).
+      stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
+      windowsHide: true,
+      env: process.env,
+    }).unref();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -158,15 +218,40 @@ const pendingEvents = new Set<Promise<void>>();
  *  immediately, never throws, never blocks or delays the caller. */
 export function trackCommand(name: string, extraProps: Record<string, string> = {}): void {
   if (!isTelemetryEnabled()) return;
-  const request = postEvent(buildEventBody(name, extraProps));
+  const body = buildEventBody(name, extraProps);
+  if (spawnPoster(body)) return;
+  // Fallback for environments that refuse the spawn (sandboxes, process
+  // limits): post in-process and let `flushTelemetry` give it what time it can.
+  const request = postEvent(body, plausibleUrl(), INLINE_TIMEOUT_MS);
   pendingEvents.add(request);
   void request.finally(() => pendingEvents.delete(request));
 }
 
-/** Give pending events a brief chance to leave the process before a quick CLI
- *  command exits. Delivery stays best-effort and the bounded wait never changes
- *  the command's result. Long-running TUI/serve commands settle naturally. */
-export async function flushTelemetry(timeoutMs = 100): Promise<void> {
+/**
+ * Deliver one prebuilt event, then exit. This is the detached child's whole job.
+ *
+ * Always resolves 0: a beacon that could not be delivered is not a failed
+ * command, and this process's exit status is visible in the user's shell if the
+ * hidden subcommand is ever run by hand. Re-checks the opt-out so the marker
+ * cannot be used to send an event while telemetry is off.
+ */
+export async function runTelemetryPoster(url?: string, payload?: string): Promise<number> {
+  if (!url || !payload || !isTelemetryEnabled()) return 0;
+  let body: EventBody;
+  try {
+    body = JSON.parse(payload) as EventBody;
+  } catch {
+    return 0;
+  }
+  await postEvent(body, url, POSTER_TIMEOUT_MS);
+  return 0;
+}
+
+/** Give in-process fallback events a brief chance to leave before a quick CLI
+ *  command exits. A no-op on the normal path, where the detached poster owns
+ *  delivery and nothing is pending. Delivery stays best-effort and the bounded
+ *  wait never changes the command's result. */
+export async function flushTelemetry(timeoutMs = INLINE_FLUSH_MS): Promise<void> {
   if (pendingEvents.size === 0) return;
   await Promise.race([
     Promise.allSettled([...pendingEvents]),
