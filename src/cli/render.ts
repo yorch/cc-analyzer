@@ -1,5 +1,13 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
+import {
+  digestCount,
+  digestDuration,
+  digestMoney,
+  formatDigestDelta,
+  isEmptyPeriod,
+  type WeeklyDigest,
+} from "../core/digest.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
@@ -372,6 +380,187 @@ export function renderPortfolioInsights(
     );
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * Render the weekly digest as a terminal report: the period headline with
+ * signed deltas against the prior period, then the period-scoped sections, then
+ * the current-state insight snapshot. `cc-analyzer report --md` prints the
+ * markdown from `buildDigestMarkdown` instead; both read the same digest object,
+ * so the two renderings cannot disagree about a number.
+ */
+export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {}): string {
+  const lines: string[] = [];
+  const h = d.headline;
+  const change = formatDigestDelta;
+
+  lines.push(reportTitle("cc-analyzer · weekly digest", options));
+  lines.push(
+    muted(`${d.period.start} → ${d.period.end} · vs ${d.prior.start} → ${d.prior.end}`, options),
+  );
+  const framingNote = costFramingNote(d.costBasis);
+  if (framingNote) lines.push(muted(framingNote, options));
+
+  lines.push(`\n${section("Summary", options)}`);
+  if (isEmptyPeriod(d)) {
+    lines.push("No sessions in this period.");
+    if (h.sessions.prior > 0) {
+      lines.push(
+        muted(
+          `Prior period: ${h.sessions.prior} ${h.sessions.prior === 1 ? "session" : "sessions"} · ` +
+            `${digestMoney(h.cost.prior)}.`,
+          options,
+        ),
+      );
+    }
+  } else {
+    lines.push(
+      table(
+        ["metric", "this period", "prior", "change"],
+        [
+          [
+            costNoun(d.costBasis),
+            digestMoney(h.cost.current),
+            digestMoney(h.cost.prior),
+            change(h.cost, digestMoney),
+          ],
+          [
+            "sessions",
+            String(h.sessions.current),
+            String(h.sessions.prior),
+            change(h.sessions, (n) => String(n)),
+          ],
+          [
+            "active time",
+            digestDuration(h.activeMs.current),
+            digestDuration(h.activeMs.prior),
+            change(h.activeMs, digestDuration),
+          ],
+          [
+            "tokens (in+out)",
+            digestCount(h.ioTokens.current),
+            digestCount(h.ioTokens.prior),
+            change(h.ioTokens, digestCount),
+          ],
+          [
+            "cache tokens",
+            digestCount(h.cacheTokens.current),
+            digestCount(h.cacheTokens.prior),
+            change(h.cacheTokens, digestCount),
+          ],
+        ],
+        { align: ["left", "right", "right", "right"] },
+      ),
+    );
+
+    if (d.projects.length) {
+      lines.push(`\n${section("Top projects", options)}`);
+      lines.push(
+        table(
+          ["cost", "sessions", "change", "project"],
+          d.projects.map((p) => [
+            digestMoney(p.cost),
+            String(p.sessions),
+            change(p.delta, digestMoney),
+            truncate(p.projectPath ?? p.projectId, 44),
+          ]),
+          { align: ["right", "right", "right", "left"] },
+        ),
+      );
+    }
+
+    if (d.models.length) {
+      lines.push(`\n${section("Models", options)}`);
+      lines.push(
+        table(
+          ["model", "calls", "cost", "prior"],
+          d.models.map((m) => [
+            truncate(m.model, 32),
+            digestCount(m.calls),
+            digestMoney(m.cost),
+            digestMoney(m.priorCost),
+          ]),
+          { align: ["left", "right", "right", "right"] },
+        ),
+      );
+    }
+
+    const r = d.reliability;
+    lines.push(`\n${section("Cache & reliability", options)}`);
+    lines.push(
+      table(
+        ["signal", "value"],
+        [
+          [
+            "cache",
+            `${digestMoney(d.cache.writeCost)} written · ${digestMoney(d.cache.readCost)} read · ` +
+              `${digestMoney(d.cache.waste)} never read back`,
+          ],
+          [
+            "tool calls",
+            `${digestCount(r.toolCalls)} (${digestCount(r.toolErrors)} errors, ` +
+              `${(r.toolErrorRate * 100).toFixed(1)}%)`,
+          ],
+          [
+            "test runs",
+            r.testRuns > 0
+              ? `${digestCount(r.testRuns)} (${digestCount(r.testFailures)} failed) · ` +
+                `worst streak ${r.worstTestFailStreak}`
+              : "none detected",
+          ],
+          [
+            "churn",
+            `${digestCount(r.retries)} repeated calls · ${digestCount(r.redundantReads)} redundant reads`,
+          ],
+          [
+            "corrections",
+            `${digestCount(r.correctionTurns)} of ${digestCount(r.turns)} turns ` +
+              `(${(r.correctionShare * 100).toFixed(0)}%) · ` +
+              `${digestCount(r.interruptionTurns)} interrupted`,
+          ],
+        ],
+      ),
+    );
+    lines.push(muted(CORRECTION_CAVEAT, options));
+
+    if (d.skills.length) {
+      lines.push(`\n${section("Skills · cost of the turns that invoked them", options)}`);
+      lines.push(
+        table(
+          ["skill", "invoc", "turns", "turn $"],
+          d.skills.map((s) => [
+            truncate(s.name, 28),
+            digestCount(s.invocations),
+            digestCount(s.attributedTurns),
+            digestMoney(s.attributedCost),
+          ]),
+          { align: ["left", "right", "right", "right"] },
+        ),
+      );
+      lines.push(muted(SKILL_COST_CAVEAT, options));
+    }
+  }
+
+  lines.push(`\n${section("Insights · current state, whole portfolio", options)}`);
+  if (d.insights.length === 0) {
+    lines.push(healthy("No findings — the portfolio looks healthy by every rule.", options));
+  } else {
+    for (const finding of d.insights) {
+      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
+      lines.push(`  ${finding.evidence}`);
+      lines.push(muted(`  Next: ${finding.action}`, options));
+    }
+  }
+
+  lines.push(
+    `\n${muted(
+      "Sessions are attributed to their start day; insights above are current state, not " +
+        "period-scoped.",
+      options,
+    )}`,
+  );
+  lines.push(muted("Paste-ready markdown: cc-analyzer report --md", options));
   return lines.join("\n");
 }
 

@@ -43,6 +43,16 @@ export function topEntries(rec: Record<string, number>, limit = Number.POSITIVE_
  * same `DayRow` series; one implementation here means they cannot total a
  * week or month differently. */
 
+/**
+ * An inclusive YYYY-MM-DD day range, matched against the `day` column (a
+ * session's start day). Used by the period-scoped rollups the weekly digest
+ * builds on; `DigestPeriod` in `digest.ts` is this shape.
+ */
+export interface DayRange {
+  start: string;
+  end: string;
+}
+
 export type Granularity = "day" | "week" | "month";
 export type BurnMetric = "cost" | "tokens" | "sessions";
 

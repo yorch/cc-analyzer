@@ -281,6 +281,35 @@ boundary) all feed the rules identical inputs. None of the rules use the
 correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
 
+**The weekly digest is the one period-scoped surface.** Same two-layer split as
+the insights engine: bun-free `digest.ts` (shapes, period math on the shared
+`weekOf`/`shiftDay`, `digestDelta`, and `buildDigestMarkdown`) plus bun-side
+`digest-signals.ts` (`buildWeeklyDigest(db, pricing, { week?, today?, audit? })`).
+The default period is the **last complete ISO week** — a half-finished current
+week would always read as a decline — and `--week YYYY-MM-DD` / `?week=` picks
+the week containing any day (`isDayString` guards both). Period metrics are
+**session-day-scoped**: every query filters `day BETWEEN start AND end`, so a
+session counts wholly toward the period it *started* in and one running past
+midnight is not split; that sentence ships in the rendered footer, not just the
+docs. Period JSON-blob signals come from `analyticsRollup(db, projectId?,
+period?)` — the same single scan, one `AND day BETWEEN ? AND ?` — and the model
+mix and cache waste reuse the exported `addModelTotalsRow` / `CACHE_WASTE_EXPR`,
+so a digest number and an analytics number for the same span cannot disagree.
+Deltas are null-safe (`share: null` against an empty prior period → render
+"new"). The embedded `insights` are deliberately **not** period-scoped: they are
+`buildPortfolioDiagnostics` over the whole portfolio (current state), because one
+week rarely fires those conservative thresholds honestly — every render site says
+so. A zero-session period is **not** an error; an empty index is (exit 1, like
+`stats`/`insights`). Surfaces: `cc-analyzer report [--week] [--md] [--json]`
+(`renderWeeklyDigest`; `--md` prints `buildDigestMarkdown` to stdout — no file
+writes), `GET /api/report?week=` (memoized on `fingerprint():week:today` like
+`/api/audit`, with `costBasis` merged fresh per request as `/api/stats` does),
+and the web Dashboard's Weekly digest card, whose "copy as markdown" button
+imports the same bun-free `buildDigestMarkdown` instead of adding an endpoint.
+No TUI screen — the CLI and web cover it, and TUI Trends already charts burn.
+`SKILL_COST_CAVEAT`, `CORRECTION_CAVEAT`, and the cost-framing sentence print
+verbatim wherever their numbers appear.
+
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
 `costDistribution`, `hotFiles` take an optional `projectId`;
 `turnDepthStats()` is their standalone per-project counterpart, and all the

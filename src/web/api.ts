@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
 import type { CostBasis } from "../core/cost-framing.ts";
+import { isDayString } from "../core/digest.ts";
+import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
@@ -193,6 +195,25 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     return cachedJson(c, "audit", `${fingerprint()}:${today}`, () =>
       buildSetupAudit(scanInventory(), analyticsRollup(db), today),
     );
+  });
+
+  // Weekly digest: one period's usage with deltas against the period before,
+  // plus the current-state insight snapshot. That snapshot embeds the setup
+  // audit's filesystem scan (same as /api/insights), so the memo key mirrors
+  // that route's `fingerprint():today` — with the requested week folded in,
+  // since one index can serve many weeks. `cachedValue` (not `cachedJson`) so
+  // the cost-basis display preference can be merged fresh per request, exactly
+  // like /api/stats does.
+  api.get("/api/report", (c) => {
+    const week = c.req.query("week");
+    if (week !== undefined && !isDayString(week)) {
+      return c.json({ error: "week must be a YYYY-MM-DD day" }, 400);
+    }
+    const today = localDayOfMs(Date.now());
+    const digest = cachedValue("report", `${fingerprint()}:${week ?? ""}:${today}`, () =>
+      buildWeeklyDigest(db, pricing, { week, today }),
+    );
+    return c.json({ ...digest, costBasis: getCostBasis() });
   });
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));

@@ -287,6 +287,52 @@ signals through the same `assemblePortfolioSignals`, so they cannot disagree.
 
 Sources: [src/core/portfolio-diagnostics.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-diagnostics.ts) [src/core/portfolio-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-signals.ts) [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) [web/src/views/Insights.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Insights.tsx) [src/tui/screens/InsightsView.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/InsightsView.tsx)
 
+### Weekly digest: period-scoped vs current-state
+
+The digest (`cc-analyzer report`, `GET /api/report`, the web Dashboard card) is
+the one surface that reports a *window of time* rather than the whole portfolio,
+so it splits cleanly in two — and the split is printed in the output, not just
+documented here.
+
+**Period-scoped** (the sessions whose start day falls in the period): the
+headline (cost, sessions, active time, input+output tokens, cache tokens), the
+top projects, the model mix, cache write/read/un-amortized dollars, the
+reliability signals (tool calls and errors, test runs and failures, retries,
+worst failing-test streak, redundant reads, correction and interruption turns),
+and the top skills by turn-scoped cost. Each headline metric and each project
+carries a `DigestDelta` against the equally long period immediately before:
+`{ current, prior, absolute, share }`, where `share` is **null** when the prior
+period was empty — there is no percentage change from zero, and render sites
+print `new` instead.
+
+**Current state, not period-scoped**: the `insights` array is
+`buildPortfolioDiagnostics` over the whole indexed portfolio (see the rules table
+above). A single week rarely carries enough evidence to fire those conservative
+thresholds honestly, and the actionable question is "what should I fix now", not
+"what fired last week". Every render site labels the section accordingly.
+
+The two-layer split follows the house pattern: [src/core/digest.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest.ts) is bun-free
+(shapes, period math via the shared `weekOf`/`shiftDay` helpers, delta math, and
+`buildDigestMarkdown`), so the SPA imports it and its "copy as markdown" button
+emits exactly what `cc-analyzer report --md` prints; [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts)
+is the bun-side assembler that reads the index. Period-scoped JSON-blob signals
+come from `analyticsRollup(db, undefined, period)` — the same single-scan folds
+the portfolio rollup uses, with a `day BETWEEN ? AND ?` filter — so a digest
+number and the analytics number for the same span cannot disagree; the model mix
+reuses `addModelTotalsRow` (shared with `spendByModel` and `whatIfRepricing`) and
+the cache waste reuses the exported `CACHE_WASTE_EXPR`.
+
+Attribution honesty: the index holds one row per session dated by its **start
+day**, so a session counts wholly toward the period it began in and one that ran
+past midnight is not split. The default period is the last **complete** ISO week
+(Monday–Sunday) relative to today, because a half-finished current week would
+always read as a decline; `--week` / `?week=` selects the week containing any
+given day. A period with zero sessions is a valid digest, not an error. The
+skills and corrections numbers carry the shared `SKILL_COST_CAVEAT` and
+`CORRECTION_CAVEAT` verbatim, as everywhere else.
+
+Sources: [src/core/digest.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest.ts) [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts) [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) [web/src/views/Dashboard.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx)
+
 ### Frontend chart primitives
 
 The two renderers share numbers but not drawing code. The TUI uses pure text primitives in [src/tui/charts.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L1-L19): `brailleChart` packs a filled area chart into braille dots ([src/tui/charts.ts:L37-L79](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L37-L79)), `sparkline` renders block-eighths adoption lines ([src/tui/charts.ts:L109-L123](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L109-L123)), and `calendarGrid` and `heatGrid` shade grids with ramp characters ([src/tui/charts.ts:L146-L174](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L146-L174)). It re-exports `bucketSeries` and `weeklySeries` from core so TUI callers keep one import site while the totals stay shared ([src/tui/charts.ts:L12-L19](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/charts.ts#L12-L19)). The SPA uses SVG building blocks in [web/src/trend-charts.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/trend-charts.tsx#L1-L19): `LineChart`, the metric/granularity `BurnPanel`, the stacked `ModelMix`, and the cost×duration `Scatter` ([web/src/trend-charts.tsx:L51-L290](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/trend-charts.tsx#L51-L290)).

@@ -12,7 +12,7 @@
 
 The Command-Line Interface (CLI) is the scriptable frontend of `cc-analyzer` and the entrypoint of the compiled binary. [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) reads `process.argv`, routes the first token to a command handler, and returns a process exit code — the file ends by calling `process.exit(await main())` at [src/cli/index.ts#L279](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L279). Every handler is a thin wrapper over `src/core`: the CLI parses arguments, invokes a core function, and hands the result to a renderer. It performs no analysis, pricing, or indexing itself.
 
-The subsystem has three modules. [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) holds the argument router and one `cmd*` function per command. [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts) supplies primitive formatters — currency, counts, byte sizes, durations, relative time — plus a `table` layout helper. [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) composes those primitives into full text reports for a single session (`renderSessionSummary`), for portfolio analytics (`renderStats`), for the setup audit (`renderSetupAudit`), and for the portfolio insights (`renderPortfolioInsights`). Passing `--json` on the commands that support it bypasses the renderers entirely and prints the raw core objects for downstream scripting.
+The subsystem has three modules. [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) holds the argument router and one `cmd*` function per command. [src/cli/format.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/format.ts) supplies primitive formatters — currency, counts, byte sizes, durations, relative time — plus a `table` layout helper. [src/cli/render.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts) composes those primitives into full text reports for a single session (`renderSessionSummary`), for portfolio analytics (`renderStats`), for the setup audit (`renderSetupAudit`), for the portfolio insights (`renderPortfolioInsights`), and for the weekly digest (`renderWeeklyDigest`). Passing `--json` on the commands that support it bypasses the renderers entirely and prints the raw core objects for downstream scripting.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ flowchart LR
     render --> format[format.ts]
 ```
 
-`main` splits `process.argv` into a command and the remaining arguments, then delegates to `runCommand`, whose `switch` maps each command string to a handler at [src/cli/index.ts#L209-L266](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L266). Handlers call into `src/core`; only `analyze`, `stats`, `audit`, and `insights` route their human-readable output through the renderers, which in turn depend on `format.ts`. The `serve` and no-command (TUI) branches use dynamic `import()` so the heavier web and Ink dependencies load only when actually invoked.
+`main` splits `process.argv` into a command and the remaining arguments, then delegates to `runCommand`, whose `switch` maps each command string to a handler at [src/cli/index.ts#L209-L266](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L266). Handlers call into `src/core`; only `analyze`, `stats`, `audit`, `insights`, and `report` route their human-readable output through the renderers, which in turn depend on `format.ts`. The `serve` and no-command (TUI) branches use dynamic `import()` so the heavier web and Ink dependencies load only when actually invoked.
 
 ## Module Layout
 
@@ -99,6 +99,16 @@ Sources: [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/sr
 
 Sources: [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) [src/core/portfolio-diagnostics.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-diagnostics.ts) [src/core/portfolio-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-signals.ts)
 
+### `report` — weekly digest
+
+`cmdReport` is the push-shaped counterpart of `stats`/`insights`: one week of usage, what changed against the week before, and what to fix. It refuses on an empty index (exit `1`, like `stats`, `audit`, and `insights`), loads the cached pricing table (the what-if signal inside the insight snapshot needs rates), and assembles the digest with `buildWeeklyDigest(db, pricing, { week })` (`src/core/digest-signals.ts`). Output has three modes: the default terminal report through `renderWeeklyDigest`, `--md` for paste-ready markdown through the bun-free `buildDigestMarkdown` (printed to stdout — the command never writes files, so users redirect), and `--json` for the raw `WeeklyDigest`.
+
+The period defaults to the **last complete ISO week** (Monday–Sunday) relative to today, because a half-finished current week would always read as a decline against a full prior week. `--week YYYY-MM-DD` (also accepted as `--week=YYYY-MM-DD`) reports the week containing any given day; a malformed value exits `2`. A period with **zero sessions is not an error** — the report says "No sessions in this period", still shows the prior period's totals, and still renders the insight snapshot.
+
+Two scoping rules travel with the output. Period metrics are **session-day-scoped**: a session counts toward the period containing its start day (the index's `day` column) with all of its cost, so a session running past midnight is not split. The insight snapshot is **not** period-scoped — it is `buildPortfolioDiagnostics` over the whole indexed portfolio, i.e. current state — and both facts are printed in the report itself, not only documented here.
+
+Sources: [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts) [src/core/digest.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest.ts) [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts)
+
 ### `cost-basis` — dollar framing preference
 
 `cmdCostBasis` (mirroring `cmdTelemetry`'s on/off/status shape) reads or writes the persisted cost-basis preference from `src/core/prefs.ts`. `cc-analyzer cost-basis` with no argument prints the current value; `cc-analyzer cost-basis api` or `cc-analyzer cost-basis subscription` sets it and confirms. The preference never changes how a dollar figure is *computed* — costs are always tokens × API rates — only how it's *framed*: `api` (the default) reads as a bill, `subscription` reframes the same numbers as API-equivalent value for flat-plan Pro/Max users who aren't billed per token. `cmdStats` reads the current basis and threads it into `renderStats`, which prints the canonical framing note (from the bun-free `src/core/cost-framing.ts`) near the top of the report when the basis is `subscription`, and folds the same wording into the run-rate line so a "projected" figure doesn't read as a bill. This CLI command is no longer the only way to *set* the preference: the web app has its own toggle (`PUT /api/prefs`, a `Seg` control on the Dashboard hero) for users who never touch the CLI, writing through the same `setCostBasis()`. The TUI and web app read the preference at their own presentation boundaries; see [Web Server and API](./5-web-server-and-api.md) and [Web SPA Frontend](./6-web-spa-frontend.md).
@@ -111,7 +121,7 @@ Sources: [src/cli/index.ts:L158-L204](https://github.com/yorch/cc-analyzer/blob/
 
 ### Passive update notice
 
-After `runCommand` returns, `main` fires a best-effort, non-blocking update notice for a curated set of quick commands. `NOTIFY_COMMANDS` contains `projects`, `sessions`, `analyze`, `index`, `stats`, `audit`, `insights`, and `pricing`; when the command is in that set and `--json` was not passed, `main` awaits `maybeNotifyUpdate()` before returning the exit code ([src/cli/index.ts#L206-L276](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L206-L276)). Excluding `--json` keeps machine-readable output clean of the human-facing banner. Before process exit, `main` also awaits the bounded `flushTelemetry()` drain; it never changes the command result and waits at most briefly for already-pending events. On the normal path nothing is pending and it returns immediately, because a quick command's telemetry event is delivered by a **detached child process** rather than by the parent: `process.exit()` would otherwise kill the socket long before a cold TLS handshake completes. `trackCommand` re-invokes the executable with the hidden `__telemetry-post` marker, the endpoint, and the prebuilt event body; the drain covers only the in-process fallback used when that spawn is refused. The marker is absent from `HELP`, is never itself tracked, prints nothing, and re-checks the opt-out before sending.
+After `runCommand` returns, `main` fires a best-effort, non-blocking update notice for a curated set of quick commands. `NOTIFY_COMMANDS` contains `projects`, `sessions`, `analyze`, `index`, `stats`, `audit`, `insights`, `report`, and `pricing`; when the command is in that set and `--json` was not passed, `main` awaits `maybeNotifyUpdate()` before returning the exit code ([src/cli/index.ts#L206-L276](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L206-L276)). Excluding `--json` keeps machine-readable output clean of the human-facing banner. Before process exit, `main` also awaits the bounded `flushTelemetry()` drain; it never changes the command result and waits at most briefly for already-pending events. On the normal path nothing is pending and it returns immediately, because a quick command's telemetry event is delivered by a **detached child process** rather than by the parent: `process.exit()` would otherwise kill the socket long before a cold TLS handshake completes. `trackCommand` re-invokes the executable with the hidden `__telemetry-post` marker, the endpoint, and the prebuilt event body; the drain covers only the in-process fallback used when that spawn is refused. The marker is absent from `HELP`, is never itself tracked, prints nothing, and re-checks the opt-out before sending.
 
 Sources: [src/cli/index.ts:L206-L277](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L206-L277)
 
@@ -129,13 +139,17 @@ Sources: [src/cli/format.ts:L1-L66](https://github.com/yorch/cc-analyzer/blob/51
 
 `renderSetupAudit` renders a `SetupAudit`: a title with the scanned Claude dir, an **Inventory** table (skills, subagents, plugins, MCP servers with their global/project split, hooks, permission rules, pinned model), and a **Findings** block that lists warnings before info-level items in the `session-diagnostics` style — title, evidence, then a muted `Next:` action. The mandatory machine-local/historical caveat (`SETUP_AUDIT_CAVEAT`, exported from core so every surface prints the same words) closes the report. `renderPortfolioInsights` renders the ranked `PortfolioDiagnostic[]` in the same style — warnings first, evidence, project line when scoped, `Next:` action — with an explicit healthy line naming the rule count when nothing fired.
 
+`renderWeeklyDigest` renders a `WeeklyDigest`: a title, the period and the period it is compared against, a **Summary** table of cost/sessions/active time/tokens with signed deltas (`+$1.90 (+18%)`, or `new` when the prior period was empty), then **Top projects**, **Models**, **Cache & reliability** (closed by the shared `CORRECTION_CAVEAT`), **Skills** (turn-scoped cost, closed by `SKILL_COST_CAVEAT`), and the current-state **Insights** list. Its numbers come from the same digest object `buildDigestMarkdown` renders, so the terminal report and the markdown export cannot disagree; the digest formatters (`digestMoney`, `digestCount`, `digestDuration`, `formatDigestDelta`) live in the bun-free `src/core/digest.ts` precisely so both renderings — and the web app's copy button — share them.
+
 Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/render.ts#L19-L315)
 
 ## Configuration & Extension Points
 
 | Flag | Command | Purpose |
 | ---- | ------- | ------- |
-| `--json` | `analyze`, `stats`, `audit`, `insights` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
+| `--json` | `analyze`, `stats`, `audit`, `insights`, `report` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
+| `--md` | `report` | Print the digest as paste-ready markdown on stdout (no file is written) |
+| `--week <day>` | `report` | Report the ISO week containing that `YYYY-MM-DD` day instead of the last complete week |
 | `--rebuild` | `index` | Force a full re-scan instead of the incremental pass |
 | `--check` | `index` | Compare source metadata with the cache without changing it; exit non-zero when stale |
 | `--port=<n>` | `serve` | Bind the web server to an integer port 1–65535; invalid values exit with code `2` |
@@ -143,7 +157,7 @@ Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/
 | `--refresh` | `serve` | Incrementally refresh the index before starting the server |
 | `--open` | `serve` | Open the served URL in the default browser when bound to loopback |
 | `--check` | `update` | Report whether a newer release exists without installing it |
-| `NO_COLOR` | `analyze`, `stats`, `audit`, `insights` | Disable ANSI styling even when stdout is an interactive terminal |
+| `NO_COLOR` | `analyze`, `stats`, `audit`, `insights`, `report` | Disable ANSI styling even when stdout is an interactive terminal |
 
 Sources: [src/cli/index.ts:L209-L246](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L209-L246)
 

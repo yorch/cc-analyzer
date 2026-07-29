@@ -15,6 +15,7 @@ import type {
   ContextTaxRow,
   CostBucket,
   CostDistribution,
+  DayRange,
   DayRow,
   DepthBucket,
   DurationSummary,
@@ -187,15 +188,16 @@ interface JsonTokens {
 
 /** Per-model totals folded out of `models_json`: calls, indexed cost, and the
  * full four-category token mix (what repricing needs). */
-interface ModelTotals {
+export interface ModelTotals {
   calls: number;
   cost: number;
   tokens: TokenCounts;
 }
 
-/** Fold one row's `models_json` into per-model totals. Shared by `spendByModel`
- * and `whatIfRepricing` so the two can never disagree about a model's mix. */
-function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | null): void {
+/** Fold one row's `models_json` into per-model totals. Shared by `spendByModel`,
+ * `whatIfRepricing`, and the period-scoped digest model mix so none of them can
+ * disagree about a model's mix. */
+export function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: string | null): void {
   const models = parseJson<
     Record<string, { apiCalls?: number; cost?: { total?: number }; tokens?: JsonTokens }>
   >(modelsJson, {});
@@ -242,8 +244,10 @@ export function spendByModel(db: Database, projectId?: string): ModelRow[] {
 }
 
 const CACHE_WRITE = "cache_write_5m + cache_write_1h";
-/** Per-session un-amortized cache-write cost: the write $ not read back. */
-const WASTE_EXPR = `cost_cache_write * max(0.0, 1.0 - min(1.0, CASE
+/** Per-session un-amortized cache-write cost: the write $ not read back.
+ * Exported so period-scoped consumers (the weekly digest) reuse the exact same
+ * SQL expression instead of re-deriving "waste" a second way. */
+export const CACHE_WASTE_EXPR = `cost_cache_write * max(0.0, 1.0 - min(1.0, CASE
   WHEN (${CACHE_WRITE}) > 0 THEN CAST(cache_read AS REAL) / (${CACHE_WRITE})
   ELSE 1.0 END))`;
 
@@ -260,7 +264,7 @@ export function cacheSummary(db: Database): CacheSummary {
     .query(
       `SELECT COALESCE(SUM(cost_cache_write), 0) AS writeCost,
         COALESCE(SUM(cost_cache_read), 0) AS readCost,
-        COALESCE(SUM(${WASTE_EXPR}), 0) AS waste,
+        COALESCE(SUM(${CACHE_WASTE_EXPR}), 0) AS waste,
         COALESCE(SUM(cost_total), 0) AS totalCost
       FROM sessions`,
     )
@@ -281,7 +285,7 @@ export function cacheWasteByProject(db: Database, limit = 50): ProjectCacheRow[]
         SUM(cost_input) AS inputCost,
         SUM(cost_output) AS outputCost,
         SUM(cost_total) AS totalCost,
-        SUM(${WASTE_EXPR}) AS waste
+        SUM(${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       GROUP BY project_id
       HAVING SUM(${CACHE_WRITE}) > 0
@@ -311,7 +315,7 @@ export function cacheWasteBySession(
         cost_input AS inputCost,
         cost_output AS outputCost,
         cost_total AS totalCost,
-        (${WASTE_EXPR}) AS waste
+        (${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       WHERE project_id = ? AND (${CACHE_WRITE}) > 0
       ORDER BY waste DESC, cost_cache_write DESC
@@ -1033,7 +1037,7 @@ export function idleVsCache(db: Database): IdleCacheBucket[] {
         (${CACHE_WRITE}) AS w,
         cache_read AS r,
         cost_cache_write AS wc,
-        (${WASTE_EXPR}) AS waste
+        (${CACHE_WASTE_EXPR}) AS waste
       FROM sessions
       WHERE duration_ms > 0 AND (${CACHE_WRITE}) > 0`,
     )
@@ -1317,7 +1321,18 @@ export function whatIfRepricing(
  * from the raw command heads stored in the index (schema v6), so those
  * heuristics can change without a reindex.
  */
-export function analyticsRollup(db: Database, projectId?: string): AnalyticsRollup {
+/**
+ * Fold every per-session JSON blob into the portfolio rollup in one table scan.
+ * Optionally scoped to a project and/or an inclusive day range: the range
+ * filters on the `day` column (a session's START day), so a session counts
+ * wholly toward the period it began in — the attribution the weekly digest
+ * reports, and the only one the index supports.
+ */
+export function analyticsRollup(
+  db: Database,
+  projectId?: string,
+  period?: DayRange,
+): AnalyticsRollup {
   interface Row {
     project_id: string;
     day: string | null;
@@ -1360,8 +1375,10 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
-      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}
+        ${period ? "AND day BETWEEN ? AND ?" : ""}`,
     projectId,
+    ...(period ? [period.start, period.end] : []),
   );
 
   const toolFold = newToolFold();

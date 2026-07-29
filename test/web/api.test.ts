@@ -377,6 +377,60 @@ describe("web API", () => {
     expect(body.findings[0]?.subject).toBe("github");
   });
 
+  test("GET /api/report defaults to the last complete week", async () => {
+    // Fresh state dir: the cost-basis assertion below needs the default pref.
+    const res = await withStateDir(() => api.request("/api/report"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      period: { start: string; end: string };
+      prior: { start: string; end: string };
+      today: string;
+      headline: { sessions: { current: number; prior: number } };
+      insights: unknown[];
+      costBasis: string;
+    };
+    // Monday-anchored, seven days long, and strictly before today.
+    expect(body.period.start < body.period.end).toBe(true);
+    expect(body.period.end < body.today).toBe(true);
+    expect(new Date(`${body.period.start}T00:00:00Z`).getUTCDay()).toBe(1);
+    expect(body.prior.end).toBe(
+      new Date(Date.parse(`${body.period.start}T00:00:00Z`) - 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+    );
+    expect(Array.isArray(body.insights)).toBe(true);
+    // The cost-basis display preference rides along like on /api/stats.
+    expect(body.costBasis).toBe("api");
+  });
+
+  test("GET /api/report?week= scopes to the week containing that day", async () => {
+    // The fixture session is dated 2026-07-01 (Wed) → week 06-29 … 07-05.
+    const res = await api.request("/api/report?week=2026-07-03");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      period: { start: string; end: string };
+      headline: { sessions: { current: number } };
+      projects: { projectId: string; cost: number }[];
+    };
+    expect(body.period).toEqual({ start: "2026-06-29", end: "2026-07-05" });
+    expect(body.headline.sessions.current).toBe(1);
+    expect(body.projects[0]?.projectId).toBe("proj-a");
+
+    // Same index, different week → a different payload (the memo key carries
+    // the requested week, so one week's digest can't be served for another).
+    const other = await api.request("/api/report?week=2026-06-22");
+    const otherBody = (await other.json()) as { period: { start: string } };
+    expect(otherBody.period.start).toBe("2026-06-22");
+  });
+
+  test("GET /api/report rejects a malformed week", async () => {
+    const res = await api.request("/api/report?week=nope");
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toEqual({
+      error: "week must be a YYYY-MM-DD day",
+    });
+  });
+
   test("aggregate responses are cached until the index fingerprint changes", async () => {
     const first = await (await api.request("/api/analytics")).text();
     const again = await (await api.request("/api/analytics")).text();

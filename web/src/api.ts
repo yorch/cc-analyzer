@@ -6,6 +6,7 @@
 
 import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import type { CostBasis } from "../../src/core/cost-framing.ts";
+import type { WeeklyDigest } from "../../src/core/digest.ts";
 import type { IndexStatus } from "../../src/core/index-status-types.ts";
 import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import type { SetupAudit } from "../../src/core/setup-audit.ts";
@@ -51,6 +52,10 @@ export * from "../../src/core/chart-series.ts";
 // the CLI/TUI for the one preference that can turn "cost" into "spend" or vice
 // versa.
 export * from "../../src/core/cost-framing.ts";
+// Weekly-digest shapes, period math, and the markdown builder — bun-free, so
+// the SPA's "copy as markdown" button produces byte-identical output to
+// `cc-analyzer report --md` with no extra endpoint.
+export * from "../../src/core/digest.ts";
 // Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
 // renders the same rule vocabulary the server computes findings with.
 export * from "../../src/core/portfolio-diagnostics.ts";
@@ -131,6 +136,11 @@ export interface AnalyticsResponse extends AnalyticsRollup {
   parseCoverage: ParseCoverageStats;
 }
 
+/** `/api/report` returns the core-built digest plus the cost-basis display
+ *  preference, merged fresh per request at the route level (same reasoning as
+ *  `/api/stats`). */
+export type ReportResponse = WeeklyDigest & { costBasis: CostBasis };
+
 /** `/api/prefs` response shape — same for GET and the PUT echo. */
 export interface PrefsResponse {
   costBasis: CostBasis;
@@ -178,4 +188,6 @@ export const api = {
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
   audit: () => get<SetupAudit>("/api/audit"),
+  report: (week?: string) =>
+    get<ReportResponse>(week ? `/api/report?week=${encodeURIComponent(week)}` : "/api/report"),
 };

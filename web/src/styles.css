@@ -1121,12 +1121,15 @@ p.muted {
   overflow: auto;
 }
 
-.loadmore {
+.loadmore,
+.digest-actions {
   display: flex;
   gap: 8px;
   margin-top: 14px;
+  align-items: center;
 }
-.loadmore button {
+.loadmore button,
+.digest-actions button {
   background: none;
   color: var(--ink);
   border: 1px solid var(--border-strong);
@@ -1141,9 +1144,14 @@ p.muted {
     border-color 0.15s,
     color 0.15s;
 }
-.loadmore button:hover {
+.loadmore button:hover,
+.digest-actions button:hover {
   border-color: var(--signal);
   color: var(--signal);
+}
+.digest-actions .status {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .loading {

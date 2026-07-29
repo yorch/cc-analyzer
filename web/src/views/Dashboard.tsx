@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  buildDigestMarkdown,
   type CostBasis,
   type CostDistribution,
   costFramingNote,
+  digestMoney,
+  formatDigestDelta,
+  isEmptyPeriod,
   type ModelRow,
   type MonthRow,
   type ProjectRow,
@@ -146,6 +150,8 @@ export function Dashboard() {
       </section>
 
       <GlobalSearch />
+
+      <WeeklyDigestCard />
 
       <StatCards data={data} />
 
@@ -320,6 +326,75 @@ export function Dashboard() {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * Compact weekly digest: last complete week at a glance, plus a "copy as
+ * markdown" button. The markdown is built client-side with the same bun-free
+ * `buildDigestMarkdown` the CLI's `report --md` uses — identical output, no
+ * extra endpoint. The full report lives in `cc-analyzer report`.
+ */
+function WeeklyDigestCard() {
+  const { data, error, loading } = useAsync(() => api.report(), []);
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+
+  if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
+  if (error || !data) return null;
+
+  const h = data.headline;
+  const topProject = data.projects[0];
+  const r = data.reliability;
+  const copy = () => {
+    navigator.clipboard
+      .writeText(buildDigestMarkdown(data))
+      .then(() => setCopied("ok"))
+      .catch(() => setCopied("failed"));
+  };
+
+  return (
+    <section>
+      <h2>Weekly digest</h2>
+      <p className="muted">
+        {data.period.start} → {data.period.end} · vs {data.prior.start} → {data.prior.end} ·
+        sessions are attributed to their start day
+      </p>
+      {isEmptyPeriod(data) ? (
+        <EmptyNotice>No sessions in this period.</EmptyNotice>
+      ) : (
+        <div className="cards">
+          <Card
+            label="Cost"
+            value={usd(h.cost.current)}
+            sub={formatDigestDelta(h.cost, digestMoney)}
+          />
+          <Card
+            label="Sessions"
+            value={String(h.sessions.current)}
+            sub={formatDigestDelta(h.sessions, (n) => String(n))}
+          />
+          <Card
+            label="Top project"
+            value={topProject ? shortPath(topProject.projectPath, topProject.projectId) : "—"}
+            sub={topProject ? usd(topProject.cost) : undefined}
+          />
+          <Card
+            label="Corrections"
+            value={`${(r.correctionShare * 100).toFixed(0)}%`}
+            sub={`${count(r.correctionTurns)} of ${count(r.turns)} turns`}
+          />
+        </div>
+      )}
+      <div className="digest-actions">
+        <button type="button" onClick={copy}>
+          Copy as markdown
+        </button>
+        <span className="status" role="status" aria-live="polite">
+          {copied === "ok" && "Copied to the clipboard."}
+          {copied === "failed" && "Couldn’t copy — the browser blocked clipboard access."}
+        </span>
+      </div>
+    </section>
   );
 }
 

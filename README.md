@@ -137,6 +137,8 @@ cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
 cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
 cc-analyzer insights [--json]        # ranked, actionable findings across the whole portfolio
+cc-analyzer report [--week YYYY-MM-DD] [--md] [--json]
+                                     # weekly digest: last complete week vs the week before
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
@@ -317,6 +319,29 @@ work so the 5-minute cache TTL amortizes", "trim that project's CLAUDE.md").
 The same findings appear at the top of the web app's Insights page (via
 `/api/insights`) and as a compact list in the TUI insights view. The full rule
 table with thresholds lives in the wiki's Analytics & Insights page.
+
+### Weekly digest
+
+`cc-analyzer report` turns all of the above from something you go looking for
+into something you can read on a schedule: one week of usage, what changed
+against the week before, and what to fix. It prints a headline (cost, sessions,
+active time, tokens) with signed deltas, the week's top projects, model mix,
+cache economics, reliability (tool errors, test runs, retries, thrash,
+corrections), the skills that cost the most turn-scoped dollars, and a snapshot
+of the portfolio insights. `--md` writes paste-ready markdown to stdout for
+notes or chat (`cc-analyzer report --md > week.md`); `--json` emits the plain
+object.
+
+The default period is the **last complete ISO week** (Monday–Sunday) — a
+half-finished current week would always read as a decline. `--week YYYY-MM-DD`
+reports the week containing any given day. Sessions are attributed to their
+**start day**, so a session that runs past midnight counts entirely in the
+period it began; the digest says so wherever it renders. The insight snapshot is
+deliberately **not** period-scoped — it is current state across the whole
+portfolio, because one week rarely carries enough evidence to fire those
+thresholds honestly. The same digest is served at `/api/report` and summarized
+in a card on the web app's Dashboard, which can copy the identical markdown to
+your clipboard.
 
 The index carries a schema version; when it changes (e.g. new columns for the
 tools analytics), the next run rebuilds the cache from scratch — just re-run
