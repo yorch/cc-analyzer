@@ -37,7 +37,7 @@ flowchart LR
     Discover -.paths + env.-> Paths[(paths.ts)]
 ```
 
-The pipeline is strictly forward: [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) locates session files, [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts) decodes each line into a typed event validated against the schemas in [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts), and the event stream fans out to two consumers — `analyzeSession` for metrics and `buildTranscript` for a human-readable view. `analyze.ts` leans on [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) for per-operation summaries and on `pricing.ts` for cost. [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) supplies every filesystem location and the test-only environment overrides.
+The pipeline is strictly forward: [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) locates session files, [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts) decodes each line into a typed event validated against the schemas in [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts), and the event stream fans out to three consumers — `analyzeSession` for metrics, `buildTranscript` for a human-readable view, and `inspectSessionHealth` for structural health and recoverability findings. `analyze.ts` leans on [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) for per-operation summaries and on `pricing.ts` for cost. [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) supplies every filesystem location and the test-only environment overrides.
 
 ## Module Layout
 
@@ -46,12 +46,27 @@ The pipeline is strictly forward: [src/core/discover.ts](https://github.com/yorc
 | `analyze` | [src/core/analyze.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts) | Fold `SessionEvent[]` into a `SessionAnalysis` (turns + aggregates) |
 | `events` | [src/core/events.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts) | Tolerant Zod schemas, event types, `isRealPrompt` turn discriminator |
 | `parser` | [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts) | Parse JSONL text/files/streams into events, never throwing |
+| `session-health` | `src/core/session-health.ts` | Classify structural health from events and parse errors, with evidence and read-only guidance |
 | `transcript` | [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts) | Flatten events into a linear `TranscriptItem[]` reading view |
 | `steps` | [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) | Tool-aware one-line summaries and result hints for turn steps |
 | `discover` | [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) | Enumerate projects and session files under `~/.claude/projects` |
 | `paths` | [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) | Resolve data/state paths and honor env-var overrides |
 
 Sources: [src/core/analyze.ts:L1-L28](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/analyze.ts#L1-L28) [src/core/events.ts:L156-L198](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/events.ts#L156-L198) [src/core/parser.ts:L71-L152](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/parser.ts#L71-L152) [src/core/discover.ts:L1-L21](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts#L1-L21)
+
+### Structural health and recoverability
+
+`inspectSessionHealth(events, parseErrors, coverage)` produces a shared
+`SessionHealthReport` without pricing or index access. It detects skipped JSONL
+records, records preserved as unknown because of unfamiliar types or schema drift,
+empty or one-sided conversations, mixed session IDs, duplicate UUIDs, unresolved
+parent/leaf pointers, unpaired tool calls/results, and a final prompt without a
+main-chain response. It also uses the same `isInterruptionEvent` authority as the
+analyzer to distinguish a session ending after an Esc interruption from an
+unanswered human prompt. The status is `damaged` when an error-level finding
+exists, `warning` for conservative continuity findings, and `healthy` otherwise.
+Missing parents and tool counterparts are not called corruption: continuation
+files can legitimately hold only one side of those relationships.
 
 ## Key Components
 

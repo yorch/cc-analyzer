@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   CORRECTION_PATTERN_SOURCE,
   isCorrectionPrompt,
+  isInterruptionEvent,
   isInterruptionMarker,
 } from "../../src/core/events.ts";
 
@@ -17,6 +18,47 @@ describe("isInterruptionMarker", () => {
     expect(isInterruptionMarker("please continue")).toBe(false);
     expect(isInterruptionMarker('the log says "[Request interrupted by user]"')).toBe(false);
     expect(isInterruptionMarker("[request interrupted by user]")).toBe(false); // markers are verbatim
+  });
+});
+
+describe("isInterruptionEvent", () => {
+  test("matches string, text-block, and nested tool-result markers", () => {
+    const event = (content: unknown) =>
+      ({
+        type: "user",
+        message: { role: "user", content },
+      }) as Parameters<typeof isInterruptionEvent>[0];
+    expect(isInterruptionEvent(event("[Request interrupted by user]"))).toBe(true);
+    expect(
+      isInterruptionEvent(
+        event([{ type: "text", text: "[Request interrupted by user for tool use]" }]),
+      ),
+    ).toBe(true);
+    expect(
+      isInterruptionEvent(
+        event([
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: [{ type: "text", text: "[Request interrupted by user]" }],
+          },
+        ]),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not match ordinary prompts or tool results", () => {
+    const event = (content: unknown) =>
+      ({
+        type: "user",
+        message: { role: "user", content },
+      }) as Parameters<typeof isInterruptionEvent>[0];
+    expect(isInterruptionEvent(event("continue"))).toBe(false);
+    expect(
+      isInterruptionEvent(
+        event([{ type: "tool_result", tool_use_id: "t1", content: "completed" }]),
+      ),
+    ).toBe(false);
   });
 });
 

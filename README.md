@@ -131,6 +131,8 @@ cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
+cc-analyzer doctor <id|path>         # check structural health and recoverability
+cc-analyzer doctor <id|path> --json  # emit the health report as JSON
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer stats [--current] [--json]
@@ -193,6 +195,21 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   visible instead of silent. `cc-analyzer insights` warns (and points at
   `cc-analyzer update`) when the newest Claude Code version's sessions stop
   parsing cleanly.
+
+### Session health checks
+
+`cc-analyzer doctor <id|path>` reads one source session directly; it does not
+require the SQLite index. It checks whether the JSONL can be represented safely,
+whether event UUIDs and session IDs are internally consistent, whether parent and
+leaf references resolve locally, whether tool calls pair with results, and whether
+the session ends with an unanswered human prompt or interrupted response.
+
+The report distinguishes **healthy**, **warning**, and **damaged** sessions. A
+missing parent or tool call is a warning rather than proof of corruption because a
+continuation file can legitimately begin mid-chain. Every finding includes its
+evidence and a read-only next step. Exit code `0` means healthy, `1` means findings
+were reported (or the session was not found), and `2` means invalid usage. Use
+`--json` for automation.
 
 ## Configuration
 

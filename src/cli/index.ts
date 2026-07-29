@@ -14,6 +14,7 @@ import { getCostBasis, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
+import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
 import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
@@ -55,6 +56,8 @@ Usage:
   cc-analyzer sessions <projectId>     List sessions in a project
   cc-analyzer analyze <id|path> [--json]
                                        Analyze a single session
+  cc-analyzer doctor <id|path> [--json]
+                                       Check session health and recoverability
   cc-analyzer index [--rebuild|--check]
                                        Build, refresh, or check the session index
   cc-analyzer stats [--current] [--json]
@@ -212,6 +215,44 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
     }
   }
   return 0;
+}
+
+function renderHealthReport(ref: string, report: SessionHealthReport): string {
+  const symbol = report.status === "healthy" ? "✓" : report.status === "damaged" ? "✗" : "!";
+  const lines = [
+    `${symbol} Session health: ${report.status}`,
+    `${ref} · ${report.events} events · ${report.parseErrors} parse errors · ` +
+      `${report.unknownEvents} unknown events`,
+  ];
+  if (report.findings.length === 0) {
+    lines.push("", "No structural health problems were detected.");
+  } else {
+    lines.push("");
+    for (const finding of report.findings) {
+      lines.push(`${finding.severity === "error" ? "✗" : "!"} ${finding.title}`);
+      lines.push(`  ${finding.evidence}`);
+      lines.push(`  Next: ${finding.action}`);
+    }
+  }
+  lines.push("", "Read-only check · no Claude Code files were changed.");
+  return lines.join("\n");
+}
+
+async function cmdDoctor(ref: string | undefined, json: boolean): Promise<number> {
+  if (!ref) {
+    console.error("error: missing <id|path>.");
+    return 2;
+  }
+  const path = await resolveSessionPath(ref);
+  if (!path) {
+    console.error(`error: session '${ref}' not found.`);
+    return 1;
+  }
+  const { events, errors, coverage } = await parseSessionFile(path);
+  const report = inspectSessionHealth(events, errors, coverage);
+  if (json) console.log(JSON.stringify({ path, ...report }, null, 2));
+  else console.log(renderHealthReport(path, report));
+  return report.status === "healthy" ? 0 : 1;
 }
 
 function indexChangeSummary(status: { added: number; changed: number; deleted: number }): string {
@@ -498,6 +539,7 @@ const NOTIFY_COMMANDS = new Set([
   "projects",
   "sessions",
   "analyze",
+  "doctor",
   "index",
   "stats",
   "audit",
@@ -516,6 +558,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "projects",
     "sessions",
     "analyze",
+    "doctor",
     "index",
     "stats",
     "audit",
@@ -537,6 +580,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdSessions(positional[0]);
     case "analyze":
       return cmdAnalyze(positional[0], json);
+    case "doctor":
+      return cmdDoctor(positional[0], json);
     case "index":
       if (rest.includes("--rebuild") && rest.includes("--check")) {
         console.error("error: --rebuild and --check cannot be used together.");

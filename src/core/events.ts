@@ -236,6 +236,23 @@ export function isInterruptionMarker(text: string): boolean {
   return text.trimStart().startsWith("[Request interrupted by user");
 }
 
+/** Does this user event carry a machine-written interruption marker? */
+export function isInterruptionEvent(event: UserEvent): boolean {
+  return hasInterruptionContent(event.message.content);
+}
+
+function hasInterruptionContent(content: UserEvent["message"]["content"] | unknown): boolean {
+  if (typeof content === "string") return isInterruptionMarker(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((item) => {
+    if (typeof item === "string") return isInterruptionMarker(item);
+    const block = item as { type?: string; text?: string; content?: unknown };
+    if (block?.type === "text") return isInterruptionMarker(block.text ?? "");
+    if (block?.type === "tool_result") return hasInterruptionContent(block.content);
+    return false;
+  });
+}
+
 /** Only this leading window of a prompt is scanned for correction markers —
  * a phrase buried deep in a long prompt is context, not how the prompt opens. */
 const CORRECTION_WINDOW = 120;

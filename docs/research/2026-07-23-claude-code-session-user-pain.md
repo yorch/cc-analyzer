@@ -544,6 +544,16 @@ Deliver:
 - Clear distinction between source missing, index stale, and chain damaged.
 - Read-only remediation guidance.
 
+Implementation status:
+
+- The first CLI slice is now implemented as `cc-analyzer doctor <id|path>
+  [--json]`.
+- It reports parser integrity, event/session identity, local parent/leaf
+  continuity, tool-call/result pairing, unanswered prompts, and sessions ending
+  after a machine-written interruption marker.
+- Health in indexed session lists, TUI, and web search results remains future
+  work and will require an index representation.
+
 Why P0:
 
 - Differentiates cc-analyzer from basic history search.
