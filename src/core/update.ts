@@ -1,5 +1,5 @@
 import { chmodSync, renameSync, rmSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { expectedHash, fileSha256, parseChecksums } from "./checksum.ts";
 import {
   assetDownloadUrl,
@@ -8,22 +8,8 @@ import {
   compareVersions,
   fetchLatestVersion,
 } from "./release.ts";
+import { isCompiledBinary } from "./runtime.ts";
 import { VERSION } from "./version.ts";
-
-/**
- * Whether this process is a `bun build --compile` standalone binary (as opposed
- * to running from source via `bun run`). Compiled binaries mount their bundled
- * code under the `$bunfs` virtual filesystem; `process.execPath` then points at
- * the standalone binary itself (the file we replace on self-update).
- */
-export function isCompiledBinary(): boolean {
-  if (import.meta.url.includes("$bunfs")) return true;
-  // Fallback allowlist: only treat the process as our compiled binary when the
-  // executable actually looks like one. A denylist ("not bun/node") would let a
-  // renamed interpreter (bun-1.3, bun-profile…) be overwritten by self-update.
-  const exe = basename(process.execPath).toLowerCase();
-  return exe === "cc-analyzer" || exe.startsWith("cc-analyzer-") || exe === "cc-analyzer.exe";
-}
 
 export interface UpdateResult {
   status: "updated" | "up-to-date" | "delegated" | "unsupported";

@@ -168,6 +168,11 @@ nature:
   (`serve`) bundles the Plausible tracker and this docs site loads its cookieless
   script. Telemetry state lives only under `~/.config/cc-analyzer/` — **never**
   in `~/.claude`.
+- **Never in your way.** A CLI command never waits on the network to report
+  itself: it hands the event to a short-lived background copy of `cc-analyzer`
+  and exits immediately. That is the second `cc-analyzer` process you may see
+  briefly in `ps` — it sends one small request and stops. When telemetry is off,
+  nothing is spawned and nothing is sent.
 - **On by default, easy to opt out.** The first run prints a one-time notice.
 
 Opt out in any of these ways — any one is enough:

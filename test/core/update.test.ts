@@ -2,12 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type DownloadProgress,
-  isCompiledBinary,
-  pumpStream,
-  swapBinary,
-} from "../../src/core/update.ts";
+import { isCompiledBinary } from "../../src/core/runtime.ts";
+import { type DownloadProgress, pumpStream, swapBinary } from "../../src/core/update.ts";
 
 /** A stream that emits `chunks` in order and closes. */
 function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {

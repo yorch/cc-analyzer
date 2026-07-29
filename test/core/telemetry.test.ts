@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { indexDbPath, telemetryConfigPath } from "../../src/core/paths.ts";
@@ -9,6 +9,9 @@ import {
   injectSpaTelemetry,
   isTelemetryEnabled,
   maybeShowFirstRunNotice,
+  POSTER_COMMAND,
+  posterArgv,
+  runTelemetryPoster,
   setTelemetryEnabled,
   spaTelemetryConfig,
   telemetryStatus,
@@ -180,50 +183,95 @@ describe("buildEventBody", () => {
   });
 });
 
+/** Capture what `trackCommand` hands to `Bun.spawn` / `fetch` without doing
+ *  either for real. `spawn` may throw to exercise the in-process fallback. */
+function captureDispatch(opts: { spawnThrows?: boolean } = {}) {
+  const spawns: Array<Record<string, unknown>> = [];
+  const fetches: Array<{ url: string; init: RequestInit }> = [];
+  const spy = spyOn(Bun, "spawn").mockImplementation(((options: Record<string, unknown>) => {
+    if (opts.spawnThrows) throw new Error("EAGAIN");
+    spawns.push(options);
+    return { unref() {} };
+  }) as unknown as typeof Bun.spawn);
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    fetches.push({ url, init });
+    return new Response("", { status: 202 });
+  }) as unknown as typeof fetch;
+  return {
+    spawns,
+    fetches,
+    restore() {
+      spy.mockRestore();
+      globalThis.fetch = origFetch;
+    },
+  };
+}
+
+/** The three argv slots the poster marker introduces: marker, endpoint, payload. */
+function posterParts(cmd: string[]): { url: string; body: { props: Record<string, string> } } {
+  const at = cmd.indexOf(POSTER_COMMAND);
+  expect(at).toBeGreaterThan(-1);
+  return { url: cmd[at + 1] as string, body: JSON.parse(cmd[at + 2] as string) };
+}
+
 describe("trackCommand", () => {
-  test("no-op (no fetch) when disabled", async () => {
+  test("no-op (nothing spawned, nothing fetched) when disabled", async () => {
     process.env.CC_ANALYZER_TELEMETRY = "0";
-    let called = false;
-    const orig = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      called = true;
-      return new Response("", { status: 202 });
-    }) as unknown as typeof fetch;
+    const cap = captureDispatch();
     try {
       trackCommand("stats");
       await Promise.resolve();
     } finally {
-      globalThis.fetch = orig;
+      cap.restore();
     }
-    expect(called).toBe(false);
+    expect(cap.spawns).toHaveLength(0);
+    expect(cap.fetches).toHaveLength(0);
   });
 
-  test("POSTs to the Events API when enabled", async () => {
+  // The core guarantee behind the detached poster: the *parent* never holds the
+  // request. A short command exits within ~10ms of dispatch, which is far less
+  // than a cold TLS handshake, so an in-process fetch would die on `process.exit`.
+  test("hands the event to a detached child instead of posting in-process", async () => {
     process.env.CC_ANALYZER_TELEMETRY_URL = "https://plausible.test";
-    let url: string | undefined;
-    let init: RequestInit | undefined;
-    const orig = globalThis.fetch;
-    globalThis.fetch = (async (u: string, i: RequestInit) => {
-      url = u;
-      init = i;
-      return new Response("", { status: 202 });
-    }) as unknown as typeof fetch;
+    const cap = captureDispatch();
     try {
       trackCommand("serve");
       await Promise.resolve();
-      await Promise.resolve();
     } finally {
-      globalThis.fetch = orig;
+      cap.restore();
     }
-    expect(url).toBe("https://plausible.test/api/event");
-    expect(init?.method).toBe("POST");
-    const body = JSON.parse(String(init?.body));
+    expect(cap.fetches).toHaveLength(0);
+    expect(cap.spawns).toHaveLength(1);
+    const spawn = cap.spawns[0] as Record<string, unknown>;
+    const { url, body } = posterParts(spawn.cmd as string[]);
+    expect(url).toBe("https://plausible.test");
     expect(body.props.name).toBe("serve");
-    const headers = init?.headers as Record<string, string>;
-    expect(headers["User-Agent"]).toContain("cc-analyzer/");
+    // Detached with no stdio is what lets it outlive the parent's process.exit().
+    expect(spawn.detached).toBe(true);
+    expect(spawn.stdio).toEqual(["ignore", "ignore", "ignore"]);
+    expect(spawn.windowsHide).toBe(true);
   });
 
-  test("never throws when fetch rejects (fire-and-forget)", async () => {
+  test("falls back to an in-process post when the spawn is refused", async () => {
+    process.env.CC_ANALYZER_TELEMETRY_URL = "https://plausible.test";
+    const cap = captureDispatch({ spawnThrows: true });
+    try {
+      expect(() => trackCommand("stats")).not.toThrow();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      cap.restore();
+    }
+    expect(cap.fetches).toHaveLength(1);
+    expect(cap.fetches[0]?.url).toBe("https://plausible.test/api/event");
+    expect(JSON.parse(String(cap.fetches[0]?.init.body)).props.name).toBe("stats");
+  });
+
+  test("never throws when the fallback fetch rejects (fire-and-forget)", async () => {
+    const spy = spyOn(Bun, "spawn").mockImplementation((() => {
+      throw new Error("EAGAIN");
+    }) as unknown as typeof Bun.spawn);
     const orig = globalThis.fetch;
     globalThis.fetch = (async () => {
       throw new Error("network down");
@@ -234,8 +282,88 @@ describe("trackCommand", () => {
       await Promise.resolve();
       await Promise.resolve();
     } finally {
+      spy.mockRestore();
       globalThis.fetch = orig;
     }
+  });
+});
+
+describe("posterArgv", () => {
+  test("re-invokes this entrypoint with the endpoint and prebuilt payload", () => {
+    const body = buildEventBody("stats");
+    const argv = posterArgv("https://plausible.test", body);
+    // The suite runs from source, so execPath is bun and the entrypoint follows.
+    expect(argv[0]).toBe(process.execPath);
+    expect(argv[1]).toBe(Bun.main);
+    expect(argv[2]).toBe(POSTER_COMMAND);
+    expect(argv[3]).toBe("https://plausible.test");
+    expect(JSON.parse(argv[4] as string)).toEqual(body);
+  });
+
+  test("payload is a single argv entry, so nothing is word-split or shell-parsed", () => {
+    const argv = posterArgv("https://plausible.test", buildEventBody("analyze"));
+    expect(argv).toHaveLength(5);
+  });
+});
+
+describe("runTelemetryPoster", () => {
+  test("posts the handed-over body to the handed-over endpoint", async () => {
+    const body = buildEventBody("projects");
+    let url: string | undefined;
+    let init: RequestInit | undefined;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (u: string, i: RequestInit) => {
+      url = u;
+      init = i;
+      return new Response("", { status: 202 });
+    }) as unknown as typeof fetch;
+    try {
+      expect(await runTelemetryPoster("https://plausible.test", JSON.stringify(body))).toBe(0);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(url).toBe("https://plausible.test/api/event");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body)).props.name).toBe("projects");
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["User-Agent"]).toContain("cc-analyzer/");
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("sends nothing, and still succeeds, on missing or malformed input", async () => {
+    let called = false;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("", { status: 202 });
+    }) as unknown as typeof fetch;
+    try {
+      expect(await runTelemetryPoster()).toBe(0);
+      expect(await runTelemetryPoster("https://plausible.test")).toBe(0);
+      expect(await runTelemetryPoster("https://plausible.test", "not json")).toBe(0);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(called).toBe(false);
+  });
+
+  // The marker is reachable by hand, so it re-checks the switch: an opted-out
+  // machine cannot be made to emit an event by invoking the hidden subcommand.
+  test("sends nothing when telemetry is disabled", async () => {
+    process.env.CC_ANALYZER_TELEMETRY = "0";
+    let called = false;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("", { status: 202 });
+    }) as unknown as typeof fetch;
+    try {
+      const body = JSON.stringify(buildEventBody("stats"));
+      expect(await runTelemetryPoster("https://plausible.test", body)).toBe(0);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(called).toBe(false);
   });
 });
 

@@ -26,6 +26,8 @@ import {
 import {
   flushTelemetry,
   maybeShowFirstRunNotice,
+  POSTER_COMMAND,
+  runTelemetryPoster,
   setTelemetryEnabled,
   telemetryStatus,
   trackCommand,
@@ -512,6 +514,11 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdTelemetry(positional[0]);
     case "cost-basis":
       return cmdCostBasis(positional[0]);
+    // Hidden re-entry point: the detached child that delivers one telemetry
+    // event after its parent has exited. Reads argv directly (the payload is
+    // JSON, not a flag) and prints nothing. Never itself tracked.
+    case POSTER_COMMAND:
+      return await runTelemetryPoster(rest[0], rest[1]);
     case undefined: {
       const { runTui } = await import("../tui/run.tsx");
       return await runTui();
