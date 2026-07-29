@@ -49,6 +49,8 @@ function seed(dir: string): void {
   write(join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "toolkit" }));
   write(join(plugin, "skills", "deploy", "SKILL.md"), "# deploy\n");
   write(join(plugin, "agents", "shipper.md"), "# shipper\n");
+  // A plugin's own MCP servers live in a root .mcp.json, not the user's config.
+  write(join(plugin, ".mcp.json"), JSON.stringify({ mcpServers: { deployer: { command: "d" } } }));
   // Malformed plugin config must be skipped, not thrown on.
   write(join(dir, "plugins", "config.json"), "{ not json");
 
@@ -85,7 +87,44 @@ describe("scanInventory", () => {
       { name: "reviewer", source: "user" },
       { name: "shipper", source: "plugin:toolkit" },
     ]);
-    expect(inv.plugins).toEqual([{ name: "toolkit", skills: ["deploy"], agents: ["shipper"] }]);
+    expect(inv.plugins).toEqual([
+      { name: "toolkit", skills: ["deploy"], agents: ["shipper"], mcpServers: ["deployer"] },
+    ]);
+    // A plugin's servers are recorded against the plugin, never merged into the
+    // user-configured server list.
+    expect(inv.mcpServers.map((s) => s.name)).not.toContain("deployer");
+  });
+
+  test("reads plugin MCP servers declared in the manifest, inline or by path", () => {
+    const dir = fakeClaudeDir();
+    const inline = join(dir, "plugins", "inline");
+    write(
+      join(inline, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "inline", mcpServers: { alpha: {} } }),
+    );
+    const pointed = join(dir, "plugins", "pointed");
+    write(
+      join(pointed, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "pointed", mcpServers: "servers.json" }),
+    );
+    write(join(pointed, "servers.json"), JSON.stringify({ mcpServers: { beta: {} } }));
+    // A dir only counts as a plugin when it declares itself or ships content.
+    write(join(inline, "commands", "go.md"), "# go\n");
+    write(join(pointed, "commands", "go.md"), "# go\n");
+
+    const plugins = scanInventory().plugins;
+    expect(plugins.find((p) => p.name === "inline")?.mcpServers).toEqual(["alpha"]);
+    expect(plugins.find((p) => p.name === "pointed")?.mcpServers).toEqual(["beta"]);
+  });
+
+  test("an unreadable plugin MCP declaration yields no servers instead of throwing", () => {
+    const dir = fakeClaudeDir();
+    const plugin = join(dir, "plugins", "broken");
+    write(join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "broken" }));
+    write(join(plugin, ".mcp.json"), "{{ not json");
+    expect(scanInventory().plugins).toEqual([
+      { name: "broken", skills: [], agents: [], mcpServers: [] },
+    ]);
   });
 
   test("merges MCP servers from settings.json and the sibling config file", () => {

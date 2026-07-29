@@ -35,11 +35,20 @@ export interface McpServerEntry {
   projects: number;
 }
 
-/** An installed plugin and the skills/agents it ships, when discoverable. */
+/**
+ * An installed plugin and the skills/agents/MCP servers it ships, when
+ * discoverable. `mcpServers` holds the server *names* the plugin declares (its
+ * own `.mcp.json`, or a `mcpServers` field in its manifest). They are
+ * deliberately **not** folded into `SetupInventory.mcpServers`, which describes
+ * what the *user* configured: a plugin's servers only exist while the plugin is
+ * enabled, and merging them would silently change the `unused-mcp-server`
+ * findings and the inventory counts.
+ */
 export interface PluginEntry {
   name: string;
   skills: string[];
   agents: string[];
+  mcpServers: string[];
 }
 
 /** A settings.json hook event carrying at least one hook. */
@@ -98,6 +107,7 @@ export type SetupAuditCode =
   | "unused-skill"
   | "unused-agent"
   | "unused-mcp-server"
+  | "unused-plugin"
   | "error-prone-skill"
   | "stale-skill"
   | "missing-but-used";
@@ -117,9 +127,42 @@ export interface SetupAuditFinding {
 export interface SetupAudit {
   inventory: SetupInventory;
   counts: SetupInventoryCounts;
+  /** Per-plugin usage rollup, most expensive first (`buildPluginUsage`). */
+  plugins: PluginUsageRow[];
   findings: SetupAuditFinding[];
   /** The day (YYYY-MM-DD) staleness was measured against. */
   today: string;
+}
+
+/**
+ * What one installed plugin actually did, rolled up from its shipped
+ * components. Costs are the same **turn-scoped** attribution the per-skill rows
+ * carry, so `SKILL_COST_CAVEAT` applies verbatim wherever this renders.
+ */
+export interface PluginUsageRow {
+  plugin: string;
+  skillsShipped: number;
+  skillsUsed: number;
+  agentsShipped: number;
+  agentsUsed: number;
+  /** MCP servers the plugin declares, and how many were observed in tool calls. */
+  mcpServers: number;
+  mcpServersUsed: number;
+  /**
+   * Skill invocations across its skills. Both observed name forms of one skill
+   * (bare `fmt` and qualified `toolkit:fmt`) are distinct rows in the index —
+   * they are summed here, so one plugin skill logged under both forms
+   * contributes both counts to a single plugin row.
+   */
+  invocations: number;
+  /** Σ sessions across its subagents — an upper bound, since one session can
+   *  dispatch two of them and the rollup only carries per-name counts. */
+  agentSessions: number;
+  /** Σ over its skills of the turn-scoped attribution (turns and their cost). */
+  attributedTurns: number;
+  attributedCost: number;
+  /** Latest day (YYYY-MM-DD) any of its skills ran, or null if never/undated. */
+  lastUsed: string | null;
 }
 
 /**
@@ -231,6 +274,8 @@ interface SkillMatch {
   invocations: number;
   errors: number;
   lastUsed: string | null;
+  attributedTurns: number;
+  attributedCost: number;
 }
 
 function matchSkill(item: InventoryItem, rows: SkillUsageRow[]): SkillMatch {
@@ -242,6 +287,8 @@ function matchSkill(item: InventoryItem, rows: SkillUsageRow[]): SkillMatch {
       (latest, r) => (r.lastUsed && (!latest || r.lastUsed > latest) ? r.lastUsed : latest),
       null,
     ),
+    attributedTurns: hits.reduce((sum, r) => sum + r.attributedTurns, 0),
+    attributedCost: hits.reduce((sum, r) => sum + r.attributedCost, 0),
   };
 }
 
@@ -249,6 +296,118 @@ function namesLine(names: string[], limit = 5): string {
   const shown = names.slice(0, limit).join(", ");
   const extra = names.length - limit;
   return extra > 0 ? `${shown}, and ${extra} more` : shown;
+}
+
+/* ——— Per-plugin rollup ———————————————————————————————————————————————— */
+
+/**
+ * Roll observed usage and turn-scoped cost up to the plugin level.
+ *
+ * The per-skill/per-agent rollups answer "which skill is expensive?"; this one
+ * answers "what is this plugin doing for me, and what does it cost?". It reuses
+ * the *same* loose name matching as the findings above (`matchesInstalled`), so
+ * a plugin skill counts whether it was invoked qualified (`toolkit:deploy`) or
+ * bare (`deploy`) — and when the index holds both forms as separate rows, both
+ * are summed into the one plugin row.
+ *
+ * Costs are turn-scoped attribution summed across the plugin's skills, so they
+ * inherit `SKILL_COST_CAVEAT` (a turn invoking several skills counts its full
+ * cost toward each). Sorted most expensive first, then by invocations.
+ */
+export function buildPluginUsage(inventory: SetupInventory, usage: SetupUsage): PluginUsageRow[] {
+  const usedServers = observedMcpServers(usage.tools);
+
+  const rows = inventory.plugins.map((plugin) => {
+    const source = `plugin:${plugin.name}` as const;
+
+    let invocations = 0;
+    let skillsUsed = 0;
+    let attributedTurns = 0;
+    let attributedCost = 0;
+    let lastUsed: string | null = null;
+    for (const name of plugin.skills) {
+      const match = matchSkill({ name, source }, usage.skills);
+      invocations += match.invocations;
+      attributedTurns += match.attributedTurns;
+      attributedCost += match.attributedCost;
+      if (match.invocations > 0) skillsUsed += 1;
+      if (match.lastUsed && (!lastUsed || match.lastUsed > lastUsed)) lastUsed = match.lastUsed;
+    }
+
+    let agentsUsed = 0;
+    let agentSessions = 0;
+    for (const name of plugin.agents) {
+      const hits = usage.subagents.filter((row) => matchesInstalled(row.name, { name, source }));
+      if (hits.length > 0) agentsUsed += 1;
+      agentSessions += hits.reduce((sum, r) => sum + r.sessions, 0);
+    }
+
+    const mcpServersUsed = plugin.mcpServers.filter((name) =>
+      usedServers.has(name.toLowerCase()),
+    ).length;
+
+    return {
+      plugin: plugin.name,
+      skillsShipped: plugin.skills.length,
+      skillsUsed,
+      agentsShipped: plugin.agents.length,
+      agentsUsed,
+      mcpServers: plugin.mcpServers.length,
+      mcpServersUsed,
+      invocations,
+      agentSessions,
+      attributedTurns,
+      attributedCost,
+      lastUsed,
+    };
+  });
+
+  return rows.sort(
+    (a, b) =>
+      b.attributedCost - a.attributedCost ||
+      b.invocations - a.invocations ||
+      a.plugin.localeCompare(b.plugin),
+  );
+}
+
+/**
+ * Plugins whose every discoverable component went unused. A plugin with nothing
+ * discoverable (no skills, no agents, no servers — e.g. one known only by name
+ * from the plugin config, or a commands-only plugin) is *not* included: "all
+ * zero of its components are unused" is vacuously true and would be a false
+ * accusation, and this module prefers false negatives.
+ */
+function deadPlugins(rows: PluginUsageRow[]): Map<string, PluginUsageRow> {
+  const dead = new Map<string, PluginUsageRow>();
+  for (const row of rows) {
+    const ships = row.skillsShipped + row.agentsShipped + row.mcpServers;
+    const used = row.invocations + row.agentSessions + row.mcpServersUsed;
+    if (ships > 0 && used === 0) dead.set(row.plugin, row);
+  }
+  return dead;
+}
+
+function observedMcpServers(tools: ToolUsageRow[]): Set<string> {
+  return new Set(
+    tools.flatMap((row) => {
+      const server = mcpServerFromTool(row.tool);
+      return server ? [server.toLowerCase()] : [];
+    }),
+  );
+}
+
+function shipsLine(row: PluginUsageRow): string {
+  const parts: string[] = [];
+  if (row.skillsShipped > 0) {
+    parts.push(`${row.skillsShipped} ${row.skillsShipped === 1 ? "skill" : "skills"}`);
+  }
+  if (row.agentsShipped > 0) {
+    parts.push(`${row.agentsShipped} ${row.agentsShipped === 1 ? "subagent" : "subagents"}`);
+  }
+  if (row.mcpServers > 0) {
+    parts.push(`${row.mcpServers} MCP ${row.mcpServers === 1 ? "server" : "servers"}`);
+  }
+  return parts.join(", ");
 }
 
 /**
@@ -263,11 +422,21 @@ export function buildSetupAudit(
   today: string,
 ): SetupAudit {
   const findings: SetupAuditFinding[] = [];
+  const plugins = buildPluginUsage(inventory, usage);
+  // One finding per dead plugin, not one per component: a plugin whose every
+  // component is unused reports `unused-plugin`, and its skills/agents skip
+  // their own `unused-skill`/`unused-agent` findings below.
+  const dead = deadPlugins(plugins);
+  const isDead = (item: InventoryItem): boolean => {
+    const plugin = sourcePlugin(item.source);
+    return plugin !== null && dead.has(plugin);
+  };
 
   for (const skill of inventory.skills) {
     const match = matchSkill(skill, usage.skills);
 
     if (match.invocations === 0) {
+      if (isDead(skill)) continue;
       findings.push({
         code: "unused-skill",
         severity: "info",
@@ -309,7 +478,7 @@ export function buildSetupAudit(
 
   for (const agent of inventory.agents) {
     const used = usage.subagents.some((row) => matchesInstalled(row.name, agent));
-    if (used) continue;
+    if (used || isDead(agent)) continue;
     findings.push({
       code: "unused-agent",
       severity: "info",
@@ -321,12 +490,19 @@ export function buildSetupAudit(
     });
   }
 
-  const usedServers = new Set(
-    usage.tools.flatMap((row) => {
-      const server = mcpServerFromTool(row.tool);
-      return server ? [server.toLowerCase()] : [];
-    }),
-  );
+  for (const row of dead.values()) {
+    findings.push({
+      code: "unused-plugin",
+      severity: "info",
+      title: `Plugin "${row.plugin}" appears unused`,
+      evidence: `It ships ${shipsLine(row)}; none of that appears in the indexed sessions.`,
+      action:
+        "Uninstall it if you have forgotten it — a plugin's skills and MCP schemas ride along in context whether or not you use them.",
+      subject: row.plugin,
+    });
+  }
+
+  const usedServers = observedMcpServers(usage.tools);
   for (const server of inventory.mcpServers) {
     if (usedServers.has(server.name.toLowerCase())) continue;
     const scope =
@@ -387,5 +563,5 @@ export function buildSetupAudit(
   const rank = (f: SetupAuditFinding): number => (f.severity === "warning" ? 0 : 1);
   findings.sort((a, b) => rank(a) - rank(b));
 
-  return { inventory, counts: inventoryCounts(inventory), findings, today };
+  return { inventory, counts: inventoryCounts(inventory), plugins, findings, today };
 }

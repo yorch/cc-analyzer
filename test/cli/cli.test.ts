@@ -325,6 +325,43 @@ describe("CLI dispatch & exit codes", () => {
     }
   });
 
+  test("audit rolls installed plugins up into a Plugins table and the JSON", async () => {
+    const plugin = join(tmpDir, "claude", "plugins", "toolkit");
+    mkdirSync(join(plugin, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(plugin, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "toolkit" }),
+    );
+    mkdirSync(join(plugin, "skills", "deploy"), { recursive: true });
+    writeFileSync(join(plugin, "skills", "deploy", "SKILL.md"), "# deploy\n");
+    try {
+      expect((await run(["index"])).code).toBe(0);
+
+      const human = await run(["audit"]);
+      expect(human.code, human.stderr).toBe(0);
+      expect(human.stdout).toContain("▸ Plugins");
+      expect(human.stdout).toContain("toolkit");
+      // The turn-$ column carries the shared skill-cost caveat.
+      expect(human.stdout).toContain("Turn-scoped cost is the cost of the turns");
+
+      const parsed = JSON.parse((await run(["audit", "--json"])).stdout) as {
+        plugins: { plugin: string; skillsShipped: number; skillsUsed: number }[];
+        findings: { code: string; subject: string }[];
+      };
+      expect(parsed.plugins).toHaveLength(1);
+      expect(parsed.plugins[0]).toMatchObject({
+        plugin: "toolkit",
+        skillsShipped: 1,
+        skillsUsed: 0,
+      });
+      // One finding for the dead plugin, not one per shipped component.
+      expect(parsed.findings.filter((f) => f.code === "unused-skill")).toEqual([]);
+      expect(parsed.findings.map((f) => f.code)).toContain("unused-plugin");
+    } finally {
+      rmSync(join(tmpDir, "claude", "plugins"), { recursive: true, force: true });
+    }
+  });
+
   test("insights renders ranked portfolio findings, and --json is clean", async () => {
     expect((await run(["index"])).code).toBe(0);
 

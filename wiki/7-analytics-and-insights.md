@@ -177,7 +177,10 @@ reads the configured Claude dir — `settings.json` (permission rule counts, hoo
 events, a pinned `model`, any `mcpServers`), `skills/<name>/SKILL.md`,
 `agents/<name>.md`, a best-effort walk of `plugins/` (a dir counts as a plugin
 when it declares `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`,
-and the plugin's own skills and agents are recorded with it) — plus the sibling
+and the plugin's own skills, agents, and MCP servers are recorded with it — the
+servers come from the plugin's own `.mcp.json` or an `mcpServers` field in its
+manifest, inline or by path, and are deliberately *not* folded into the
+user-configured server list) — plus the sibling
 `<claudeDir>.json`, whose top-level `mcpServers` are global and whose
 `projects.<path>.mcpServers` are project-scoped. Every read is wrapped: a missing
 dir, an unfamiliar layout, or malformed JSON is skipped silently, because this is
@@ -197,6 +200,7 @@ plus the `subject` the finding is about), warnings first:
 | `error-prone-skill` | warning | Error rate ≥ 25% over ≥ 5 invocations. One in four failing is past flaky; the floor of five keeps a single bad run out of two from being called error-prone. |
 | `unused-skill` | info | An installed skill with zero matching invocations; the evidence names the install source (user dir or plugin). |
 | `unused-agent` | info | An installed subagent never named by a `Task`/`Agent` call. |
+| `unused-plugin` | info | An installed plugin where *nothing* it ships was ever used — no skill invocation, no subagent session, no MCP tool call. Fires once for the plugin instead of one finding per dead component, and suppresses its components' own `unused-skill`/`unused-agent` findings. A plugin with nothing discoverable (known only by name, or commands-only) never fires it: "all zero components unused" is vacuously true. Worded "appears unused" because the matching is loose. |
 | `stale-skill` | info | Previously used, but last used ≥ 30 days before `today` — one month covers a normal work cycle, and anything shorter would flag genuinely monthly skills. |
 | `missing-but-used` | info | Skills or subagents observed in sessions but absent from the inventory, aggregated into one finding per kind. Suppressed entirely when there is no Claude dir to compare against. |
 
@@ -205,6 +209,22 @@ Name matching is deliberately loose. A plugin skill may be invoked qualified
 observed name matches either the fully qualified form or the bare name after the
 last `:`. A loose match yields a false negative — the audit stays quiet — which
 is strictly better than accusing a daily-driver skill of being unused.
+
+`buildPluginUsage(inventory, usage)` rolls that same matching up one level, from
+per-skill to per-plugin, answering "what is this plugin doing for me, and what
+does it cost?". Each `PluginUsageRow` carries how many of the plugin's shipped
+skills, subagents, and MCP servers were used, its total skill invocations, the
+sessions its subagents ran in, the turn-scoped `attributedTurns`/`attributedCost`
+summed over its skills, and the latest day any of them ran. Rows sort by
+attributed cost, then invocations. Because one plugin skill can appear in the
+index under two names — bare `fmt` and qualified `toolkit:fmt` are distinct rows
+— both are summed into the single plugin row rather than counted as two skills.
+The costs are the same turn-scoped attribution the per-skill table uses, so
+`SKILL_COST_CAVEAT` is printed wherever the rollup renders. The rollup rides on
+`SetupAudit.plugins`, so `cc-analyzer audit` (a Plugins table, and `plugins` in
+`--json`), `GET /api/audit`, and the web Tools → Setup section all read the same
+numbers. Subagent sessions are an upper bound: the rollup only has per-name
+session counts, so one session dispatching two of a plugin's agents counts twice.
 
 The whole result is machine-local and historical: the index can cover sessions
 that predate the current setup, and project-scoped skills, subagents, and MCP

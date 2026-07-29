@@ -287,8 +287,13 @@ used. It reports an inventory summary and findings such as an **unused MCP
 server** (a warning: its tool schemas are re-sent to the model every turn, so an
 unused one is pure context tax), an **unused skill or subagent**, an
 **error-prone skill** (≥25% errors over ≥5 invocations), a **stale skill**
-(unused for 30+ days), and skills or subagents that sessions used but that are
-no longer installed. The scan is read-only and tolerant: a missing or malformed
+(unused for 30+ days), an **unused plugin** (nothing it ships — skills,
+subagents, or MCP servers — was ever used; reported once for the plugin rather
+than once per dead component), and skills or subagents that sessions used but
+that are no longer installed. When you have plugins installed it also prints a
+**Plugins** table: per plugin, how many of its skills and subagents you actually
+use, its invocation count, the turn-scoped dollars attributed to its skills, and
+when it last ran — so you can see what each plugin is doing for you. The scan is read-only and tolerant: a missing or malformed
 config file is skipped, never fatal. Findings are machine-local and historical —
 the index can cover sessions that predate the current setup, and project-scoped
 skills, subagents, and MCP servers live outside the Claude config dir — so treat

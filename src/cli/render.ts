@@ -294,6 +294,27 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
     ),
   );
 
+  // Per-plugin rollup: what each installed plugin actually did. Only worth a
+  // table when at least one plugin is installed.
+  if (audit.plugins.length > 0) {
+    lines.push(`\n${section("Plugins", options)}`);
+    lines.push(
+      table(
+        ["plugin", "skills", "subagents", "invocations", "turn $", "last used"],
+        audit.plugins.map((p) => [
+          truncate(p.plugin, 28),
+          `${p.skillsUsed}/${p.skillsShipped}`,
+          `${p.agentsUsed}/${p.agentsShipped}`,
+          formatCount(p.invocations),
+          formatUSD(p.attributedCost),
+          p.lastUsed ?? "—",
+        ]),
+        { align: ["left", "right", "right", "right", "right", "left"] },
+      ),
+    );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
+  }
+
   lines.push(`\n${section("Findings", options)}`);
   if (audit.findings.length === 0) {
     lines.push(

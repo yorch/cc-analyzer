@@ -105,6 +105,7 @@ function auditWith(findings: Partial<SetupAuditFinding>[]): SetupAudit {
       permissionDeny: 0,
       permissionAsk: 0,
     },
+    plugins: [],
     findings: findings.map((f) => ({
       code: "unused-mcp-server",
       severity: "warning",

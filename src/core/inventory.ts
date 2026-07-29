@@ -194,6 +194,30 @@ function looksLikePlugin(dir: string): boolean {
   );
 }
 
+/**
+ * MCP server names a plugin declares. Two layouts are in the wild and both are
+ * best-effort: a `.mcp.json` at the plugin root (`{ "mcpServers": { … } }`, the
+ * same shape as the project-level file), and an `mcpServers` field in the
+ * manifest — either the inline object or a path to a JSON file relative to the
+ * plugin dir. Anything else (or unreadable JSON) yields no names rather than an
+ * error; a missed server is a false negative, which is the safe direction here.
+ */
+function pluginMcpServers(dir: string, manifest: Json | undefined): string[] {
+  const names = new Set<string>(objectKeys(readJson(join(dir, ".mcp.json")), "mcpServers"));
+
+  const declared = manifest?.mcpServers;
+  if (isObject(declared)) {
+    for (const name of Object.keys(declared)) names.add(name);
+  } else if (typeof declared === "string" && declared.trim().length > 0) {
+    const file = readJson(join(dir, declared.trim()));
+    // The pointed-at file may nest under `mcpServers` or be the map itself.
+    const keys = objectKeys(file, "mcpServers");
+    for (const name of keys.length > 0 ? keys : Object.keys(file ?? {})) names.add(name);
+  }
+
+  return [...names].sort();
+}
+
 function pluginAt(dir: string): PluginEntry {
   const manifest = readJson(join(dir, ".claude-plugin", "plugin.json"));
   const declared = typeof manifest?.name === "string" ? manifest.name.trim() : "";
@@ -201,6 +225,7 @@ function pluginAt(dir: string): PluginEntry {
     name: declared.length > 0 ? declared : basename(dir),
     skills: skillNames(dir).sort(),
     agents: agentNames(dir).sort(),
+    mcpServers: pluginMcpServers(dir, manifest),
   };
 }
 
@@ -246,7 +271,7 @@ function scanPlugins(root: string): PluginEntry[] {
             ? Object.keys(entry)
             : [key];
         for (const name of names) {
-          if (!found.has(name)) found.set(name, { name, skills: [], agents: [] });
+          if (!found.has(name)) found.set(name, { name, skills: [], agents: [], mcpServers: [] });
         }
       }
     }

@@ -221,7 +221,10 @@ Claude dir for `settings.json` (permission rule counts, hook events, a pinned
 `model`, any `mcpServers`), `skills/<name>/SKILL.md`, `agents/<name>.md`, and a
 best-effort walk of `plugins/` — a dir counts as a plugin when it declares
 `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`, and its own
-skills/agents are recorded against it — plus the sibling `<claudeDir>.json`
+skills/agents/MCP servers are recorded against it (servers from the plugin's own
+`.mcp.json` or a manifest `mcpServers` field, inline or by path; they stay on
+`PluginEntry` and are never merged into `SetupInventory.mcpServers`, which
+describes what the *user* configured) — plus the sibling `<claudeDir>.json`
 (computed as `claudeDir() + ".json"` so `CC_ANALYZER_CLAUDE_DIR` keeps tests
 hermetic): its top-level `mcpServers` are global, `projects.<path>.mcpServers`
 are project-scoped. Every read is wrapped; a missing dir or malformed JSON
@@ -232,11 +235,25 @@ usage, today)` — `today` is a parameter, never `Date.now()` — folds
 `analyticsRollup`'s `skills`/`subagents`/`tools` against the inventory and
 emits `session-diagnostics`-shaped findings: `unused-mcp-server` and
 `error-prone-skill` (≥25% errors over ≥5 invocations) as warnings,
-`unused-skill`, `unused-agent`, `stale-skill` (≥30 days), and
+`unused-skill`, `unused-agent`, `unused-plugin`, `stale-skill` (≥30 days), and
 `missing-but-used` as info. Name matching is deliberately loose — a plugin
 skill may be invoked qualified (`plugin:skill`) or bare, so either form counts
 as used; a loose match is a false negative, which beats accusing a
-daily-driver skill of being unused. The audit is machine-local and historical
+daily-driver skill of being unused. **Usage also rolls up per plugin**:
+`buildPluginUsage(inventory, usage)` folds the *same* loose matching one level
+higher into a `PluginUsageRow` per plugin (skills/agents/MCP servers used of
+shipped, invocations, subagent sessions — an upper bound, since the rollup only
+has per-name counts — turn-scoped `attributedTurns`/`attributedCost` summed over
+its skills, and the latest last-used day), sorted by cost then invocations. One
+plugin skill can be two index rows (bare `fmt` and qualified `toolkit:fmt`);
+both sum into the one plugin row. The cost is the per-skill turn-scoped
+attribution, so `SKILL_COST_CAVEAT` prints at every render site. It rides on
+`SetupAudit.plugins`, which is why the CLI `--json` and `/api/audit` carry it for
+free. `unused-plugin` fires when *nothing* a plugin ships was used, and it
+**replaces** its components' `unused-skill`/`unused-agent` findings (one finding
+per dead plugin, not N — the skill/agent loops skip items whose source plugin is
+dead); a plugin with nothing discoverable never fires it, since "all zero
+components unused" is vacuously true. The audit is machine-local and historical
 (sessions can predate the setup; project-scoped items live outside the config
 dir) — that caveat ships as the exported `SETUP_AUDIT_CAVEAT` so every render
 site prints the same words. Surfaces: `cc-analyzer audit` (+`--json`,

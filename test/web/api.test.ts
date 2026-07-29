@@ -365,9 +365,12 @@ describe("web API", () => {
     const body = (await res.json()) as {
       inventory: { present: boolean; skills: { name: string }[] };
       counts: { skills: number; mcpServers: number };
+      plugins: unknown[];
       findings: { code: string; subject: string; severity: string }[];
     };
     expect(body.inventory.present).toBe(true);
+    // No plugins installed in the fixture setup, but the field always ships.
+    expect(body.plugins).toEqual([]);
     expect(body.counts).toMatchObject({ skills: 1, mcpServers: 1 });
     // The fixture session uses neither the installed skill nor the MCP server.
     expect(body.findings.map((f) => f.code)).toEqual(["unused-mcp-server", "unused-skill"]);
