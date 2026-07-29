@@ -38,6 +38,10 @@ export default defineConfig({
   ],
 
   markdown: {
+    theme: {
+      light: "github-light-high-contrast",
+      dark: "github-dark",
+    },
     config(md) {
       const fallback = md.renderer.rules.fence?.bind(md.renderer.rules);
       md.renderer.rules.fence = (tokens, index, options, env, self) => {
