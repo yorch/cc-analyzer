@@ -267,7 +267,7 @@ h1.name,
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.25);
 }
 .vp-doc [class*="language-"] > span.lang {
-  color: var(--cc-ink-3);
+  color: var(--cc-ink-2);
   font-family: var(--cc-mono);
   text-transform: lowercase;
 }
@@ -293,6 +293,34 @@ h1.name,
   background: none;
   padding: 0;
   color: var(--cc-ink);
+}
+
+/* VitePress visually hides these controls by default. Restore a strong,
+   theme-native focus treatment and keep copy discoverable on touch screens. */
+.vp-code-group .tabs input:focus-visible + label,
+.vp-doc [class*="language-"] > button.copy:focus-visible {
+  outline: 2px solid var(--cc-amber-hi);
+  outline-offset: 2px;
+}
+.vp-code-group .tabs input:focus-visible + label {
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--cc-bg);
+}
+.vp-doc [class*="language-"] > button.copy:focus-visible {
+  opacity: 1;
+}
+.vp-code-group .tabs label,
+.vp-doc [class*="language-"] > button.copy {
+  touch-action: manipulation;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .vp-doc [class*="language-"] > button.copy {
+    opacity: 0.78;
+  }
+  .vp-doc [class*="language-"] > span.lang {
+    right: 62px;
+  }
 }
 
 /* ---- Nav + sidebar chrome ------------------------------------------------ */
