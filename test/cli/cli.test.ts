@@ -146,6 +146,73 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.code).toBe(1);
   });
 
+  test("doctor reports a structurally complete session as healthy", async () => {
+    const path = join(tmpDir, "healthy.jsonl");
+    writeFileSync(
+      path,
+      [
+        {
+          type: "user",
+          uuid: "u1",
+          parentUuid: null,
+          sessionId: "healthy",
+          message: { role: "user", content: "hello" },
+        },
+        {
+          type: "assistant",
+          uuid: "a1",
+          parentUuid: "u1",
+          sessionId: "healthy",
+          message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+        },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n"),
+    );
+    try {
+      const r = await run(["doctor", path]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).toContain("Session health: healthy");
+      expect(r.stdout).toContain("0 parse errors · 0 unknown events");
+      expect(r.stdout).toContain("No structural health problems were detected");
+      expect(r.stdout).toContain("Read-only check");
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  test("doctor --json reports findings and exits 1 for a damaged session", async () => {
+    const path = join(tmpDir, "damaged.jsonl");
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        parentUuid: null,
+        sessionId: "broken",
+        message: { role: "user", content: "unfinished" },
+      })}\nnot-json\n`,
+    );
+    try {
+      const r = await run(["doctor", path, "--json"]);
+      expect(r.code).toBe(1);
+      const report = JSON.parse(r.stdout) as {
+        status: string;
+        findings: Array<{ code: string }>;
+      };
+      expect(report.status).toBe("damaged");
+      expect(report.findings.map((finding) => finding.code)).toContain("unparseable-lines");
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  test("doctor without a session exits 2", async () => {
+    const r = await run(["doctor"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("missing <id|path>");
+  });
+
   test("projects lists the fixture projects", async () => {
     const r = await run(["projects"]);
     expect(r.code).toBe(0);

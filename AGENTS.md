@@ -103,9 +103,10 @@ reset). Both feed the `edit-test-thrash`/`repeated-file-reads` session
 diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. The two
 **correction** signals (schema v13) measure prompts redoing the previous turn:
 *interruption turns* (`interruptionTurns`: turns whose events carry the literal
-machine-written `[Request interrupted by user…]` marker, `isInterruptionMarker()`
-in `events.ts` — once per turn, main chain only; it rides on the message text or
-inside a `tool_result` block's content (string or nested blocks) when the
+machine-written `[Request interrupted by user…]` marker, centralized by
+`isInterruptionEvent()` / `isInterruptionMarker()` in `events.ts` — once per
+turn, main chain only; it rides on the message text or inside a `tool_result`
+block's content (string or nested blocks) when the
 interrupt cancelled a pending tool call, and that carrier is *not* a real prompt
 so it marks the turn already open; a plain marker message IS a real prompt, so
 turn segmentation is unchanged and it usually opens its own short turn) and
@@ -448,6 +449,18 @@ the web Tools → Environment section, and the `parse-coverage-drop` portfolio
 rule (warning when the newest version's `unparsedShare ≥ 1%` over ≥ 10k lines —
 judged per version, not per rolling window, because a format change ships with
 a release).
+
+**Session health is evidence-backed and read-only.** `session-health.ts` consumes
+the parser's events, `ParseError[]`, and `ParseCoverage` to classify one source as
+`healthy`, `warning`, or `damaged`. `cc-analyzer doctor <id|path>` exposes that
+report without requiring the index. Missing parent/tool records and events kept
+only through tolerant unknown parsing remain warnings because continuation files
+and newer Claude Code schemas can be valid; skipped JSONL records, duplicate UUIDs,
+and mixed session IDs are errors. Every finding carries observed evidence and
+remediation guidance, and no check mutates `~/.claude`.
+The analyzer and health engine share `isInterruptionEvent()`: analyzer metrics
+attribute the marker to a turn, while doctor reports a session that ends after
+the marker separately from an unanswered human prompt.
 
 **Tool results resolve in one pass.** `analyzeSession`/`analyzeSessionStream` don't
 pre-scan for `tool_result`s. A `tool_use` registers in a small `pending` map and is

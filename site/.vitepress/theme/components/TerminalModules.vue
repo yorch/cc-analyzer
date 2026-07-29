@@ -34,8 +34,8 @@ const modules = [
   },
   {
     id: "private",
-    title: "Read-only & private",
-    body: "Never writes to ~/.claude. Its own state (pricing cache, index) lives under ~/.config/cc-analyzer. Your session data stays on your machine.",
+    title: "Read-only health checks & privacy",
+    body: "cc-analyzer doctor checks parser integrity, conversation links, tool results, and interrupted prompts without touching the source. It never writes to ~/.claude, and your session data stays local.",
     icon: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2.5"/>',
   },
 ];

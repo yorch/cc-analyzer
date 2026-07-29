@@ -23,16 +23,19 @@ flowchart LR
     runCommand -->|projects| cmdProjects
     runCommand -->|sessions| cmdSessions
     runCommand -->|analyze| cmdAnalyze
+    runCommand -->|doctor| cmdDoctor
     runCommand -->|index| cmdIndex
     runCommand -->|stats| cmdStats
     runCommand -->|audit| cmdAudit
+    runCommand -->|insights| cmdInsights
+    runCommand -->|report| cmdReport
     runCommand -->|serve| runServe[runServe dynamic import]
     runCommand -->|pricing update| cmdPricingUpdate
     runCommand -->|update| cmdUpdate
     runCommand -->|no command| runTui[runTui dynamic import]
     main -.NOTIFY_COMMANDS.-> maybeNotifyUpdate
 
-    cmdProjects & cmdSessions & cmdAnalyze & cmdIndex & cmdStats & cmdAudit & cmdPricingUpdate & cmdUpdate --> core[src/core]
+    cmdProjects & cmdSessions & cmdAnalyze & cmdDoctor & cmdIndex & cmdStats & cmdAudit & cmdInsights & cmdReport & cmdPricingUpdate & cmdUpdate --> core[src/core]
     cmdAnalyze --> render[render.ts]
     cmdStats --> render
     cmdAudit --> render
@@ -72,6 +75,22 @@ Sources: [src/cli/index.ts:L43-L77](https://github.com/yorch/cc-analyzer/blob/51
 `cmdAnalyze` resolves a session reference through `resolveSessionPath`, which treats an argument ending in `.jsonl` or containing `/` as a filesystem path and otherwise looks the id up across all projects via `findSessionById` ([src/cli/index.ts#L79-L95](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L79-L95)). It then runs the core pipeline directly: `parseSessionFile` yields events and parse errors, `loadPricing` supplies the pricing table, and `analyzeSession` produces the `SessionAnalysis` ([src/cli/index.ts#L96-L98](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L96-L98)). With `--json` it prints `JSON.stringify` of the analysis augmented with a `parseErrors` count; otherwise it prints `renderSessionSummary(analysis, { color })` and, when anything was not fully understood, closes with the session's parse coverage — unparseable lines skipped, lines kept as tolerant "unknown" events, and the total line count. Color is enabled only when stdout is a terminal and `NO_COLOR` is absent, so redirected reports remain plain text. Unlike `stats` and `serve`, `analyze` reads and parses the raw `.jsonl` file and needs no index.
 
 Sources: [src/cli/index.ts:L79-L107](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/cli/index.ts#L79-L107)
+
+### `doctor` — structural session health
+
+`doctor <id|path>` resolves and parses a source session exactly like `analyze`, but
+does not load pricing or require the SQLite index. It passes both usable events and
+recorded parser errors to the shared `inspectSessionHealth` core function, then
+prints a `healthy`, `warning`, or `damaged` report. Findings cover parser integrity,
+session and event identity, local parent/leaf continuity, tool-call/result pairing,
+unanswered human prompts, and sessions ending after Claude Code's machine-written
+interruption marker. Each includes observed evidence and a next action; the command
+never repairs or rewrites the source.
+
+Human and `--json` output are both scriptable: exit code `0` means healthy, `1`
+means findings exist or the source was not found, and `2` means invalid usage.
+Warnings deliberately include conditions that may be valid in continuation files,
+so the report does not overstate local evidence as corruption.
 
 ### `index` — build the SQLite cache
 
@@ -147,7 +166,7 @@ Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/
 
 | Flag | Command | Purpose |
 | ---- | ------- | ------- |
-| `--json` | `analyze`, `stats`, `audit`, `insights`, `report` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
+| `--json` | `analyze`, `doctor`, `stats`, `audit`, `insights`, `report` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
 | `--md` | `report` | Print the digest as paste-ready markdown on stdout (no file is written); mutually exclusive with `--json` (both ⇒ exit `2`) |
 | `--week <day>` | `report` | Report the ISO week containing that `YYYY-MM-DD` day instead of the last complete week; a missing or flag-shaped value exits `2` |
 | `--rebuild` | `index` | Force a full re-scan instead of the incremental pass |

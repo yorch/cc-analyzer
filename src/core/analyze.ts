@@ -2,7 +2,7 @@ import {
   type AssistantEvent,
   type ContentBlock,
   isCorrectionPrompt,
-  isInterruptionMarker,
+  isInterruptionEvent,
   isRealPrompt,
   type ParseCoverage,
   type SessionEvent,
@@ -397,39 +397,6 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
-/**
- * Does this user-message content carry an interruption marker?
- *
- * Three shapes are in the wild, all machine-written by Claude Code:
- * - the whole message is the marker string;
- * - a `text` block holds it (the common "Esc during a response" case);
- * - a `tool_result` block holds it, when the interrupt cancelled a pending tool
- *   call. Per the API content-block schema a tool_result's `content` is either a
- *   plain string or an array of blocks, so both are scanned. Such an event is
- *   *not* a real prompt (tool_result blocks only), so it opens no turn — it
- *   marks whichever turn is currently open, like the other shapes.
- */
-function hasInterruptionContent(content: UserEvent["message"]["content"]): boolean {
-  if (typeof content === "string") return isInterruptionMarker(content);
-  return content.some((b) => {
-    const block = b as ContentBlock & { text?: string; content?: unknown };
-    if (block.type === "text") return isInterruptionMarker(block.text ?? "");
-    if (block.type === "tool_result") return hasInterruptionResult(block.content);
-    return false;
-  });
-}
-
-/** A `tool_result` block's content: a string, or nested content blocks. */
-function hasInterruptionResult(content: unknown): boolean {
-  if (typeof content === "string") return isInterruptionMarker(content);
-  if (!Array.isArray(content)) return false;
-  return content.some((b) => {
-    if (typeof b === "string") return isInterruptionMarker(b);
-    const block = b as { type?: string; text?: string };
-    return block?.type === "text" && isInterruptionMarker(block.text ?? "");
-  });
-}
-
 function stringField(input: unknown, key: string): string | undefined {
   if (typeof input === "object" && input !== null && key in input) {
     const v = (input as Record<string, unknown>)[key];
@@ -799,7 +766,7 @@ class SessionAnalyzer {
       // marker message is itself a real prompt (turn segmentation unchanged),
       // so it usually marks the short turn it just opened above; one seen
       // before any real prompt belongs to no turn and is dropped.
-      if (event.isSidechain !== true && this.hasTurn && hasInterruptionContent(content)) {
+      if (event.isSidechain !== true && this.hasTurn && isInterruptionEvent(event)) {
         this.currentTurnInterrupted = true;
       }
       this.touchTime(event.timestamp);

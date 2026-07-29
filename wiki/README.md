@@ -11,7 +11,7 @@
 
 ## Overview
 
-`cc-analyzer` is a read-only command-line tool that browses and analyzes [Claude Code](https://claude.com/claude-code) sessions stored under `~/.claude`. Claude Code writes each session as a JSONL transcript that records token usage per API call but not cost; `cc-analyzer` derives cost from those token counts and a per-model pricing table, then surfaces cost, tokens, tools, skills, subagents, a per-turn (and per-step) breakdown, and a growing suite of portfolio analytics — cache-efficiency insights, time-series trends, tool/skill usage, and session/project charts ([README.md](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md)).
+`cc-analyzer` is a read-only command-line tool that browses, analyzes, and checks the structural health of [Claude Code](https://claude.com/claude-code) sessions stored under `~/.claude`. Claude Code writes each session as a JSONL transcript that records token usage per API call but not cost; `cc-analyzer` derives cost from those token counts and a per-model pricing table, then surfaces cost, tokens, tools, skills, subagents, a per-turn (and per-step) breakdown, evidence-backed recoverability findings, and a growing suite of portfolio analytics — cache-efficiency insights, time-series trends, tool/skill usage, and session/project charts ([README.md](https://github.com/yorch/cc-analyzer/blob/51ccd4e/README.md)).
 
 The tool never writes to `~/.claude`. Its own state — a pricing cache, a SQLite session index, and an update-check cache — lives under `~/.config/cc-analyzer/`. It is written in TypeScript, runs on Bun, and ships as a single self-contained binary bundling the CLI, the terminal UI, the web API, and the web front end.
 
