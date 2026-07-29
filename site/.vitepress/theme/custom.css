@@ -291,7 +291,7 @@ h1.name,
 .vp-doc [class*="language-"] code {
   border: 0;
   background: none;
-  padding: 0;
+  padding: 0 24px;
   color: var(--cc-ink);
 }
 
