@@ -152,7 +152,9 @@ export interface PluginUsageRow {
    * Skill invocations across its skills. Both observed name forms of one skill
    * (bare `fmt` and qualified `toolkit:fmt`) are distinct rows in the index —
    * they are summed here, so one plugin skill logged under both forms
-   * contributes both counts to a single plugin row.
+   * contributes both counts to a single plugin row. A bare row is only summed
+   * when it unambiguously belongs to this plugin (see the attribution rule
+   * above `buildPluginUsage`), so `skillsUsed` can be non-zero while this is 0.
    */
   invocations: number;
   /** Σ sessions across its subagents — an upper bound, since one session can
@@ -298,17 +300,82 @@ function namesLine(names: string[], limit = 5): string {
   return extra > 0 ? `${shown}, and ${extra} more` : shown;
 }
 
-/* ——— Per-plugin rollup ———————————————————————————————————————————————— */
+/* ——— Per-plugin rollup ————————————————————————————————————————————————
+ *
+ * ATTRIBUTION RULE — usedness is loose, numbers are strict.
+ *
+ * The findings above only ever ask "was this used?", so they can afford the
+ * loose matching described under "Name matching": a false match keeps us quiet.
+ * A plugin row also carries *numbers* (invocations, turns, dollars), and there
+ * a loose match is not silence but invention — the same bare `deploy` row would
+ * be summed into every plugin shipping a `deploy` skill, and a user's own
+ * `deploy` skill would have its cost claimed by a plugin. So the two questions
+ * are answered differently:
+ *
+ * 1. Qualified row (`toolkit:deploy`) — the prefix names its owner. Counts for
+ *    that plugin, both as usedness and in every number.
+ * 2. Bare row (`deploy`), shipped by exactly one plugin and by no user-installed
+ *    skill of that name — unambiguous. Counts fully, same as (1).
+ * 3. Bare row shipped by two or more plugins — one of them really did run it,
+ *    so it counts toward *usedness* for each candidate (accusing them all of
+ *    being unused would be a guaranteed false accusation) but toward the
+ *    numbers of none.
+ * 4. Bare row whose name is also a user-installed skill — the user's own skill
+ *    shadows the plugin's copy for bare invocations, so the plugin gets neither
+ *    the numbers nor the usedness, and stays eligible for `unused-plugin`.
+ */
+
+/** How much of one observed row belongs to a given plugin's shipped item. */
+type Attribution = "owned" | "shared" | "none";
+
+/** Bare names of the items the user installed themselves (not via a plugin). */
+function userBareNames(items: InventoryItem[]): Set<string> {
+  return new Set(items.filter((i) => sourcePlugin(i.source) === null).map((i) => bareName(i.name)));
+}
+
+/** Which plugins ship each bare name — the ambiguity check behind rule (3). */
+function ownersByBareName(
+  plugins: PluginEntry[],
+  ships: (plugin: PluginEntry) => string[],
+): Map<string, Set<string>> {
+  const owners = new Map<string, Set<string>>();
+  for (const plugin of plugins) {
+    for (const name of ships(plugin)) {
+      const key = bareName(name);
+      const set = owners.get(key) ?? new Set<string>();
+      set.add(plugin.name);
+      owners.set(key, set);
+    }
+  }
+  return owners;
+}
+
+function attribute(
+  observed: string,
+  plugin: string,
+  item: string,
+  owners: Map<string, Set<string>>,
+  userNames: Set<string>,
+): Attribution {
+  const n = norm(observed);
+  const cut = n.lastIndexOf(":");
+  const bare = bareName(item);
+  // (1) Qualified: nothing to guess — it names its plugin or it is not ours.
+  if (cut !== -1)
+    return n.slice(0, cut) === norm(plugin) && n.slice(cut + 1) === bare ? "owned" : "none";
+  if (n !== bare) return "none";
+  if (userNames.has(n)) return "none"; // (4) shadowed by the user's own item
+  return (owners.get(n)?.size ?? 0) === 1 ? "owned" : "shared"; // (2) / (3)
+}
 
 /**
  * Roll observed usage and turn-scoped cost up to the plugin level.
  *
  * The per-skill/per-agent rollups answer "which skill is expensive?"; this one
- * answers "what is this plugin doing for me, and what does it cost?". It reuses
- * the *same* loose name matching as the findings above (`matchesInstalled`), so
- * a plugin skill counts whether it was invoked qualified (`toolkit:deploy`) or
- * bare (`deploy`) — and when the index holds both forms as separate rows, both
- * are summed into the one plugin row.
+ * answers "what is this plugin doing for me, and what does it cost?" — under
+ * the attribution rule documented above, so a plugin skill invoked under both
+ * its qualified and its bare name still sums into one row while an ambiguous
+ * bare name inflates nobody's numbers.
  *
  * Costs are turn-scoped attribution summed across the plugin's skills, so they
  * inherit `SKILL_COST_CAVEAT` (a turn invoking several skills counts its full
@@ -316,30 +383,43 @@ function namesLine(names: string[], limit = 5): string {
  */
 export function buildPluginUsage(inventory: SetupInventory, usage: SetupUsage): PluginUsageRow[] {
   const usedServers = observedMcpServers(usage.tools);
+  const userSkills = userBareNames(inventory.skills);
+  const userAgents = userBareNames(inventory.agents);
+  const skillOwners = ownersByBareName(inventory.plugins, (p) => p.skills);
+  const agentOwners = ownersByBareName(inventory.plugins, (p) => p.agents);
 
   const rows = inventory.plugins.map((plugin) => {
-    const source = `plugin:${plugin.name}` as const;
-
     let invocations = 0;
     let skillsUsed = 0;
     let attributedTurns = 0;
     let attributedCost = 0;
     let lastUsed: string | null = null;
     for (const name of plugin.skills) {
-      const match = matchSkill({ name, source }, usage.skills);
-      invocations += match.invocations;
-      attributedTurns += match.attributedTurns;
-      attributedCost += match.attributedCost;
-      if (match.invocations > 0) skillsUsed += 1;
-      if (match.lastUsed && (!lastUsed || match.lastUsed > lastUsed)) lastUsed = match.lastUsed;
+      let used = false;
+      for (const row of usage.skills) {
+        const claim = attribute(row.name, plugin.name, name, skillOwners, userSkills);
+        if (claim === "none") continue;
+        if (row.invocations > 0) used = true;
+        if (claim !== "owned") continue;
+        invocations += row.invocations;
+        attributedTurns += row.attributedTurns;
+        attributedCost += row.attributedCost;
+        if (row.lastUsed && (!lastUsed || row.lastUsed > lastUsed)) lastUsed = row.lastUsed;
+      }
+      if (used) skillsUsed += 1;
     }
 
     let agentsUsed = 0;
     let agentSessions = 0;
     for (const name of plugin.agents) {
-      const hits = usage.subagents.filter((row) => matchesInstalled(row.name, { name, source }));
-      if (hits.length > 0) agentsUsed += 1;
-      agentSessions += hits.reduce((sum, r) => sum + r.sessions, 0);
+      let used = false;
+      for (const row of usage.subagents) {
+        const claim = attribute(row.name, plugin.name, name, agentOwners, userAgents);
+        if (claim === "none") continue;
+        used = true;
+        if (claim === "owned") agentSessions += row.sessions;
+      }
+      if (used) agentsUsed += 1;
     }
 
     const mcpServersUsed = plugin.mcpServers.filter((name) =>
@@ -381,7 +461,13 @@ function deadPlugins(rows: PluginUsageRow[]): Map<string, PluginUsageRow> {
   const dead = new Map<string, PluginUsageRow>();
   for (const row of rows) {
     const ships = row.skillsShipped + row.agentsShipped + row.mcpServers;
-    const used = row.invocations + row.agentSessions + row.mcpServersUsed;
+    // `skillsUsed`/`agentsUsed` are the *usedness* counters, and they can be
+    // non-zero while the numbers are zero: an ambiguous bare name (rule 3
+    // above) counts as used for every candidate plugin but is summed into
+    // none. Including them here keeps the loose, false-negative-safe answer to
+    // "was anything of this plugin used?" out of the strict number path.
+    const used =
+      row.invocations + row.agentSessions + row.mcpServersUsed + row.skillsUsed + row.agentsUsed;
     if (ships > 0 && used === 0) dead.set(row.plugin, row);
   }
   return dead;

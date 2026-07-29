@@ -131,6 +131,22 @@ describe("buildWeeklyDigest period scoping", () => {
     expect(models).toEqual([{ model: "claude-opus-4-7", calls: 5, cost: 12, priorCost: 10 }]);
   });
 
+  test("keeps a model that ran only in the prior period", () => {
+    insertSession(db, {
+      path: "prior-haiku",
+      day: "2026-07-01",
+      cost_total: 40,
+      models_json: JSON.stringify({ "claude-haiku-4-5": { apiCalls: 7, cost: { total: 40 } } }),
+    });
+    // Dropping a model is exactly the change a digest exists to show, so it
+    // still gets a row — no calls this week, its prior cost intact — and ranks
+    // by whichever side is larger.
+    expect(build().models).toEqual([
+      { model: "claude-haiku-4-5", calls: 0, cost: 0, priorCost: 40 },
+      { model: "claude-opus-4-7", calls: 5, cost: 12, priorCost: 10 },
+    ]);
+  });
+
   test("folds skills period-filtered, not portfolio-wide", () => {
     const d = build();
     // The week's own attribution only: 2 turns / $3 — not the $90 prior week

@@ -117,6 +117,48 @@ describe("scanInventory", () => {
     expect(plugins.find((p) => p.name === "pointed")?.mcpServers).toEqual(["beta"]);
   });
 
+  test("a pointed-at file's mcpServers key is authoritative, even when empty", () => {
+    // Regression: an `{ $schema, mcpServers: {} }` file used to fall back to
+    // the file's own top-level keys, inventing servers named "$schema" and
+    // "mcpServers" — and with them a false unused-plugin accusation.
+    const dir = fakeClaudeDir();
+    const plugin = join(dir, "plugins", "schema-only");
+    write(
+      join(plugin, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "schema-only", mcpServers: "servers.json" }),
+    );
+    write(
+      join(plugin, "servers.json"),
+      JSON.stringify({ $schema: "https://example.com/s.json", mcpServers: {} }),
+    );
+    expect(scanInventory().plugins[0]?.mcpServers).toEqual([]);
+  });
+
+  test("a pointed-at file that IS the server map still works", () => {
+    const dir = fakeClaudeDir();
+    const plugin = join(dir, "plugins", "bare-map");
+    write(
+      join(plugin, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "bare-map", mcpServers: "servers.json" }),
+    );
+    write(
+      join(plugin, "servers.json"),
+      JSON.stringify({ alpha: { command: "a" }, beta: { url: "http://b" } }),
+    );
+    expect(scanInventory().plugins[0]?.mcpServers).toEqual(["alpha", "beta"]);
+  });
+
+  test("a pointed-at file that looks like anything else yields no servers", () => {
+    const dir = fakeClaudeDir();
+    const plugin = join(dir, "plugins", "junk");
+    write(
+      join(plugin, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "junk", mcpServers: "servers.json" }),
+    );
+    write(join(plugin, "servers.json"), JSON.stringify({ version: 2, notes: "wip" }));
+    expect(scanInventory().plugins[0]?.mcpServers).toEqual([]);
+  });
+
   test("an unreadable plugin MCP declaration yields no servers instead of throwing", () => {
     const dir = fakeClaudeDir();
     const plugin = join(dir, "plugins", "broken");

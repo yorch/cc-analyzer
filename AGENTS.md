@@ -104,15 +104,23 @@ diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. The two
 **correction** signals (schema v13) measure prompts redoing the previous turn:
 *interruption turns* (`interruptionTurns`: turns whose events carry the literal
 machine-written `[Request interrupted by user…]` marker, `isInterruptionMarker()`
-in `events.ts` — once per turn, main chain only; the marker message is itself a
-real prompt, so turn segmentation is unchanged and it usually opens its own
-short turn) and *correction turns* (`correctionTurns`: real prompts opening
-with a correction marker per `isCorrectionPrompt()` in `events.ts` — a
-conservative **English-only keyword heuristic** over the first ~120 chars,
-phrase-start anchored, never matching `<`/`/`/`[`-leading prompts; false
-negatives are fine, false positives are the failure mode; like
+in `events.ts` — once per turn, main chain only; it rides on the message text or
+inside a `tool_result` block's content (string or nested blocks) when the
+interrupt cancelled a pending tool call, and that carrier is *not* a real prompt
+so it marks the turn already open; a plain marker message IS a real prompt, so
+turn segmentation is unchanged and it usually opens its own short turn) and
+*correction turns* (`correctionTurns`: real prompts opening with a correction
+marker per `isCorrectionPrompt()` in `events.ts` — a conservative
+**English-only keyword heuristic** over the first ~120 chars in **two tiers**:
+outcome/miscommunication phrases ("that's not what i", "still broken", "same
+error") match anywhere in that window, imperative/ambiguous ones ("no, …",
+"undo that", "go back to", "try again", "not working") must open the prompt,
+because each is also ordinary product language mid-sentence ("add a back button
+so users can go back to the list view"); never matching `<`/`/`/`[`-leading
+prompts; false negatives are fine, false positives are the failure mode; like
 `testFailStreak` the phrase list is baked into the index and needs a reindex to
-evolve). The two counters are independent — an interrupted turn followed by a
+evolve — a pinning test over the exported `CORRECTION_PATTERN_SOURCE` fails on
+any edit and says to bump `SCHEMA_VERSION`). The two counters are independent — an interrupted turn followed by a
 "no, …" prompt counts once in each. Share = `correctionTurns / totals.turns`
 (turns counts exactly the real prompts); every render site prints the shared
 `CORRECTION_CAVEAT` from `stats-types.ts`. They feed the `correction-loop`
@@ -240,14 +248,22 @@ emits `session-diagnostics`-shaped findings: `unused-mcp-server` and
 skill may be invoked qualified (`plugin:skill`) or bare, so either form counts
 as used; a loose match is a false negative, which beats accusing a
 daily-driver skill of being unused. **Usage also rolls up per plugin**:
-`buildPluginUsage(inventory, usage)` folds the *same* loose matching one level
-higher into a `PluginUsageRow` per plugin (skills/agents/MCP servers used of
-shipped, invocations, subagent sessions — an upper bound, since the rollup only
-has per-name counts — turn-scoped `attributedTurns`/`attributedCost` summed over
-its skills, and the latest last-used day), sorted by cost then invocations. One
-plugin skill can be two index rows (bare `fmt` and qualified `toolkit:fmt`);
-both sum into the one plugin row. The cost is the per-skill turn-scoped
-attribution, so `SKILL_COST_CAVEAT` prints at every render site. It rides on
+`buildPluginUsage(inventory, usage)` folds one level higher into a
+`PluginUsageRow` per plugin (skills/agents/MCP servers used of shipped,
+invocations, subagent sessions — an upper bound, since the rollup only has
+per-name counts — turn-scoped `attributedTurns`/`attributedCost` summed over its
+skills, and the latest last-used day), sorted by cost then invocations. Here
+**usedness stays loose but the numbers are attributed strictly**, because a
+loose match on a number is not silence but invention: a qualified row
+(`toolkit:fmt`) counts for the plugin it names; a bare row (`fmt`) counts only
+when unambiguous — no user-installed skill of that name AND exactly one plugin
+shipping it — which is what still sums one skill's two index rows (bare `fmt` +
+qualified `toolkit:fmt`) into one plugin row; a bare name shared by two plugins
+counts as *used* for each (one of them did run it) but is summed into neither;
+and a bare name that is also a user skill is shadowed, counting for no plugin at
+all, so that plugin stays eligible for `unused-plugin`. `deadPlugins` keys off
+the loose usedness side. The cost is the per-skill turn-scoped attribution, so
+`SKILL_COST_CAVEAT` prints at every render site. It rides on
 `SetupAudit.plugins`, which is why the CLI `--json` and `/api/audit` carry it for
 free. `unused-plugin` fires when *nothing* a plugin ships was used, and it
 **replaces** its components' `unused-skill`/`unused-agent` findings (one finding
@@ -300,12 +316,18 @@ Deltas are null-safe (`share: null` against an empty prior period → render
 `buildPortfolioDiagnostics` over the whole portfolio (current state), because one
 week rarely fires those conservative thresholds honestly — every render site says
 so. A zero-session period is **not** an error; an empty index is (exit 1, like
-`stats`/`insights`). Surfaces: `cc-analyzer report [--week] [--md] [--json]`
+`stats`/`insights`). The model table is the **union** of both periods' models
+(ranked by the larger of the two costs), so a model the user stopped running —
+the whole point of a weekly read — still shows, with 0 calls against its prior
+cost. Surfaces: `cc-analyzer report [--week] [--md|--json]`
 (`renderWeeklyDigest`; `--md` prints `buildDigestMarkdown` to stdout — no file
-writes), `GET /api/report?week=` (memoized on `fingerprint():week:today` like
-`/api/audit`, with `costBasis` merged fresh per request as `/api/stats` does),
-and the web Dashboard's Weekly digest card, whose "copy as markdown" button
-imports the same bun-free `buildDigestMarkdown` instead of adding an endpoint.
+writes; `--md` and `--json` are mutually exclusive and a valueless/flag-shaped
+`--week` both exit 2), `GET /api/report?week=` (memoized on
+`fingerprint():week:today` like `/api/audit`, with `costBasis` merged fresh per
+request as `/api/stats` does), and the web Dashboard's Weekly digest card, whose
+"copy as markdown" button imports the same bun-free `buildDigestMarkdown`
+instead of adding an endpoint (it refetches when the cost basis flips, and
+prints `CORRECTION_CAVEAT` beside its correction share).
 No TUI screen — the CLI and web cover it, and TUI Trends already charts burn.
 `SKILL_COST_CAVEAT`, `CORRECTION_CAVEAT`, and the cost-framing sentence print
 verbatim wherever their numbers appear.

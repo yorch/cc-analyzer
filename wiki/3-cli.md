@@ -101,9 +101,9 @@ Sources: [src/cli/index.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/sr
 
 ### `report` — weekly digest
 
-`cmdReport` is the push-shaped counterpart of `stats`/`insights`: one week of usage, what changed against the week before, and what to fix. It refuses on an empty index (exit `1`, like `stats`, `audit`, and `insights`), loads the cached pricing table (the what-if signal inside the insight snapshot needs rates), and assembles the digest with `buildWeeklyDigest(db, pricing, { week })` (`src/core/digest-signals.ts`). Output has three modes: the default terminal report through `renderWeeklyDigest`, `--md` for paste-ready markdown through the bun-free `buildDigestMarkdown` (printed to stdout — the command never writes files, so users redirect), and `--json` for the raw `WeeklyDigest`.
+`cmdReport` is the push-shaped counterpart of `stats`/`insights`: one week of usage, what changed against the week before, and what to fix. It refuses on an empty index (exit `1`, like `stats`, `audit`, and `insights`), loads the cached pricing table (the what-if signal inside the insight snapshot needs rates), and assembles the digest with `buildWeeklyDigest(db, pricing, { week })` (`src/core/digest-signals.ts`). Output has three modes: the default terminal report through `renderWeeklyDigest`, `--md` for paste-ready markdown through the bun-free `buildDigestMarkdown` (printed to stdout — the command never writes files, so users redirect), and `--json` for the raw `WeeklyDigest`. `--md` and `--json` are **mutually exclusive** — asking for both would silently print only one, so it exits `2`.
 
-The period defaults to the **last complete ISO week** (Monday–Sunday) relative to today, because a half-finished current week would always read as a decline against a full prior week. `--week YYYY-MM-DD` (also accepted as `--week=YYYY-MM-DD`) reports the week containing any given day; a malformed value exits `2`. A period with **zero sessions is not an error** — the report says "No sessions in this period", still shows the prior period's totals, and still renders the insight snapshot.
+The period defaults to the **last complete ISO week** (Monday–Sunday) relative to today, because a half-finished current week would always read as a decline against a full prior week. `--week YYYY-MM-DD` (also accepted as `--week=YYYY-MM-DD`) reports the week containing any given day; a malformed value exits `2`, and so does a `--week` with no value — a following token that starts with `-` is the next flag, not the week (`report --week --md` is an error, not a silently ignored `--md`). A period with **zero sessions is not an error** — the report says "No sessions in this period", still shows the prior period's totals, and still renders the insight snapshot.
 
 Two scoping rules travel with the output. Period metrics are **session-day-scoped**: a session counts toward the period containing its start day (the index's `day` column) with all of its cost, so a session running past midnight is not split. The insight snapshot is **not** period-scoped — it is `buildPortfolioDiagnostics` over the whole indexed portfolio, i.e. current state — and both facts are printed in the report itself, not only documented here.
 
@@ -148,8 +148,8 @@ Sources: [src/cli/render.ts:L19-L315](https://github.com/yorch/cc-analyzer/blob/
 | Flag | Command | Purpose |
 | ---- | ------- | ------- |
 | `--json` | `analyze`, `stats`, `audit`, `insights`, `report` | Emit the raw core object as JSON instead of a rendered report; also suppresses the passive update notice |
-| `--md` | `report` | Print the digest as paste-ready markdown on stdout (no file is written) |
-| `--week <day>` | `report` | Report the ISO week containing that `YYYY-MM-DD` day instead of the last complete week |
+| `--md` | `report` | Print the digest as paste-ready markdown on stdout (no file is written); mutually exclusive with `--json` (both ⇒ exit `2`) |
+| `--week <day>` | `report` | Report the ISO week containing that `YYYY-MM-DD` day instead of the last complete week; a missing or flag-shaped value exits `2` |
 | `--rebuild` | `index` | Force a full re-scan instead of the incremental pass |
 | `--check` | `index` | Compare source metadata with the cache without changing it; exit non-zero when stale |
 | `--port=<n>` | `serve` | Bind the web server to an integer port 1–65535; invalid values exit with code `2` |

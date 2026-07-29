@@ -210,15 +210,36 @@ observed name matches either the fully qualified form or the bare name after the
 last `:`. A loose match yields a false negative — the audit stays quiet — which
 is strictly better than accusing a daily-driver skill of being unused.
 
-`buildPluginUsage(inventory, usage)` rolls that same matching up one level, from
-per-skill to per-plugin, answering "what is this plugin doing for me, and what
-does it cost?". Each `PluginUsageRow` carries how many of the plugin's shipped
-skills, subagents, and MCP servers were used, its total skill invocations, the
-sessions its subagents ran in, the turn-scoped `attributedTurns`/`attributedCost`
-summed over its skills, and the latest day any of them ran. Rows sort by
-attributed cost, then invocations. Because one plugin skill can appear in the
-index under two names — bare `fmt` and qualified `toolkit:fmt` are distinct rows
-— both are summed into the single plugin row rather than counted as two skills.
+`buildPluginUsage(inventory, usage)` rolls that up one level, from per-skill to
+per-plugin, answering "what is this plugin doing for me, and what does it
+cost?". Each `PluginUsageRow` carries how many of the plugin's shipped skills,
+subagents, and MCP servers were used, its total skill invocations, the sessions
+its subagents ran in, the turn-scoped `attributedTurns`/`attributedCost` summed
+over its skills, and the latest day any of them ran. Rows sort by attributed
+cost, then invocations.
+
+A plugin row carries *numbers*, not just a yes/no, and there loose matching
+would not be silence but invention — the same bare `fmt` row would be summed
+into every plugin shipping an `fmt` skill, and a user's own `fmt` skill would
+have its dollars claimed by a plugin. So usedness stays loose while the numbers
+are attributed strictly:
+
+1. a **qualified** row (`toolkit:fmt`) names its owner — it counts for that
+   plugin, both as usedness and in every number;
+2. a **bare** row shipped by exactly one plugin and by no user-installed skill
+   of that name is unambiguous, and counts the same way (this is what keeps a
+   plugin skill logged under both name forms summed into one row);
+3. a **bare** row shipped by two or more plugins counts toward *usedness* for
+   each candidate — one of them really did run it, and accusing them all of
+   being unused would be a guaranteed false accusation — but toward the numbers
+   of none;
+4. a **bare** row whose name is also a user-installed skill is shadowed: a bare
+   invocation resolves to the user's own skill, so the plugin gets neither the
+   numbers nor the usedness and stays eligible for `unused-plugin`.
+
+Subagent sessions follow the same rule. `unused-plugin` keys off the loose
+usedness side, so case (3) suppresses it while case (4) does not.
+
 The costs are the same turn-scoped attribution the per-skill table uses, so
 `SKILL_COST_CAVEAT` is printed wherever the rollup renders. The rollup rides on
 `SetupAudit.plugins`, so `cc-analyzer audit` (a Plugins table, and `plugins` in

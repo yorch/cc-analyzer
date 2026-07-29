@@ -209,13 +209,37 @@ function pluginMcpServers(dir: string, manifest: Json | undefined): string[] {
   if (isObject(declared)) {
     for (const name of Object.keys(declared)) names.add(name);
   } else if (typeof declared === "string" && declared.trim().length > 0) {
-    const file = readJson(join(dir, declared.trim()));
-    // The pointed-at file may nest under `mcpServers` or be the map itself.
-    const keys = objectKeys(file, "mcpServers");
-    for (const name of keys.length > 0 ? keys : Object.keys(file ?? {})) names.add(name);
+    for (const name of serverMapKeys(readJson(join(dir, declared.trim())))) names.add(name);
   }
 
   return [...names].sort();
+}
+
+/**
+ * Server names out of a pointed-at JSON file, which may either nest them under
+ * `mcpServers` or be the bare map itself.
+ *
+ * An `mcpServers` key is authoritative: its keys are the servers, even when it
+ * is empty. Only a file *without* that key is read as a bare map, and then only
+ * when it actually looks like one — every value an object carrying a
+ * `command`/`url`/`type`, and no `$schema`-style metadata key. Otherwise a
+ * `{ "$schema": …, "mcpServers": {} }` file would invent servers called
+ * "$schema" and "mcpServers", and the plugin would then be accused of shipping
+ * unused ones.
+ */
+function serverMapKeys(file: Json | undefined): string[] {
+  if (!file) return [];
+  if ("mcpServers" in file) return objectKeys(file, "mcpServers");
+  const entries = Object.entries(file);
+  const looksLikeServers =
+    entries.length > 0 &&
+    entries.every(
+      ([key, value]) =>
+        !key.startsWith("$") &&
+        isObject(value) &&
+        ("command" in value || "url" in value || "type" in value),
+    );
+  return looksLikeServers ? entries.map(([key]) => key) : [];
 }
 
 function pluginAt(dir: string): PluginEntry {

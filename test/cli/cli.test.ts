@@ -424,6 +424,26 @@ describe("CLI dispatch & exit codes", () => {
     expect(r.stdout).toContain("◆ cc-analyzer · weekly digest");
   });
 
+  test("report rejects a --week with no value instead of eating the next flag", async () => {
+    for (const args of [
+      ["report", "--week"],
+      ["report", "--week", "--md"],
+      ["report", "--week="],
+    ]) {
+      const r = await run(args);
+      expect(r.code, r.stderr).toBe(2);
+      expect(r.stderr).toContain("missing value for --week");
+      expect(r.stdout).toBe("");
+    }
+  });
+
+  test("report refuses --md and --json together", async () => {
+    const r = await run(["report", "--md", "--json"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("cannot be used together");
+    expect(r.stdout).toBe("");
+  });
+
   test("report rejects a malformed --week and refuses an empty index", async () => {
     const bad = await run(["report", "--week", "last-monday"]);
     expect(bad.code).toBe(2);

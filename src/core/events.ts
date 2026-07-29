@@ -240,49 +240,83 @@ export function isInterruptionMarker(text: string): boolean {
  * a phrase buried deep in a long prompt is context, not how the prompt opens. */
 const CORRECTION_WINDOW = 120;
 
-/**
- * The correction marker families, each anchored to a phrase start (`\b`, or
- * `^` where only the very beginning of the prompt is a signal). Matched
- * against the lowercased leading window. Every group is deliberately narrow:
- * false negatives are fine, false positives are the failure mode to avoid.
+/* ——— Correction markers —————————————————————————————————————————————————
+ * ⚠ These two lists ARE the `correction_turns` index column: `isCorrectionPrompt`
+ * runs at index time and only the verdict is stored, exactly like
+ * `isTestCommand()` behind `test_fail_streak`. Editing a pattern therefore
+ * changes what already-indexed rows would have said — bump `SCHEMA_VERSION` in
+ * `db.ts` so the index is rebuilt, or the two heuristics coexist in one table.
+ * The pinning test in `test/core/events.test.ts` fails on any edit here and
+ * repeats that instruction.
+ *
+ * Two tiers, because the phrases differ in how much they mean on their own.
  */
-const CORRECTION_PATTERNS: readonly RegExp[] = [
-  // Leading rejection — only at the very start of the prompt, and "no"/"nope"
-  // only when punctuation follows ("no, the other file"), so prompts like
-  // "no tests needed" or "no worries" never match.
-  /^(?:no|nope)[,.!;:—-]/,
-  /^(?:not that|wrong)\b/,
-  // Explicit undo/redo — verbs need an object ("undo that"), so "undo stack
-  // implementation" as a task never matches.
-  /\b(?:undo|revert) (?:that|this|it|the last)\b/,
-  /\broll (?:that |this |it )?back\b/,
-  /\bgo back to\b/,
-  // Miscommunication — the previous turn solved the wrong problem.
+
+/**
+ * Tier 1 — outcome and miscommunication phrases. These state that the previous
+ * turn went wrong, and they say so specifically enough that position inside the
+ * opening window doesn't change the meaning ("hold on — that's not what I
+ * meant"). Matched anywhere in the window.
+ */
+const CORRECTION_OUTCOME_PATTERNS: readonly RegExp[] = [
   /\bthat'?s not what i\b/,
   /\bnot what i (?:meant|asked|wanted)\b/,
-  /\bi meant\b/,
   /\bi didn'?t mean\b/,
   /\byou misunderstood\b/,
-  // Non-working outcome — the previous turn's work didn't hold up.
-  /\bstill (?:broken|failing|doesn'?t)\b/,
+  /\bstill (?:broken|failing|doesn'?t|not working)\b/,
   /\b(?:didn'?t|doesn'?t) work\b/,
-  /\bnot working\b/,
   /\bsame error\b/,
-  // Re-ask — the user repeats what they already asked for.
-  /\btry (?:that |it |this )?again\b/,
-  /\bdo it again\b/,
-  /\bas i said\b/,
-  /\blike i asked\b/,
 ];
+
+/**
+ * Tier 2 — imperative and ambiguous phrases. Every one of these is also
+ * ordinary product language in the middle of a feature request ("add a back
+ * button so users can go back to the list view", "if the request fails, try
+ * again with exponential backoff", "show a banner when the network is not
+ * working"). They only count as corrections when the prompt *opens* with them,
+ * so they are anchored with `^` — leading whitespace is already trimmed off.
+ */
+const CORRECTION_OPENING_PATTERNS: readonly RegExp[] = [
+  // Leading rejection. "no"/"nope" only when punctuation follows ("no, the
+  // other file"), so "no tests needed" never matches — and the ASCII hyphen is
+  // deliberately NOT in the class, or "No-op the migration" and "no-cache
+  // headers" would read as rejections.
+  /^(?:no|nope)\s*[,.!;:—]/,
+  /^(?:not that|wrong)\b/,
+  // Explicit undo/redo — the verbs still need an object ("undo that"), so
+  // "undo stack implementation" never matches even at a prompt start.
+  /^(?:please )?(?:undo|revert) (?:that|this|it|the last)\b/,
+  /^(?:please )?roll (?:that |this |it )?back\b/,
+  /^go back to\b/,
+  /^i meant\b/,
+  // Non-working outcome, in its ambiguous bare form.
+  /^(?:it'?s |it |that'?s |that )?not working\b/,
+  // Re-ask — the user repeats what they already asked for.
+  /^(?:please )?try (?:that |it |this )?again\b/,
+  /^(?:please )?do it again\b/,
+  /^as i said\b/,
+  /^like i asked\b/,
+];
+
+/**
+ * Every correction pattern's source, outcome tier first — the exact heuristic
+ * baked into the index. Exported only so the pinning test can hash it; see the
+ * warning above before changing anything it covers.
+ */
+export const CORRECTION_PATTERN_SOURCE: readonly string[] = [
+  ...CORRECTION_OUTCOME_PATTERNS,
+  ...CORRECTION_OPENING_PATTERNS,
+].map(String);
 
 /**
  * Does this REAL user prompt open by correcting the previous turn?
  *
  * A conservative, **English-only keyword heuristic** — biased and imperfect by
  * construction. It only inspects the first `CORRECTION_WINDOW` characters
- * (lowercased) and anchors every marker to a phrase start, so "no," opening a
- * prompt is a signal while a "no" buried mid-sentence is not. Slash commands
- * and machine-looking prompts (starting with `<`, `/`, or `[` — XML payloads,
+ * (lowercased) and anchors every marker to a phrase start: outcome phrases may
+ * sit anywhere in that window, ambiguous imperative ones only at the very
+ * start of the prompt (see the two pattern lists). Slash commands and
+ * machine-looking prompts (starting with `<`, `/`, or `[` — XML payloads,
  * commands, bracketed markers like the interruption message) never match.
  * Non-English corrections are missed entirely, and plenty of English ones
  * will be too: prefer missing corrections to inventing them, because the
@@ -293,5 +327,8 @@ export function isCorrectionPrompt(text: string): boolean {
   const first = trimmed[0];
   if (first === "<" || first === "/" || first === "[") return false;
   const head = trimmed.slice(0, CORRECTION_WINDOW).toLowerCase();
-  return CORRECTION_PATTERNS.some((re) => re.test(head));
+  return (
+    CORRECTION_OUTCOME_PATTERNS.some((re) => re.test(head)) ||
+    CORRECTION_OPENING_PATTERNS.some((re) => re.test(head))
+  );
 }

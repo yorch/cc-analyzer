@@ -211,9 +211,12 @@ export interface SessionAnalysis {
    * "…for tool use]") — the user hit Esc on a response or a pending tool call.
    * Counted once per turn, however many markers the turn carries. Main chain
    * only: an interruption inside a subagent transcript belongs to that
-   * subagent's burst, not to the user's dialogue. The marker message itself is
-   * a real prompt under `isRealPrompt` (turn segmentation is unchanged), so it
-   * typically opens — and is counted against — its own short turn; a marker
+   * subagent's burst, not to the user's dialogue. The marker rides on the
+   * message text or, when the interrupt cancelled a pending tool call, inside
+   * a `tool_result` block — that second shape is *not* a real prompt, so it
+   * marks the turn already open instead of opening one. A plain marker message
+   * IS a real prompt under `isRealPrompt` (turn segmentation is unchanged), so
+   * it typically opens — and is counted against — its own short turn; a marker
    * seen before any real prompt belongs to no turn and is not counted, the
    * same rule `turnDepths` applies. Available in aggregate mode.
    */
@@ -394,12 +397,36 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
-/** Does this user-message content carry an interruption marker text block? */
+/**
+ * Does this user-message content carry an interruption marker?
+ *
+ * Three shapes are in the wild, all machine-written by Claude Code:
+ * - the whole message is the marker string;
+ * - a `text` block holds it (the common "Esc during a response" case);
+ * - a `tool_result` block holds it, when the interrupt cancelled a pending tool
+ *   call. Per the API content-block schema a tool_result's `content` is either a
+ *   plain string or an array of blocks, so both are scanned. Such an event is
+ *   *not* a real prompt (tool_result blocks only), so it opens no turn — it
+ *   marks whichever turn is currently open, like the other shapes.
+ */
 function hasInterruptionContent(content: UserEvent["message"]["content"]): boolean {
   if (typeof content === "string") return isInterruptionMarker(content);
   return content.some((b) => {
-    const block = b as ContentBlock & { text?: string };
-    return block.type === "text" && isInterruptionMarker(block.text ?? "");
+    const block = b as ContentBlock & { text?: string; content?: unknown };
+    if (block.type === "text") return isInterruptionMarker(block.text ?? "");
+    if (block.type === "tool_result") return hasInterruptionResult(block.content);
+    return false;
+  });
+}
+
+/** A `tool_result` block's content: a string, or nested content blocks. */
+function hasInterruptionResult(content: unknown): boolean {
+  if (typeof content === "string") return isInterruptionMarker(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((b) => {
+    if (typeof b === "string") return isInterruptionMarker(b);
+    const block = b as { type?: string; text?: string };
+    return block?.type === "text" && isInterruptionMarker(block.text ?? "");
   });
 }
 

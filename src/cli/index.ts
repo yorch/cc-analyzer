@@ -61,7 +61,7 @@ Usage:
                                        Portfolio or current-project analytics (needs an index)
   cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
   cc-analyzer insights [--json]        Ranked, actionable findings across the whole portfolio
-  cc-analyzer report [--week YYYY-MM-DD] [--md] [--json]
+  cc-analyzer report [--week YYYY-MM-DD] [--md|--json]
                                        Weekly digest: last complete week vs the week before
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
@@ -390,7 +390,15 @@ async function cmdInsights(json: boolean): Promise<number> {
  * A period with zero sessions is NOT an error: "you didn't use Claude Code last
  * week" is a legitimate answer, and the prior week still renders.
  */
-async function cmdReport(json: boolean, md: boolean, week: string | undefined): Promise<number> {
+async function cmdReport(
+  json: boolean,
+  md: boolean,
+  week: string | null | undefined,
+): Promise<number> {
+  if (week === null) {
+    console.error("error: missing value for --week (expected a YYYY-MM-DD day inside the week).");
+    return 2;
+  }
   if (week !== undefined && !isDayString(week)) {
     console.error(`error: invalid --week '${week}' (expected a YYYY-MM-DD day inside the week).`);
     return 2;
@@ -417,12 +425,22 @@ async function cmdReport(json: boolean, md: boolean, week: string | undefined): 
   return 0;
 }
 
-/** `--week=YYYY-MM-DD` or `--week YYYY-MM-DD`; "" when the flag has no value. */
-function weekArg(rest: string[]): string | undefined {
+/**
+ * `--week=YYYY-MM-DD` or `--week YYYY-MM-DD`. `undefined` when the flag is
+ * absent, `null` when it is present without a value — nothing follows it, or
+ * the next token is another flag, since `report --week --md` must report a
+ * missing week rather than swallow `--md` as its value.
+ */
+function weekArg(rest: string[]): string | null | undefined {
   const inline = rest.find((a) => a.startsWith("--week="));
-  if (inline) return inline.slice("--week=".length);
+  if (inline) {
+    const value = inline.slice("--week=".length);
+    return value.length > 0 ? value : null;
+  }
   const i = rest.indexOf("--week");
-  return i === -1 ? undefined : (rest[i + 1] ?? "");
+  if (i === -1) return undefined;
+  const next = rest[i + 1];
+  return next !== undefined && !next.startsWith("-") ? next : null;
 }
 
 async function cmdPricingUpdate(): Promise<number> {
@@ -529,8 +547,15 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdAudit(json);
     case "insights":
       return cmdInsights(json);
-    case "report":
-      return cmdReport(json, rest.includes("--md"), weekArg(rest));
+    case "report": {
+      const md = rest.includes("--md");
+      // Two different renderings of the same digest — asking for both hides one.
+      if (md && json) {
+        console.error("error: --md and --json cannot be used together.");
+        return 2;
+      }
+      return cmdReport(json, md, weekArg(rest));
+    }
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

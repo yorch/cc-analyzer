@@ -347,6 +347,110 @@ describe("buildPluginUsage", () => {
     });
   });
 
+  test("a bare row shipped by two plugins inflates neither's numbers", () => {
+    // Only one of them actually ran `fmt`, and the row cannot say which. Both
+    // count it as *used* (calling both unused would be a certain false
+    // accusation), neither claims the invocations or the dollars.
+    const inv = inventory({
+      skills: [
+        { name: "fmt", source: "plugin:toolkit" },
+        { name: "fmt", source: "plugin:tidy" },
+      ],
+      plugins: [
+        plugin({ name: "toolkit", skills: ["fmt"] }),
+        plugin({ name: "tidy", skills: ["fmt"] }),
+      ],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "fmt", invocations: 6, attributedCost: 4 })] }),
+    );
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({ skillsUsed: 1, invocations: 0, attributedCost: 0 });
+      expect(row.lastUsed).toBeNull();
+    }
+    // And neither is accused of being unused.
+    const audit = buildSetupAudit(inv, usage({ skills: [skillRow({ name: "fmt" })] }), TODAY);
+    expect(codes(audit.findings)).toEqual([]);
+  });
+
+  test("a user skill of the same name shadows the plugin's copy", () => {
+    // A bare `fmt` invocation resolves to the user's own skill, so the plugin
+    // claims none of it — and stays eligible for `unused-plugin`.
+    const inv = inventory({
+      skills: [user("fmt"), { name: "fmt", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["fmt"] })],
+    });
+    const observed = usage({
+      skills: [skillRow({ name: "fmt", invocations: 5, attributedTurns: 4, attributedCost: 8 })],
+    });
+    expect(buildPluginUsage(inv, observed)[0]).toMatchObject({
+      plugin: "toolkit",
+      skillsUsed: 0,
+      invocations: 0,
+      attributedTurns: 0,
+      attributedCost: 0,
+    });
+    expect(codes(buildSetupAudit(inv, observed, TODAY).findings)).toEqual(["unused-plugin"]);
+  });
+
+  test("a qualified row always attributes to the plugin it names", () => {
+    const inv = inventory({
+      plugins: [
+        plugin({ name: "toolkit", skills: ["fmt"] }),
+        plugin({ name: "tidy", skills: ["fmt"] }),
+      ],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "toolkit:fmt", invocations: 6, attributedCost: 4 })] }),
+    );
+    expect(rows.find((r) => r.plugin === "toolkit")).toMatchObject({
+      invocations: 6,
+      attributedCost: 4,
+      skillsUsed: 1,
+    });
+    expect(rows.find((r) => r.plugin === "tidy")).toMatchObject({
+      invocations: 0,
+      attributedCost: 0,
+      skillsUsed: 0,
+    });
+  });
+
+  test("an unambiguous bare row attributes in full", () => {
+    const rows = buildPluginUsage(
+      inventory({ plugins: [plugin({ name: "toolkit", skills: ["fmt"] })] }),
+      usage({
+        skills: [skillRow({ name: "fmt", invocations: 6, attributedTurns: 3, attributedCost: 4 })],
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      invocations: 6,
+      attributedTurns: 3,
+      attributedCost: 4,
+      skillsUsed: 1,
+      lastUsed: TODAY,
+    });
+  });
+
+  test("subagent sessions follow the same attribution rule", () => {
+    const inv = inventory({
+      plugins: [
+        plugin({ name: "toolkit", agents: ["shipper"] }),
+        plugin({ name: "tidy", agents: ["shipper"] }),
+      ],
+    });
+    const rows = buildPluginUsage(inv, usage({ subagents: [{ name: "shipper", sessions: 4 }] }));
+    for (const row of rows) expect(row).toMatchObject({ agentsUsed: 1, agentSessions: 0 });
+    const qualified = buildPluginUsage(
+      inv,
+      usage({ subagents: [{ name: "toolkit:shipper", sessions: 4 }] }),
+    );
+    expect(qualified.find((r) => r.plugin === "toolkit")).toMatchObject({ agentSessions: 4 });
+    expect(qualified.find((r) => r.plugin === "tidy")).toMatchObject({ agentSessions: 0 });
+  });
+
   test("sorts by attributed cost, then invocations", () => {
     const inv = inventory({
       plugins: [

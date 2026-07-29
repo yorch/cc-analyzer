@@ -137,7 +137,7 @@ cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
 cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
 cc-analyzer insights [--json]        # ranked, actionable findings across the whole portfolio
-cc-analyzer report [--week YYYY-MM-DD] [--md] [--json]
+cc-analyzer report [--week YYYY-MM-DD] [--md|--json]
                                      # weekly digest: last complete week vs the week before
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
@@ -330,7 +330,8 @@ cache economics, reliability (tool errors, test runs, retries, thrash,
 corrections), the skills that cost the most turn-scoped dollars, and a snapshot
 of the portfolio insights. `--md` writes paste-ready markdown to stdout for
 notes or chat (`cc-analyzer report --md > week.md`); `--json` emits the plain
-object.
+object. They are two renderings of the same digest, so asking for both is an
+error rather than a silent choice.
 
 The default period is the **last complete ISO week** (Monday–Sunday) — a
 half-finished current week would always read as a decline. `--week YYYY-MM-DD`

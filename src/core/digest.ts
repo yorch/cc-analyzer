@@ -111,6 +111,7 @@ export interface DigestProjectRow {
 
 export interface DigestModelRow {
   model: string;
+  /** API calls in the period — 0 for a model only the prior period ran. */
   calls: number;
   cost: number;
   priorCost: number;
@@ -161,7 +162,8 @@ export interface WeeklyDigest {
   headline: DigestHeadline;
   /** Highest-cost projects in the period (≤ 5). */
   projects: DigestProjectRow[];
-  /** Models used in either period, costliest in the period first. */
+  /** Models used in EITHER period, ranked by the larger of the two costs — so
+   *  a model dropped this week still appears, with 0 calls. */
   models: DigestModelRow[];
   cache: DigestCache;
   reliability: DigestReliability;

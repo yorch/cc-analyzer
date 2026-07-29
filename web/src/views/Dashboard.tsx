@@ -3,6 +3,7 @@ import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildDigestMarkdown,
+  CORRECTION_CAVEAT,
   type CostBasis,
   type CostDistribution,
   costFramingNote,
@@ -17,6 +18,7 @@ import {
   type StatsResponse,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import { copyText } from "../clipboard.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
@@ -151,7 +153,7 @@ export function Dashboard() {
 
       <GlobalSearch />
 
-      <WeeklyDigestCard />
+      <WeeklyDigestCard costBasis={data.costBasis} />
 
       <StatCards data={data} />
 
@@ -335,8 +337,10 @@ export function Dashboard() {
  * `buildDigestMarkdown` the CLI's `report --md` uses — identical output, no
  * extra endpoint. The full report lives in `cc-analyzer report`.
  */
-function WeeklyDigestCard() {
-  const { data, error, loading } = useAsync(() => api.report(), []);
+function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
+  // Refetch when the hero's cost-basis toggle flips: the digest carries the
+  // framing sentence, and the copied markdown must not go out with the old one.
+  const { data, error, loading } = useAsync(() => api.report(), [costBasis]);
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
 
   if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
@@ -345,11 +349,11 @@ function WeeklyDigestCard() {
   const h = data.headline;
   const topProject = data.projects[0];
   const r = data.reliability;
+  // `copyText` feature-detects `navigator.clipboard` (absent outside a secure
+  // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
+  // on the LAN) and reports failure rather than throwing.
   const copy = () => {
-    navigator.clipboard
-      .writeText(buildDigestMarkdown(data))
-      .then(() => setCopied("ok"))
-      .catch(() => setCopied("failed"));
+    void copyText(buildDigestMarkdown(data)).then((ok) => setCopied(ok ? "ok" : "failed"));
   };
 
   return (
@@ -385,6 +389,7 @@ function WeeklyDigestCard() {
           />
         </div>
       )}
+      {!isEmptyPeriod(data) && <p className="muted spark-cap">{CORRECTION_CAVEAT}</p>}
       <div className="digest-actions">
         <button type="button" onClick={copy}>
           Copy as markdown

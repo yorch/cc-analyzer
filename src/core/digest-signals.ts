@@ -146,16 +146,20 @@ export function buildWeeklyDigest(
       delta: digestDelta(r.cost, priorProjects.get(r.projectId) ?? 0),
     }));
 
+  // Union of both periods' models, not just this week's: a model the user
+  // STOPPED running is exactly the change a digest exists to show (it renders
+  // with 0 calls this period against its prior cost). Ranked by whichever side
+  // is larger, so a dropped model sorts by what it used to cost.
   const curModels = periodModels(db, period);
   const prevModels = periodModels(db, prior);
-  const models = [...curModels.entries()]
-    .map(([model, v]) => ({
+  const models = [...new Set([...curModels.keys(), ...prevModels.keys()])]
+    .map((model) => ({
       model,
-      calls: v.calls,
-      cost: v.cost,
+      calls: curModels.get(model)?.calls ?? 0,
+      cost: curModels.get(model)?.cost ?? 0,
       priorCost: prevModels.get(model)?.cost ?? 0,
     }))
-    .sort((a, b) => b.cost - a.cost);
+    .sort((a, b) => Math.max(b.cost, b.priorCost) - Math.max(a.cost, a.priorCost));
 
   // One period-scoped scan for every JSON-blob signal (tools, tests, retries,
   // thrash, corrections, skills) — the same folds the portfolio rollup uses,

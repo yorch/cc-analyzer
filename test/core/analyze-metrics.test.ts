@@ -439,6 +439,71 @@ describe("correction and interruption turns", () => {
     expect(a.totals.turns).toBe(2);
   });
 
+  test("a tool_result carrying the marker interrupts the open turn", () => {
+    // Esc during a pending tool call: the marker is the tool_result's content,
+    // as a plain string.
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: "[Request interrupted by user for tool use]",
+            },
+          ],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    // A tool_result carrier is not a real prompt: no new turn, no split.
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("a tool_result marker nested in content blocks counts too", () => {
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("an ordinary tool_result is not an interruption", () => {
+    const a = analyze([
+      prompt("u1", 0, "run the migration"),
+      assistant({ id: "1", min: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(2),
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "migration applied" }],
+        },
+      },
+    ]);
+    expect(a.interruptionTurns).toBe(0);
+  });
+
   test("counts corrections only on real prompts, and shares a turn denominator", () => {
     const a = analyze([
       prompt("u1", 0, "build the thing"),
