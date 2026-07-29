@@ -400,3 +400,105 @@ describe("turn-scoped skill cost attribution", () => {
     expect(agg.skillTurnCosts.docx?.turns).toBe(2);
   });
 });
+
+describe("correction and interruption turns", () => {
+  const prompt = (
+    uuid: string,
+    min: number,
+    text: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    ...extra,
+    message: { content: text },
+  });
+  const marker = (uuid: string, min: number, blocks = 1, extra: Record<string, unknown> = {}) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    ...extra,
+    message: {
+      content: Array.from({ length: blocks }, () => ({
+        type: "text",
+        text: "[Request interrupted by user]",
+      })),
+    },
+  });
+
+  test("counts an interrupted turn once, however many markers it carries", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      // One user message with two marker blocks: one turn, one interruption.
+      marker("u2", 2, 2),
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    // Turn segmentation is unchanged: the marker is still a real prompt.
+    expect(a.totals.turns).toBe(2);
+  });
+
+  test("counts corrections only on real prompts, and shares a turn denominator", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      prompt("u2", 2, "no, the other module"),
+      // Meta and sidechain copies of the same text are not real prompts.
+      prompt("u3", 3, "no, the other module", { isMeta: true }),
+      prompt("u4", 4, "no, the other module", { isSidechain: true }),
+    ]);
+    expect(a.correctionTurns).toBe(1);
+    expect(a.totals.turns).toBe(2);
+    expect(a.interruptionTurns).toBe(0);
+  });
+
+  test("sidechain interruption markers belong to the subagent, not the dialogue", () => {
+    const a = analyze([
+      prompt("u1", 0, "delegate it"),
+      assistant({ id: "1", min: 1, sidechain: true }),
+      marker("u2", 2, 1, { isSidechain: true }),
+    ]);
+    expect(a.interruptionTurns).toBe(0);
+    expect(a.totals.turns).toBe(1);
+  });
+
+  test("an interrupted turn and a correction prompt are independent counters", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      marker("u2", 2),
+      prompt("u3", 3, "that's not what i meant — smaller"),
+      assistant({ id: "2", min: 4 }),
+    ]);
+    expect(a.interruptionTurns).toBe(1);
+    expect(a.correctionTurns).toBe(1);
+    expect(a.totals.turns).toBe(3);
+  });
+
+  test("the interruption marker prompt itself is never a correction", () => {
+    const a = analyze([prompt("u1", 0, "go"), marker("u2", 1)]);
+    expect(a.correctionTurns).toBe(0);
+    expect(a.interruptionTurns).toBe(1);
+  });
+
+  test("aggregate mode counts exactly like detail mode", async () => {
+    const events = [
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      marker("u2", 2),
+      prompt("u3", 3, "undo that and use the flag"),
+      assistant({ id: "2", min: 4 }),
+    ];
+    const full = analyze(events);
+    async function* stream() {
+      for (const e of events) yield e as Events[number];
+    }
+    const agg = await analyzeSessionStream(stream(), pricing, { detail: false });
+    expect(agg.turns).toEqual([]);
+    expect(agg.correctionTurns).toBe(full.correctionTurns);
+    expect(agg.interruptionTurns).toBe(full.interruptionTurns);
+    expect(full.correctionTurns).toBe(1);
+    expect(full.interruptionTurns).toBe(1);
+  });
+});

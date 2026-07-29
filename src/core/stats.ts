@@ -1324,8 +1324,11 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     month: string | null;
     cost: number | null;
     retriesN: number;
+    turnsN: number;
     testFailStreakN: number;
     redundantReadsN: number;
+    correctionTurnsN: number;
+    interruptionTurnsN: number;
     reread_files_json: string | null;
     tools_json: string | null;
     tool_errors_json: string | null;
@@ -1346,8 +1349,11 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     db,
     `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
+        COALESCE(turns, 0) AS turnsN,
         COALESCE(test_fail_streak, 0) AS testFailStreakN,
         COALESCE(redundant_reads, 0) AS redundantReadsN,
+        COALESCE(correction_turns, 0) AS correctionTurnsN,
+        COALESCE(interruption_turns, 0) AS interruptionTurnsN,
         reread_files_json,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
         skill_turn_costs_json,
@@ -1420,6 +1426,15 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
   let redundantReadsTotal = 0;
   let rereadSessions = 0;
   const rereadFileAcc = new Map<string, number>();
+
+  // Corrections (schema v13 columns): plain column sums plus a weekly trend
+  // folded in this same scan (weeks keyed off each session's `day`; undated
+  // sessions count toward the totals but not the trend).
+  let correctionSessions = 0;
+  let correctionTurnsTotal = 0;
+  let interruptionTurnsTotal = 0;
+  let realPromptTurns = 0;
+  const correctionWeekAcc = new Map<string, { correctionTurns: number; turns: number }>();
 
   const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
   const reasonAcc = new Map<string, { count: number; sessions: number }>();
@@ -1504,6 +1519,18 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     if (r.redundantReadsN >= THRASH_REREAD_MIN) rereadSessions += 1;
     for (const file of new Set(parseJson<string[]>(r.reread_files_json, []))) {
       rereadFileAcc.set(file, (rereadFileAcc.get(file) ?? 0) + 1);
+    }
+
+    if (r.correctionTurnsN > 0) correctionSessions += 1;
+    correctionTurnsTotal += r.correctionTurnsN;
+    interruptionTurnsTotal += r.interruptionTurnsN;
+    realPromptTurns += r.turnsN;
+    if (r.day) {
+      const week = weekOf(r.day);
+      const w = correctionWeekAcc.get(week) ?? { correctionTurns: 0, turns: 0 };
+      w.correctionTurns += r.correctionTurnsN;
+      w.turns += r.turnsN;
+      correctionWeekAcc.set(week, w);
     }
     for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.retries_json, {}))) {
       const a = retryAcc.get(tool) ?? { retries: 0, sessions: 0 };
@@ -1608,6 +1635,17 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         .map(([file, sessions]) => ({ file, sessions }))
         .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
         .slice(0, 10),
+    },
+    corrections: {
+      sessions: correctionSessions,
+      correctionTurns: correctionTurnsTotal,
+      interruptionTurns: interruptionTurnsTotal,
+      turns: realPromptTurns,
+      correctionShare: realPromptTurns > 0 ? correctionTurnsTotal / realPromptTurns : 0,
+      interruptionShare: realPromptTurns > 0 ? interruptionTurnsTotal / realPromptTurns : 0,
+      weekly: [...correctionWeekAcc.entries()]
+        .map(([week, w]) => ({ week, ...w }))
+        .sort((a, b) => (a.week < b.week ? -1 : 1)),
     },
     permissionModes: [...modeAcc.entries()]
       .map(([mode, a]) => ({

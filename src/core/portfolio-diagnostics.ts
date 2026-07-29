@@ -45,7 +45,8 @@ export type PortfolioDiagnosticCode =
   | "sidechain-imbalance"
   | "parse-coverage-drop"
   | "test-thrash-pattern"
-  | "reread-heavy";
+  | "reread-heavy"
+  | "correction-heavy";
 
 /** Every implemented rule code — the "N rules checked" count on render sites. */
 export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
@@ -64,6 +65,7 @@ export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
   "parse-coverage-drop",
   "test-thrash-pattern",
   "reread-heavy",
+  "correction-heavy",
 ];
 
 export type PortfolioDiagnosticSeverity = "info" | "warning";
@@ -195,6 +197,15 @@ export const TEST_THRASH_SESSION_SHARE = 0.1;
  * pathological session from firing a portfolio-wide habit finding. */
 export const REREAD_MIN_TOTAL = 200;
 export const REREAD_MIN_SESSIONS = 10;
+
+/** Correction-heavy: 15% of real-prompt turns opening with a correction means
+ * roughly one turn in seven redoes the one before it — a prompt-quality
+ * pattern, not a bad afternoon — but only over 200+ turns, so a short history
+ * (or the heuristic's occasional false positive) can't fire a portfolio-wide
+ * finding. The detector is English-only and undercounts, so the true share is
+ * likely higher, never lower — firing on the measured share is safe. */
+export const CORRECTION_HEAVY_SHARE = 0.15;
+export const CORRECTION_MIN_TURNS = 200;
 
 /** Sidechain imbalance: half of spend on subagents merits a look at whether
  * delegation earns its keep; zero subagent use only becomes remarkable once
@@ -619,6 +630,30 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         action:
           "Put hot reference files in CLAUDE.md summaries or delegate bulk reading to " +
           "subagents — every re-read pays the whole file into context again.",
+        impact: 0,
+      });
+    }
+  }
+
+  // 16. correction-heavy — a large share of prompts redo the previous turn.
+  {
+    const co = rollup.corrections;
+    if (co.turns >= CORRECTION_MIN_TURNS && co.correctionShare >= CORRECTION_HEAVY_SHARE) {
+      findings.push({
+        code: "correction-heavy",
+        severity: "info",
+        title: "A large share of prompts correct the previous turn",
+        evidence:
+          `${tok(co.correctionTurns)} of ${tok(co.turns)} turns (${pct(co.correctionShare)}) ` +
+          `opened by correcting the turn before, across ${plural(co.sessions, "session")}` +
+          (co.interruptionTurns > 0
+            ? `; ${pct(co.interruptionShare)} of turns were interrupted mid-flight.`
+            : ".") +
+          " English-only keyword heuristic — it undercounts.",
+        action:
+          "Invest in first prompts: more context, constraints, and acceptance criteria up " +
+          "front. When a turn misfires, /clear plus a fresh, fuller prompt usually beats " +
+          "iterating on the misfire — corrected turns pay for the work twice.",
         impact: 0,
       });
     }

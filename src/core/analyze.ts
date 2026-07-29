@@ -1,6 +1,8 @@
 import {
   type AssistantEvent,
   type ContentBlock,
+  isCorrectionPrompt,
+  isInterruptionMarker,
   isRealPrompt,
   type ParseCoverage,
   type SessionEvent,
@@ -203,6 +205,31 @@ export interface SessionAnalysis {
   /** Files some chain read ≥ 3 times, ordered by total session-wide reads
    * (most re-read first), capped at 20 entries. */
   rereadFiles: string[];
+  /**
+   * Turns whose events include a machine-written user interruption marker
+   * (`isInterruptionMarker`: "[Request interrupted by user]" /
+   * "…for tool use]") — the user hit Esc on a response or a pending tool call.
+   * Counted once per turn, however many markers the turn carries. Main chain
+   * only: an interruption inside a subagent transcript belongs to that
+   * subagent's burst, not to the user's dialogue. The marker message itself is
+   * a real prompt under `isRealPrompt` (turn segmentation is unchanged), so it
+   * typically opens — and is counted against — its own short turn; a marker
+   * seen before any real prompt belongs to no turn and is not counted, the
+   * same rule `turnDepths` applies. Available in aggregate mode.
+   */
+  interruptionTurns: number;
+  /**
+   * REAL user prompts (per `isRealPrompt`) that open with a correction marker
+   * (`isCorrectionPrompt`: "no, …", "that's not what I meant", "undo that",
+   * "still broken", …) — the user redoing the previous turn. A conservative
+   * English-only keyword heuristic; false negatives are expected and fine.
+   * Independent of `interruptionTurns` — a turn can be interrupted *and* the
+   * next prompt can be a correction, and the two counters deliberately do not
+   * dedupe against each other (they measure different acts: cutting a response
+   * off vs. re-asking). Share = correctionTurns / totals.turns, since
+   * `totals.turns` counts exactly the real prompts. Available in aggregate mode.
+   */
+  correctionTurns: number;
   /** Total characters across every turn's prompt (survives aggregate mode). */
   promptChars: number;
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
@@ -367,6 +394,15 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
+/** Does this user-message content carry an interruption marker text block? */
+function hasInterruptionContent(content: UserEvent["message"]["content"]): boolean {
+  if (typeof content === "string") return isInterruptionMarker(content);
+  return content.some((b) => {
+    const block = b as ContentBlock & { text?: string };
+    return block.type === "text" && isInterruptionMarker(block.text ?? "");
+  });
+}
+
 function stringField(input: unknown, key: string): string | undefined {
   if (typeof input === "object" && input !== null && key in input) {
     const v = (input as Record<string, unknown>)[key];
@@ -447,6 +483,12 @@ class SessionAnalyzer {
   private sidechainApiCalls = 0;
   private sidechainCost = 0;
   private promptChars = 0;
+  // Correction/interruption turns (see the SessionAnalysis field docs). The
+  // flag marks the OPEN turn as interrupted and is folded into the counter at
+  // the turn boundary, so a turn with several markers counts once.
+  private interruptionTurns = 0;
+  private correctionTurns = 0;
+  private currentTurnInterrupted = false;
   // Prompt-side tokens of the first main-chain call (see `firstPromptTokens`).
   // `undefined` until one is seen, so a genuinely zero-token call still sticks.
   private firstPromptTokens: number | undefined;
@@ -688,9 +730,17 @@ class SessionAnalyzer {
       if (isRealPrompt(event)) {
         const prompt = promptPreview(content);
         this.promptChars += prompt.length;
-        // Finalize the previous turn's depth and skill attribution before
-        // opening this one.
-        if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+        // A real prompt that opens with a correction marker: the previous
+        // turn's work is being redone. English-only keyword heuristic (see
+        // `isCorrectionPrompt`) — undercounting is by design.
+        if (isCorrectionPrompt(prompt)) this.correctionTurns += 1;
+        // Finalize the previous turn's depth, skill attribution, and
+        // interruption flag before opening this one.
+        if (this.hasTurn) {
+          this.turnDepths.push(this.currentDepth);
+          if (this.currentTurnInterrupted) this.interruptionTurns += 1;
+        }
+        this.currentTurnInterrupted = false;
         this.closeTurnSkills(this.hasTurn);
         this.hasTurn = true;
         this.currentDepth = 0;
@@ -717,6 +767,14 @@ class SessionAnalyzer {
           };
           this.turns.push(this.current);
         }
+      }
+      // Interruption markers are literal machine-written user messages. Main
+      // chain only — a subagent's interruption belongs to its burst. The
+      // marker message is itself a real prompt (turn segmentation unchanged),
+      // so it usually marks the short turn it just opened above; one seen
+      // before any real prompt belongs to no turn and is dropped.
+      if (event.isSidechain !== true && this.hasTurn && hasInterruptionContent(content)) {
+        this.currentTurnInterrupted = true;
       }
       this.touchTime(event.timestamp);
       return;
@@ -973,8 +1031,12 @@ class SessionAnalyzer {
   }
 
   finish(): SessionAnalysis {
-    // Finalize the last open turn's depth and skill attribution.
-    if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+    // Finalize the last open turn's depth, skill attribution, and
+    // interruption flag.
+    if (this.hasTurn) {
+      this.turnDepths.push(this.currentDepth);
+      if (this.currentTurnInterrupted) this.interruptionTurns += 1;
+    }
     this.closeTurnSkills(this.hasTurn);
 
     // Active time: sum gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
@@ -1043,6 +1105,8 @@ class SessionAnalyzer {
             (this.readsByFile.get(b) ?? 0) - (this.readsByFile.get(a) ?? 0) || (a < b ? -1 : 1),
         )
         .slice(0, 20),
+      interruptionTurns: this.interruptionTurns,
+      correctionTurns: this.correctionTurns,
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
       firstPromptTokens: this.firstPromptTokens,

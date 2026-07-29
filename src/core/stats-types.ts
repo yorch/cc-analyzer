@@ -572,6 +572,47 @@ export interface ThrashStats {
   topRereadFiles: RereadFileRow[];
 }
 
+/* ——— Corrections: prompts that redo the previous turn ————————————————
+ * Two schema v13 columns: `correction_turns` (real prompts opening with a
+ * correction marker, per `isCorrectionPrompt` in events.ts) and
+ * `interruption_turns` (turns carrying the machine-written "[Request
+ * interrupted by user…]" marker). The strongest available prompt-quality
+ * signal: a high correction share means tokens were spent redoing work. */
+
+/** One ISO week of the correction trend (weeks with sessions but no dated
+ * corrections still appear, with correctionTurns 0). */
+export interface CorrectionWeekRow {
+  week: string;
+  correctionTurns: number;
+  /** Real-prompt turns that week (the share's denominator). */
+  turns: number;
+}
+
+/** Portfolio corrections rollup (part of `AnalyticsRollup`). */
+export interface CorrectionStats {
+  /** Sessions with ≥ 1 correction turn. */
+  sessions: number;
+  correctionTurns: number;
+  interruptionTurns: number;
+  /** Real-prompt turns portfolio-wide (Σ of the `turns` column). */
+  turns: number;
+  /** correctionTurns / turns; 0 when there are no turns. */
+  correctionShare: number;
+  /** interruptionTurns / turns; 0 when there are no turns. */
+  interruptionShare: number;
+  /** Weekly trend, oldest first (sessions without a day are excluded). */
+  weekly: CorrectionWeekRow[];
+}
+
+/**
+ * The caveat every corrections surface must print, verbatim — the detection is
+ * a language-biased heuristic, so the wording cannot drift between the CLI,
+ * the TUI and the web app.
+ */
+export const CORRECTION_CAVEAT =
+  "Corrections are detected by a conservative English-only keyword heuristic over how prompts " +
+  "open; it undercounts by design, and non-English corrections are missed entirely.";
+
 /** The portfolio overview shared by `cc-analyzer stats` and `/api/stats` —
  * assembled only by `buildPortfolioStats`, so the two surfaces cannot drift. */
 export interface PortfolioStats {
@@ -597,6 +638,7 @@ export interface AnalyticsRollup {
   tests: TestRunSummary;
   retries: RetryStats;
   thrash: ThrashStats;
+  corrections: CorrectionStats;
   permissionModes: PermissionModeRow[];
   stopReasons: StopReasonRow[];
   turnDepth: TurnDepthStats;

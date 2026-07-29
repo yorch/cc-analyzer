@@ -217,3 +217,59 @@ describe("buildSessionDiagnostics · repeated-file-reads", () => {
     expect(diag({ "/p/a.md": 2, "/p/b.md": 2 })).toBeUndefined();
   });
 });
+
+describe("correction-loop", () => {
+  /** A session with `total` real prompts, the last `corrections` of which open
+   * with a correction marker. Prompts are minutes apart to keep turns cheap. */
+  function sessionWith(corrections: number, total: number) {
+    const events: SessionEvent[] = [];
+    for (let i = 0; i < total; i++) {
+      const text = i >= total - corrections ? "no, use the other approach" : `step ${i}`;
+      events.push(prompt(`u${i}`, i, text));
+      events.push(assistant(`a${i}`, i, { input_tokens: 10, output_tokens: 1 }));
+    }
+    return analyzeSession(events, pricing);
+  }
+  const find = (corrections: number, total: number) =>
+    buildSessionDiagnostics(sessionWith(corrections, total)).find(
+      (d) => d.code === "correction-loop",
+    );
+
+  test("fires as info at 3 corrections making a quarter of the turns", () => {
+    const f = find(3, 12);
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("3 of 12 turns (25%)");
+    expect(f?.evidence).toContain("English-only");
+    expect(f?.action).toContain("first prompt");
+  });
+
+  test("escalates to warning at 40% of turns", () => {
+    expect(find(3, 7)?.severity).toBe("warning");
+  });
+
+  test("mentions interruptions in the evidence when present", () => {
+    const events: SessionEvent[] = [
+      prompt("u1", 0, "build it"),
+      assistant("a1", 0, { input_tokens: 10, output_tokens: 1 }),
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: at(1),
+        message: { content: [{ type: "text", text: "[Request interrupted by user]" }] },
+      } as unknown as SessionEvent,
+      prompt("u3", 2, "no, smaller"),
+      prompt("u4", 3, "still broken"),
+      prompt("u5", 4, "try again with the flag"),
+    ];
+    const f = buildSessionDiagnostics(analyzeSession(events, pricing)).find(
+      (d) => d.code === "correction-loop",
+    );
+    expect(f?.evidence).toContain("3 of 5 turns");
+    expect(f?.evidence).toContain("1 turn interrupted mid-flight");
+  });
+
+  test("stays quiet below 3 corrections or below a quarter of the turns", () => {
+    expect(find(2, 4)).toBeUndefined(); // 50% share, but only two corrections
+    expect(find(3, 13)).toBeUndefined(); // three corrections, 23% share
+  });
+});

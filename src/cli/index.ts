@@ -300,6 +300,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     skills: [...analytics.skills].sort((a, b) => b.attributedCost - a.attributedCost).slice(0, 10),
     tests: analytics.tests,
     retries: analytics.retries,
+    corrections: analytics.corrections,
     concurrency: { peak, parallelDayShare },
     contextTax: contextTax(db, projectId),
     whatIf: whatIfRepricing(db, pricing, projectId),

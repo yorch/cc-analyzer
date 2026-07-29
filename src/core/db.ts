@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   unknown_events INTEGER,
   test_fail_streak INTEGER,
   redundant_reads INTEGER,
+  correction_turns INTEGER,
+  interruption_turns INTEGER,
   reread_files_json TEXT,
   models_json TEXT,
   tools_json TEXT,
@@ -117,7 +119,17 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // `reread-heavy` insight rules read. Same rationale as v8–v11: the incremental
 // indexer skips unchanged files, so rows written by v11 would report zero
 // thrash forever — the bump forces the rebuild.
-export const SCHEMA_VERSION = "12";
+// v13: adds the correction columns — `correction_turns` (real prompts opening
+// with a correction marker, per `isCorrectionPrompt`) and `interruption_turns`
+// (turns carrying a "[Request interrupted by user…]" marker) — what the
+// corrections rollup, the `correction-loop` session diagnostic, and the
+// `correction-heavy` insight rule read. Same rationale as v8–v12: the
+// incremental indexer skips unchanged files, so rows written by v12 would
+// report zero corrections forever — the bump forces the rebuild. Note the
+// `isTestCommand`-style trade-off, made the other way here: the correction
+// marker list is baked in at index time, so evolving the phrase heuristics
+// requires a reindex (unlike command heads, which classify at query time).
+export const SCHEMA_VERSION = "13";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

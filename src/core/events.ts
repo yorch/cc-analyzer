@@ -220,3 +220,78 @@ export function isRealPrompt(e: UserEvent): boolean {
   if (typeof content === "string") return true;
   return content.some((b) => (b as ContentBlock).type !== "tool_result");
 }
+
+/**
+ * Is this user-message text the machine-written interruption marker?
+ *
+ * When the user interrupts a response mid-flight (Esc), Claude Code writes a
+ * literal user message — observed verbatim in real transcripts as
+ * `[Request interrupted by user]`, or `[Request interrupted by user for tool
+ * use]` when a pending tool call was cancelled. Matched by prefix (after
+ * trimming) so trailing whitespace or a future suffix variant still counts;
+ * the bracketed prefix is distinctive enough that a human prompt will not
+ * start with it.
+ */
+export function isInterruptionMarker(text: string): boolean {
+  return text.trimStart().startsWith("[Request interrupted by user");
+}
+
+/** Only this leading window of a prompt is scanned for correction markers —
+ * a phrase buried deep in a long prompt is context, not how the prompt opens. */
+const CORRECTION_WINDOW = 120;
+
+/**
+ * The correction marker families, each anchored to a phrase start (`\b`, or
+ * `^` where only the very beginning of the prompt is a signal). Matched
+ * against the lowercased leading window. Every group is deliberately narrow:
+ * false negatives are fine, false positives are the failure mode to avoid.
+ */
+const CORRECTION_PATTERNS: readonly RegExp[] = [
+  // Leading rejection — only at the very start of the prompt, and "no"/"nope"
+  // only when punctuation follows ("no, the other file"), so prompts like
+  // "no tests needed" or "no worries" never match.
+  /^(?:no|nope)[,.!;:—-]/,
+  /^(?:not that|wrong)\b/,
+  // Explicit undo/redo — verbs need an object ("undo that"), so "undo stack
+  // implementation" as a task never matches.
+  /\b(?:undo|revert) (?:that|this|it|the last)\b/,
+  /\broll (?:that |this |it )?back\b/,
+  /\bgo back to\b/,
+  // Miscommunication — the previous turn solved the wrong problem.
+  /\bthat'?s not what i\b/,
+  /\bnot what i (?:meant|asked|wanted)\b/,
+  /\bi meant\b/,
+  /\bi didn'?t mean\b/,
+  /\byou misunderstood\b/,
+  // Non-working outcome — the previous turn's work didn't hold up.
+  /\bstill (?:broken|failing|doesn'?t)\b/,
+  /\b(?:didn'?t|doesn'?t) work\b/,
+  /\bnot working\b/,
+  /\bsame error\b/,
+  // Re-ask — the user repeats what they already asked for.
+  /\btry (?:that |it |this )?again\b/,
+  /\bdo it again\b/,
+  /\bas i said\b/,
+  /\blike i asked\b/,
+];
+
+/**
+ * Does this REAL user prompt open by correcting the previous turn?
+ *
+ * A conservative, **English-only keyword heuristic** — biased and imperfect by
+ * construction. It only inspects the first `CORRECTION_WINDOW` characters
+ * (lowercased) and anchors every marker to a phrase start, so "no," opening a
+ * prompt is a signal while a "no" buried mid-sentence is not. Slash commands
+ * and machine-looking prompts (starting with `<`, `/`, or `[` — XML payloads,
+ * commands, bracketed markers like the interruption message) never match.
+ * Non-English corrections are missed entirely, and plenty of English ones
+ * will be too: prefer missing corrections to inventing them, because the
+ * downstream diagnostics accuse prompts of causing rework.
+ */
+export function isCorrectionPrompt(text: string): boolean {
+  const trimmed = text.trimStart();
+  const first = trimmed[0];
+  if (first === "<" || first === "/" || first === "[") return false;
+  const head = trimmed.slice(0, CORRECTION_WINDOW).toLowerCase();
+  return CORRECTION_PATTERNS.some((re) => re.test(head));
+}

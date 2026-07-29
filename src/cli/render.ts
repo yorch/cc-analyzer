@@ -20,6 +20,8 @@ import type {
   WhatIfRepricing,
 } from "../core/stats.ts";
 import {
+  CORRECTION_CAVEAT,
+  type CorrectionStats,
   SKILL_COST_CAVEAT,
   type SkillUsageRow,
   THRASH_REREAD_MIN,
@@ -112,6 +114,28 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
           a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected",
         ],
         ["tool-call churn", a.retries > 0 ? `${a.retries} repeated identical calls` : "none"],
+        // One corrections line when either counter fired; the shared
+        // CORRECTION_CAVEAT prints right under the table.
+        ...(a.correctionTurns > 0 || a.interruptionTurns > 0
+          ? [
+              [
+                "corrections",
+                [
+                  a.correctionTurns > 0
+                    ? `${a.correctionTurns} correction turn${a.correctionTurns === 1 ? "" : "s"}` +
+                      (a.totals.turns > 0
+                        ? ` (${Math.round((a.correctionTurns / a.totals.turns) * 100)}%)`
+                        : "")
+                    : "",
+                  a.interruptionTurns > 0
+                    ? `${a.interruptionTurns} interruption${a.interruptionTurns === 1 ? "" : "s"}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+              ],
+            ]
+          : []),
         // One thrash line, only when a signal is non-trivial (the "Actionable
         // diagnostics" section below carries the evidence and next step).
         ...(a.testFailStreak >= THRASH_STREAK_MIN || a.redundantReads >= THRASH_REREAD_MIN
@@ -134,6 +158,9 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
       ],
     ),
   );
+  if (a.correctionTurns > 0 || a.interruptionTurns > 0) {
+    lines.push(muted(CORRECTION_CAVEAT, options));
+  }
 
   lines.push(`\n${section("Cost by token category", options)}`);
   lines.push(
@@ -353,6 +380,7 @@ export interface PortfolioView extends PortfolioStats {
   skills: SkillUsageRow[];
   tests: TestRunSummary;
   retries: RetryStats;
+  corrections: CorrectionStats;
   concurrency: { peak: number; parallelDayShare: number };
   contextTax: ContextTax;
   whatIf: WhatIfRepricing;
@@ -483,12 +511,23 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             : "none",
         ],
         [
+          "corrections",
+          v.corrections.correctionTurns > 0 || v.corrections.interruptionTurns > 0
+            ? `${formatCount(v.corrections.correctionTurns)} correction turns ` +
+              `(${(v.corrections.correctionShare * 100).toFixed(0)}% of ${formatCount(v.corrections.turns)} turns) · ` +
+              `${formatCount(v.corrections.interruptionTurns)} interrupted`
+            : "none detected",
+        ],
+        [
           "parallel sessions",
           `peak ${v.concurrency.peak} · ${(v.concurrency.parallelDayShare * 100).toFixed(0)}% of days overlapped`,
         ],
       ],
     ),
   );
+  if (v.corrections.correctionTurns > 0 || v.corrections.interruptionTurns > 0) {
+    lines.push(muted(CORRECTION_CAVEAT, options));
+  }
 
   if (dist.buckets.some((b) => b.count > 0)) {
     lines.push(`\n${section("Session cost distribution", options)}`);

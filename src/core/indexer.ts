@@ -46,6 +46,8 @@ export interface SessionRow {
   unknown_events: number;
   test_fail_streak: number;
   redundant_reads: number;
+  correction_turns: number;
+  interruption_turns: number;
   reread_files_json: string;
   models_json: string;
   tools_json: string;
@@ -133,6 +135,8 @@ export function toSessionRow(
     unknown_events: analysis.parseCoverage?.unknownEvents ?? 0,
     test_fail_streak: analysis.testFailStreak,
     redundant_reads: analysis.redundantReads,
+    correction_turns: analysis.correctionTurns,
+    interruption_turns: analysis.interruptionTurns,
     reread_files_json: JSON.stringify(analysis.rereadFiles),
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
@@ -196,6 +200,8 @@ const COLUMNS: (keyof SessionRow)[] = [
   "unknown_events",
   "test_fail_streak",
   "redundant_reads",
+  "correction_turns",
+  "interruption_turns",
   "reread_files_json",
   "models_json",
   "tools_json",

@@ -100,7 +100,24 @@ and *redundant reads* (`redundantReads`/`rereadFiles`: per chain, `Read`s of
 the same `file_path` beyond the second — the third read is the first redundant
 one; different offset/limit still counts, chains stay isolated, turns don't
 reset). Both feed the `edit-test-thrash`/`repeated-file-reads` session
-diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. For
+diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. The two
+**correction** signals (schema v13) measure prompts redoing the previous turn:
+*interruption turns* (`interruptionTurns`: turns whose events carry the literal
+machine-written `[Request interrupted by user…]` marker, `isInterruptionMarker()`
+in `events.ts` — once per turn, main chain only; the marker message is itself a
+real prompt, so turn segmentation is unchanged and it usually opens its own
+short turn) and *correction turns* (`correctionTurns`: real prompts opening
+with a correction marker per `isCorrectionPrompt()` in `events.ts` — a
+conservative **English-only keyword heuristic** over the first ~120 chars,
+phrase-start anchored, never matching `<`/`/`/`[`-leading prompts; false
+negatives are fine, false positives are the failure mode; like
+`testFailStreak` the phrase list is baked into the index and needs a reindex to
+evolve). The two counters are independent — an interrupted turn followed by a
+"no, …" prompt counts once in each. Share = `correctionTurns / totals.turns`
+(turns counts exactly the real prompts); every render site prints the shared
+`CORRECTION_CAVEAT` from `stats-types.ts`. They feed the `correction-loop`
+session diagnostic and the `correction-heavy` insight rule, and roll up (with a
+weekly trend) as `AnalyticsRollup.corrections`. For
 shell commands the index stores a **raw signal, not a
 classification**: normalized per-segment command heads (`commandHead()`, schema
 v6). Command families and test-run detection (`isTestCommand()`) classify those
@@ -232,8 +249,8 @@ view's Setup section. **No TUI screen** — the CLI and web cover it.
 portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
 `PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
 per-project waste, compactions, weekly error rate, context tax, what-if,
-optional setup audit, parse coverage, thrash) into ranked `PortfolioDiagnostic[]`
-findings — 15 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
+optional setup audit, parse coverage, thrash, corrections) into ranked `PortfolioDiagnostic[]`
+findings — 16 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
 threshold-rationale comment, warnings before infos and dollar-backed findings first within a
 severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side

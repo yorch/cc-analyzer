@@ -67,6 +67,7 @@ describe("renderStats · skills", () => {
       skills: analytics.skills,
       tests: analytics.tests,
       retries: analytics.retries,
+      corrections: analytics.corrections,
       concurrency: { peak: 1, parallelDayShare: 0 },
       contextTax: contextTax(db),
       whatIf: whatIfRepricing(db, pricing),

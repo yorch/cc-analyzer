@@ -3,6 +3,7 @@ import {
   type AnalyticsResponse,
   api,
   type BashCommandRow,
+  CORRECTION_CAVEAT,
   type CompactionUsage,
   type NameUsageRow,
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
@@ -469,6 +470,7 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
   const th = data.thrash;
+  const co = data.corrections;
   return (
     <>
       <p className="muted">
@@ -532,6 +534,28 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
           </p>
         </>
       )}
+      <h2 className="section-h">Corrections · prompts that redo the previous turn</h2>
+      <p className="muted">
+        Correction turns:{" "}
+        {co.correctionTurns > 0 ? (
+          <>
+            <strong>{count(co.correctionTurns)}</strong> of {count(co.turns)} turns (
+            {(co.correctionShare * 100).toFixed(0)}%) across {count(co.sessions)} sessions
+          </>
+        ) : (
+          "none detected"
+        )}
+        {" · "}Interrupted mid-flight:{" "}
+        {co.interruptionTurns > 0 ? (
+          <>
+            <strong>{count(co.interruptionTurns)}</strong> turns (
+            {(co.interruptionShare * 100).toFixed(0)}%)
+          </>
+        ) : (
+          "none"
+        )}
+      </p>
+      <p className="muted">{CORRECTION_CAVEAT}</p>
     </>
   );
 }
