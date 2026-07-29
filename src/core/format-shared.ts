@@ -50,6 +50,10 @@ export function formatCount(n: number, opts: SignOptions = {}): string {
 /** A count that may be a delta: `-30.0k` rather than `-30000`. */
 export const formatSignedCount = (n: number): string => formatCount(n, { signed: true });
 
+/** A ratio as a whole-percent string ("25%") — the form every findings/evidence
+ * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
+export const pct = (value: number): string => `${Math.round(value * 100)}%`;
+
 function durationOf(ms: number | undefined, seconds: boolean): string {
   if (ms === undefined || Number.isNaN(ms)) return "-";
   const sign = ms < 0 ? "-" : "";

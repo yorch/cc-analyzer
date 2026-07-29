@@ -199,6 +199,54 @@ export function formatDigestDelta(d: DigestDelta, fmt: (n: number) => string): s
   return `${signed} (${d.share === null ? "new" : pct(d.share)})`;
 }
 
+/** The five labels of the summary table, in render order. Each renderer keeps
+ * its own wording (the terminal's lowercase columns and cost noun, the
+ * markdown's Title Case) — only the numbers are shared. */
+export type DigestSummaryLabels = readonly [string, string, string, string, string];
+
+/**
+ * The summary table's rows as `[label, this period, prior, change]`. The
+ * terminal renderer (`renderWeeklyDigest`) and the markdown one both build the
+ * table from this, so a cell cannot read differently in `cc-analyzer report`
+ * and in `report --md`.
+ */
+export function digestSummaryRows(d: WeeklyDigest, labels: DigestSummaryLabels): string[][] {
+  const h = d.headline;
+  const plain = (n: number): string => String(n);
+  return [
+    [
+      labels[0],
+      formatUSD(h.cost.current),
+      formatUSD(h.cost.prior),
+      formatDigestDelta(h.cost, formatUSD),
+    ],
+    [
+      labels[1],
+      plain(h.sessions.current),
+      plain(h.sessions.prior),
+      formatDigestDelta(h.sessions, plain),
+    ],
+    [
+      labels[2],
+      formatCompactDuration(h.activeMs.current),
+      formatCompactDuration(h.activeMs.prior),
+      formatDigestDelta(h.activeMs, formatCompactDuration),
+    ],
+    [
+      labels[3],
+      formatSignedCount(h.ioTokens.current),
+      formatSignedCount(h.ioTokens.prior),
+      formatDigestDelta(h.ioTokens, formatSignedCount),
+    ],
+    [
+      labels[4],
+      formatSignedCount(h.cacheTokens.current),
+      formatSignedCount(h.cacheTokens.prior),
+      formatDigestDelta(h.cacheTokens, formatSignedCount),
+    ],
+  ];
+}
+
 const row = (cells: string[]): string => `| ${cells.join(" | ")} |`;
 
 function mdTable(headers: string[], align: ("left" | "right")[], rows: string[][]): string {
@@ -245,38 +293,13 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
       mdTable(
         ["Metric", "This period", "Prior", "Change"],
         ["left", "right", "right", "right"],
-        [
-          [
-            "Cost",
-            formatUSD(h.cost.current),
-            formatUSD(h.cost.prior),
-            formatDigestDelta(h.cost, formatUSD),
-          ],
-          [
-            "Sessions",
-            String(h.sessions.current),
-            String(h.sessions.prior),
-            formatDigestDelta(h.sessions, (n) => String(n)),
-          ],
-          [
-            "Active time",
-            formatCompactDuration(h.activeMs.current),
-            formatCompactDuration(h.activeMs.prior),
-            formatDigestDelta(h.activeMs, formatCompactDuration),
-          ],
-          [
-            "Input+output tokens",
-            formatSignedCount(h.ioTokens.current),
-            formatSignedCount(h.ioTokens.prior),
-            formatDigestDelta(h.ioTokens, formatSignedCount),
-          ],
-          [
-            "Cache tokens",
-            formatSignedCount(h.cacheTokens.current),
-            formatSignedCount(h.cacheTokens.prior),
-            formatDigestDelta(h.cacheTokens, formatSignedCount),
-          ],
-        ],
+        digestSummaryRows(d, [
+          "Cost",
+          "Sessions",
+          "Active time",
+          "Input+output tokens",
+          "Cache tokens",
+        ]),
       ),
     );
     out.push("");

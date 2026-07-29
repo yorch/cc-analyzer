@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -16,6 +16,7 @@ import {
   type SessionRankRow,
   type SessionWithProject,
   type StatsResponse,
+  type WeeklyDigest,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
@@ -340,8 +341,16 @@ export function Dashboard() {
 function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
   // Refetch when the hero's cost-basis toggle flips: the digest carries the
   // framing sentence, and the copied markdown must not go out with the old one.
-  const { data, error, loading } = useAsync(() => api.report(), [costBasis]);
+  // `insights: false` keeps first paint cheap — the card below renders no
+  // finding; only the copied markdown has an insights section, and that pays
+  // for the full report at click time.
+  const { data, error, loading } = useAsync(
+    () => api.report(undefined, { insights: false }),
+    [costBasis],
+  );
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+  // The full digest, fetched once per cost basis and reused across clicks.
+  const full = useRef<{ basis: CostBasis; digest: WeeklyDigest } | null>(null);
 
   if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
   if (error || !data) return null;
@@ -353,7 +362,16 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
   // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
   // on the LAN) and reports failure rather than throwing.
   const copy = () => {
-    void copyText(buildDigestMarkdown(data)).then((ok) => setCopied(ok ? "ok" : "failed"));
+    void (async () => {
+      try {
+        if (full.current?.basis !== costBasis) {
+          full.current = { basis: costBasis, digest: await api.report() };
+        }
+        setCopied((await copyText(buildDigestMarkdown(full.current.digest))) ? "ok" : "failed");
+      } catch {
+        setCopied("failed");
+      }
+    })();
   };
 
   return (

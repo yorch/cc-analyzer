@@ -188,6 +188,14 @@ export const api = {
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
   audit: () => get<SetupAudit>("/api/audit"),
-  report: (week?: string) =>
-    get<WeeklyDigest>(week ? `/api/report?week=${encodeURIComponent(week)}` : "/api/report"),
+  /** One week's digest. `insights: false` asks the server to skip the
+   * current-state insight snapshot — the dashboard card renders none of it, and
+   * assembling those signals is the expensive half of the response. */
+  report: (week?: string, opts: { insights?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (week) params.set("week", week);
+    if (opts.insights === false) params.set("insights", "0");
+    const query = params.toString();
+    return get<WeeklyDigest>(query ? `/api/report?${query}` : "/api/report");
+  },
 };

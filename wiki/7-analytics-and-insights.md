@@ -204,11 +204,17 @@ plus the `subject` the finding is about), warnings first:
 | `stale-skill` | info | Previously used, but last used ≥ 30 days before `today` — one month covers a normal work cycle, and anything shorter would flag genuinely monthly skills. |
 | `missing-but-used` | info | Skills or subagents observed in sessions but absent from the inventory, aggregated into one finding per kind. Suppressed entirely when there is no Claude dir to compare against. |
 
-Name matching is deliberately loose. A plugin skill may be invoked qualified
-(`my-plugin:review`) or bare, so an installed item counts as used when an
-observed name matches either the fully qualified form or the bare name after the
-last `:`. A loose match yields a false negative — the audit stays quiet — which
-is strictly better than accusing a daily-driver skill of being unused.
+Every name question — the findings above and the per-plugin numbers below —
+goes through the single classifier `attribute(observed, item, owners,
+userNames)`, and the two differ only in the strictness they accept. The
+findings ask it loosely (anything but `"none"` counts as used): a plugin skill
+may be invoked qualified (`my-plugin:review`) or bare, and either form counts,
+because a loose match yields a false negative — the audit stays quiet — which
+is strictly better than accusing a daily-driver skill of being unused. The one
+thing loose matching does *not* do is let two installed items claim the same
+observation: a user-installed skill owns bare invocations of its name, so a
+plugin shipping a same-named skill is shadowed (case 4 below) and one erroring
+`deploy` row produces one `error-prone-skill` finding, not one per copy.
 
 `buildPluginUsage(inventory, usage)` rolls that up one level, from per-skill to
 per-plugin, answering "what is this plugin doing for me, and what does it
@@ -222,7 +228,9 @@ A plugin row carries *numbers*, not just a yes/no, and there loose matching
 would not be silence but invention — the same bare `fmt` row would be summed
 into every plugin shipping an `fmt` skill, and a user's own `fmt` skill would
 have its dollars claimed by a plugin. So usedness stays loose while the numbers
-are attributed strictly:
+are attributed strictly, over the same four cases the classifier decides (a
+user-installed item is case 0: trivially its own owner, since nothing shadows
+a skill the user installed themselves):
 
 1. a **qualified** row (`toolkit:fmt`) names its owner — it counts for that
    plugin, both as usedness and in every number;

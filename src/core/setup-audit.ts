@@ -12,6 +12,7 @@
  * threshold is documented beside the rule that uses it.
  */
 
+import { pct } from "./format-shared.ts";
 import type { NameUsageRow, SkillUsageRow, ToolUsageRow } from "./stats-types.ts";
 
 /* ——— Inventory shapes ——————————————————————————————————————————————— */
@@ -191,11 +192,12 @@ export const SETUP_AUDIT_CAVEAT =
  *  - a user skill is invoked bare (`review`);
  *  - a plugin skill is invoked qualified (`my-plugin:review`), but Claude Code
  *    versions and configs differ on whether the prefix is present.
- * So an installed item counts as used when an observed name matches either the
- * fully qualified form or the bare name after the last `:`. That is deliberately
- * loose: a loose match yields a false negative (we stay quiet), while a strict
- * match would produce a false accusation ("never used" for something used
- * daily). Prefer false negatives.
+ *
+ * `attribute()` below is the ONE classifier every question here goes through —
+ * "was this used?" and "whose numbers are these?" are the same match asked at
+ * two strictnesses, so they cannot drift apart. Both sides of the match are
+ * normalized once (`matchTarget` / `observedName`) because every caller runs
+ * installed items × observed rows.
  */
 
 const norm = (name: string): string => name.trim().replace(/^\//, "").toLowerCase();
@@ -211,14 +213,46 @@ export function sourcePlugin(source: InventorySource): string | null {
   return source.startsWith("plugin:") ? source.slice("plugin:".length) : null;
 }
 
-function qualifiedName(item: InventoryItem): string {
-  const plugin = sourcePlugin(item.source);
-  return plugin ? `${plugin}:${item.name}` : item.name;
+/** An installed item reduced to what matching needs, normalized once. */
+interface MatchTarget {
+  /** Normalized name of the plugin shipping it; null for a user-installed item. */
+  plugin: string | null;
+  /** Its normalized, unqualified name. */
+  bare: string;
 }
 
-function matchesInstalled(observed: string, item: InventoryItem): boolean {
-  return norm(observed) === norm(qualifiedName(item)) || bareName(observed) === bareName(item.name);
+const target = (plugin: string | null, name: string): MatchTarget => ({
+  plugin: plugin === null ? null : norm(plugin),
+  bare: bareName(name),
+});
+
+const matchTarget = (item: InventoryItem): MatchTarget =>
+  target(sourcePlugin(item.source), item.name);
+
+/** An observed usage row's name, normalized once. */
+interface ObservedName {
+  /** The plugin prefix when the name is qualified (`toolkit:fmt`), else null. */
+  prefix: string | null;
+  /** The name after the last `:`. */
+  bare: string;
 }
+
+function observedName(name: string): ObservedName {
+  const n = norm(name);
+  const cut = n.lastIndexOf(":");
+  return cut === -1
+    ? { prefix: null, bare: n }
+    : { prefix: n.slice(0, cut), bare: n.slice(cut + 1) };
+}
+
+/** An observed row paired with its normalized name — hoisted out of the loops. */
+interface Observed<T> {
+  name: ObservedName;
+  row: T;
+}
+
+const observeAll = <T extends { name: string }>(rows: T[]): Observed<T>[] =>
+  rows.map((row) => ({ name: observedName(row.name), row }));
 
 /** Server name out of an `mcp__<server>__<tool>` tool name, if it is one. */
 export function mcpServerFromTool(tool: string): string | null {
@@ -264,15 +298,18 @@ export function inventoryCounts(inventory: SetupInventory): SetupInventoryCounts
   };
 }
 
-const pct = (value: number): string => `${Math.round(value * 100)}%`;
-
 const sourceLabel = (source: InventorySource): string => {
   const plugin = sourcePlugin(source);
   return plugin ? `plugin ${plugin}` : "your ~/.claude dir";
 };
 
-/** Aggregate of every observed skill row that matched one installed skill. */
+/**
+ * Aggregate of the observed skill rows one installed skill matched. `used` is
+ * the loose answer (any attribution but "none"), the numbers are the strict one
+ * (rows this item owns) — the two strictnesses of the attribution rule below.
+ */
 interface SkillMatch {
+  used: boolean;
   invocations: number;
   errors: number;
   lastUsed: string | null;
@@ -280,18 +317,32 @@ interface SkillMatch {
   attributedCost: number;
 }
 
-function matchSkill(item: InventoryItem, rows: SkillUsageRow[]): SkillMatch {
-  const hits = rows.filter((row) => matchesInstalled(row.name, item));
-  return {
-    invocations: hits.reduce((sum, r) => sum + r.invocations, 0),
-    errors: hits.reduce((sum, r) => sum + r.errors, 0),
-    lastUsed: hits.reduce<string | null>(
-      (latest, r) => (r.lastUsed && (!latest || r.lastUsed > latest) ? r.lastUsed : latest),
-      null,
-    ),
-    attributedTurns: hits.reduce((sum, r) => sum + r.attributedTurns, 0),
-    attributedCost: hits.reduce((sum, r) => sum + r.attributedCost, 0),
+function matchSkill(
+  item: MatchTarget,
+  rows: Observed<SkillUsageRow>[],
+  owners: Map<string, Set<string>>,
+  userNames: Set<string>,
+): SkillMatch {
+  const m: SkillMatch = {
+    used: false,
+    invocations: 0,
+    errors: 0,
+    lastUsed: null,
+    attributedTurns: 0,
+    attributedCost: 0,
   };
+  for (const { name, row } of rows) {
+    const claim = attribute(name, item, owners, userNames);
+    if (claim === "none") continue;
+    if (row.invocations > 0) m.used = true;
+    if (claim !== "owned") continue;
+    m.invocations += row.invocations;
+    m.errors += row.errors;
+    m.attributedTurns += row.attributedTurns;
+    m.attributedCost += row.attributedCost;
+    if (row.lastUsed && (!m.lastUsed || row.lastUsed > m.lastUsed)) m.lastUsed = row.lastUsed;
+  }
+  return m;
 }
 
 function namesLine(names: string[], limit = 5): string {
@@ -300,20 +351,23 @@ function namesLine(names: string[], limit = 5): string {
   return extra > 0 ? `${shown}, and ${extra} more` : shown;
 }
 
-/* ——— Per-plugin rollup ————————————————————————————————————————————————
+/* ——— Attribution ———————————————————————————————————————————————————
  *
  * ATTRIBUTION RULE — usedness is loose, numbers are strict.
  *
- * The findings above only ever ask "was this used?", so they can afford the
- * loose matching described under "Name matching": a false match keeps us quiet.
- * A plugin row also carries *numbers* (invocations, turns, dollars), and there
- * a loose match is not silence but invention — the same bare `deploy` row would
- * be summed into every plugin shipping a `deploy` skill, and a user's own
- * `deploy` skill would have its cost claimed by a plugin. So the two questions
- * are answered differently:
+ * Every consumer asks the same question of the same classifier and only varies
+ * the strictness it accepts: "was this used?" takes anything but `"none"` (a
+ * loose match keeps us quiet, which is the failure mode this module prefers),
+ * while "how many invocations / dollars are this item's?" takes only `"owned"`.
+ * There a loose match is not silence but invention — the same bare `deploy` row
+ * would be summed into every plugin shipping a `deploy` skill, and a user's own
+ * `deploy` skill would have its cost claimed by a plugin. The cases:
  *
- * 1. Qualified row (`toolkit:deploy`) — the prefix names its owner. Counts for
- *    that plugin, both as usedness and in every number.
+ * 0. User-installed item — trivially its own owner: nothing shadows a skill the
+ *    user installed themselves, and a qualified observation of the same bare
+ *    name stays a (loose, false-negative-safe) match for it.
+ * 1. Qualified row (`toolkit:deploy`) against a plugin item — the prefix names
+ *    its owner. Counts for that plugin, as usedness and in every number.
  * 2. Bare row (`deploy`), shipped by exactly one plugin and by no user-installed
  *    skill of that name — unambiguous. Counts fully, same as (1).
  * 3. Bare row shipped by two or more plugins — one of them really did run it,
@@ -322,10 +376,11 @@ function namesLine(names: string[], limit = 5): string {
  *    numbers of none.
  * 4. Bare row whose name is also a user-installed skill — the user's own skill
  *    shadows the plugin's copy for bare invocations, so the plugin gets neither
- *    the numbers nor the usedness, and stays eligible for `unused-plugin`.
+ *    the numbers nor the usedness (the user's item, by (0), owns it), and stays
+ *    eligible for `unused-plugin`.
  */
 
-/** How much of one observed row belongs to a given plugin's shipped item. */
+/** How much of one observed row belongs to a given installed item. */
 type Attribution = "owned" | "shared" | "none";
 
 /** Bare names of the items the user installed themselves (not via a plugin). */
@@ -350,22 +405,24 @@ function ownersByBareName(
   return owners;
 }
 
+/**
+ * Classify one observed usage row against one installed item — the single name
+ * matcher in this module. `owners`/`userNames` describe the *inventory* the
+ * item lives in (which plugins ship each bare name, which bare names the user
+ * installed themselves); they are what makes cases (2)–(4) decidable.
+ */
 function attribute(
-  observed: string,
-  plugin: string,
-  item: string,
+  observed: ObservedName,
+  item: MatchTarget,
   owners: Map<string, Set<string>>,
   userNames: Set<string>,
 ): Attribution {
-  const n = norm(observed);
-  const cut = n.lastIndexOf(":");
-  const bare = bareName(item);
+  if (observed.bare !== item.bare) return "none";
+  if (item.plugin === null) return "owned"; // (0) the user's own item
   // (1) Qualified: nothing to guess — it names its plugin or it is not ours.
-  if (cut !== -1)
-    return n.slice(0, cut) === norm(plugin) && n.slice(cut + 1) === bare ? "owned" : "none";
-  if (n !== bare) return "none";
-  if (userNames.has(n)) return "none"; // (4) shadowed by the user's own item
-  return (owners.get(n)?.size ?? 0) === 1 ? "owned" : "shared"; // (2) / (3)
+  if (observed.prefix !== null) return observed.prefix === item.plugin ? "owned" : "none";
+  if (userNames.has(observed.bare)) return "none"; // (4) shadowed by a user item
+  return (owners.get(observed.bare)?.size ?? 0) === 1 ? "owned" : "shared"; // (2) / (3)
 }
 
 /**
@@ -394,6 +451,8 @@ export function buildPluginUsage(
   const userAgents = userBareNames(inventory.agents);
   const skillOwners = ownersByBareName(inventory.plugins, (p) => p.skills);
   const agentOwners = ownersByBareName(inventory.plugins, (p) => p.agents);
+  const observedSkills = observeAll(usage.skills);
+  const observedAgents = observeAll(usage.subagents);
 
   const rows = inventory.plugins.map((plugin) => {
     let invocations = 0;
@@ -402,26 +461,21 @@ export function buildPluginUsage(
     let attributedCost = 0;
     let lastUsed: string | null = null;
     for (const name of plugin.skills) {
-      let used = false;
-      for (const row of usage.skills) {
-        const claim = attribute(row.name, plugin.name, name, skillOwners, userSkills);
-        if (claim === "none") continue;
-        if (row.invocations > 0) used = true;
-        if (claim !== "owned") continue;
-        invocations += row.invocations;
-        attributedTurns += row.attributedTurns;
-        attributedCost += row.attributedCost;
-        if (row.lastUsed && (!lastUsed || row.lastUsed > lastUsed)) lastUsed = row.lastUsed;
-      }
-      if (used) skillsUsed += 1;
+      const match = matchSkill(target(plugin.name, name), observedSkills, skillOwners, userSkills);
+      if (match.used) skillsUsed += 1;
+      invocations += match.invocations;
+      attributedTurns += match.attributedTurns;
+      attributedCost += match.attributedCost;
+      if (match.lastUsed && (!lastUsed || match.lastUsed > lastUsed)) lastUsed = match.lastUsed;
     }
 
     let agentsUsed = 0;
     let agentSessions = 0;
     for (const name of plugin.agents) {
+      const item = target(plugin.name, name);
       let used = false;
-      for (const row of usage.subagents) {
-        const claim = attribute(row.name, plugin.name, name, agentOwners, userAgents);
+      for (const { name: observed, row } of observedAgents) {
+        const claim = attribute(observed, item, agentOwners, userAgents);
         if (claim === "none") continue;
         used = true;
         if (claim === "owned") agentSessions += row.sessions;
@@ -468,13 +522,12 @@ function deadPlugins(rows: PluginUsageRow[]): Map<string, PluginUsageRow> {
   const dead = new Map<string, PluginUsageRow>();
   for (const row of rows) {
     const ships = row.skillsShipped + row.agentsShipped + row.mcpServers;
-    // `skillsUsed`/`agentsUsed` are the *usedness* counters, and they can be
-    // non-zero while the numbers are zero: an ambiguous bare name (rule 3
-    // above) counts as used for every candidate plugin but is summed into
-    // none. Including them here keeps the loose, false-negative-safe answer to
-    // "was anything of this plugin used?" out of the strict number path.
-    const used =
-      row.invocations + row.agentSessions + row.mcpServersUsed + row.skillsUsed + row.agentsUsed;
+    // The three *usedness* counters, and only those: they are the loose,
+    // false-negative-safe answer to "was anything of this plugin used?", and
+    // they already subsume the strict numbers (an owned row is a used one).
+    // An ambiguous bare name (case 3 above) counts as used for every candidate
+    // plugin while being summed into none, so this stays quiet about it.
+    const used = row.skillsUsed + row.agentsUsed + row.mcpServersUsed;
     if (ships > 0 && used === 0) dead.set(row.plugin, row);
   }
   return dead;
@@ -519,6 +572,15 @@ export function buildSetupAudit(
   // ("which MCP servers actually appear in the sessions?") of the same rows.
   const usedServers = observedMcpServers(usage.tools);
   const plugins = buildPluginUsage(inventory, usage, usedServers);
+  // The same normalized inputs `buildPluginUsage` matches with — every question
+  // below goes through `attribute()`, so findings and numbers agree by
+  // construction.
+  const userSkills = userBareNames(inventory.skills);
+  const userAgents = userBareNames(inventory.agents);
+  const skillOwners = ownersByBareName(inventory.plugins, (p) => p.skills);
+  const agentOwners = ownersByBareName(inventory.plugins, (p) => p.agents);
+  const observedSkills = observeAll(usage.skills);
+  const observedAgents = observeAll(usage.subagents);
   // One finding per dead plugin, not one per component: a plugin whose every
   // component is unused reports `unused-plugin`, and its skills/agents skip
   // their own `unused-skill`/`unused-agent` findings below.
@@ -529,9 +591,9 @@ export function buildSetupAudit(
   };
 
   for (const skill of inventory.skills) {
-    const match = matchSkill(skill, usage.skills);
+    const match = matchSkill(matchTarget(skill), observedSkills, skillOwners, userSkills);
 
-    if (match.invocations === 0) {
+    if (!match.used) {
       if (isDead(skill)) continue;
       findings.push({
         code: "unused-skill",
@@ -573,7 +635,10 @@ export function buildSetupAudit(
   }
 
   for (const agent of inventory.agents) {
-    const used = usage.subagents.some((row) => matchesInstalled(row.name, agent));
+    const item = matchTarget(agent);
+    const used = observedAgents.some(
+      ({ name }) => attribute(name, item, agentOwners, userAgents) !== "none",
+    );
     if (used || isDead(agent)) continue;
     findings.push({
       code: "unused-agent",
@@ -618,9 +683,15 @@ export function buildSetupAudit(
   // "Used but not installed" is only meaningful when there is an inventory to
   // compare against: with no config dir every observed name would be missing.
   if (inventory.present) {
-    const missingSkills = usage.skills
-      .filter((row) => row.invocations > 0)
-      .filter((row) => !inventory.skills.some((item) => matchesInstalled(row.name, item)))
+    const skillTargets = inventory.skills.map(matchTarget);
+    const agentTargets = inventory.agents.map(matchTarget);
+    const missingSkills = observedSkills
+      .filter(({ row }) => row.invocations > 0)
+      .filter(
+        ({ name }) =>
+          !skillTargets.some((item) => attribute(name, item, skillOwners, userSkills) !== "none"),
+      )
+      .map(({ row }) => row)
       .sort((a, b) => b.invocations - a.invocations);
     if (missingSkills.length > 0) {
       findings.push({
@@ -636,8 +707,12 @@ export function buildSetupAudit(
       });
     }
 
-    const missingAgents = usage.subagents
-      .filter((row) => !inventory.agents.some((item) => matchesInstalled(row.name, item)))
+    const missingAgents = observedAgents
+      .filter(
+        ({ name }) =>
+          !agentTargets.some((item) => attribute(name, item, agentOwners, userAgents) !== "none"),
+      )
+      .map(({ row }) => row)
       .sort((a, b) => b.sessions - a.sessions);
     if (missingAgents.length > 0) {
       findings.push({

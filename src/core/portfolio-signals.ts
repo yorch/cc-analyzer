@@ -28,10 +28,17 @@ import {
   parseCoverage,
   whatIfRepricing,
 } from "./stats.ts";
+import type { AnalyticsRollup } from "./stats-types.ts";
 
 export interface AssembleSignalsOptions {
   /** Skip the setup-audit inventory scan (the only filesystem-touching input). */
   audit?: boolean;
+  /**
+   * A pre-computed `analyticsRollup(db)`. The web server already memoizes it
+   * for `/api/analytics`, so it hands it over rather than paying for the same
+   * table scan twice; the CLI and TUI omit it and the assembler scans.
+   */
+  rollup?: AnalyticsRollup;
 }
 
 /** Everything `buildPortfolioDiagnostics` needs, from the index + pricing. */
@@ -41,7 +48,7 @@ export function assemblePortfolioSignals(
   opts: AssembleSignalsOptions = {},
 ): PortfolioSignals {
   const today = localDayOfMs(Date.now());
-  const rollup = analyticsRollup(db);
+  const rollup = opts.rollup ?? analyticsRollup(db);
   return {
     stats: buildPortfolioStats(db, today),
     rollup,

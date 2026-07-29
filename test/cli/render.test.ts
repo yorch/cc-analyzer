@@ -9,12 +9,13 @@ import {
   contextTax,
   whatIfRepricing,
 } from "../../src/core/stats.ts";
+import { clock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
 type Events = Parameters<typeof analyzeSession>[0];
 
-const at = (min: number): string => new Date(Date.UTC(2026, 6, 3, 12, min)).toISOString();
+const at = clock(2026, 7, 3, 12);
 
 function sessionWithSkill(): SessionAnalysis {
   const events = [

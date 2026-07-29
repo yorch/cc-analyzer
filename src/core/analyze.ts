@@ -627,14 +627,18 @@ class SessionAnalyzer {
   }
 
   /**
-   * Close the open turn's skill attribution: charge its full cost to every
-   * skill invoked in it, then reset the accumulators. `attribute` is false
-   * before the first real prompt — those events belong to no turn, the same
-   * rule `turnDepths` applies — so their cost is dropped, never folded into
-   * the turn that follows.
+   * Finalize the open turn: record its depth, fold its interruption flag, and
+   * charge its full cost to every skill invoked in it, then reset the per-turn
+   * state. Called at both turn boundaries — the next real prompt, and
+   * `finish()` — from one place, so the two can never drift apart. With no turn
+   * open (`hasTurn` false, i.e. before the first real prompt) nothing is
+   * recorded: those events belong to no turn, never to the turn that follows,
+   * so their cost is dropped rather than folded forward.
    */
-  private closeTurnSkills(attribute: boolean): void {
-    if (attribute) {
+  private closeOpenTurn(): void {
+    if (this.hasTurn) {
+      this.turnDepths.push(this.currentDepth);
+      if (this.currentTurnInterrupted) this.interruptionTurns += 1;
       for (const name of this.currentTurnSkills) {
         const acc = this.skillTurnCosts[name] ?? { turns: 0, cost: 0 };
         acc.turns += 1;
@@ -642,25 +646,9 @@ class SessionAnalyzer {
         this.skillTurnCosts[name] = acc;
       }
     }
+    this.currentTurnInterrupted = false;
     this.currentTurnSkills.clear();
     this.currentTurnCost = 0;
-  }
-
-  /**
-   * Finalize the open turn: record its depth, fold its interruption flag, and
-   * close its skill attribution, then reset the per-turn state. Called at both
-   * turn boundaries — the next real prompt, and `finish()` — from one place, so
-   * the two can never drift apart. With no turn open (`hasTurn` false, i.e.
-   * before the first real prompt) nothing is recorded: those events belong to
-   * no turn, never to the turn that follows.
-   */
-  private closeOpenTurn(): void {
-    if (this.hasTurn) {
-      this.turnDepths.push(this.currentDepth);
-      if (this.currentTurnInterrupted) this.interruptionTurns += 1;
-    }
-    this.currentTurnInterrupted = false;
-    this.closeTurnSkills(this.hasTurn);
   }
 
   /** Attach a tool_result to its pending tool_use: count errors, patch the step. */

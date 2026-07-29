@@ -11,6 +11,7 @@ import {
   type SessionCacheRow,
   type WhatIfRepricing,
 } from "../api.ts";
+import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
@@ -34,9 +35,10 @@ const PROJECT_SORT: Accessors<ProjectCacheRow> = {
 
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), []);
-  // Cost basis lives on `/api/stats`, not `/api/insights` — a second, cheap
-  // (memoized server-side) fetch just to frame the dollar tables below.
-  const costBasis = useAsync(() => api.stats(), []).data?.costBasis;
+  // Cost basis is a preference, not an insight: fetch it from the tiny
+  // `/api/prefs` endpoint rather than pulling the whole portfolio payload in
+  // just to frame the dollar tables below.
+  const costBasis = useAsync(() => api.prefs(), []).data?.costBasis;
   const framingNote = costBasis ? costFramingNote(costBasis) : undefined;
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
@@ -149,25 +151,17 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
           {PORTFOLIO_DIAGNOSTIC_CODES.length} rules checked).
         </p>
       ) : (
-        <div className="diagnostic-list">
-          {diagnostics.map((d) => (
-            <article
-              className={`diagnostic diagnostic-${d.severity}`}
-              key={`${d.code}:${d.projectId ?? ""}`}
-            >
-              <h3>{d.title}</h3>
-              <p>{d.evidence}</p>
-              {d.projectId && (
-                <p>
-                  <a href={link.project(d.projectId)}>{d.projectPath ?? d.projectId}</a>
-                </p>
-              )}
-              <p className="muted">
-                <strong>Next:</strong> {d.action}
+        <DiagnosticList
+          items={diagnostics}
+          keyOf={(d) => `${d.code}:${d.projectId ?? ""}`}
+          extra={(d) =>
+            d.projectId && (
+              <p>
+                <a href={link.project(d.projectId)}>{d.projectPath ?? d.projectId}</a>
               </p>
-            </article>
-          ))}
-        </div>
+            )
+          }
+        />
       )}
     </section>
   );

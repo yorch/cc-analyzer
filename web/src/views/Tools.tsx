@@ -18,6 +18,7 @@ import {
   type TurnDepthStats,
   weeklySeries,
 } from "../api.ts";
+import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { useHashParam } from "../router.ts";
@@ -500,20 +501,7 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
             : "No findings match this filter."}
         </p>
       ) : (
-        <div className="diagnostic-list">
-          {findings.map((f) => (
-            <article
-              className={`diagnostic diagnostic-${f.severity}`}
-              key={`${f.code}:${f.subject}`}
-            >
-              <h3>{f.title}</h3>
-              <p>{f.evidence}</p>
-              <p className="muted">
-                <strong>Next:</strong> {f.action}
-              </p>
-            </article>
-          ))}
-        </div>
+        <DiagnosticList items={findings} keyOf={(f) => `${f.code}:${f.subject}`} />
       )}
       <p className="muted spark-cap">{SETUP_AUDIT_CAVEAT}</p>
     </>

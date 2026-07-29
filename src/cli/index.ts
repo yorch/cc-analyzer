@@ -412,7 +412,9 @@ async function cmdReport(
   // The insight snapshot needs live rates for what-if repricing; `loadPricing`
   // serves the cached table (bundled snapshot offline).
   const { table: pricing } = await loadPricing();
-  const digest = buildWeeklyDigest(db, pricing, { week });
+  // Cost framing is read here, at the CLI's presentation boundary — the digest
+  // builder never touches the prefs file.
+  const digest = buildWeeklyDigest(db, pricing, { week, costBasis: getCostBasis() });
   db.close();
   if (json) console.log(JSON.stringify(digest, null, 2));
   else if (md) console.log(buildDigestMarkdown(digest));

@@ -6,7 +6,6 @@ import type { CostBasis } from "../core/cost-framing.ts";
 import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
-import { scanInventory } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
@@ -18,13 +17,10 @@ import {
   searchSessions,
   sessionPathById,
 } from "../core/queries.ts";
-import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   activityHeatmap,
   analyticsRollup,
   buildPortfolioStats,
-  cacheSummary,
-  cacheTtlSplit,
   cacheWasteByProject,
   cacheWasteBySession,
   compactionUsage,
@@ -32,7 +28,6 @@ import {
   contextTax,
   errorRateByWeek,
   hotFiles,
-  idleVsCache,
   localDayOfMs,
   modelMixByDay,
   parseCoverage,
@@ -74,47 +69,60 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       .get() as { n: number; t: number };
     return `${r.n}:${r.t}`;
   };
-  const cache = new Map<string, { key: string; body: string }>();
-  const cachedJson = (c: Context, name: string, key: string, build: () => unknown) => {
+  /**
+   * One memo table for every cached thing here — built values and serialized
+   * payloads alike. A slot holds one value at a time and rebuilds when its
+   * `key` changes; the slot is re-inserted on every read so Map iteration order
+   * is true recency, which is what `capSlots` evicts by (`Map.set` on an
+   * existing key does NOT reorder, so without the delete the *first requested*
+   * slot would be dropped first — the opposite of the intent).
+   */
+  const cache = new Map<string, { key: string; value: unknown }>();
+  const memo = <T>(name: string, key: string, build: () => T): T => {
     const hit = cache.get(name);
-    if (hit?.key !== key) cache.set(name, { key, body: JSON.stringify(build()) });
-    return c.body((cache.get(name) as { body: string }).body, 200, {
-      "content-type": "application/json",
-    });
+    const value = hit?.key === key ? (hit.value as T) : build();
+    cache.delete(name);
+    cache.set(name, { key, value });
+    return value;
   };
-  // Same idea as `cachedJson`, but keeps the built object (not its JSON string)
-  // so a caller can merge in something that changes independently of the index
-  // fingerprint — like the cost-basis preference below — without re-running
-  // the expensive rollup.
-  const objCache = new Map<string, { key: string; value: unknown }>();
-  const cachedValue = <T>(name: string, key: string, build: () => T): T => {
-    const hit = objCache.get(name);
-    if (hit?.key !== key) objCache.set(name, { key, value: build() });
-    return (objCache.get(name) as { value: T }).value;
-  };
-  /** Keep at most `max` slots whose name starts with `prefix`, oldest first (a
-   * Map iterates in insertion order). Only routes whose slot name embeds a
-   * client-supplied value need this — every other keyspace here is bounded by
-   * the index itself, and unknown project ids 404 before reaching the memo. */
-  const capSlots = <T>(slots: Map<string, T>, prefix: string, max: number): void => {
-    const keys = [...slots.keys()].filter((k) => k.startsWith(prefix));
-    for (const k of keys.slice(0, Math.max(0, keys.length - max))) slots.delete(k);
+  /** Memoize a route's *serialized* payload — the common case, where nothing
+   * outside the memo key can change the response body. */
+  const cachedJson = (c: Context, name: string, key: string, build: () => unknown) =>
+    c.body(
+      memo(name, key, () => JSON.stringify(build())),
+      200,
+      { "content-type": "application/json" },
+    );
+  /** Keep at most `max` slots whose name starts with `prefix`, least recently
+   * requested first. Only routes whose slot name embeds a client-supplied value
+   * need this — every other keyspace here is bounded by the index itself, and
+   * unknown project ids 404 before reaching the memo. */
+  const capSlots = (prefix: string, max: number): void => {
+    const keys = [...cache.keys()].filter((k) => k.startsWith(prefix));
+    for (const k of keys.slice(0, Math.max(0, keys.length - max))) cache.delete(k);
   };
 
-  // Current-state portfolio diagnostics, shared by /api/insights and the
-  // digest's insight snapshot on /api/report: both want the identical findings,
-  // and assembling the signals scans the index and rescans the setup inventory.
-  // Memoized on the index fingerprint plus the local day, because the audit's
-  // staleness rules roll over at midnight.
+  // The single-scan usage rollup, shared by /api/analytics and the portfolio
+  // signals below (which would otherwise scan the table a second time).
+  const rollup = () => memo("rollup", fingerprint(), () => analyticsRollup(db));
+  // The assembled portfolio signals — an index scan plus the setup audit's
+  // filesystem walk — shared by /api/insights, /api/audit, and the digest's
+  // insight snapshot on /api/report, so the three assemble them once between
+  // them and cannot disagree. Memoized on the index fingerprint plus the local
+  // day, because the audit's staleness rules roll over at midnight.
+  const signals = (today: string) =>
+    memo("signals", `${fingerprint()}:${today}`, () =>
+      assemblePortfolioSignals(db, pricing, { rollup: rollup() }),
+    );
   const portfolioDiagnostics = (today: string) =>
-    cachedValue("diagnostics", `${fingerprint()}:${today}`, () =>
-      buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
+    memo("diagnostics", `${fingerprint()}:${today}`, () =>
+      buildPortfolioDiagnostics(signals(today)),
     );
 
   api.get("/api/stats", (c) => {
     const today = localDayOfMs(Date.now());
     // `today` is part of the key: streaks/run-rate must roll over at midnight.
-    const stats = cachedValue("stats", `${fingerprint()}:${today}`, () =>
+    const stats = memo("stats", `${fingerprint()}:${today}`, () =>
       buildPortfolioStats(db, today, { projectLimit: MAX_PROJECT_ROWS, topLimit: 20 }),
     );
     // costBasis is a display preference read fresh every request (it's not
@@ -160,13 +168,19 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // route's `fingerprint():today` — staleness rolls over at midnight.
   api.get("/api/insights", (c) => {
     const today = localDayOfMs(Date.now());
-    return cachedJson(c, "insights", `${fingerprint()}:${today}`, () => ({
-      summary: cacheSummary(db),
-      projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
-      ttl: cacheTtlSplit(db),
-      idleBuckets: idleVsCache(db),
-      diagnostics: portfolioDiagnostics(today),
-    }));
+    return cachedJson(c, "insights", `${fingerprint()}:${today}`, () => {
+      const s = signals(today);
+      return {
+        summary: s.cache.summary,
+        // The one list not taken off the shared signals: the rules only need
+        // the default top slice, while this view filters client-side and so
+        // needs every project.
+        projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
+        ttl: s.cache.ttl,
+        idleBuckets: s.cache.idleBuckets,
+        diagnostics: portfolioDiagnostics(today),
+      };
+    });
   });
 
   api.get("/api/insights/:id/sessions", (c) =>
@@ -198,7 +212,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // along for the same reason — it is one more scan of the same rows.
   api.get("/api/analytics", (c) =>
     cachedJson(c, "analytics", fingerprint(), () => ({
-      ...analyticsRollup(db),
+      ...rollup(),
       webTools: webToolUsage(db),
       sidechain: { summary: sidechainSummary(db), byProject: sidechainByProject(db) },
       compactions: compactionUsage(db),
@@ -209,25 +223,30 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   );
 
   // Setup audit: the installed inventory (scanned live off the Claude dir)
-  // cross-referenced with observed usage from the index. It depends on the
-  // filesystem too, but the inventory scan is cheap — memoizing on the index
-  // fingerprint plus `today` (staleness rolls over at midnight) rebuilds the
-  // whole payload, inventory included, whenever the index changes.
+  // cross-referenced with observed usage from the index. It is one of the
+  // portfolio signals, so this route just serves that field instead of
+  // rescanning — the signals memo already keys on the index fingerprint plus
+  // `today` (staleness rolls over at midnight) and rebuilds the whole payload,
+  // inventory included, whenever the index changes. `signals()` never disables
+  // the audit, so the field is always present.
   api.get("/api/audit", (c) => {
     const today = localDayOfMs(Date.now());
-    return cachedJson(c, "audit", `${fingerprint()}:${today}`, () =>
-      buildSetupAudit(scanInventory(), analyticsRollup(db), today),
-    );
+    return cachedJson(c, "audit", `${fingerprint()}:${today}`, () => signals(today).audit);
   });
 
   // Weekly digest: one period's usage with deltas against the period before,
   // plus the current-state insight snapshot (shared with /api/insights through
   // the memo above, so the two routes assemble those signals once between
-  // them). The period is resolved BEFORE the memo, so each ISO week gets its
-  // own slot: two days of the same week share one entry, and asking for an
-  // older week doesn't evict the default one. `cachedValue` (not `cachedJson`)
-  // so the cost-basis display preference can be merged fresh per request,
-  // exactly like /api/stats does.
+  // them). `insights=0` drops that snapshot — the dashboard card renders none
+  // of it and shouldn't pay for the signal assembly on first paint.
+  //
+  // The period is resolved BEFORE the memo, so each ISO week gets its own slot:
+  // two days of the same week share one entry, and asking for an older week
+  // doesn't evict the default one. The cost-basis preference rides in the memo
+  // KEY rather than being patched over a cached digest: it is baked into the
+  // digest (the framing sentence, and the markdown the SPA copies), and
+  // flipping the toggle is rare enough that one cheap period rebuild beats
+  // keeping a second, unmemoized merge step here.
   api.get("/api/report", (c) => {
     const week = c.req.query("week");
     if (week !== undefined && !isDayString(week)) {
@@ -235,14 +254,25 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     }
     const today = localDayOfMs(Date.now());
     const period = week ? weekPeriod(week) : lastCompleteWeek(today);
-    const digest = cachedValue(`report:${period.start}`, `${fingerprint()}:${today}`, () =>
-      buildWeeklyDigest(db, pricing, { week, today, insights: portfolioDiagnostics(today) }),
-    );
+    const withInsights = c.req.query("insights") !== "0";
+    const costBasis = getCostBasis();
     // `week` is a client-supplied (if validated) day, so the slot name is the
     // one keyspace here a caller can grow: keep the most recently *requested*
     // weeks and drop the rest — a dropped week costs one rebuild, nothing more.
-    capSlots(objCache, "report:", MAX_REPORT_SLOTS);
-    return c.json({ ...digest, costBasis: getCostBasis() });
+    const body = cachedJson(
+      c,
+      `report:${period.start}:${withInsights ? "full" : "light"}`,
+      `${fingerprint()}:${today}:${costBasis}`,
+      () =>
+        buildWeeklyDigest(db, pricing, {
+          week,
+          today,
+          costBasis,
+          insights: withInsights ? portfolioDiagnostics(today) : [],
+        }),
+    );
+    capSlots("report:", MAX_REPORT_SLOTS);
+    return body;
   });
 
   api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));

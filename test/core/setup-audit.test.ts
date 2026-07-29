@@ -170,6 +170,27 @@ describe("error-prone-skill", () => {
     expect(audit.findings[0]?.evidence).toContain("2 of 5 invocations");
   });
 
+  test("a user skill shadowing a plugin's copy reports the finding once", () => {
+    // One observed bare row, two installed skills of that name. It belongs to
+    // the user's own skill (the plugin's copy is shadowed for bare
+    // invocations), so exactly one error-prone finding is reported — and the
+    // plugin, having claimed none of it, stays eligible for `unused-plugin`.
+    const inv = inventory({
+      skills: [user("deploy"), { name: "deploy", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["deploy"] })],
+    });
+    const audit = buildSetupAudit(
+      inv,
+      usage({
+        skills: [skillRow({ name: "deploy", invocations: ERROR_PRONE_MIN_INVOCATIONS, errors: 3 })],
+      }),
+      TODAY,
+    );
+    expect(codes(audit.findings)).toEqual(["error-prone-skill", "unused-plugin"]);
+    expect(audit.findings[0]?.evidence).toContain("3 of 5 invocations");
+    expect(audit.findings[1]?.subject).toBe("toolkit");
+  });
+
   test("does not fire below the invocation floor or below the rate", () => {
     const tooFew = buildSetupAudit(
       inventory({ skills: [user("flaky")] }),

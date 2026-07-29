@@ -244,10 +244,15 @@ usage, today)` — `today` is a parameter, never `Date.now()` — folds
 emits `session-diagnostics`-shaped findings: `unused-mcp-server` and
 `error-prone-skill` (≥25% errors over ≥5 invocations) as warnings,
 `unused-skill`, `unused-agent`, `unused-plugin`, `stale-skill` (≥30 days), and
-`missing-but-used` as info. Name matching is deliberately loose — a plugin
-skill may be invoked qualified (`plugin:skill`) or bare, so either form counts
-as used; a loose match is a false negative, which beats accusing a
-daily-driver skill of being unused. **Usage also rolls up per plugin**:
+`missing-but-used` as info. **One classifier answers every name question**:
+`attribute(observed, item, owners, userNames)` in `setup-audit.ts` — findings
+ask it loosely (anything but `"none"` counts as used, because a loose match is
+a false negative, which beats accusing a daily-driver skill of being unused),
+the per-plugin numbers ask it strictly (`"owned"` only). A plugin skill may be
+invoked qualified (`plugin:skill`) or bare, so either form counts as used, but
+an observed **bare** row is owned by the user's own same-named skill when there
+is one: the plugin's copy is shadowed, so one erroring `deploy` row reports one
+`error-prone-skill` finding (the user's), not one per installed copy. **Usage also rolls up per plugin**:
 `buildPluginUsage(inventory, usage)` folds one level higher into a
 `PluginUsageRow` per plugin (skills/agents/MCP servers used of shipped,
 invocations, subagent sessions — an upper bound, since the rollup only has
@@ -289,11 +294,16 @@ severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side
 `assemblePortfolioSignals(db, pricing, opts?)` in `portfolio-signals.ts`
 assembles the signals (including the audit's filesystem inventory scan unless
-`{ audit: false }`) so the CLI `insights` command (`renderPortfolioInsights`,
+`{ audit: false }`, and reusing a caller's `{ rollup }` instead of re-scanning
+when it has one) so the CLI `insights` command (`renderPortfolioInsights`,
 explicit "healthy by every rule" line when nothing fires), `GET /api/insights`
 (`diagnostics` field, memoized on fingerprint + local day like `/api/audit`),
 and the TUI Insights header (compact glyph+title list, computed at the screen
-boundary) all feed the rules identical inputs. None of the rules use the
+boundary) all feed the rules identical inputs. The signals object is the
+**whole** surface: `serve` memoizes one per `fingerprint():today` and serves
+`/api/audit` out of its `audit` field while `/api/insights` reads its cache
+summary/TTL/idle buckets, and the TUI Insights screen assembles one and reads
+its cache, context tax, and what-if off it rather than recomputing them. None of the rules use the
 correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
 
@@ -333,14 +343,20 @@ the memo, so each ISO week gets its own `report:<start>` slot keyed
 `fingerprint():today` like `/api/audit` — two days of one week share an entry
 and an old week can't evict the default one; the slot name is the one memo
 keyspace a client can enumerate, so it is capped at the most recent
-`MAX_REPORT_SLOTS` weeks. `costBasis` is merged fresh per request as
-`/api/stats` does, and the insight snapshot is injected via
+`MAX_REPORT_SLOTS` weeks. `costBasis` is read at the route boundary and passed
+in through `WeeklyDigestOptions.costBasis` — the core builder never touches
+`prefs.ts` — and rides in the memo *key* rather than being patched over a
+cached digest, since it is baked into the framing sentence and the copied
+markdown. `?insights=0` builds the digest with an empty snapshot for callers
+that render none of it, on its own slot; otherwise the snapshot is injected via
 `WeeklyDigestOptions.insights` from the same per-`fingerprint():today` memo
 `/api/insights` reads, so the two routes assemble those signals once between
 them; the CLI keeps assembling its own), and the web Dashboard's Weekly digest card, whose
 "copy as markdown" button imports the same bun-free `buildDigestMarkdown`
-instead of adding an endpoint (it refetches when the cost basis flips, and
-prints `CORRECTION_CAVEAT` beside its correction share).
+instead of adding an endpoint (the card itself fetches `insights=0` and pays
+for the full report only on the first copy per cost basis; it refetches when
+the cost basis flips, and prints `CORRECTION_CAVEAT` beside its correction
+share).
 No TUI screen — the CLI and web cover it, and TUI Trends already charts burn.
 `SKILL_COST_CAVEAT`, `CORRECTION_CAVEAT`, and the cost-framing sentence print
 verbatim wherever their numbers appear.

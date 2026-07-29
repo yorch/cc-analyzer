@@ -10,39 +10,28 @@ import {
   summarizeCompactions,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
+import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
-const ts = (s: number) => `2026-07-01T10:00:${String(s).padStart(2, "0")}.000Z`;
+const day = clock(2026, 7, 1, 10);
+const ts = (s: number) => day(0, s);
 
-function assistant(
+const assistant = (
   id: string,
   second: number,
   usage: Record<string, number>,
   opts: { sidechain?: boolean } = {},
-): SessionEvent {
-  return {
-    type: "assistant",
+): SessionEvent =>
+  assistantEvent({
     uuid: id,
-    isSidechain: opts.sidechain === true,
     timestamp: ts(second),
-    message: {
-      id: `msg_${id}`,
-      role: "assistant",
-      model: "claude-opus-4-7",
-      stop_reason: "end_turn",
-      content: [{ type: "text", text: "ok" }],
-      usage,
-    },
-  } as unknown as SessionEvent;
-}
+    isSidechain: opts.sidechain === true,
+    stopReason: "end_turn",
+    usage,
+  });
 
 const prompt = (id: string, second: number, text: string): SessionEvent =>
-  ({
-    type: "user",
-    uuid: id,
-    timestamp: ts(second),
-    message: { role: "user", content: text },
-  }) as unknown as SessionEvent;
+  promptEvent(id, ts(second), text);
 
 /** Two turns; call b runs on a sidechain; a compaction lands between c and d. */
 const events: SessionEvent[] = [

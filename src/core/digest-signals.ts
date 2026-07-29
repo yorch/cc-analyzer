@@ -15,21 +15,20 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { CostBasis } from "./cost-framing.ts";
 import type { WeeklyDigest } from "./digest.ts";
 import { digestDelta, lastCompleteWeek, priorPeriod, weekPeriod } from "./digest.ts";
 import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
 import { buildPortfolioDiagnostics } from "./portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "./portfolio-signals.ts";
-import { getCostBasis } from "./prefs.ts";
 import type { PricingTable } from "./pricing.ts";
 import {
-  addModelTotalsRow,
   analyticsRollup,
   CACHE_TOKENS,
   cacheSummary,
   IO_TOKENS,
   localDayOfMs,
-  type ModelTotals,
+  modelTotals,
   spendByProject,
 } from "./stats.ts";
 import type { DayRange } from "./stats-types.ts";
@@ -49,6 +48,13 @@ export interface WeeklyDigestOptions {
   today?: string;
   /** Skip the insight snapshot's setup-audit filesystem scan. */
   audit?: boolean;
+  /**
+   * Display-only cost framing, read at the *caller's* presentation boundary
+   * (the CLI command, the API route) like every other surface does — this
+   * module stays free of the prefs file. Defaults to `"api"`, the same default
+   * `getCostBasis()` falls back to.
+   */
+  costBasis?: CostBasis;
   /**
    * Pre-built current-state diagnostics for the insight snapshot. The web
    * server already memoizes these per index fingerprint for `/api/insights`, so
@@ -81,16 +87,6 @@ function periodTotals(db: Database, p: DayRange): PeriodTotals {
         FROM sessions WHERE day BETWEEN ? AND ?`,
     )
     .get(p.start, p.end) as PeriodTotals;
-}
-
-/** Per-model totals for one period, through the same fold `spendByModel` uses. */
-function periodModels(db: Database, p: DayRange): Map<string, ModelTotals> {
-  const rows = db
-    .query("SELECT models_json FROM sessions WHERE day BETWEEN ? AND ?")
-    .all(p.start, p.end) as { models_json: string | null }[];
-  const acc = new Map<string, ModelTotals>();
-  for (const row of rows) addModelTotalsRow(acc, row.models_json);
-  return acc;
 }
 
 /** How many projects the digest lists — a digest is a glance, not a report. */
@@ -150,8 +146,8 @@ export function buildWeeklyDigest(
   // STOPPED running is exactly the change a digest exists to show (it renders
   // with 0 calls this period against its prior cost). Ranked by whichever side
   // is larger, so a dropped model sorts by what it used to cost.
-  const curModels = periodModels(db, period);
-  const prevModels = periodModels(db, prior);
+  const curModels = modelTotals(db, undefined, period);
+  const prevModels = modelTotals(db, undefined, prior);
   const models = [...new Set([...curModels.keys(), ...prevModels.keys()])]
     .map((model) => ({
       model,
@@ -208,7 +204,7 @@ export function buildWeeklyDigest(
     insights:
       opts.insights ??
       buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing, { audit: opts.audit })),
-    // Display-only framing, read at this boundary like every other surface.
-    costBasis: getCostBasis(),
+    // Display-only framing; never changes a number, only its wording.
+    costBasis: opts.costBasis ?? "api",
   };
 }

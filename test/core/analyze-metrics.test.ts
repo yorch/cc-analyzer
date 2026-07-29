@@ -8,6 +8,7 @@ import {
   isTestCommand,
   type SessionAnalysis,
 } from "../../src/core/analyze.ts";
+import { assistantEvent, clock, toolResultEvent, toolUseBlock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 type Events = Parameters<typeof analyzeSession>[0];
@@ -81,9 +82,7 @@ describe("isTestCommand", () => {
 });
 
 /** Minutes after a fixed origin, as an ISO timestamp. */
-const at = (min: number): string => new Date(Date.UTC(2026, 0, 1, 12, min)).toISOString();
-
-const usage = { input_tokens: 10, output_tokens: 20 };
+const at = clock(2026, 1, 1, 12);
 
 function assistant(opts: {
   id: string;
@@ -94,36 +93,23 @@ function assistant(opts: {
   content?: unknown[];
   model?: string;
 }) {
-  return {
-    type: "assistant",
+  return assistantEvent({
     uuid: `a-${opts.id}`,
     parentUuid: opts.parentId ? `a-${opts.parentId}` : undefined,
     timestamp: at(opts.min),
     isSidechain: opts.sidechain,
     requestId: `req-${opts.id}`,
-    message: {
-      id: `msg-${opts.id}`,
-      model: opts.model ?? "claude-opus-4-7",
-      stop_reason: opts.stopReason ?? null,
-      content: opts.content ?? [{ type: "text", text: "ok" }],
-      usage,
-    },
-  };
+    messageId: `msg-${opts.id}`,
+    model: opts.model,
+    stopReason: opts.stopReason ?? null,
+    content: opts.content,
+  });
 }
 
-const toolUse = (id: string, name: string, input: unknown) => ({
-  type: "tool_use",
-  id,
-  name,
-  input,
-});
+const toolUse = toolUseBlock;
 
-const toolResult = (id: string, isError: boolean) => ({
-  type: "user",
-  uuid: `r-${id}`,
-  timestamp: at(0),
-  message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "x" }] },
-});
+const toolResult = (id: string, isError: boolean) =>
+  toolResultEvent({ uuid: `r-${id}`, timestamp: at(0), toolUseId: id, isError, content: "x" });
 
 function analyze(events: unknown[]): SessionAnalysis {
   return analyzeSession(events as Events, pricing);

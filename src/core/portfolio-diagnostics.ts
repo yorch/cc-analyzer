@@ -15,6 +15,7 @@
  * `audit.today`).
  */
 
+import { pct } from "./format-shared.ts";
 import type { SetupAudit } from "./setup-audit.ts";
 import type {
   AnalyticsRollup,
@@ -30,26 +31,10 @@ import type {
   WhatIfRepricing,
 } from "./stats-types.ts";
 
-export type PortfolioDiagnosticCode =
-  | "cache-leaky"
-  | "cache-waste-heavy"
-  | "idle-cache-pattern"
-  | "compaction-pressure"
-  | "context-tax-heavy"
-  | "model-downshift-opportunity"
-  | "retry-churn"
-  | "error-rate-rising"
-  | "spend-concentration"
-  | "estimated-pricing-share"
-  | "setup-debt"
-  | "sidechain-imbalance"
-  | "parse-coverage-drop"
-  | "test-thrash-pattern"
-  | "reread-heavy"
-  | "correction-heavy";
-
-/** Every implemented rule code — the "N rules checked" count on render sites. */
-export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
+/** Every implemented rule code, in the order the rules run — the single source
+ * for both the `PortfolioDiagnosticCode` union and the "N rules checked" count
+ * render sites print. */
+export const PORTFOLIO_DIAGNOSTIC_CODES = [
   "cache-leaky",
   "cache-waste-heavy",
   "idle-cache-pattern",
@@ -66,7 +51,9 @@ export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
   "test-thrash-pattern",
   "reread-heavy",
   "correction-heavy",
-];
+] as const;
+
+export type PortfolioDiagnosticCode = (typeof PORTFOLIO_DIAGNOSTIC_CODES)[number];
 
 export type PortfolioDiagnosticSeverity = "info" | "warning";
 
@@ -214,8 +201,6 @@ export const SIDECHAIN_HEAVY_SHARE = 0.5;
 export const SIDECHAIN_NONE_MIN_SESSIONS = 50;
 
 /* ——— Formatting helpers (deterministic, locale-pinned) ———————————————— */
-
-const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
 const usd = (value: number): string =>
   value >= 100 ? `$${Math.round(value).toLocaleString("en-US")}` : `$${value.toFixed(2)}`;

@@ -8,6 +8,7 @@
 
 import type { ApiCall, SessionAnalysis } from "./analyze.ts";
 import { buildContextSeries } from "./chart-series.ts";
+import { pct } from "./format-shared.ts";
 import { THRASH_REREAD_MIN, THRASH_STREAK_MIN } from "./stats-types.ts";
 
 /** Prompt-cache rewrites become interesting after the five-minute TTL boundary. */
@@ -56,8 +57,6 @@ export interface SessionDiagnostic {
   /** Zero-based turn index when the signal belongs to one turn. */
   turnIndex?: number;
 }
-
-const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
 interface TimedCall {
   call: ApiCall;

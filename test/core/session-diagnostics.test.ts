@@ -2,34 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { analyzeSession } from "../../src/core/analyze.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
 import { buildSessionDiagnostics } from "../../src/core/session-diagnostics.ts";
+import {
+  assistantEvent,
+  clock,
+  promptEvent,
+  toolResultEvent,
+  toolUseBlock,
+} from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
-const at = (minutes: number, seconds = 0): string =>
-  new Date(Date.UTC(2026, 6, 1, 10, minutes, seconds)).toISOString();
+const at = clock(2026, 7, 1, 10);
 
 const prompt = (id: string, minutes: number, text = id): SessionEvent =>
-  ({
-    type: "user",
-    uuid: id,
-    timestamp: at(minutes),
-    message: { role: "user", content: text },
-  }) as unknown as SessionEvent;
+  promptEvent(id, at(minutes), text);
 
-function assistant(id: string, minutes: number, usage: Record<string, number>): SessionEvent {
-  return {
-    type: "assistant",
-    uuid: id,
-    timestamp: at(minutes, 10),
-    message: {
-      id: `msg_${id}`,
-      role: "assistant",
-      model: "claude-opus-4-7",
-      stop_reason: "end_turn",
-      content: [{ type: "text", text: "ok" }],
-      usage,
-    },
-  } as unknown as SessionEvent;
-}
+const assistant = (id: string, minutes: number, usage: Record<string, number>): SessionEvent =>
+  assistantEvent({ uuid: id, timestamp: at(minutes, 10), stopReason: "end_turn", usage });
 
 describe("buildSessionDiagnostics", () => {
   test("reports context pressure and a large single-call jump with turn evidence", () => {
@@ -128,28 +116,20 @@ describe("buildSessionDiagnostics", () => {
 
 let seq = 0;
 const toolUse = (id: string, name: string, input: unknown): SessionEvent =>
-  ({
-    type: "assistant",
+  assistantEvent({
     uuid: `tu-${++seq}`,
     timestamp: at(0, Math.min(59, seq)),
-    message: {
-      id: `msg-tu-${seq}`,
-      role: "assistant",
-      model: "claude-opus-4-7",
-      content: [{ type: "tool_use", id, name, input }],
-      usage: { input_tokens: 1, output_tokens: 1 },
-    },
-  }) as unknown as SessionEvent;
+    messageId: `msg-tu-${seq}`,
+    content: [toolUseBlock(id, name, input)],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
 const toolResult = (id: string, isError: boolean): SessionEvent =>
-  ({
-    type: "user",
+  toolResultEvent({
     uuid: `tr-${++seq}`,
     timestamp: at(0, Math.min(59, seq)),
-    message: {
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "out" }],
-    },
-  }) as unknown as SessionEvent;
+    toolUseId: id,
+    isError,
+  });
 
 /** N failing test runs in a row (edit-test loop without the edits). */
 function failingRuns(n: number): SessionEvent[] {

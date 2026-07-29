@@ -229,12 +229,22 @@ export function addModelTotalsRow(acc: Map<string, ModelTotals>, modelsJson: str
   }
 }
 
-/** Every model's totals across the (optionally project-scoped) index. */
-function modelTotals(db: Database, projectId?: string): Map<string, ModelTotals> {
+/**
+ * Every model's totals across the index, optionally scoped to one project
+ * and/or one period. `spendByModel`, `whatIfRepricing`, and the weekly digest's
+ * model mix all read it, so a model's calls/cost/token mix is folded in exactly
+ * one place no matter which surface asks.
+ */
+export function modelTotals(
+  db: Database,
+  projectId?: string,
+  period?: DayRange,
+): Map<string, ModelTotals> {
   const rows = scopedAll<{ models_json: string | null }>(
     db,
-    `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)}`,
+    `SELECT models_json FROM sessions WHERE 1 = 1 ${projectScope(projectId)} ${periodScope(period)}`,
     projectId,
+    ...periodBinds(period),
   );
   const acc = new Map<string, ModelTotals>();
   for (const row of rows) addModelTotalsRow(acc, row.models_json);

@@ -1,6 +1,11 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
-import { formatDigestDelta, isEmptyPeriod, type WeeklyDigest } from "../core/digest.ts";
+import {
+  digestSummaryRows,
+  formatDigestDelta,
+  isEmptyPeriod,
+  type WeeklyDigest,
+} from "../core/digest.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
@@ -30,7 +35,6 @@ import {
   topEntries,
 } from "../core/stats-types.ts";
 import {
-  formatCompactDuration,
   formatCount,
   formatDuration,
   formatRelativeTime,
@@ -75,6 +79,35 @@ function muted(value: string, options: RenderOptions): string {
 
 function healthy(value: string, options: RenderOptions): string {
   return paint(options.color === true, ANSI.green, value);
+}
+
+/** The shape every findings block renders: the `session-diagnostics.ts` house
+ * style, shared by session diagnostics, portfolio insights, and audit findings. */
+interface FindingLike {
+  severity: "info" | "warning";
+  title: string;
+  evidence: string;
+  action: string;
+}
+
+/**
+ * Append a findings block: severity glyph + title, the evidence, then the next
+ * action. `project` is the optional middle line the portfolio insights add for
+ * project-scoped findings; the other surfaces omit it.
+ */
+function pushFindings<T extends FindingLike>(
+  lines: string[],
+  findings: readonly T[],
+  options: RenderOptions,
+  project?: (finding: T) => string | null | undefined,
+): void {
+  for (const finding of findings) {
+    lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
+    lines.push(`  ${finding.evidence}`);
+    const scope = project?.(finding);
+    if (scope) lines.push(muted(`  Project: ${scope}`, options));
+    lines.push(muted(`  Next: ${finding.action}`, options));
+  }
 }
 
 function totalTokens(t: TokenCounts): number {
@@ -230,11 +263,7 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
       healthy("No notable context or cost patterns crossed the current thresholds.", options),
     );
   } else {
-    for (const diagnostic of diagnostics) {
-      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
-      lines.push(`  ${diagnostic.evidence}`);
-      lines.push(muted(`  Next: ${diagnostic.action}`, options));
-    }
+    pushFindings(lines, diagnostics, options);
   }
 
   lines.push(`\n${section("Turns", options)}`);
@@ -324,11 +353,7 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
       healthy("Everything installed is in use, and nothing crossed a threshold.", options),
     );
   } else {
-    for (const finding of audit.findings) {
-      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
-      lines.push(`  ${finding.evidence}`);
-      lines.push(muted(`  Next: ${finding.action}`, options));
-    }
+    pushFindings(lines, audit.findings, options);
   }
 
   lines.push(`\n${muted(SETUP_AUDIT_CAVEAT, options)}`);
@@ -359,13 +384,7 @@ export function renderPortfolioInsights(
       ),
     );
   } else {
-    for (const diagnostic of diagnostics) {
-      lines.push(`${diagnostic.severity === "warning" ? "!" : "·"} ${diagnostic.title}`);
-      lines.push(`  ${diagnostic.evidence}`);
-      const project = diagnostic.projectPath ?? diagnostic.projectId;
-      if (project) lines.push(muted(`  Project: ${project}`, options));
-      lines.push(muted(`  Next: ${diagnostic.action}`, options));
-    }
+    pushFindings(lines, diagnostics, options, (d) => d.projectPath ?? d.projectId);
     lines.push(
       muted(
         `\n${diagnostics.length} of ${ruleCount} rules fired. Drill into sessions with ` +
@@ -413,38 +432,13 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
     lines.push(
       table(
         ["metric", "this period", "prior", "change"],
-        [
-          [
-            costNoun(d.costBasis),
-            formatUSD(h.cost.current),
-            formatUSD(h.cost.prior),
-            change(h.cost, formatUSD),
-          ],
-          [
-            "sessions",
-            String(h.sessions.current),
-            String(h.sessions.prior),
-            change(h.sessions, (n) => String(n)),
-          ],
-          [
-            "active time",
-            formatCompactDuration(h.activeMs.current),
-            formatCompactDuration(h.activeMs.prior),
-            change(h.activeMs, formatCompactDuration),
-          ],
-          [
-            "tokens (in+out)",
-            formatSignedCount(h.ioTokens.current),
-            formatSignedCount(h.ioTokens.prior),
-            change(h.ioTokens, formatSignedCount),
-          ],
-          [
-            "cache tokens",
-            formatSignedCount(h.cacheTokens.current),
-            formatSignedCount(h.cacheTokens.prior),
-            change(h.cacheTokens, formatSignedCount),
-          ],
-        ],
+        digestSummaryRows(d, [
+          costNoun(d.costBasis),
+          "sessions",
+          "active time",
+          "tokens (in+out)",
+          "cache tokens",
+        ]),
         { align: ["left", "right", "right", "right"] },
       ),
     );
@@ -541,11 +535,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
   if (d.insights.length === 0) {
     lines.push(healthy("No findings — the portfolio looks healthy by every rule.", options));
   } else {
-    for (const finding of d.insights) {
-      lines.push(`${finding.severity === "warning" ? "!" : "·"} ${finding.title}`);
-      lines.push(`  ${finding.evidence}`);
-      lines.push(muted(`  Next: ${finding.action}`, options));
-    }
+    pushFindings(lines, d.insights, options);
   }
 
   lines.push(
