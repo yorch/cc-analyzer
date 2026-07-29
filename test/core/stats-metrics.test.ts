@@ -12,6 +12,7 @@ import {
   hotFiles,
   idleVsCache,
   modelMixByDay,
+  parseCoverage,
   runRate,
   sessionScatter,
   sidechainByProject,
@@ -378,5 +379,76 @@ describe("idleVsCache", () => {
     expect(buckets[0]?.wasteShare).toBeCloseTo(0, 5);
     expect(buckets[3]).toMatchObject({ bucket: "75%+ idle", sessions: 1 });
     expect(buckets[3]?.wasteShare).toBeCloseTo(1, 5);
+  });
+});
+
+describe("parseCoverage", () => {
+  const session = (
+    path: string,
+    lines: number,
+    parseErrors: number,
+    unknownEvents: number,
+    versions: string[],
+  ) =>
+    ({
+      path,
+      parse_lines: lines,
+      parse_errors: parseErrors,
+      unknown_events: unknownEvents,
+      versions_json: JSON.stringify(versions),
+    }) as const;
+
+  test("sums the counters and derives the unparsed share", () => {
+    const db = fresh();
+    insert(db, { ...session("a", 100, 1, 1, ["1.2.3"]) });
+    insert(db, { ...session("b", 900, 0, 8, ["1.2.3"]) });
+    const c = parseCoverage(db).summary;
+    expect(c).toEqual({
+      sessions: 2,
+      lines: 1000,
+      parseErrors: 1,
+      unknownEvents: 9,
+      unparsedShare: 0.01,
+    });
+  });
+
+  test("attributes a session to the newest version it ran under, newest row first", () => {
+    const db = fresh();
+    // A session that spanned an upgrade belongs to the newer version — 1.10.0
+    // is newer than 1.9.0 numerically, not lexicographically.
+    insert(db, { ...session("spanning", 100, 0, 4, ["1.9.0", "1.10.0"]) });
+    insert(db, { ...session("old", 100, 0, 0, ["1.9.0"]) });
+    // No recorded version: counted in the summary, attributed to no row.
+    insert(db, { ...session("versionless", 50, 5, 0, []) });
+
+    const c = parseCoverage(db);
+    expect(c.byVersion.map((v) => v.version)).toEqual(["1.10.0", "1.9.0"]);
+    expect(c.byVersion[0]).toMatchObject({ sessions: 1, lines: 100, unknownEvents: 4 });
+    expect(c.byVersion[0]?.unparsedShare).toBeCloseTo(0.04, 10);
+    expect(c.byVersion[1]?.unparsedShare).toBe(0);
+    expect(c.summary.sessions).toBe(3);
+    expect(c.summary.lines).toBe(250);
+  });
+
+  test("a zero-line portfolio reports a 0 share, not NaN", () => {
+    const db = fresh();
+    expect(parseCoverage(db).summary).toEqual({
+      sessions: 0,
+      lines: 0,
+      parseErrors: 0,
+      unknownEvents: 0,
+      unparsedShare: 0,
+    });
+    // Rows predating schema v11 would carry NULL counters; COALESCE keeps the
+    // math honest rather than propagating NULL into the share.
+    insert(db, { path: "legacy" });
+    const c = parseCoverage(db).summary;
+    expect(c).toEqual({
+      sessions: 1,
+      lines: 0,
+      parseErrors: 0,
+      unknownEvents: 0,
+      unparsedShare: 0,
+    });
   });
 });

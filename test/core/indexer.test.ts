@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import {
+  analyticsRollup,
   contextTax,
+  parseCoverage,
   portfolioSummary,
   spendByModel,
   spendByProject,
@@ -189,6 +191,204 @@ describe("reindex · context tax (schema v9)", () => {
     db.close();
     rmSync(withCall, { force: true });
     rmSync(noCall, { force: true });
+  });
+});
+
+describe("reindex · turn-scoped skill cost (schema v10)", () => {
+  test("round-trips per-skill turn attribution into skill_turn_costs_json", async () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const call = (uuid: string, minute: number, content: unknown[], sidechain = false) =>
+      line({
+        type: "assistant",
+        uuid,
+        isSidechain: sidechain,
+        sessionId: "sess-skill",
+        timestamp: `2026-07-03T10:0${minute}:00.000Z`,
+        requestId: `req-${uuid}`,
+        message: {
+          id: `m-${uuid}`,
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content,
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      });
+    const file = join(claude.dir, "projects", "proj-b", "sess-skill.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-skill",
+          timestamp: "2026-07-03T10:00:00.000Z",
+          message: { role: "user", content: "write the doc" },
+        }),
+        call("a1", 1, [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "docx" } }]),
+        // The subagent this turn spawned bills to the same turn.
+        call("s1", 2, [{ type: "text", text: "sub" }], true),
+        line({
+          type: "user",
+          uuid: "u2",
+          sessionId: "sess-skill",
+          timestamp: "2026-07-03T10:03:00.000Z",
+          message: { role: "user", content: "now something else" },
+        }),
+        call("a2", 4, [{ type: "text", text: "done" }]),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT cost_total, skills_json, skill_turn_costs_json FROM sessions
+          WHERE session_id = 'sess-skill'`,
+      )
+      .get() as { cost_total: number; skills_json: string; skill_turn_costs_json: string };
+    expect(JSON.parse(row.skills_json)).toEqual({ docx: 1 });
+    const attributed = JSON.parse(row.skill_turn_costs_json) as Record<
+      string,
+      { turns: number; cost: number }
+    >;
+    expect(attributed.docx?.turns).toBe(1);
+    // Turn 1 (main call + subagent call) — strictly less than the session, which
+    // also paid for turn 2.
+    expect(attributed.docx?.cost).toBeGreaterThan(0);
+    expect(attributed.docx?.cost).toBeLessThan(row.cost_total);
+
+    // …and the column is what analyticsRollup reads.
+    const skill = analyticsRollup(db, "proj-b").skills.find((s) => s.name === "docx");
+    expect(skill?.attributedTurns).toBe(1);
+    expect(skill?.attributedCost).toBeCloseTo(attributed.docx?.cost as number, 12);
+    db.close();
+    rmSync(file, { force: true });
+  });
+});
+
+describe("reindex · parse coverage (schema v11)", () => {
+  test("round-trips the coverage counters and feeds parseCoverage()", async () => {
+    const file = join(claude.dir, "projects", "proj-b", "sess-drift.jsonl");
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-drift",
+          version: "9.9.9",
+          timestamp: "2026-07-04T10:00:00.000Z",
+          message: { role: "user", content: "hi" },
+        }),
+        "not json at all",
+        JSON.stringify({ type: "some-future-type", brandNewField: 1 }),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT parse_lines, parse_errors, unknown_events FROM sessions
+          WHERE session_id = 'sess-drift'`,
+      )
+      .get() as { parse_lines: number; parse_errors: number; unknown_events: number };
+    expect(row).toEqual({ parse_lines: 3, parse_errors: 1, unknown_events: 1 });
+
+    // …and the columns are what parseCoverage() reads: this session is the only
+    // one carrying version 9.9.9, so it owns that row entirely.
+    const drift = parseCoverage(db).byVersion.find((v) => v.version === "9.9.9");
+    expect(drift).toEqual({
+      version: "9.9.9",
+      sessions: 1,
+      lines: 3,
+      parseErrors: 1,
+      unknownEvents: 1,
+      unparsedShare: 2 / 3,
+    });
+    db.close();
+    rmSync(file, { force: true });
+  });
+});
+
+describe("reindex · thrash (schema v12)", () => {
+  test("round-trips the streak, redundant reads, and re-read files; rollup folds them", async () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const toolUse = (uuid: string, name: string, input: unknown) =>
+      line({
+        type: "assistant",
+        uuid,
+        sessionId: "sess-thrash",
+        timestamp: "2026-07-05T10:00:00.000Z",
+        requestId: `req-${uuid}`,
+        message: {
+          id: `m-${uuid}`,
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "tool_use", id: `t-${uuid}`, name, input }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      });
+    const result = (uuid: string, forUuid: string, isError: boolean) =>
+      line({
+        type: "user",
+        uuid,
+        sessionId: "sess-thrash",
+        timestamp: "2026-07-05T10:00:01.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: `t-${forUuid}`, is_error: isError }],
+        },
+      });
+    const file = join(claude.dir, "projects", "proj-b", "sess-thrash.jsonl");
+    writeFileSync(
+      file,
+      [
+        line({
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-thrash",
+          timestamp: "2026-07-05T10:00:00.000Z",
+          message: { role: "user", content: "fix the tests" },
+        }),
+        // Three failing test runs in a row, edits in between.
+        toolUse("b1", "Bash", { command: "bun test" }),
+        result("x1", "b1", true),
+        toolUse("e1", "Edit", { file_path: "/p/x.ts" }),
+        result("x2", "e1", false),
+        toolUse("b2", "Bash", { command: "bun test" }),
+        result("x3", "b2", true),
+        toolUse("b3", "Bash", { command: "bun test" }),
+        result("x4", "b3", true),
+        // Four reads of the same file: 2 redundant.
+        toolUse("r1", "Read", { file_path: "/p/hot.md" }),
+        toolUse("r2", "Read", { file_path: "/p/hot.md" }),
+        toolUse("r3", "Read", { file_path: "/p/hot.md", offset: 10 }),
+        toolUse("r4", "Read", { file_path: "/p/hot.md" }),
+      ].join("\n"),
+    );
+
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    const row = db
+      .query(
+        `SELECT test_fail_streak, redundant_reads, reread_files_json FROM sessions
+          WHERE session_id = 'sess-thrash'`,
+      )
+      .get() as { test_fail_streak: number; redundant_reads: number; reread_files_json: string };
+    expect(row.test_fail_streak).toBe(3);
+    expect(row.redundant_reads).toBe(2);
+    expect(JSON.parse(row.reread_files_json)).toEqual(["/p/hot.md"]);
+
+    // …and the columns are what the rollup folds.
+    const thrash = analyticsRollup(db).thrash;
+    expect(thrash.testThrashSessions).toBe(1);
+    expect(thrash.worstTestFailStreak).toBe(3);
+    expect(thrash.redundantReads).toBe(2);
+    expect(thrash.rereadSessions).toBe(0); // 2 < the 4-redundant-read session floor
+    expect(thrash.topRereadFiles).toEqual([{ file: "/p/hot.md", sessions: 1 }]);
+    db.close();
+    rmSync(file, { force: true });
   });
 });
 

@@ -43,6 +43,8 @@ function skillRow(over: Partial<SkillUsageRow> & { name: string }): SkillUsageRo
     errorRate: invocations > 0 ? errors / invocations : 0,
     firstUsed: TODAY,
     lastUsed: TODAY,
+    attributedTurns: 0,
+    attributedCost: 0,
     totalCost: 0,
     avgCostPerSession: 0,
     daily: [],

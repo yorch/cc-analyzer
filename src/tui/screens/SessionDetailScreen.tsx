@@ -53,8 +53,8 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { events } = await parseSessionFile(session.path);
-      const analysis = analyzeSession(events, pricing);
+      const { events, coverage } = await parseSessionFile(session.path);
+      const analysis = analyzeSession(events, pricing, { coverage });
       const transcript = buildTranscript(events);
       if (!cancelled) setData({ analysis, transcript });
     })();

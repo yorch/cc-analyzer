@@ -24,6 +24,7 @@ import type {
   ContextTax,
   ErrorWeekRow,
   IdleCacheBucket,
+  ParseCoverageStats,
   PortfolioStats,
   ProjectCacheRow,
   WhatIfRepricing,
@@ -41,7 +42,10 @@ export type PortfolioDiagnosticCode =
   | "spend-concentration"
   | "estimated-pricing-share"
   | "setup-debt"
-  | "sidechain-imbalance";
+  | "sidechain-imbalance"
+  | "parse-coverage-drop"
+  | "test-thrash-pattern"
+  | "reread-heavy";
 
 /** Every implemented rule code — the "N rules checked" count on render sites. */
 export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
@@ -57,6 +61,9 @@ export const PORTFOLIO_DIAGNOSTIC_CODES: readonly PortfolioDiagnosticCode[] = [
   "estimated-pricing-share",
   "setup-debt",
   "sidechain-imbalance",
+  "parse-coverage-drop",
+  "test-thrash-pattern",
+  "reread-heavy",
 ];
 
 export type PortfolioDiagnosticSeverity = "info" | "warning";
@@ -99,6 +106,9 @@ export interface PortfolioSignals {
   whatIf: WhatIfRepricing;
   /** `buildSetupAudit()` — optional: callers without filesystem access omit it. */
   audit?: SetupAudit;
+  /** `parseCoverage()` — optional: a caller on an older payload omits it, and
+   * the parse-coverage rule simply doesn't run. */
+  parseCoverage?: ParseCoverageStats;
 }
 
 /* ——— Thresholds (conservative, each with its rationale) ————————————— */
@@ -163,6 +173,29 @@ export const CONCENTRATION_SHARE = 0.6;
  * to flag; below that the totals are still directionally solid. */
 export const ESTIMATED_SHARE = 0.25;
 
+/** Parse coverage: 1% of a version's lines unreadable is well past noise (a
+ * healthy version parses at ~0%), and 10k lines is roughly a handful of real
+ * sessions — below that a single corrupt file would fire the rule. Judged on
+ * the NEWEST version rather than a rolling window: a format change ships with a
+ * release, and old sessions keep parsing exactly as well as they always did, so
+ * a 30-day window would dilute the very signal the rule is looking for. */
+export const PARSE_COVERAGE_MAX_UNPARSED_SHARE = 0.01;
+export const PARSE_COVERAGE_MIN_LINES = 10_000;
+
+/** Test thrash: ≥ 3 sessions hitting a failing-test streak of ≥ 3
+ * (`THRASH_STREAK_MIN`, judged in the rollup) is a pattern, not one bad
+ * afternoon — but only when those sessions are ≥ 10% of the sessions that ran
+ * tests at all, so a heavy test-running portfolio isn't flagged for its
+ * ordinary tail. */
+export const TEST_THRASH_MIN_SESSIONS = 3;
+export const TEST_THRASH_SESSION_SHARE = 0.1;
+
+/** Reread-heavy: 200 redundant reads portfolio-wide is real token volume
+ * (whole files re-paid into context), and 10 affected sessions keep one
+ * pathological session from firing a portfolio-wide habit finding. */
+export const REREAD_MIN_TOTAL = 200;
+export const REREAD_MIN_SESSIONS = 10;
+
 /** Sidechain imbalance: half of spend on subagents merits a look at whether
  * delegation earns its keep; zero subagent use only becomes remarkable once
  * the portfolio is large enough (50+ sessions) that it's clearly a habit. */
@@ -197,7 +230,17 @@ interface Ranked extends PortfolioDiagnostic {
  * the finding text.
  */
 export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioDiagnostic[] {
-  const { stats, rollup, cache, compactions, errorWeekly, contextTax, whatIf, audit } = signals;
+  const {
+    stats,
+    rollup,
+    cache,
+    compactions,
+    errorWeekly,
+    contextTax,
+    whatIf,
+    audit,
+    parseCoverage,
+  } = signals;
   const findings: Ranked[] = [];
   const summary = stats.summary;
 
@@ -500,6 +543,82 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         action:
           "Subagents can offload bulk reading and exploration from the main context window " +
           "(reducing compactions and cache churn) — worth trying on large tasks.",
+        impact: 0,
+      });
+    }
+  }
+
+  // 13. parse-coverage-drop — the newest Claude Code version's sessions no
+  //     longer parse cleanly, i.e. the format has moved ahead of this build.
+  {
+    const newest = parseCoverage?.byVersion[0];
+    if (
+      newest &&
+      newest.lines >= PARSE_COVERAGE_MIN_LINES &&
+      newest.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE
+    ) {
+      findings.push({
+        code: "parse-coverage-drop",
+        severity: "warning",
+        title: "The newest Claude Code version's sessions don't fully parse",
+        evidence:
+          `${(newest.unparsedShare * 100).toFixed(1)}% of the ${tok(newest.lines)} lines written by ` +
+          `Claude Code ${newest.version} (${plural(newest.sessions, "session")}) were not fully ` +
+          `understood — ${tok(newest.parseErrors)} unreadable, ` +
+          `${tok(newest.unknownEvents)} kept as unknown events.`,
+        action:
+          "Update cc-analyzer (`cc-analyzer update`) — the session format may have moved ahead " +
+          "of this parser version. Unparsed lines are excluded from every metric, so totals for " +
+          "those sessions read low until the parser catches up.",
+        impact: 0,
+      });
+    }
+  }
+
+  // 14. test-thrash-pattern — edit→test→fail loops recur across sessions.
+  {
+    const th = rollup.thrash;
+    const testSessions = rollup.tests.sessions;
+    if (
+      th.testThrashSessions >= TEST_THRASH_MIN_SESSIONS &&
+      testSessions > 0 &&
+      th.testThrashSessions >= testSessions * TEST_THRASH_SESSION_SHARE
+    ) {
+      findings.push({
+        code: "test-thrash-pattern",
+        severity: "warning",
+        title: "Edit-test loops repeat without progress across sessions",
+        evidence:
+          `${plural(th.testThrashSessions, "session")} hit 3+ consecutive failing test runs ` +
+          `without a pass (worst streak: ${th.worstTestFailStreak}) — ` +
+          `${pct(th.testThrashSessions / testSessions)} of the ${plural(testSessions, "session")} that ran tests.`,
+        action:
+          "When a test fails twice in a row, step back and read the failure output carefully " +
+          "or bisect — repeated blind edit-test cycles burn tokens; consider asking for a " +
+          "different approach.",
+        impact: 0,
+      });
+    }
+  }
+
+  // 15. reread-heavy — redundant same-file reads add up portfolio-wide.
+  {
+    const th = rollup.thrash;
+    const top = th.topRereadFiles[0];
+    if (th.redundantReads >= REREAD_MIN_TOTAL && th.rereadSessions >= REREAD_MIN_SESSIONS) {
+      findings.push({
+        code: "reread-heavy",
+        severity: "info",
+        title: "The same files are re-read over and over",
+        evidence:
+          `${tok(th.redundantReads)} redundant reads (3rd+ read of a file) across ` +
+          `${plural(th.rereadSessions, "session")} with 4 or more` +
+          (top
+            ? `; the most re-read file is ${top.file} (${plural(top.sessions, "session")}).`
+            : "."),
+        action:
+          "Put hot reference files in CLAUDE.md summaries or delegate bulk reading to " +
+          "subagents — every re-read pays the whole file into context again.",
         impact: 0,
       });
     }

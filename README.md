@@ -30,7 +30,8 @@ API rates. If you're on a flat-plan subscription (Pro/Max) rather than
 pay-as-you-go API billing, those numbers are API-equivalent *value*, not a
 bill. Run `cc-analyzer cost-basis subscription` to frame them that way across
 the CLI, TUI, and web app (`cc-analyzer cost-basis` shows the current setting;
-`api` is the default).
+`api` is the default) — or, in the web app, flip the toggle beside the
+Dashboard's cost figure.
 
 ## Install
 
@@ -155,6 +156,9 @@ Index-backed reports include the last successful refresh time. `index --check`
 compares source file metadata with the cache without parsing sessions and exits
 non-zero when it finds new, changed, or deleted files. The TUI, `stats`, and
 web app surface the same freshness status so an older cache is never silent.
+`index --check` also prints one line of **parse coverage** — the share of
+indexed lines this build of the parser fully understood — read from the index
+rows, so the no-parse guarantee holds.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.
@@ -167,13 +171,23 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
 - **Tokens alongside cost** everywhere the Web UI and TUI show a cost figure —
   shown as input+output with the (much larger) cache volume broken out, e.g.
   `213M +52B cache`.
-- **Tools**, **skills**, and **subagents** used; files touched.
+- **Tools**, **skills**, and **subagents** used; files touched. Skills carry the
+  cost of the turns that invoked them (turn-scoped attribution).
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for
   context pressure, large context jumps, cache rewrites after idle gaps,
-  post-compaction refills, and concentrated per-turn spend. These are named
+  post-compaction refills, concentrated per-turn spend, edit-test thrash
+  (consecutive failing test runs without a pass), and repeated re-reads of the
+  same file (each re-read pays the file into context again). These are named
   heuristics, not a session-quality score.
+- **Parse coverage**: how much of the session file this build actually
+  understood — lines skipped as unreadable, and lines kept as tolerant
+  "unknown" events. The JSONL format is undocumented and changes between Claude
+  Code releases, so the parser is tolerant by design; this makes that tolerance
+  visible instead of silent. `cc-analyzer insights` warns (and points at
+  `cc-analyzer update`) when the newest Claude Code version's sessions stop
+  parsing cleanly.
 
 ## Configuration
 
@@ -234,7 +248,8 @@ metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
 rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, and the most expensive sessions. Two cost-optimization
+month/project/model, the most expensive sessions, and your **skills ranked by
+the cost of the turns that invoked them**. Two cost-optimization
 sections round it out: **what-if model repricing** replays each model's actual
 token mix — all four categories, both cache-write TTLs — at the rates of the
 other models you ran, and **context tax** reports the median/p90 tokens each
@@ -277,8 +292,9 @@ and rendered on the web app's Tools view.
 `cc-analyzer insights` is the portfolio-wide counterpart of the per-session
 "actionable diagnostics": a bun-free rules engine folds every portfolio signal —
 cache efficiency, compaction pressure, context tax, what-if repricing, retry
-churn, weekly error trend, spend concentration, pricing confidence, the setup
-audit, and subagent balance — into a ranked list of explainable findings.
+churn, edit-test thrash, redundant file re-reads, weekly error trend, spend
+concentration, pricing confidence, the setup audit, subagent balance, and parse
+coverage — into a ranked list of explainable findings.
 Warnings rank before infos, and dollar-backed findings rank first within a
 severity. These are deliberately named heuristics with conservative,
 documented thresholds — **not a score**: every finding shows the observed
@@ -311,11 +327,15 @@ time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
 (day/week/month) — and an activity **heatmap** of sessions by local weekday ×
 hour (`m` toggles to cost). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
 **tools** by invocations with an error count and error rate (`s` sorts); goes
-deeper on **skills** — invocations, sessions, distinct projects, error rate, and
-session-scoped cost (`s` sorts), with an adoption detail strip (first/last used +
-a weekly invocation sparkline) for the selected skill; and lists **subagents** by
-how many sessions used each. (Skill cost is *correlational*: a session using
-several skills counts its full cost toward each.) Opening a session
+deeper on **skills** — invocations, sessions, distinct projects, error rate,
+turn-scoped cost and session-scoped cost (`s` sorts), with an adoption detail
+strip (first/last used + a weekly invocation sparkline) for the selected skill;
+and lists **subagents** by how many sessions used each. (Skill cost is reported
+at two scopes: *turn-scoped* — the cost of the turns that invoked the skill,
+including any subagent burst inside them — is the primary number, and
+*session-scoped* is the whole-session upper bound. Both are correlational, not
+causal: a turn or session touching several skills counts its full cost toward
+each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
 (each step expands an amber card with its input/result), plus **transcript** and

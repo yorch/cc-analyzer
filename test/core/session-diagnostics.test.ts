@@ -123,3 +123,97 @@ describe("buildSessionDiagnostics", () => {
     expect(buildSessionDiagnostics(analysis)).toEqual([]);
   });
 });
+
+/* ——— Thrash diagnostics ————————————————————————————————————————————— */
+
+let seq = 0;
+const toolUse = (id: string, name: string, input: unknown): SessionEvent =>
+  ({
+    type: "assistant",
+    uuid: `tu-${++seq}`,
+    timestamp: at(0, Math.min(59, seq)),
+    message: {
+      id: `msg-tu-${seq}`,
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "tool_use", id, name, input }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  }) as unknown as SessionEvent;
+const toolResult = (id: string, isError: boolean): SessionEvent =>
+  ({
+    type: "user",
+    uuid: `tr-${++seq}`,
+    timestamp: at(0, Math.min(59, seq)),
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "out" }],
+    },
+  }) as unknown as SessionEvent;
+
+/** N failing test runs in a row (edit-test loop without the edits). */
+function failingRuns(n: number): SessionEvent[] {
+  const events: SessionEvent[] = [prompt("u1", 0)];
+  for (let i = 0; i < n; i++) {
+    events.push(toolUse(`t-${i}`, "Bash", { command: "bun test" }), toolResult(`t-${i}`, true));
+  }
+  return events;
+}
+
+/** Read each file the given number of times. */
+function reads(files: Record<string, number>): SessionEvent[] {
+  const events: SessionEvent[] = [prompt("u1", 0)];
+  for (const [file, n] of Object.entries(files)) {
+    for (let i = 0; i < n; i++) events.push(toolUse(`r-${file}-${i}`, "Read", { file_path: file }));
+  }
+  return events;
+}
+
+describe("buildSessionDiagnostics · edit-test-thrash", () => {
+  const find = (n: number) =>
+    buildSessionDiagnostics(analyzeSession(failingRuns(n), pricing)).find(
+      (d) => d.code === "edit-test-thrash",
+    );
+
+  test("fires as info at a streak of 3 and escalates to warning at 4", () => {
+    const info = find(3);
+    expect(info?.severity).toBe("info");
+    expect(info?.evidence).toBe("3 consecutive failing test runs without a pass.");
+    expect(find(4)?.severity).toBe("warning");
+  });
+
+  test("stays quiet at a streak of 2", () => {
+    expect(find(2)).toBeUndefined();
+  });
+});
+
+describe("buildSessionDiagnostics · repeated-file-reads", () => {
+  const diag = (files: Record<string, number>) =>
+    buildSessionDiagnostics(analyzeSession(reads(files), pricing)).find(
+      (d) => d.code === "repeated-file-reads",
+    );
+
+  test("fires as info at 4 redundant reads and names the top file", () => {
+    // 6 reads of one file = 4 redundant on one chain.
+    const f = diag({ "/p/hot.md": 6, "/p/other.md": 1 });
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("4 redundant reads");
+    expect(f?.evidence).toContain("/p/hot.md (6 reads)");
+  });
+
+  test("fires as info when any single file is read 4 times", () => {
+    // Only 2 redundant reads — but one file read 4 times is worth naming.
+    const f = diag({ "/p/hot.md": 4 });
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("2 redundant reads");
+  });
+
+  test("escalates to warning at 8 redundant reads", () => {
+    expect(diag({ "/p/hot.md": 10 })?.severity).toBe("warning");
+  });
+
+  test("stays quiet when files are read at most 3 times and redundancy is low", () => {
+    expect(diag({ "/p/a.md": 3, "/p/b.md": 3, "/p/c.md": 3 })).toBeUndefined();
+    expect(diag({ "/p/a.md": 2, "/p/b.md": 2 })).toBeUndefined();
+  });
+});

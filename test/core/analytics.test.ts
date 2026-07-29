@@ -18,6 +18,7 @@ beforeAll(() => {
     tools_json: '{"Bash":10,"Read":5}',
     tool_errors_json: '{"Bash":2}',
     skills_json: '{"superpowers:brainstorming":1}',
+    skill_turn_costs_json: '{"superpowers:brainstorming":{"turns":1,"cost":0.5}}',
     subagents_json: '["general-purpose"]',
   });
   insertSession(db, {
@@ -29,6 +30,8 @@ beforeAll(() => {
     tool_errors_json: '{"Edit":1}',
     skills_json: '{"superpowers:brainstorming":2,"artifact-design":1}',
     skill_errors_json: '{"artifact-design":1}',
+    skill_turn_costs_json:
+      '{"superpowers:brainstorming":{"turns":2,"cost":1.25},"artifact-design":{"turns":1,"cost":0.75}}',
   });
   insertSession(db, {
     path: "s3",
@@ -37,6 +40,7 @@ beforeAll(() => {
     cost_total: 4,
     tools_json: '{"Read":7}',
     skills_json: '{"superpowers:brainstorming":1}',
+    skill_turn_costs_json: '{"superpowers:brainstorming":{"turns":1,"cost":3}}',
     subagents_json: '["general-purpose"]',
   });
 });
@@ -54,7 +58,7 @@ describe("analyticsRollup tools", () => {
 });
 
 describe("analyticsRollup skills", () => {
-  test("folds invocations, reach, reliability, adoption, and session-scoped cost", () => {
+  test("folds invocations, reach, reliability, adoption, and both cost scopes", () => {
     const rows = analyticsRollup(db).skills;
     expect(rows.map((r) => r.name)).toEqual(["superpowers:brainstorming", "artifact-design"]);
 
@@ -69,6 +73,10 @@ describe("analyticsRollup skills", () => {
       lastUsed: "2026-06-01",
       totalCost: 7,
     });
+    // Turn-scoped attribution sums across sessions and stays below the
+    // session-scoped upper bound.
+    expect(brain?.attributedTurns).toBe(4);
+    expect(brain?.attributedCost).toBeCloseTo(0.5 + 1.25 + 3, 10);
     expect(brain?.avgCostPerSession).toBeCloseTo(7 / 3, 5);
     expect(brain?.daily).toEqual([
       { day: "2026-05-01", count: 1 },
@@ -86,7 +94,9 @@ describe("analyticsRollup skills", () => {
       firstUsed: "2026-05-08",
       lastUsed: "2026-05-08",
       totalCost: 2,
+      attributedTurns: 1,
     });
+    expect(art?.attributedCost).toBeCloseTo(0.75, 10);
   });
 });
 

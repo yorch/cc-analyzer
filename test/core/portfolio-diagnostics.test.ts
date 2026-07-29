@@ -10,6 +10,8 @@ import type {
   ContextTaxRow,
   ErrorWeekRow,
   IdleCacheBucket,
+  ParseCoverageSummary,
+  ParseCoverageVersionRow,
   ProjectCacheRow,
 } from "../../src/core/stats-types.ts";
 
@@ -121,12 +123,15 @@ type Overrides = {
   distribution?: Partial<PortfolioSignals["stats"]["distribution"]>;
   sidechain?: Partial<PortfolioSignals["stats"]["sidechain"]>;
   retries?: Partial<PortfolioSignals["rollup"]["retries"]>;
+  tests?: Partial<PortfolioSignals["rollup"]["tests"]>;
+  thrash?: Partial<PortfolioSignals["rollup"]["thrash"]>;
   cacheSummary?: Partial<PortfolioSignals["cache"]["summary"]>;
   cacheProjects?: ProjectCacheRow[];
   idleBuckets?: IdleCacheBucket[];
   compactionsByProject?: CompactionProjectRow[];
   errorWeekly?: ErrorWeekRow[];
   taxByProject?: ContextTaxRow[];
+  parseCoverage?: PortfolioSignals["parseCoverage"];
   whatIfSummary?: Partial<PortfolioSignals["whatIf"]["summary"]>;
   audit?: SetupAudit;
 };
@@ -196,12 +201,20 @@ function signals(over: Overrides = {}): PortfolioSignals {
       skills: [],
       subagents: [],
       bash: [],
-      tests: { runs: 0, failures: 0, sessions: 0, failureRate: 0 },
+      tests: { runs: 0, failures: 0, sessions: 0, failureRate: 0, ...over.tests },
       retries: {
         total: 5,
         sessions: 3,
         byTool: [{ tool: "Bash", retries: 5, sessions: 2 }],
         ...over.retries,
+      },
+      thrash: {
+        testThrashSessions: 0,
+        worstTestFailStreak: 0,
+        redundantReads: 10,
+        rereadSessions: 2,
+        topRereadFiles: [{ file: "/p/one/README.md", sessions: 2 }],
+        ...over.thrash,
       },
       permissionModes: [],
       stopReasons: [],
@@ -245,6 +258,7 @@ function signals(over: Overrides = {}): PortfolioSignals {
       rows: [],
     },
     ...(over.audit ? { audit: over.audit } : {}),
+    ...(over.parseCoverage ? { parseCoverage: over.parseCoverage } : {}),
   };
 }
 
@@ -258,7 +272,7 @@ describe("baseline", () => {
   });
 
   test("the exported code list covers every implemented rule", () => {
-    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(12);
+    expect(PORTFOLIO_DIAGNOSTIC_CODES).toHaveLength(15);
   });
 });
 
@@ -554,6 +568,166 @@ describe("sidechain-imbalance", () => {
 });
 
 /* ——— Ranking ————————————————————————————————————————————————————————— */
+
+describe("parse-coverage-drop", () => {
+  /** One version row, newest first (the rule only reads byVersion[0]). */
+  const coverage = (over: Partial<ParseCoverageVersionRow> = {}) => {
+    const row: ParseCoverageVersionRow = {
+      version: "2.4.0",
+      sessions: 40,
+      lines: 200_000,
+      parseErrors: 500,
+      unknownEvents: 1_500,
+      unparsedShare: 0.01,
+      ...over,
+    };
+    return { summary: { ...row } as ParseCoverageSummary, byVersion: [row] };
+  };
+
+  test("fires on the newest version once the unparsed share clears 1%", () => {
+    const out = buildPortfolioDiagnostics(signals({ parseCoverage: coverage() }));
+    const f = out.find((d) => d.code === "parse-coverage-drop");
+    expect(f?.severity).toBe("warning");
+    expect(f?.evidence).toContain("2.4.0");
+    expect(f?.evidence).toContain("1.0%");
+    expect(f?.evidence).toContain("200,000");
+    expect(f?.action).toContain("cc-analyzer update");
+  });
+
+  test("stays quiet just below the 1% share", () => {
+    expect(codes(signals({ parseCoverage: coverage({ unparsedShare: 0.0099 }) }))).not.toContain(
+      "parse-coverage-drop",
+    );
+  });
+
+  test("stays quiet below the 10k-line volume floor", () => {
+    expect(
+      codes(signals({ parseCoverage: coverage({ lines: 9_999, unparsedShare: 0.5 }) })),
+    ).not.toContain("parse-coverage-drop");
+  });
+
+  test("only the newest version is judged", () => {
+    const newest: ParseCoverageVersionRow = {
+      version: "2.4.0",
+      sessions: 10,
+      lines: 50_000,
+      parseErrors: 0,
+      unknownEvents: 0,
+      unparsedShare: 0,
+    };
+    const old: ParseCoverageVersionRow = {
+      version: "1.0.0",
+      sessions: 10,
+      lines: 50_000,
+      parseErrors: 5_000,
+      unknownEvents: 0,
+      unparsedShare: 0.1,
+    };
+    expect(
+      codes(
+        signals({
+          parseCoverage: {
+            summary: { ...newest } as ParseCoverageSummary,
+            byVersion: [newest, old],
+          },
+        }),
+      ),
+    ).not.toContain("parse-coverage-drop");
+  });
+
+  test("is safe when the signal is absent entirely", () => {
+    expect(signals().parseCoverage).toBeUndefined();
+    expect(codes(signals())).not.toContain("parse-coverage-drop");
+    // …and with an empty index there is no version row to judge.
+    expect(
+      codes(
+        signals({
+          parseCoverage: {
+            summary: {
+              sessions: 0,
+              lines: 0,
+              parseErrors: 0,
+              unknownEvents: 0,
+              unparsedShare: 0,
+            },
+            byVersion: [],
+          },
+        }),
+      ),
+    ).not.toContain("parse-coverage-drop");
+  });
+});
+
+describe("test-thrash-pattern", () => {
+  test("fires at 3 thrashing sessions making 10% of test-running sessions", () => {
+    const out = buildPortfolioDiagnostics(
+      signals({
+        tests: { runs: 100, sessions: 30 },
+        thrash: { testThrashSessions: 3, worstTestFailStreak: 7 },
+      }),
+    );
+    const f = out.find((d) => d.code === "test-thrash-pattern");
+    expect(f?.severity).toBe("warning");
+    expect(f?.evidence).toContain("3 sessions");
+    expect(f?.evidence).toContain("worst streak: 7");
+    expect(f?.evidence).toContain("10%");
+    expect(f?.action).toContain("bisect");
+  });
+
+  test("stays quiet below 3 sessions", () => {
+    expect(
+      codes(
+        signals({
+          tests: { runs: 100, sessions: 10 },
+          thrash: { testThrashSessions: 2, worstTestFailStreak: 9 },
+        }),
+      ),
+    ).not.toContain("test-thrash-pattern");
+  });
+
+  test("the volume guard holds: 3 sessions out of 31+ testers stay quiet", () => {
+    expect(
+      codes(
+        signals({
+          tests: { runs: 500, sessions: 31 },
+          thrash: { testThrashSessions: 3, worstTestFailStreak: 5 },
+        }),
+      ),
+    ).not.toContain("test-thrash-pattern");
+    // …and with no test-running sessions at all, nothing can fire.
+    expect(
+      codes(signals({ thrash: { testThrashSessions: 3, worstTestFailStreak: 5 } })),
+    ).not.toContain("test-thrash-pattern");
+  });
+});
+
+describe("reread-heavy", () => {
+  test("fires at 200 redundant reads across 10 sessions and names the top file", () => {
+    const out = buildPortfolioDiagnostics(
+      signals({
+        thrash: {
+          redundantReads: 200,
+          rereadSessions: 10,
+          topRereadFiles: [{ file: "/p/one/schema.sql", sessions: 8 }],
+        },
+      }),
+    );
+    const f = out.find((d) => d.code === "reread-heavy");
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toContain("200 redundant reads");
+    expect(f?.evidence).toContain("/p/one/schema.sql");
+    expect(f?.action).toContain("subagents");
+  });
+
+  test("stays quiet below either volume guard", () => {
+    expect(codes(signals({ thrash: { redundantReads: 199, rereadSessions: 20 } }))).not.toContain(
+      "reread-heavy",
+    );
+    expect(codes(signals({ thrash: { redundantReads: 500, rereadSessions: 9 } }))).not.toContain(
+      "reread-heavy",
+    );
+  });
+});
 
 describe("ranking", () => {
   test("warnings rank before infos, and dollar impact orders within severity", () => {

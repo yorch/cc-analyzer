@@ -22,6 +22,7 @@ import type {
   HotFileRow,
   IdleCacheBucket,
   ModelDayRow,
+  ParseCoverageStats,
   PortfolioStats,
   ProjectCacheRow,
   ProjectTrends,
@@ -126,6 +127,13 @@ export interface AnalyticsResponse extends AnalyticsRollup {
   compactions: CompactionUsage;
   contextTax: ContextTax;
   whatIf: WhatIfRepricing;
+  /** How much of the indexed JSONL this build of the parser understood. */
+  parseCoverage: ParseCoverageStats;
+}
+
+/** `/api/prefs` response shape — same for GET and the PUT echo. */
+export interface PrefsResponse {
+  costBasis: CostBasis;
 }
 
 async function get<T>(url: string): Promise<T> {
@@ -134,9 +142,24 @@ async function get<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function putJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  return (await res.json()) as T;
+}
+
 export const api = {
   indexStatus: () => get<IndexStatus>("/api/index-status"),
   stats: () => get<StatsResponse>("/api/stats"),
+  prefs: () => get<PrefsResponse>("/api/prefs"),
+  // The one write call in the client: persists the cost-basis display
+  // preference (see the write-endpoint note in src/web/api.ts). Never touches
+  // Claude session data — only cc-analyzer's own prefs.json.
+  setCostBasis: (costBasis: CostBasis) => putJson<PrefsResponse>("/api/prefs", { costBasis }),
   projects: () => get<IndexedProject[]>("/api/projects"),
   sessions: (projectId: string) =>
     get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),

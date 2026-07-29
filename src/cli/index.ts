@@ -20,6 +20,7 @@ import {
   concurrency,
   contextTax,
   localDayOfMs,
+  parseCoverage,
   whatIfRepricing,
 } from "../core/stats.ts";
 import {
@@ -34,6 +35,7 @@ import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
 import {
+  renderParseCoverageLine,
   renderPortfolioInsights,
   renderSessionSummary,
   renderSetupAudit,
@@ -181,9 +183,9 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
     console.error(`error: session '${ref}' not found.`);
     return 1;
   }
-  const { events, errors } = await parseSessionFile(path);
+  const { events, errors, coverage } = await parseSessionFile(path);
   const { table: pricing } = await loadPricing();
-  const analysis = analyzeSession(events, pricing);
+  const analysis = analyzeSession(events, pricing, { coverage });
 
   if (json) {
     console.log(JSON.stringify({ ...analysis, parseErrors: errors.length }, null, 2));
@@ -193,7 +195,14 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
         color: process.stdout.isTTY && !process.env.NO_COLOR,
       }),
     );
-    if (errors.length) console.log(`\n(${errors.length} unparseable lines skipped)`);
+    // Parse coverage, not just the error count: a line kept as a tolerant
+    // "unknown" event is not skipped, but it is also not understood.
+    if (coverage.parseErrors > 0 || coverage.unknownEvents > 0) {
+      console.log(
+        `\n(${coverage.parseErrors} unparseable lines skipped, ` +
+          `${coverage.unknownEvents} kept as unknown events, of ${coverage.lines} lines)`,
+      );
+    }
   }
   return 0;
 }
@@ -206,10 +215,14 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   const db = openDb();
   if (check) {
     const status = await inspectIndexStatus(db);
+    // Coverage comes from the indexed rows (schema v11), so `--check` keeps its
+    // no-parse guarantee: this is one SQL scan, no session file is reopened.
+    const coverage = parseCoverage(db).summary;
     db.close();
     if (status.stale) {
       console.log(`Index is stale: ${indexChangeSummary(status)} sessions.`);
       console.log("Run `cc-analyzer index` to refresh.");
+      console.log(renderParseCoverageLine(coverage));
       return 1;
     }
     const refreshed = status.lastRefreshedAt
@@ -217,6 +230,7 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
       : "unknown";
     console.log(`Index is current (${status.added + status.changed + status.deleted} changes).`);
     console.log(`Last refreshed: ${refreshed}.`);
+    console.log(renderParseCoverageLine(coverage));
     return 0;
   }
   const start = Date.now();
@@ -280,6 +294,8 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     ...portfolio,
     ttl: cacheTtlSplit(db, projectId),
     bash: analytics.bash.slice(0, 10),
+    // Ranked by turn-scoped cost — the primary skill-cost number.
+    skills: [...analytics.skills].sort((a, b) => b.attributedCost - a.attributedCost).slice(0, 10),
     tests: analytics.tests,
     retries: analytics.retries,
     concurrency: { peak, parallelDayShare },

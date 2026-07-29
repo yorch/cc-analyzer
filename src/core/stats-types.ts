@@ -298,7 +298,8 @@ export interface SkillDayCount {
 }
 
 /** Rich per-skill analytics: invocation depth, reach, reliability, adoption, and
- * (session-scoped, correlational) cost. */
+ * cost at two scopes — turn-scoped attribution (the primary number) plus the
+ * session-scoped upper bound. */
 export interface SkillUsageRow {
   name: string;
   /** Total `Skill` invocations across all sessions. */
@@ -314,13 +315,30 @@ export interface SkillUsageRow {
   /** Earliest / latest day (YYYY-MM-DD) the skill was used, or null if undated. */
   firstUsed: string | null;
   lastUsed: string | null;
-  /** Σ cost_total over sessions that used the skill. Correlational, not causal:
-   * a session using N skills counts its full cost toward each of them. */
+  /** Turns (across all sessions) that invoked the skill, and Σ cost of those
+   * turns — the turn-scoped attribution, which is the primary cost number.
+   * Tighter than `totalCost`, but still correlational at the margin: a turn
+   * invoking several skills counts its full cost toward each. */
+  attributedTurns: number;
+  attributedCost: number;
+  /** Σ cost_total over sessions that used the skill — the whole-session upper
+   * bound. Correlational, not causal: a session using N skills counts its full
+   * cost toward each of them. */
   totalCost: number;
   avgCostPerSession: number;
   /** Per-day invocation counts, oldest first, for the adoption sparkline. */
   daily: SkillDayCount[];
 }
+
+/**
+ * The caveat every skill-cost surface must print, verbatim — the two scopes
+ * mean different things and neither is causal, so the wording cannot drift
+ * between the CLI, the TUI and the web app.
+ */
+export const SKILL_COST_CAVEAT =
+  "Turn-scoped cost is the cost of the turns that invoked the skill (a turn invoking several " +
+  "skills counts its full cost toward each); session-scoped is the whole-session upper bound. " +
+  "Correlational, not causal.";
 
 export interface DurationSummary {
   /** Sessions carrying a positive duration. */
@@ -518,6 +536,42 @@ export interface RetryToolRow {
   sessions: number;
 }
 
+/* ——— Thrash: edit→test→fail loops and redundant same-file re-reads ——————
+ * Both signals come off the schema v12 columns (`test_fail_streak`,
+ * `redundant_reads`, `reread_files_json`). The per-session cutoffs live here,
+ * beside the shape, so the rollup, the session diagnostics, and the portfolio
+ * rules count a "thrashing session" identically. */
+
+/** A session counts as edit-test thrashing at this many consecutive failing
+ * test runs without a pass. Two fails in a row is a normal debugging step;
+ * three is the loop repeating without progress. */
+export const THRASH_STREAK_MIN = 3;
+
+/** A session counts as reread-heavy at this many redundant reads (3rd+ read of
+ * a file on one chain). One or two redundant reads happen in any long session;
+ * four means whole files are being re-paid into context repeatedly. */
+export const THRASH_REREAD_MIN = 4;
+
+/** A file portfolio-wide and how many sessions re-read it (≥ 3 reads). */
+export interface RereadFileRow {
+  file: string;
+  sessions: number;
+}
+
+/** Portfolio thrash rollup (part of `AnalyticsRollup`). */
+export interface ThrashStats {
+  /** Sessions whose longest consecutive-failing-test streak ≥ THRASH_STREAK_MIN. */
+  testThrashSessions: number;
+  /** The worst such streak anywhere in the portfolio. */
+  worstTestFailStreak: number;
+  /** Σ redundant Read invocations across all sessions. */
+  redundantReads: number;
+  /** Sessions with ≥ THRASH_REREAD_MIN redundant reads. */
+  rereadSessions: number;
+  /** Most re-read files by session count, top 10. */
+  topRereadFiles: RereadFileRow[];
+}
+
 /** The portfolio overview shared by `cc-analyzer stats` and `/api/stats` —
  * assembled only by `buildPortfolioStats`, so the two surfaces cannot drift. */
 export interface PortfolioStats {
@@ -542,6 +596,7 @@ export interface AnalyticsRollup {
   bash: BashCommandRow[];
   tests: TestRunSummary;
   retries: RetryStats;
+  thrash: ThrashStats;
   permissionModes: PermissionModeRow[];
   stopReasons: StopReasonRow[];
   turnDepth: TurnDepthStats;
@@ -606,6 +661,37 @@ export interface CompactionProjectRow {
 export interface CompactionUsage {
   summary: CompactionSummary;
   byProject: CompactionProjectRow[];
+}
+
+/* ——— Parse coverage ——————————————————————————————————————————————————
+ * How much of the indexed JSONL this build of the parser understood. The
+ * session format is undocumented and moves between Claude Code releases, and
+ * the parser is deliberately tolerant (invalid JSON is skipped, a drifted
+ * schema is kept as an "unknown" event) — this is what makes that tolerance
+ * visible instead of silent. Split by Claude Code version, because a format
+ * change lands with a version. */
+
+export interface ParseCoverageSummary {
+  /** Indexed sessions the counters were summed over. */
+  sessions: number;
+  lines: number;
+  /** Lines that produced no event at all (invalid JSON / non-object). */
+  parseErrors: number;
+  /** Lines kept only as tolerant "unknown" events (drifted or unknown type). */
+  unknownEvents: number;
+  /** (parseErrors + unknownEvents) / lines; 0 when no lines are indexed. */
+  unparsedShare: number;
+}
+
+export interface ParseCoverageVersionRow extends ParseCoverageSummary {
+  /** The Claude Code version the session is attributed to (best effort). */
+  version: string;
+}
+
+export interface ParseCoverageStats {
+  summary: ParseCoverageSummary;
+  /** Newest version first — the first row is the version to judge the parser by. */
+  byVersion: ParseCoverageVersionRow[];
 }
 
 /* ——— Context tax ————————————————————————————————————————————————————

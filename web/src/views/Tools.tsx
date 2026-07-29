@@ -5,8 +5,12 @@ import {
   type BashCommandRow,
   type CompactionUsage,
   type NameUsageRow,
+  PARSE_COVERAGE_MAX_UNPARSED_SHARE,
+  PARSE_COVERAGE_MIN_LINES,
+  type ParseCoverageStats,
   SETUP_AUDIT_CAVEAT,
   type SetupAudit,
+  SKILL_COST_CAVEAT,
   type SkillUsageRow,
   type ToolUsageRow,
   type TurnDepthStats,
@@ -35,6 +39,7 @@ const SKILL_SORT: Accessors<SkillUsageRow> = {
   sessions: (r) => r.sessions,
   projects: (r) => r.projects,
   errorRate: (r) => r.errorRate,
+  attributedCost: (r) => r.attributedCost,
   totalCost: (r) => r.totalCost,
 };
 const NAME_SORT: Accessors<NameUsageRow> = {
@@ -76,8 +81,9 @@ function SkillDetail({ skill }: { skill: SkillUsageRow }) {
         <strong>{skill.name}</strong>
         <span className="muted">
           first {skill.firstUsed ?? "—"} · last {skill.lastUsed ?? "—"} · {skill.projects} project
-          {skill.projects === 1 ? "" : "s"} · avg {usd(skill.avgCostPerSession)}/session · total{" "}
-          {usd(skill.totalCost)}
+          {skill.projects === 1 ? "" : "s"} · {count(skill.attributedTurns)} attributed turn
+          {skill.attributedTurns === 1 ? "" : "s"} · {usd(skill.attributedCost)} turn-scoped ·{" "}
+          {usd(skill.totalCost)} session-scoped
         </span>
       </div>
       {series.length > 0 ? (
@@ -108,7 +114,8 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
               <SortTh label="Sessions" col="sessions" sort={sort} className="num" />
               <SortTh label="Projects" col="projects" sort={sort} className="num" />
               <SortTh label="Err %" col="errorRate" sort={sort} className="num" />
-              <SortTh label="Total $" col="totalCost" sort={sort} className="num" />
+              <SortTh label="Turn $" col="attributedCost" sort={sort} className="num" />
+              <SortTh label="Session $" col="totalCost" sort={sort} className="num" />
             </tr>
           </thead>
           <tbody>
@@ -130,17 +137,15 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
                 <td className={`num ${rateClass(r.errorRate)}`}>
                   {(r.errorRate * 100).toFixed(1)}%
                 </td>
-                <td className="num">{usd(r.totalCost)}</td>
+                <td className="num">{usd(r.attributedCost)}</td>
+                <td className="num muted">{usd(r.totalCost)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {sel && <SkillDetail skill={sel} />}
-      <p className="muted spark-cap">
-        Cost is session-scoped: a session using several skills counts its full cost toward each —
-        correlational, not causal.
-      </p>
+      <p className="muted spark-cap">{SKILL_COST_CAVEAT}</p>
     </>
   );
 }
@@ -324,6 +329,58 @@ function Compactions({ data }: { data: CompactionUsage }) {
   );
 }
 
+/**
+ * How much of the indexed JSONL this build of the parser actually understood,
+ * per Claude Code version (newest first). The session format is undocumented
+ * and moves between releases; unparsed lines are excluded from every metric, so
+ * a rising share on the newest version means the numbers below it read low.
+ */
+function ParseCoverage({ data, query }: { data: ParseCoverageStats; query: string }) {
+  const s = data.summary;
+  if (s.lines === 0) {
+    return <p className="muted">No parse coverage recorded. Reindex if this seems wrong.</p>;
+  }
+  const q = query.trim().toLowerCase();
+  const rows = data.byVersion.filter((r) => !q || r.version.toLowerCase().includes(q));
+  const share = (v: number) => `${(v * 100).toFixed(2)}%`;
+  const newest = data.byVersion[0];
+  const behind =
+    newest !== undefined &&
+    newest.lines >= PARSE_COVERAGE_MIN_LINES &&
+    newest.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE;
+  return (
+    <>
+      <p className="muted">
+        <strong>{share(1 - s.unparsedShare)}</strong> of {count(s.lines)} indexed lines fully parsed
+        across {count(s.sessions)} sessions · {count(s.parseErrors)} unreadable ·{" "}
+        {count(s.unknownEvents)} kept as unknown events
+      </p>
+      {rows.length > 0 && (
+        <FactsTable
+          head={["Version", "Sessions", "Lines", "Unreadable", "Unknown", "Unparsed"]}
+          rows={rows
+            .slice(0, 15)
+            .map((r) => [
+              r.version,
+              count(r.sessions),
+              count(r.lines),
+              count(r.parseErrors),
+              count(r.unknownEvents),
+              share(r.unparsedShare),
+            ])}
+        />
+      )}
+      <p className="muted spark-cap">
+        {behind
+          ? `Claude Code ${newest?.version} sessions are ${share(newest?.unparsedShare ?? 0)} unparsed — run ` +
+            "`cc-analyzer update`; the session format may have moved ahead of this parser."
+          : "Unparsed lines are excluded from every metric. A version is attributed per session " +
+            "(the newest version the session ran under), so this is a best-effort split."}
+      </p>
+    </>
+  );
+}
+
 /** Inventory counts + findings from `/api/audit`. Fetched on its own so the
  * filesystem scan never blocks the usage analytics the rest of this page shows. */
 function SetupAuditPanel({ query }: { query: string }) {
@@ -411,6 +468,7 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
 function Reliability({ data }: { data: AnalyticsResponse }) {
   const t = data.tests;
   const r = data.retries;
+  const th = data.thrash;
   return (
     <>
       <p className="muted">
@@ -440,6 +498,39 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
             .slice(0, 10)
             .map((row) => [row.tool, count(row.retries), count(row.sessions)])}
         />
+      )}
+      <h2 className="section-h">Thrash · edit-test loops &amp; redundant re-reads</h2>
+      <p className="muted">
+        Edit-test loops:{" "}
+        {th.testThrashSessions > 0 ? (
+          <>
+            <strong>{count(th.testThrashSessions)}</strong> sessions hit 3+ consecutive failing test
+            runs (worst streak: {count(th.worstTestFailStreak)})
+          </>
+        ) : (
+          "none detected"
+        )}
+        {" · "}Redundant reads (3rd+ read of a file on one chain):{" "}
+        {th.redundantReads > 0 ? (
+          <>
+            <strong>{count(th.redundantReads)}</strong> across {count(th.rereadSessions)} sessions
+            with 4 or more
+          </>
+        ) : (
+          "none"
+        )}
+      </p>
+      {th.topRereadFiles.length > 0 && (
+        <>
+          <FactsTable
+            head={["Most re-read file", "Sessions"]}
+            rows={th.topRereadFiles.map((row) => [shortPath(row.file), count(row.sessions)])}
+          />
+          <p className="muted">
+            Every re-read pays the whole file into context again — hot reference files belong in a
+            CLAUDE.md summary or a subagent.
+          </p>
+        </>
       )}
     </>
   );
@@ -607,6 +698,8 @@ export function Tools() {
               .slice(0, 15)
               .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
           />
+          <h2 className="section-h">Parse coverage · how much of the format we understand</h2>
+          <ParseCoverage data={data.parseCoverage} query={query} />
           <h2 className="section-h">Git branches · by sessions</h2>
           <FactsTable
             head={["Branch", "Sessions", "Session $"]}

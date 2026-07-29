@@ -8,16 +8,31 @@
 
 import type { ApiCall, SessionAnalysis } from "./analyze.ts";
 import { buildContextSeries } from "./chart-series.ts";
+import { THRASH_REREAD_MIN, THRASH_STREAK_MIN } from "./stats-types.ts";
 
 /** Prompt-cache rewrites become interesting after the five-minute TTL boundary. */
 const CACHE_IDLE_GAP_MS = 5 * 60_000;
+
+/** Edit-test thrash escalates to a warning here: four consecutive failing test
+ * runs without a pass is the loop clearly repeating, not a debugging step. */
+const THRASH_STREAK_WARN = 4;
+
+/** Redundant reads escalate to a warning at eight — at that point whole files
+ * are being re-paid into context every couple of turns. */
+const THRASH_REREAD_WARN = 8;
+
+/** A single file read this many times is worth naming even when total
+ * redundancy stays low (4 reads of one file = 2 redundant on one chain). */
+const SINGLE_FILE_READS = 4;
 
 export type SessionDiagnosticCode =
   | "context-pressure"
   | "context-jump"
   | "idle-cache-rewrite"
   | "post-compaction-refill"
-  | "turn-cost-concentration";
+  | "turn-cost-concentration"
+  | "edit-test-thrash"
+  | "repeated-file-reads";
 
 export type SessionDiagnosticSeverity = "info" | "warning";
 
@@ -37,6 +52,25 @@ interface TimedCall {
   call: ApiCall;
   turnIndex: number;
   ms: number;
+}
+
+/**
+ * Session-wide `Read` counts per file, off the detail-mode step timeline —
+ * richer evidence for `repeated-file-reads` (counts span chains, unlike the
+ * per-chain analyzer counters, so they are display evidence, not the trigger).
+ */
+function readCountsByFile(analysis: SessionAnalysis): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const turn of analysis.turns) {
+    for (const call of turn.apiCalls) {
+      for (const step of call.steps) {
+        // The Read step's summary is its file_path (see `summarizeToolUse`).
+        if (step.tool !== "Read" || !step.summary) continue;
+        counts.set(step.summary, (counts.get(step.summary) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
 }
 
 function mainCallsByTime(analysis: SessionAnalysis): TimedCall[] {
@@ -61,6 +95,10 @@ function mainCallsByTime(analysis: SessionAnalysis): TimedCall[] {
  *   compaction recovered little practical headroom.
  * - Cost concentration requires at least three turns, so short sessions are not
  *   called concentrated by construction.
+ * - Edit-test thrash starts at three consecutive failing test runs (warning at
+ *   four) — two fails in a row is a normal debugging step.
+ * - Repeated reads start at four redundant reads, or one file read four times
+ *   (warning at eight redundant) — a re-read or two happens in any session.
  */
 export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagnostic[] {
   const diagnostics: SessionDiagnostic[] = [];
@@ -160,6 +198,50 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
         "Check for a large reloaded file or tool result; a fresh handoff may be more effective.",
       turnIndex: worst.point.turnIndex,
     });
+  }
+
+  if (analysis.testFailStreak >= THRASH_STREAK_MIN) {
+    const streak = analysis.testFailStreak;
+    diagnostics.push({
+      code: "edit-test-thrash",
+      severity: streak >= THRASH_STREAK_WARN ? "warning" : "info",
+      title: "Edit-test loop repeated without progress",
+      evidence: `${streak} consecutive failing test runs without a pass.`,
+      action:
+        "Step back and read the failure output carefully, or bisect — repeated blind " +
+        "edit-test cycles burn tokens; consider asking for a different approach.",
+    });
+  }
+
+  {
+    const reads = readCountsByFile(analysis);
+    let topFile: string | undefined = analysis.rereadFiles[0];
+    let topReads = topFile !== undefined ? (reads.get(topFile) ?? 0) : 0;
+    for (const [file, n] of reads) {
+      if (n > topReads) {
+        topFile = file;
+        topReads = n;
+      }
+    }
+    if (
+      analysis.redundantReads >= THRASH_REREAD_MIN ||
+      (topFile !== undefined && topReads >= SINGLE_FILE_READS)
+    ) {
+      const total = analysis.redundantReads;
+      diagnostics.push({
+        code: "repeated-file-reads",
+        severity: total >= THRASH_REREAD_WARN ? "warning" : "info",
+        title: "The same files are being re-read repeatedly",
+        evidence:
+          `${total} redundant read${total === 1 ? "" : "s"} (3rd+ read of a file)` +
+          (topFile !== undefined
+            ? `; the most re-read file is ${topFile}${topReads > 0 ? ` (${topReads} reads)` : ""}.`
+            : "."),
+        action:
+          "Large files re-read every turn belong in a summary or a subagent; check whether " +
+          "context was compacted away, forcing the re-reads.",
+      });
+    }
   }
 
   if (analysis.turns.length >= 3 && analysis.totals.cost.total > 0) {

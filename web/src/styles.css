@@ -651,6 +651,16 @@ th.num {
   font-size: 12px;
   color: var(--muted);
 }
+.cost-basis-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.cost-basis-error {
+  font-size: 11px;
+  color: var(--red);
+}
 .seg-gap {
   display: inline-block;
   width: 14px;

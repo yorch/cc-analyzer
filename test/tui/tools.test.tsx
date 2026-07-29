@@ -13,13 +13,17 @@ function insert(
   errs: Record<string, number>,
   skills: Record<string, number>,
   subagents: string[],
+  turnCosts: Record<string, { turns: number; cost: number }> = {},
+  cost = 0,
 ): void {
   insertSession(db, {
     path,
+    cost_total: cost,
     tools_json: JSON.stringify(tools),
     tool_errors_json: JSON.stringify(errs),
     skills_json: JSON.stringify(skills),
     skill_errors_json: JSON.stringify({}),
+    skill_turn_costs_json: JSON.stringify(turnCosts),
     subagents_json: JSON.stringify(subagents),
   });
 }
@@ -27,7 +31,16 @@ function insert(
 let db: Database;
 beforeAll(() => {
   db = openDb(":memory:");
-  insert(db, "s1", { Bash: 30, Edit: 3 }, { Edit: 1 }, { brainstorming: 2 }, ["general-purpose"]);
+  insert(
+    db,
+    "s1",
+    { Bash: 30, Edit: 3 },
+    { Edit: 1 },
+    { brainstorming: 2 },
+    ["general-purpose"],
+    { brainstorming: { turns: 1, cost: 0.25 } },
+    9,
+  );
   insert(db, "s2", { Bash: 20, Read: 9 }, { Bash: 6 }, { brainstorming: 1 }, []);
 });
 
@@ -59,6 +72,13 @@ describe("ToolsView", () => {
     let frame = lastFrame() ?? "";
     expect(frame).toContain("SKILL");
     expect(frame).toContain("brainstorming");
+    // Turn-scoped cost leads, session-scoped follows as the upper bound.
+    expect(frame).toContain("TURN $");
+    expect(frame).toContain("SESS $");
+    expect(frame).toContain("$0.25");
+    expect(frame).toContain("$9.00");
+    expect(frame).toContain("session-scoped");
+    expect(frame).toContain("Turn-scoped cost");
 
     stdin.write("3"); // subagents panel
     await waitForFrame(lastFrame, "SUBAGENT");

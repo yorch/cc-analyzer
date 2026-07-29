@@ -41,11 +41,18 @@ export interface SessionRow {
   retries: number;
   compactions: number;
   first_prompt_tokens: number | null;
+  parse_lines: number;
+  parse_errors: number;
+  unknown_events: number;
+  test_fail_streak: number;
+  redundant_reads: number;
+  reread_files_json: string;
   models_json: string;
   tools_json: string;
   tool_errors_json: string;
   skills_json: string;
   skill_errors_json: string;
+  skill_turn_costs_json: string;
   subagents_json: string;
   turn_depths_json: string;
   permission_modes_json: string;
@@ -119,11 +126,20 @@ export function toSessionRow(
     // Null (not 0) when the session made no main-chain API call — there is no
     // baseline to report, and 0 would drag every percentile down.
     first_prompt_tokens: analysis.firstPromptTokens ?? null,
+    // Coverage is always known on this path (the streaming parser returns it),
+    // and a session with no lines genuinely has zero — 0, not NULL.
+    parse_lines: analysis.parseCoverage?.lines ?? 0,
+    parse_errors: analysis.parseCoverage?.parseErrors ?? 0,
+    unknown_events: analysis.parseCoverage?.unknownEvents ?? 0,
+    test_fail_streak: analysis.testFailStreak,
+    redundant_reads: analysis.redundantReads,
+    reread_files_json: JSON.stringify(analysis.rereadFiles),
     models_json: JSON.stringify(analysis.models),
     tools_json: JSON.stringify(analysis.tools),
     tool_errors_json: JSON.stringify(analysis.toolErrors),
     skills_json: JSON.stringify(analysis.skills),
     skill_errors_json: JSON.stringify(analysis.skillErrors),
+    skill_turn_costs_json: JSON.stringify(analysis.skillTurnCosts),
     subagents_json: JSON.stringify(analysis.subagents),
     turn_depths_json: JSON.stringify(analysis.turnDepths),
     permission_modes_json: JSON.stringify(analysis.permissionModes),
@@ -175,11 +191,18 @@ const COLUMNS: (keyof SessionRow)[] = [
   "retries",
   "compactions",
   "first_prompt_tokens",
+  "parse_lines",
+  "parse_errors",
+  "unknown_events",
+  "test_fail_streak",
+  "redundant_reads",
+  "reread_files_json",
   "models_json",
   "tools_json",
   "tool_errors_json",
   "skills_json",
   "skill_errors_json",
+  "skill_turn_costs_json",
   "subagents_json",
   "turn_depths_json",
   "permission_modes_json",

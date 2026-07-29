@@ -91,7 +91,17 @@ same series through the indexer's aggregate mode); *retries* (a tool call
 identical to the immediately
 preceding one on the same chain — chain identity resolves through `parentUuid`,
 so parallel subagents get independent cursors, and every cursor resets at each
-new turn). For shell commands the index stores a **raw signal, not a
+new turn); and the two **thrash** signals (schema v12) — *test-fail streak*
+(`testFailStreak`: the longest run of consecutive failing test runs on one
+chain; a pass resets it, non-test calls in between don't, new turn resets — the
+edit→test→fail loop; unlike command heads this bakes `isTestCommand()` into the
+index and needs a reindex to evolve, the trade-off `testRuns` already makes)
+and *redundant reads* (`redundantReads`/`rereadFiles`: per chain, `Read`s of
+the same `file_path` beyond the second — the third read is the first redundant
+one; different offset/limit still counts, chains stay isolated, turns don't
+reset). Both feed the `edit-test-thrash`/`repeated-file-reads` session
+diagnostics and the `test-thrash-pattern`/`reread-heavy` insight rules. For
+shell commands the index stores a **raw signal, not a
 classification**: normalized per-segment command heads (`commandHead()`, schema
 v6). Command families and test-run detection (`isTestCommand()`) classify those
 heads **at query time** in `stats.ts`, so the heuristics can evolve without a
@@ -104,9 +114,28 @@ shared by `cc-analyzer stats` and `/api/stats` is assembled only by
 index fingerprint (row count + newest `indexed_at`). The pure shapes and date
 helpers live in `stats-types.ts`, a bun-free module the web SPA imports directly
 so client and server types cannot drift. Several rollups are **session-scoped
-and correlational** (skill cost, permission-mode cost, branch cost, idle-vs-cache
+and correlational** (permission-mode cost, branch cost, idle-vs-cache
 buckets): a session counts its full cost toward each label it carries. Keep the
 "correlational, not causal" caveat wherever they're rendered.
+
+**Skill cost is turn-scoped first.** The session-scoped number was too weak to
+act on, so `analyze.ts` attributes each skill the cost of the *turns* that
+invoked it: the `SessionAnalyzer` accumulates the open turn's total cost (every
+API call in it — sidechains included, since a subagent burst belongs to the turn
+that spawned it) plus the set of skills invoked in it, and folds them into
+`SessionAnalysis.skillTurnCosts` (`{ turns, cost }` per skill) at the *same*
+turn boundary `turnDepths` uses — so it works in aggregate mode, with no
+materialized turns. Attribution keys off the `Skill` tool_use, not its
+later-arriving tool_result, and pre-first-prompt events belong to no turn. It
+flattens to the `skill_turn_costs_json` column (**schema v10** forces the
+rebuild — the incremental indexer would otherwise leave v9 rows unattributed
+forever) and sums in `analyticsRollup()` into `SkillUsageRow.attributedTurns` /
+`attributedCost`, the **primary** cost columns everywhere (CLI `stats` and the
+single-session report, TUI skills panel, web Tools). Session-scoped
+`totalCost`/`avgCostPerSession` stay beside them as the whole-session upper
+bound. Turn scope is tighter but still **not causal** — a turn invoking N
+skills counts its full cost toward each — so every render site prints the
+shared `SKILL_COST_CAVEAT` from `stats-types.ts` verbatim.
 
 **Compactions and session charts.** `analyze.ts` records context compactions
 (`SessionAnalysis.compactions`) from `system`/`compact_boundary` events (trigger +
@@ -203,9 +232,9 @@ view's Setup section. **No TUI screen** — the CLI and web cover it.
 portfolio-wide: `buildPortfolioDiagnostics(signals)` folds a single plain-data
 `PortfolioSignals` object (stats, rollup, cache summary/TTL/idle-buckets/
 per-project waste, compactions, weekly error rate, context tax, what-if,
-optional setup audit) into ranked `PortfolioDiagnostic[]` findings — 12 named
-rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a threshold-rationale
-comment, warnings before infos and dollar-backed findings first within a
+optional setup audit, parse coverage, thrash) into ranked `PortfolioDiagnostic[]`
+findings — 15 named rules (codes in `PORTFOLIO_DIAGNOSTIC_CODES`), each with a
+threshold-rationale comment, warnings before infos and dollar-backed findings first within a
 severity; **not a score**. The module is **bun-free and pure** (no db/fs/
 `Date.now()` — "today" lives inside the data); the bun-side
 `assemblePortfolioSignals(db, pricing, opts?)` in `portfolio-signals.ts`
@@ -215,7 +244,7 @@ explicit "healthy by every rule" line when nothing fires), `GET /api/insights`
 (`diagnostics` field, memoized on fingerprint + local day like `/api/audit`),
 and the TUI Insights header (compact glyph+title list, computed at the screen
 boundary) all feed the rules identical inputs. None of the rules use the
-session-scoped correlational cost rollups; the idle-cache rule carries its
+correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
 
 **Project-scoped charts.** `spendByDay`, `modelMixByDay`, `sessionScatter`,
@@ -247,10 +276,14 @@ the same tolerant pattern as `telemetry.ts`, default `"api"`) never changes a co
 number, only its wording — `"api"` reads the number as a bill, `"subscription"` (for
 flat-plan Pro/Max users) frames the identical number as API-equivalent value via one
 canonical sentence, `costFramingNote()`, rendered verbatim wherever it appears. Set with
-`cc-analyzer cost-basis api|subscription`; read at each surface's presentation boundary
-(CLI `cmdStats`, the TUI `App` component, and a `costBasis` field merged into `/api/stats`
-at the route level, read fresh per request rather than memoized with the rest of the
-payload) so flipping it never requires a reindex.
+`cc-analyzer cost-basis api|subscription`, or, for web-only users, the `Seg` toggle on the
+web Dashboard hero — `GET`/`PUT` (`POST` accepted too) `/api/prefs` in `src/web/api.ts`,
+the API's only write route, which persists only to `<stateDir>/prefs.json` and never
+touches `~/.claude`; the SPA calls it then re-triggers its `useAsync` fetch, no reload.
+Read at each surface's presentation boundary (CLI `cmdStats`, the TUI `App` component, and
+a `costBasis` field merged into `/api/stats` at the route level, read fresh per request
+rather than memoized with the rest of the payload) so flipping it — from either surface —
+never requires a reindex.
 
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at
@@ -266,14 +299,41 @@ name under `~/.claude/projects/`. `decodeProjectLabel()` is best-effort display 
 the authoritative project path comes from the session's `cwd` field, not by decoding
 the id. Never round-trip a real path through the encoded id.
 
-**The parser never throws.** `parser.ts` is tolerant: invalid JSON → recorded
-`ParseError` and skipped; a known event type whose Zod schema drifted → kept as a
-tolerant "unknown" event so counts stay consistent. Event schemas live in `events.ts`.
+**The parser never throws — and its tolerance is measured, not silent.**
+`parser.ts` is tolerant: invalid JSON → recorded `ParseError` and skipped; a
+known event type whose Zod schema drifted → kept as a tolerant "unknown" event
+so counts stay consistent. Event schemas live in `events.ts`.
 `parseSessionFile` streams the file line by line (sessions can be hundreds of MB);
 `parseSessionText` is the in-memory path; `streamSessionEvents` yields events one
 at a time for bulk consumers. All three share `parseLineOutcome` (per line) and
 `readLines` (byte streaming), so their behavior can't drift. (Only file I/O — e.g.
 a missing file — throws.)
+
+Because the JSONL format is undocumented and moves between Claude Code
+releases, that tolerance is **counted**: `countLine` folds every outcome into a
+`ParseCoverage` (`{ lines, parseErrors, unknownEvents }`, declared in
+`events.ts` so `analyze.ts` — and through it the SPA — can name the shape
+without pulling the Bun-only reader into the browser typecheck graph).
+`parseErrors` counts lines that produced **no** event; `unknownEvents` counts
+lines kept as tolerant unknowns — schema-drifted known types *and* unrecognized
+types in one counter, because they are one actionable signal. The array paths
+return it on `ParseResult`; `streamSessionEvents` returns it as the
+**generator's return value**, which `analyzeSessionStream` captures by driving
+the iterator by hand (a `for await` discards it) — so the streaming path stays
+constant-memory and no call site can forget to wire it. It lands on
+`SessionAnalysis.parseCoverage` (handed in via `AnalyzeOptions.coverage` on the
+array paths; the analyzer never sees unparseable lines), flattens to the
+`parse_lines` / `parse_errors` / `unknown_events` columns (**schema v11**), and
+rolls up in `parseCoverage()`: a portfolio summary plus per-Claude-Code-version
+rows sorted newest first, each with `unparsedShare = (parseErrors +
+unknownEvents) / lines`. Version attribution is best effort — a session is
+attributed to the newest version it ran under, and version-less sessions count
+only toward the summary. Surfaces: `cc-analyzer index --check` (one SQL scan —
+`--check` still parses nothing), the CLI `analyze` footer, `/api/analytics` →
+the web Tools → Environment section, and the `parse-coverage-drop` portfolio
+rule (warning when the newest version's `unparsedShare ≥ 1%` over ≥ 10k lines —
+judged per version, not per rolling window, because a format change ships with
+a release).
 
 **Tool results resolve in one pass.** `analyzeSession`/`analyzeSessionStream` don't
 pre-scan for `tool_result`s. A `tool_use` registers in a small `pending` map and is

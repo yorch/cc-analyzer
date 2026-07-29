@@ -2,6 +2,7 @@ import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
+  PARSE_COVERAGE_MAX_UNPARSED_SHARE,
   PORTFOLIO_DIAGNOSTIC_CODES,
   type PortfolioDiagnostic,
 } from "../core/portfolio-diagnostics.ts";
@@ -12,12 +13,19 @@ import type {
   BashCommandRow,
   CacheTtlSplit,
   ContextTax,
+  ParseCoverageSummary,
   PortfolioStats,
   RetryStats,
   TestRunSummary,
   WhatIfRepricing,
 } from "../core/stats.ts";
-import { topEntries } from "../core/stats-types.ts";
+import {
+  SKILL_COST_CAVEAT,
+  type SkillUsageRow,
+  THRASH_REREAD_MIN,
+  THRASH_STREAK_MIN,
+  topEntries,
+} from "../core/stats-types.ts";
 import {
   formatCount,
   formatDuration,
@@ -104,6 +112,25 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
           a.testRuns > 0 ? `${a.testRuns} (${a.testFailures} failed)` : "none detected",
         ],
         ["tool-call churn", a.retries > 0 ? `${a.retries} repeated identical calls` : "none"],
+        // One thrash line, only when a signal is non-trivial (the "Actionable
+        // diagnostics" section below carries the evidence and next step).
+        ...(a.testFailStreak >= THRASH_STREAK_MIN || a.redundantReads >= THRASH_REREAD_MIN
+          ? [
+              [
+                "thrash",
+                [
+                  a.testFailStreak >= THRASH_STREAK_MIN
+                    ? `${a.testFailStreak} failing test runs in a row`
+                    : "",
+                  a.redundantReads >= THRASH_REREAD_MIN
+                    ? `${a.redundantReads} redundant file reads`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+              ],
+            ]
+          : []),
       ],
     ),
   );
@@ -137,12 +164,20 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
     lines.push(table(["tool", "count"], toolRows, { align: ["left", "right"] }));
   }
 
-  if (Object.keys(a.skills).length) {
+  const skillEntries = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
+  if (skillEntries.length) {
+    lines.push(`\n${section("Skills", options)}`);
     lines.push(
-      `\nSkills: ${Object.entries(a.skills)
-        .map(([s, n]) => `${s}:${n}`)
-        .join(", ")}`,
+      table(
+        ["skill", "uses", "turns", "turn $"],
+        skillEntries.map(([s, n]) => {
+          const attributed = a.skillTurnCosts[s];
+          return [s, String(n), String(attributed?.turns ?? 0), formatUSD(attributed?.cost ?? 0)];
+        }),
+        { align: ["left", "right", "right", "right"] },
+      ),
     );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
   }
   if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
@@ -292,11 +327,30 @@ export function renderPortfolioInsights(
   return lines.join("\n");
 }
 
+/**
+ * One line of portfolio parse coverage for the freshness surfaces
+ * (`cc-analyzer index --check`). Read straight off the indexed rows — no
+ * session file is re-parsed to produce it.
+ */
+export function renderParseCoverageLine(c: ParseCoverageSummary): string {
+  if (c.lines === 0) return "Parse coverage: no indexed lines yet.";
+  const clean = ((1 - c.unparsedShare) * 100).toFixed(1);
+  const tail =
+    c.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE
+      ? " — run `cc-analyzer update`; the session format may have moved ahead of this parser."
+      : "";
+  return (
+    `Parse coverage: ${clean}% of ${formatCount(c.lines)} indexed lines fully parsed ` +
+    `(${formatCount(c.parseErrors)} unreadable, ${formatCount(c.unknownEvents)} unknown events)${tail}`
+  );
+}
+
 /** The shared portfolio shape plus the CLI's terminal-only extras. */
 export interface PortfolioView extends PortfolioStats {
   index: IndexStatus;
   ttl: CacheTtlSplit;
   bash: BashCommandRow[];
+  skills: SkillUsageRow[];
   tests: TestRunSummary;
   retries: RetryStats;
   concurrency: { peak: number; parallelDayShare: number };
@@ -608,6 +662,25 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         { align: ["left", "right", "right", "right"] },
       ),
     );
+  }
+
+  if (v.skills.length) {
+    lines.push(`\n${section("Skills · cost of the turns that invoked them", options)}`);
+    lines.push(
+      table(
+        ["skill", "invoc", "turns", "turn $", "session $", "err %"],
+        v.skills.map((s) => [
+          truncate(s.name, 28),
+          formatCount(s.invocations),
+          formatCount(s.attributedTurns),
+          formatUSD(s.attributedCost),
+          formatUSD(s.totalCost),
+          `${(s.errorRate * 100).toFixed(1)}%`,
+        ]),
+        { align: ["left", "right", "right", "right", "right", "right"] },
+      ),
+    );
+    lines.push(muted(SKILL_COST_CAVEAT, options));
   }
 
   if (v.retries.byTool.length) {

@@ -174,6 +174,30 @@ export type SessionEvent =
   | Record<string, unknown>;
 
 /**
+ * How much of a session file this parser actually understood — the honesty
+ * counter behind the whole product, since the JSONL format is undocumented and
+ * moves between Claude Code releases.
+ *
+ * - `lines`: non-empty lines seen (blank lines are not content).
+ * - `parseErrors`: lines that produced NO event — invalid JSON, or valid JSON
+ *   that isn't an object. Their content is genuinely lost.
+ * - `unknownEvents`: lines kept as a tolerant "unknown" event. This merges the
+ *   two tolerant cases — a KNOWN `type` whose Zod schema no longer validates
+ *   (schema drift) and a `type` this parser has never heard of — because they
+ *   are the same actionable signal ("this build doesn't fully understand this
+ *   file") and the index stores one column per counter.
+ *
+ * Lives here rather than in `parser.ts` so `analyze.ts` (and through it the web
+ * SPA, which type-imports `SessionAnalysis`) can name the shape without pulling
+ * the Bun-only file reader into the browser typecheck graph.
+ */
+export interface ParseCoverage {
+  lines: number;
+  parseErrors: number;
+  unknownEvents: number;
+}
+
+/**
  * A user event starts a new turn only if it is a genuine prompt. Shared by the
  * analyzer and the transcript builder so turn boundaries never diverge between
  * them (a *turn* = one genuine prompt plus its assistant/tool loop).

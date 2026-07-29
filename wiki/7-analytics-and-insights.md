@@ -106,11 +106,21 @@ Two cost-optimization rollups answer the questions "what do I pay before I type?
 
 Sources: [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts) [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts) [src/core/pricing.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/pricing.ts)
 
+### Parse coverage
+
+Every metric in this page rests on a parser reading an **undocumented** file format that moves between Claude Code releases. `parseCoverage(db)` makes the resulting uncertainty measurable: it scans the `parse_lines`, `parse_errors`, and `unknown_events` columns (schema `v11`) and returns a portfolio `ParseCoverageSummary` plus one row per Claude Code version, each with `unparsedShare = (parseErrors + unknownEvents) / lines`, guarded against a zero-line denominator (an empty index, or rows written before v11). `parseErrors` counts lines that produced no event at all; `unknownEvents` counts lines kept only as tolerant "unknown" events — see [Session Parsing & Events](./2.1-session-parsing-and-events.md) for how the counters are produced.
+
+Version attribution is deliberately **best effort**: a session records every version it ran under (it can span an upgrade) and is attributed wholly to the newest of them, since that is the version most likely to have written the lines the parser choked on. Sessions with no recorded version count toward the summary but toward no version row. Rows are sorted newest version first (numerically, through `compareVersions`), so `byVersion[0]` is the version to judge the current parser by — which is exactly what the `parse-coverage-drop` rule reads.
+
+Surfaces: `cc-analyzer index --check` prints the portfolio line (one SQL scan, so `--check` still parses no sessions), `cc-analyzer analyze` reports the single session's counters under its report, `/api/analytics` carries the rollup as `parseCoverage`, and the web Tools → Environment tab renders the per-version table next to the Claude Code versions table.
+
+Sources: [src/core/stats.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/stats.ts) [src/core/stats-types.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/stats-types.ts) [src/core/parser.ts](https://github.com/yorch/cc-analyzer/blob/main/src/core/parser.ts)
+
 ### Single-scan analytics rollup and project trends
 
-Full-table JSON parsing is expensive, so `analyticsRollup` folds every per-session JSON rollup in one table scan rather than scanning per metric ([src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305)). A single pass over the rows accumulates tool usage with error rates, rich per-skill analytics (invocations, reach, reliability, adoption, and session-scoped cost), subagent frequency, Bash command families, test runs, retries, permission modes, stop reasons, turn depth, Claude Code versions, and Git branches. Bash families and test runs are classified at query time from the raw command heads, so those heuristics can change without a reindex. The per-project variant `projectTrends` also runs a single project scan, feeding the shared `newToolFold`, `newDepthFold`, and `newModelMixFold` accumulators so the portfolio Tools view and the project pages can never disagree about error rates or bucket boundaries ([src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808)).
+Full-table JSON parsing is expensive, so `analyticsRollup` folds every per-session JSON rollup in one table scan rather than scanning per metric ([src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305)). A single pass over the rows accumulates tool usage with error rates, rich per-skill analytics (invocations, reach, reliability, adoption, turn-scoped cost attribution, and session-scoped cost), subagent frequency, Bash command families, test runs, retries, thrash (sessions with a failing-test streak ≥ 3, total redundant reads, and the portfolio-wide top re-read files off the schema v12 columns), permission modes, stop reasons, turn depth, Claude Code versions, and Git branches. Bash families and test runs are classified at query time from the raw command heads, so those heuristics can change without a reindex. The per-project variant `projectTrends` also runs a single project scan, feeding the shared `newToolFold`, `newDepthFold`, and `newModelMixFold` accumulators so the portfolio Tools view and the project pages can never disagree about error rates or bucket boundaries ([src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808)).
 
-The `SkillUsageRow` shape carries the invocation depth, project reach, error rate, first/last-used dates, and a per-day series for the adoption sparkline ([src/core/stats-types.ts:L302-L323](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts#L302-L323)). Skill cost is session-scoped and correlational — a session using several skills counts its full cost toward each — a caveat both frontends print. The TUI `ToolsView` runs one rollup and switches between tools/skills/subagents panels, adding an adoption strip for the selected skill ([src/tui/screens/ToolsView.tsx:L55-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L55-L235)); the web `Tools` view renders the same rollup plus reliability, depth, compaction, web-tool, mode, stop-reason, version, and branch tables ([web/src/views/Tools.tsx:L344-L456](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Tools.tsx#L344-L456)).
+The `SkillUsageRow` shape carries the invocation depth, project reach, error rate, first/last-used dates, a per-day series for the adoption sparkline, and skill cost at **two scopes** ([src/core/stats-types.ts:L302-L323](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats-types.ts#L302-L323)). The primary number is turn-scoped: `attributedTurns` / `attributedCost` sum the per-session `skill_turn_costs_json` blob (schema v10), i.e. the cost of the *turns* that invoked the skill — the containing turn's API calls, its tool loop, and any subagent burst inside it. `totalCost` / `avgCostPerSession` remain as the session-scoped upper bound: a session's whole cost charged to every skill it touched. Neither is causal — a turn invoking several skills counts its full cost toward each — and the shared `SKILL_COST_CAVEAT` string, exported from the bun-free `stats-types.ts`, is what every surface prints so the wording cannot drift. Surfaces: the `Skills` section of `cc-analyzer stats` and of a single-session report (`turn $` beside `session $`), the TUI skills panel (`TURN $` / `SESS $` columns, both sortable), and the web Tools view's Skills table. The TUI `ToolsView` runs one rollup and switches between tools/skills/subagents panels, adding an adoption strip for the selected skill ([src/tui/screens/ToolsView.tsx:L55-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L55-L235)); the web `Tools` view renders the same rollup plus reliability, depth, compaction, web-tool, mode, stop-reason, version, and branch tables ([web/src/views/Tools.tsx:L344-L456](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Tools.tsx#L344-L456)).
 
 Sources: [src/core/stats.ts:L1041-L1305](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L1041-L1305) [src/core/stats.ts:L778-L808](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/stats.ts#L778-L808) [src/tui/screens/ToolsView.tsx:L55-L235](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/tui/screens/ToolsView.tsx#L55-L235) [web/src/views/Tools.tsx:L344-L456](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Tools.tsx#L344-L456)
 
@@ -135,12 +145,17 @@ Sources: [src/core/chart-series.ts:L53-L165](https://github.com/yorch/cc-analyze
 ### Actionable session diagnostics
 
 `session-diagnostics.ts` turns detail-mode session evidence into named,
-explainable recommendations shared by the CLI, TUI, and web summary. The first
+explainable recommendations shared by the CLI, TUI, and web summary. The
 diagnostic set covers context pressure at or above 75% of a known window, a
 single-call context increase of at least 25% of the window, cache writes following
 gaps of at least five minutes, a first post-compaction call that refills at least
-75% of recorded pre-compaction context, and one turn carrying at least half the
-cost of a session with three or more turns. Each result includes the observed
+75% of recorded pre-compaction context, one turn carrying at least half the
+cost of a session with three or more turns, `edit-test-thrash` (at least three
+consecutive failing test runs without a pass on one chain — info at 3, warning
+at 4; edits between the failures do not break the streak), and
+`repeated-file-reads` (at least four redundant reads — the 3rd+ read of a file
+on one chain — or any single file read four times; warning at eight redundant
+reads, naming the most re-read file). Each result includes the observed
 evidence, affected turn when known, severity, and suggested next action.
 
 The thresholds are deliberately documented in code and the output remains
@@ -209,12 +224,12 @@ assemble it with `assemblePortfolioSignals(db, pricing)`
 ([src/core/portfolio-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/portfolio-signals.ts)),
 which bundles `buildPortfolioStats`, `analyticsRollup`, the cache rollups
 (summary, TTL split, idle buckets, per-project waste), `compactionUsage`,
-`errorRateByWeek`, `contextTax`, `whatIfRepricing`, and (optionally — it is
-the one filesystem-touching input) the setup audit. "Today" is pinned at that
+`errorRateByWeek`, `contextTax`, `whatIfRepricing`, `parseCoverage`, and
+(optionally — it is the one filesystem-touching input) the setup audit. "Today" is pinned at that
 boundary, so the rules module never reads the clock. The engine ranks warnings
 before infos, and within a severity by addressable dollar impact (cache waste,
 repricing savings) with insertion order as the tiebreak. It deliberately does
-**not** use the session-scoped correlational cost rollups (skill /
+**not** use the correlational cost rollups (skill /
 permission-mode / branch cost); the one correlational signal it reads (idle
 share × cache waste) carries the caveat in the finding text.
 
@@ -233,7 +248,10 @@ The rules, with thresholds (each documented beside its code with a rationale):
 | `spend-concentration` | info | Top decile of sessions carries ≥ 60% of spend, over ≥ 20 sessions. |
 | `estimated-pricing-share` | info | ≥ 25% of computed spend used heuristic (family-matched) pricing. |
 | `setup-debt` | info | The setup audit (when supplied) contains ≥ 1 warning; names the top one and points at `cc-analyzer audit` / the Setup tab. |
+| `parse-coverage-drop` | warning | The newest Claude Code version's sessions have an unparsed share ≥ 1% over ≥ 10k lines. Judged per version rather than over a rolling window, because a format change ships with a release; the action is `cc-analyzer update`. |
 | `sidechain-imbalance` | info | Subagent spend share ≥ 50% (verify the delegation earns its keep), or exactly $0 of subagent spend over ≥ 50 sessions (worth trying). Only one side can fire. |
+| `test-thrash-pattern` | warning | ≥ 3 sessions hit a streak of ≥ 3 consecutive failing test runs, AND those sessions are ≥ 10% of the sessions that ran tests (volume guard). Evidence carries the session count and worst streak; the action mirrors the `edit-test-thrash` session diagnostic. |
+| `reread-heavy` | info | ≥ 200 redundant reads portfolio-wide across ≥ 10 sessions with 4+ each; names the top re-read file. Action: put hot reference files in CLAUDE.md summaries or delegate bulk reading to subagents. |
 
 The surfaces: `cc-analyzer insights` renders the ranked findings (with an
 explicit "healthy by every rule" line and the rule count when nothing fires),

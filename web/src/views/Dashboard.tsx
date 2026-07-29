@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  type CostBasis,
   type CostDistribution,
   costFramingNote,
   type ModelRow,
@@ -16,9 +17,19 @@ import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
+import { Seg } from "../Seg.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
+
+const COST_BASIS_LABEL: Record<CostBasis, "API bill" | "Subscription"> = {
+  api: "API bill",
+  subscription: "Subscription",
+};
+const LABEL_COST_BASIS: Record<"API bill" | "Subscription", CostBasis> = {
+  "API bill": "api",
+  Subscription: "subscription",
+};
 
 const MONTH_SORT: Accessors<MonthRow> = {
   month: (m) => m.month,
@@ -48,6 +59,18 @@ const TOP_SORT: Accessors<SessionRankRow> = {
 export function Dashboard() {
   const { data, error, loading, retry } = useAsync(() => api.stats(), []);
   const [projectQuery, setProjectQuery] = useHashParam<string>("projects", "");
+  const [basisPending, setBasisPending] = useState(false);
+  const [basisError, setBasisError] = useState<string | null>(null);
+  const handleCostBasisChange = (next: CostBasis) => {
+    if (basisPending || next === data?.costBasis) return;
+    setBasisPending(true);
+    setBasisError(null);
+    api
+      .setCostBasis(next)
+      .then(() => retry())
+      .catch((err) => setBasisError(String(err)))
+      .finally(() => setBasisPending(false));
+  };
   const byMonth = data?.byMonth ?? [];
   const byProject = data?.byProject ?? [];
   const byModel = data?.byModel ?? [];
@@ -88,6 +111,15 @@ export function Dashboard() {
             {range} · {count(summary.sessions)} sessions
           </div>
           {framingNote && <div className="hero-sub">{framingNote}</div>}
+          <div className="hero-sub cost-basis-control">
+            <Seg
+              label="Cost basis"
+              options={["API bill", "Subscription"] as const}
+              value={COST_BASIS_LABEL[data.costBasis]}
+              onChange={(label) => handleCostBasisChange(LABEL_COST_BASIS[label])}
+            />
+            {basisError && <span className="cost-basis-error">Couldn’t save: {basisError}</span>}
+          </div>
         </div>
         <dl className="hero-stats">
           <div>

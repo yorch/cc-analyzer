@@ -25,6 +25,7 @@ import {
   errorRateByWeek,
   idleVsCache,
   localDayOfMs,
+  parseCoverage,
   whatIfRepricing,
 } from "./stats.ts";
 
@@ -54,6 +55,7 @@ export function assemblePortfolioSignals(
     errorWeekly: errorRateByWeek(db),
     contextTax: contextTax(db),
     whatIf: whatIfRepricing(db, pricing),
+    parseCoverage: parseCoverage(db),
     ...(opts.audit === false ? {} : { audit: buildSetupAudit(scanInventory(), rollup, today) }),
   };
 }

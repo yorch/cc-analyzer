@@ -2,6 +2,7 @@ import {
   type AssistantEvent,
   type ContentBlock,
   isRealPrompt,
+  type ParseCoverage,
   type SessionEvent,
   type ToolUseBlock,
   type Usage,
@@ -55,6 +56,14 @@ export interface Turn {
   tokens: TokenCounts;
   cost: CostBreakdown;
   toolCounts: Record<string, number>;
+}
+
+/** Turn-scoped cost attributed to one skill (see `SessionAnalysis.skillTurnCosts`). */
+export interface SkillTurnCost {
+  /** Turns in which the skill was invoked at least once. */
+  turns: number;
+  /** Σ cost of those turns (every API call in them, subagents included). */
+  cost: number;
 }
 
 export interface ModelUsage {
@@ -131,6 +140,21 @@ export interface SessionAnalysis {
   skills: Record<string, number>;
   /** Per-skill count of `Skill` invocations whose result was an error. */
   skillErrors: Record<string, number>;
+  /**
+   * Turn-scoped cost attribution per skill: for each skill, how many turns
+   * invoked it and the total cost of those turns — every API call made in the
+   * turn, sidechains included, because a subagent burst belongs to the turn
+   * that spawned it. Attribution keys off the `Skill` tool_use (the
+   * invocation), not its later tool_result.
+   *
+   * This is tighter than the session-scoped rollup (which charges a skill the
+   * whole session), but it is still **correlational, not causal**: a turn
+   * invoking N distinct skills counts its FULL cost toward each of them, so
+   * summing across skills can exceed the session's cost. Turns are attributed
+   * only from the first real prompt onward; anything before it belongs to no
+   * turn. Empty when the session invoked no skills. Available in aggregate mode.
+   */
+  skillTurnCosts: Record<string, SkillTurnCost>;
   subagents: string[];
   filesTouched: string[];
   /** Count of API calls per stop_reason (end_turn, tool_use, max_tokens, …). */
@@ -152,6 +176,33 @@ export interface SessionAnalysis {
   /** Consecutive tool calls with identical tool + input (churn / wasted loops). */
   retries: number;
   retriesByTool: Record<string, number>;
+  /**
+   * Longest run of consecutive *failing* test invocations on one chain — the
+   * edit→test→fail loop signal. A test invocation is a Bash call satisfying
+   * `isTestCommand()`; "failing" means its tool_result was an error. A passing
+   * test run resets the streak; non-test tool calls between the failures do
+   * NOT (the loop is edit→test→fail→edit→test→fail — the edits sit between the
+   * failures). Chains are independent (a parallel subagent gets its own
+   * cursor), and every cursor resets at each new turn, like retry detection.
+   * Unlike raw command heads, this bakes the `isTestCommand()` classification
+   * into the index and needs a reindex to evolve — accepted, the same
+   * trade-off `testRuns` already makes. Available in aggregate mode.
+   */
+  testFailStreak: number;
+  /**
+   * Redundant `Read` invocations: per chain, reads of the same `file_path`
+   * beyond the SECOND — re-reading a file once is often legitimate (it changed
+   * after an edit), so redundancy starts at the third read
+   * (Σ per chain+file of max(0, reads − 2)). Reads with different
+   * `offset`/`limit` params still count as reads of the file — a deliberate
+   * simplification, since they are usually re-pagination of the same content.
+   * Not reset per turn (re-reading across turns is exactly the cost pattern),
+   * but chains stay isolated. Available in aggregate mode.
+   */
+  redundantReads: number;
+  /** Files some chain read ≥ 3 times, ordered by total session-wide reads
+   * (most re-read first), capped at 20 entries. */
+  rereadFiles: string[];
   /** Total characters across every turn's prompt (survives aggregate mode). */
   promptChars: number;
   /** Main-chain API calls per turn, in order — the turn-depth series. Available
@@ -174,6 +225,14 @@ export interface SessionAnalysis {
   firstPromptTokens?: number;
   /** Context compactions, in session order. Available in aggregate mode too. */
   compactions: Compaction[];
+  /**
+   * How much of the session file this build of the parser understood (lines
+   * seen, lines lost to invalid JSON, lines kept only as tolerant "unknown"
+   * events). The analyzer cannot derive this on its own — parse errors never
+   * reach it — so it is handed in by whoever did the parsing, and is
+   * `undefined` when the caller didn't supply it. Available in aggregate mode.
+   */
+  parseCoverage?: ParseCoverage;
 }
 
 export interface AnalyzeOptions {
@@ -183,6 +242,13 @@ export interface AnalyzeOptions {
    * indexer, which never reads `turns` (it uses `promptChars`/`turnDepths`).
    */
   detail?: boolean;
+  /**
+   * Parse coverage for these events, from the parse layer (`ParseResult.coverage`
+   * on the array paths; `streamSessionEvents`' return value on the streaming
+   * one, which `analyzeSessionStream` captures for itself). Passed in rather
+   * than derived because the analyzer never sees the lines that failed to parse.
+   */
+  coverage?: ParseCoverage;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -312,6 +378,8 @@ function stringField(input: unknown, key: string): string | undefined {
 /** A tool_use awaiting its (later-arriving) tool_result. */
 interface PendingTool {
   toolName: string;
+  /** Chain the tool_use ran on ("" = main) — for the per-chain fail streak. */
+  chain: string;
   skillName?: string;
   /** Bash command family, if this was a Bash call — for deferred `bashErrors`. */
   bashFamily?: string;
@@ -345,6 +413,7 @@ class SessionAnalyzer {
   private readonly toolErrors: Record<string, number> = {};
   private readonly skills: Record<string, number> = {};
   private readonly skillErrors: Record<string, number> = {};
+  private readonly skillTurnCosts: Record<string, SkillTurnCost> = {};
   private readonly subagents = new Set<string>();
   private readonly filesTouched = new Set<string>();
   private readonly stopReasons: Record<string, number> = {};
@@ -391,6 +460,28 @@ class SessionAnalyzer {
   private hasTurn = false;
   private currentDepth = 0;
 
+  // Turn-scoped skill attribution, tracked the same way (no materialized turn
+  // needed): the open turn's total cost — every call in it, sidechain bursts
+  // included — and the distinct skills it invoked, folded into
+  // `skillTurnCosts` at each turn boundary.
+  private currentTurnCost = 0;
+  private readonly currentTurnSkills = new Set<string>();
+
+  // Test-fail streaks (edit→test→fail loops): one running streak per chain,
+  // bumped when a test invocation's result errors, zeroed when one passes —
+  // non-test calls in between leave it alone (the loop's edits sit between the
+  // failures). Reset at each new turn, like the retry cursors below.
+  private testFailStreak = 0;
+  private readonly testStreakByChain = new Map<string, number>();
+
+  // Redundant reads: per chain+file read counts (never reset — re-reading
+  // across turns is the cost pattern), plus session-wide per-file totals to
+  // order `rereadFiles` by. Bounded by the number of distinct files read.
+  private readonly readsByChainFile = new Map<string, number>();
+  private readonly readsByFile = new Map<string, number>();
+  private readonly rereadFiles = new Set<string>();
+  private redundantReads = 0;
+
   // One retry cursor per chain, reset at each new turn: a user-requested
   // re-run or an interleaved call from a *different* subagent must not read
   // as churn, while a subagent repeating its own call must. Inputs are
@@ -417,10 +508,18 @@ class SessionAnalyzer {
   private readonly stoppedKeys = new Set<string>();
   private readonly pending = new Map<string, PendingTool>();
 
+  // Handed in from the parse layer (the analyzer never sees unparseable lines).
+  private parseCoverage: ParseCoverage | undefined;
+
   constructor(
     private readonly pricing: PricingTable,
     private readonly detail: boolean,
   ) {}
+
+  /** Record the parse coverage of the events this analyzer is being fed. */
+  setParseCoverage(coverage: ParseCoverage | undefined): void {
+    this.parseCoverage = coverage;
+  }
 
   private touchTime(ts?: string): void {
     if (!ts) return;
@@ -458,6 +557,26 @@ class SessionAnalyzer {
     this.stopReasons[reason] = (this.stopReasons[reason] ?? 0) + 1;
   }
 
+  /**
+   * Close the open turn's skill attribution: charge its full cost to every
+   * skill invoked in it, then reset the accumulators. `attribute` is false
+   * before the first real prompt — those events belong to no turn, the same
+   * rule `turnDepths` applies — so their cost is dropped, never folded into
+   * the turn that follows.
+   */
+  private closeTurnSkills(attribute: boolean): void {
+    if (attribute) {
+      for (const name of this.currentTurnSkills) {
+        const acc = this.skillTurnCosts[name] ?? { turns: 0, cost: 0 };
+        acc.turns += 1;
+        acc.cost += this.currentTurnCost;
+        this.skillTurnCosts[name] = acc;
+      }
+    }
+    this.currentTurnSkills.clear();
+    this.currentTurnCost = 0;
+  }
+
   /** Attach a tool_result to its pending tool_use: count errors, patch the step. */
   private resolveResult(id: string, isError: boolean, rawContent: unknown): void {
     const p = this.pending.get(id);
@@ -470,6 +589,17 @@ class SessionAnalyzer {
       if (p.isTest) this.testFailures += 1;
       for (const head of p.heads ?? []) {
         this.commandHeadErrors[head] = (this.commandHeadErrors[head] ?? 0) + 1;
+      }
+    }
+    // Test-fail streak: a failing test run extends its chain's streak, a
+    // passing one breaks it; non-test results never touch it.
+    if (p.isTest) {
+      if (isError) {
+        const streak = (this.testStreakByChain.get(p.chain) ?? 0) + 1;
+        this.testStreakByChain.set(p.chain, streak);
+        if (streak > this.testFailStreak) this.testFailStreak = streak;
+      } else {
+        this.testStreakByChain.set(p.chain, 0);
       }
     }
     if (this.detail && p.step) {
@@ -558,16 +688,20 @@ class SessionAnalyzer {
       if (isRealPrompt(event)) {
         const prompt = promptPreview(content);
         this.promptChars += prompt.length;
-        // Finalize the previous turn's depth before opening this one.
+        // Finalize the previous turn's depth and skill attribution before
+        // opening this one.
         if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+        this.closeTurnSkills(this.hasTurn);
         this.hasTurn = true;
         this.currentDepth = 0;
         this.turnCount += 1;
         const mode = event.permissionMode ?? "default";
         this.permissionModes[mode] = (this.permissionModes[mode] ?? 0) + 1;
         // A new turn is a fresh start: repeating the previous turn's last call
-        // (e.g. the user asked to run it again) is not churn.
+        // (e.g. the user asked to run it again) is not churn, and a failing
+        // streak the user stepped into does not span the intervention.
         this.prevToolByChain.clear();
+        this.testStreakByChain.clear();
         if (this.detail) {
           this.current = {
             index: this.turns.length,
@@ -665,7 +799,11 @@ class SessionAnalyzer {
       let skillName: string | undefined;
       if (tu.name === "Skill") {
         skillName = stringField(tu.input, "skill") ?? stringField(tu.input, "command");
-        if (skillName) this.skills[skillName] = (this.skills[skillName] ?? 0) + 1;
+        if (skillName) {
+          this.skills[skillName] = (this.skills[skillName] ?? 0) + 1;
+          // Attribution is per turn, so repeat invocations in one turn collapse.
+          this.currentTurnSkills.add(skillName);
+        }
       } else if (tu.name === "Task" || tu.name === "Agent") {
         const t = stringField(tu.input, "subagent_type");
         if (t) this.subagents.add(t);
@@ -673,6 +811,24 @@ class SessionAnalyzer {
       if (FILE_TOOLS.has(tu.name)) {
         const fp = stringField(tu.input, "file_path");
         if (fp) this.filesTouched.add(fp);
+      }
+
+      // Redundant reads: keyed by chain + file_path only, so a re-read with a
+      // different offset/limit still counts (usually re-pagination of the same
+      // content — a deliberate simplification). The third read of a file on
+      // one chain is the first redundant one.
+      if (tu.name === "Read") {
+        const fp = stringField(tu.input, "file_path");
+        if (fp) {
+          const key = `${chain}\u0000${fp}`;
+          const reads = (this.readsByChainFile.get(key) ?? 0) + 1;
+          this.readsByChainFile.set(key, reads);
+          this.readsByFile.set(fp, (this.readsByFile.get(fp) ?? 0) + 1);
+          if (reads >= 3) {
+            this.redundantReads += 1;
+            this.rereadFiles.add(fp);
+          }
+        }
       }
 
       // Bash command families + test runs + raw command heads (counted now;
@@ -714,7 +870,15 @@ class SessionAnalyzer {
         };
         steps.push(step);
       }
-      this.pending.set(tu.id, { toolName: tu.name, skillName, bashFamily, isTest, heads, step });
+      this.pending.set(tu.id, {
+        toolName: tu.name,
+        chain,
+        skillName,
+        bashFamily,
+        isTest,
+        heads,
+        step,
+      });
     }
 
     // A continuation line of an already-counted API call: keep its steps on the
@@ -770,6 +934,9 @@ class SessionAnalyzer {
     }
     this.totalTokens = addTokens(this.totalTokens, tokens);
     this.totalCost = addCost(this.totalCost, cost);
+    // Every call in the open turn — main chain and the subagents it spawned —
+    // counts toward the skills that turn invoked.
+    this.currentTurnCost += cost.total;
     if (model) {
       let mu = this.models[model];
       if (!mu) {
@@ -806,8 +973,9 @@ class SessionAnalyzer {
   }
 
   finish(): SessionAnalysis {
-    // Finalize the last open turn's depth.
+    // Finalize the last open turn's depth and skill attribution.
     if (this.hasTurn) this.turnDepths.push(this.currentDepth);
+    this.closeTurnSkills(this.hasTurn);
 
     // Active time: sum gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
     // (longer gaps are the session sitting idle). Sorting first makes the sum
@@ -852,6 +1020,7 @@ class SessionAnalyzer {
       toolErrors: this.toolErrors,
       skills: this.skills,
       skillErrors: this.skillErrors,
+      skillTurnCosts: this.skillTurnCosts,
       subagents: [...this.subagents],
       filesTouched: [...this.filesTouched],
       stopReasons: this.stopReasons,
@@ -864,19 +1033,46 @@ class SessionAnalyzer {
       testFailures: this.testFailures,
       retries: this.retries,
       retriesByTool: this.retriesByTool,
+      testFailStreak: this.testFailStreak,
+      redundantReads: this.redundantReads,
+      // Most re-read first (by total session-wide reads), so the first entry
+      // is the file to name in diagnostics; ties break alphabetically.
+      rereadFiles: [...this.rereadFiles]
+        .sort(
+          (a, b) =>
+            (this.readsByFile.get(b) ?? 0) - (this.readsByFile.get(a) ?? 0) || (a < b ? -1 : 1),
+        )
+        .slice(0, 20),
       promptChars: this.promptChars,
       turnDepths: this.turnDepths,
       firstPromptTokens: this.firstPromptTokens,
       compactions: this.compactions,
+      parseCoverage: this.parseCoverage,
     };
   }
 }
 
-/** Analyze a session's events into per-turn and aggregate metrics. */
-export function analyzeSession(events: SessionEvent[], pricing: PricingTable): SessionAnalysis {
-  const analyzer = new SessionAnalyzer(pricing, true);
+/**
+ * Analyze a session's events into per-turn and aggregate metrics.
+ *
+ * `opts` is optional and additive (existing two-argument callers are
+ * unaffected): pass `coverage` — `ParseResult.coverage` from the parse that
+ * produced these events — to carry parse coverage into the analysis.
+ */
+export function analyzeSession(
+  events: SessionEvent[],
+  pricing: PricingTable,
+  opts: AnalyzeOptions = {},
+): SessionAnalysis {
+  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
+  analyzer.setParseCoverage(opts.coverage);
   for (const event of events) analyzer.push(event);
   return analyzer.finish();
+}
+
+/** Is this a generator's `ParseCoverage` return value (see below)? */
+function isParseCoverage(value: unknown): value is ParseCoverage {
+  return typeof value === "object" && value !== null && "lines" in value && "parseErrors" in value;
 }
 
 /**
@@ -885,6 +1081,13 @@ export function analyzeSession(events: SessionEvent[], pricing: PricingTable): S
  * `detail: false` the per-turn timeline is skipped entirely (aggregates only);
  * `promptChars` and `turnDepths` still carry the turn-derived aggregates the
  * indexer needs.
+ *
+ * The iterator is driven by hand rather than with `for await` so that a
+ * generator's **return value** survives: `streamSessionEvents` returns its
+ * `ParseCoverage` that way, so the streaming path picks up coverage with no
+ * wiring at the call site (an explicit `opts.coverage` still wins). Any other
+ * iterable — a plain array turned async, a test helper — returns nothing, which
+ * `isParseCoverage` rejects, and the analysis simply carries no coverage.
  */
 export async function analyzeSessionStream(
   events: AsyncIterable<SessionEvent>,
@@ -892,6 +1095,24 @@ export async function analyzeSessionStream(
   opts: AnalyzeOptions = {},
 ): Promise<SessionAnalysis> {
   const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
-  for await (const event of events) analyzer.push(event);
+  analyzer.setParseCoverage(opts.coverage);
+  const it = events[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const next = await it.next();
+      if (next.done) {
+        // `AsyncIterable`'s return type is `any` by default (so every iterable
+        // is accepted); guard the value rather than trusting it.
+        if (!opts.coverage && isParseCoverage(next.value)) analyzer.setParseCoverage(next.value);
+        break;
+      }
+      analyzer.push(next.value);
+    }
+  } catch (err) {
+    // `for await` closes the iterator when the body throws; do the same so a
+    // failing analysis can't leave the file stream open.
+    await it.return?.();
+    throw err;
+  }
   return analyzer.finish();
 }

@@ -3,6 +3,7 @@ import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type { PricingTable, TokenCounts } from "./pricing.ts";
 import { cacheTokens, computeCost, ioTokens, resolveModel, zeroTokens } from "./pricing.ts";
+import { compareVersions } from "./release.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -25,6 +26,8 @@ import type {
   ModelDayRow,
   ModelRow,
   MonthRow,
+  ParseCoverageStats,
+  ParseCoverageSummary,
   PortfolioStats,
   PortfolioSummary,
   ProjectCacheRow,
@@ -45,7 +48,14 @@ import type {
   WhatIfRepricing,
   WhatIfRow,
 } from "./stats-types.ts";
-import { bucketSeries, localDayOfMs, shiftDay, weekOf } from "./stats-types.ts";
+import {
+  bucketSeries,
+  localDayOfMs,
+  shiftDay,
+  THRASH_REREAD_MIN,
+  THRASH_STREAK_MIN,
+  weekOf,
+} from "./stats-types.ts";
 
 export * from "./stats-types.ts";
 
@@ -1070,6 +1080,82 @@ export function errorRateByWeek(db: Database): ErrorWeekRow[] {
 }
 
 /* ————————————————————————————————————————————————————————————————————————
+ * Parse coverage
+ * ———————————————————————————————————————————————————————————————————————— */
+
+/** Coverage counters + the derived share, guarded for a zero-line denominator
+ * (an empty index, or sessions indexed before schema v11). */
+function coverageRow(a: {
+  sessions: number;
+  lines: number;
+  parseErrors: number;
+  unknownEvents: number;
+}): ParseCoverageSummary {
+  return { ...a, unparsedShare: a.lines > 0 ? (a.parseErrors + a.unknownEvents) / a.lines : 0 };
+}
+
+/**
+ * How much of the indexed session files this build of the parser understood,
+ * portfolio-wide and per Claude Code version (schema v11 columns).
+ *
+ * The format is undocumented and changes between releases, so a rising
+ * unparsed share on the newest version is the signal that this parser has
+ * fallen behind — see the `parse-coverage-drop` diagnostic.
+ *
+ * Version attribution is **best effort**: a session records every version it
+ * ran under (it can span an upgrade), and the whole session is attributed to
+ * the newest of them — the version most likely to have written the lines the
+ * parser choked on. Sessions with no recorded version contribute to the
+ * summary but to no version row (there is nothing to blame). Rows are sorted
+ * newest version first, so the first row is the one to judge the parser by.
+ */
+export function parseCoverage(db: Database): ParseCoverageStats {
+  const rows = db
+    .query(
+      `SELECT COALESCE(parse_lines, 0) AS lines,
+          COALESCE(parse_errors, 0) AS parseErrors,
+          COALESCE(unknown_events, 0) AS unknownEvents,
+          versions_json AS versions
+        FROM sessions`,
+    )
+    .all() as {
+    lines: number;
+    parseErrors: number;
+    unknownEvents: number;
+    versions: string | null;
+  }[];
+
+  const total = { sessions: 0, lines: 0, parseErrors: 0, unknownEvents: 0 };
+  const byVersion = new Map<string, typeof total>();
+  for (const r of rows) {
+    total.sessions += 1;
+    total.lines += r.lines;
+    total.parseErrors += r.parseErrors;
+    total.unknownEvents += r.unknownEvents;
+
+    let newest: string | undefined;
+    for (const v of parseJson<string[]>(r.versions, [])) {
+      if (!v) continue;
+      if (newest === undefined || compareVersions(v, newest) > 0) newest = v;
+    }
+    if (newest === undefined) continue;
+    const a = byVersion.get(newest) ?? { sessions: 0, lines: 0, parseErrors: 0, unknownEvents: 0 };
+    a.sessions += 1;
+    a.lines += r.lines;
+    a.parseErrors += r.parseErrors;
+    a.unknownEvents += r.unknownEvents;
+    byVersion.set(newest, a);
+  }
+
+  return {
+    summary: coverageRow(total),
+    byVersion: [...byVersion.entries()]
+      .map(([version, a]) => ({ version, ...coverageRow(a) }))
+      .sort((a, b) => compareVersions(b.version, a.version)),
+  };
+}
+
+/* ————————————————————————————————————————————————————————————————————————
  * Context tax & what-if repricing
  * ———————————————————————————————————————————————————————————————————————— */
 
@@ -1238,10 +1324,14 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     month: string | null;
     cost: number | null;
     retriesN: number;
+    testFailStreakN: number;
+    redundantReadsN: number;
+    reread_files_json: string | null;
     tools_json: string | null;
     tool_errors_json: string | null;
     skills_json: string | null;
     skill_errors_json: string | null;
+    skill_turn_costs_json: string | null;
     subagents_json: string | null;
     commands_json: string | null;
     command_errors_json: string | null;
@@ -1256,7 +1346,11 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     db,
     `SELECT project_id, day, month, cost_total AS cost,
         COALESCE(retries, 0) AS retriesN,
+        COALESCE(test_fail_streak, 0) AS testFailStreakN,
+        COALESCE(redundant_reads, 0) AS redundantReadsN,
+        reread_files_json,
         tools_json, tool_errors_json, skills_json, skill_errors_json,
+        skill_turn_costs_json,
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
@@ -1273,6 +1367,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
     projects: Set<string>;
     firstUsed: string | null;
     lastUsed: string | null;
+    attributedTurns: number;
+    attributedCost: number;
     totalCost: number;
     daily: Map<string, number>;
   }
@@ -1287,6 +1383,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         projects: new Set(),
         firstUsed: null,
         lastUsed: null,
+        attributedTurns: 0,
+        attributedCost: 0,
         totalCost: 0,
         daily: new Map(),
       };
@@ -1314,6 +1412,14 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
   let retryTotal = 0;
   let retrySessions = 0;
   const retryAcc = new Map<string, { retries: number; sessions: number }>();
+
+  // Thrash (schema v12 columns): cheap column folds plus one JSON fold for the
+  // portfolio-wide top re-read files (per-session deduped, like hotFiles).
+  let testThrashSessions = 0;
+  let worstTestFailStreak = 0;
+  let redundantReadsTotal = 0;
+  let rereadSessions = 0;
+  const rereadFileAcc = new Map<string, number>();
 
   const modeAcc = new Map<string, { turns: number; sessions: number; totalCost: number }>();
   const reasonAcc = new Map<string, { count: number; sessions: number }>();
@@ -1347,6 +1453,15 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
       parseJson<Record<string, number>>(r.skill_errors_json, {}),
     )) {
       skillOf(name).errors += n;
+    }
+    // Turn-scoped attribution (schema v10): the cost of the turns that invoked
+    // the skill, summed across sessions — the primary skill-cost number.
+    for (const [name, v] of Object.entries(
+      parseJson<Record<string, { turns?: number; cost?: number }>>(r.skill_turn_costs_json, {}),
+    )) {
+      const a = skillOf(name);
+      a.attributedTurns += v.turns ?? 0;
+      a.attributedCost += v.cost ?? 0;
     }
 
     for (const name of new Set(parseJson<string[]>(r.subagents_json, []))) {
@@ -1382,6 +1497,14 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
 
     retryTotal += r.retriesN;
     if (r.retriesN > 0) retrySessions += 1;
+
+    if (r.testFailStreakN >= THRASH_STREAK_MIN) testThrashSessions += 1;
+    if (r.testFailStreakN > worstTestFailStreak) worstTestFailStreak = r.testFailStreakN;
+    redundantReadsTotal += r.redundantReadsN;
+    if (r.redundantReadsN >= THRASH_REREAD_MIN) rereadSessions += 1;
+    for (const file of new Set(parseJson<string[]>(r.reread_files_json, []))) {
+      rereadFileAcc.set(file, (rereadFileAcc.get(file) ?? 0) + 1);
+    }
     for (const [tool, n] of Object.entries(parseJson<Record<string, number>>(r.retries_json, {}))) {
       const a = retryAcc.get(tool) ?? { retries: 0, sessions: 0 };
       a.retries += n;
@@ -1441,6 +1564,8 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
         errorRate: a.invocations > 0 ? a.errors / a.invocations : 0,
         firstUsed: a.firstUsed,
         lastUsed: a.lastUsed,
+        attributedTurns: a.attributedTurns,
+        attributedCost: a.attributedCost,
         totalCost: a.totalCost,
         avgCostPerSession: a.sessions > 0 ? a.totalCost / a.sessions : 0,
         daily: [...a.daily.entries()]
@@ -1473,6 +1598,16 @@ export function analyticsRollup(db: Database, projectId?: string): AnalyticsRoll
       byTool: [...retryAcc.entries()]
         .map(([tool, a]) => ({ tool, ...a }))
         .sort((a, b) => b.retries - a.retries),
+    },
+    thrash: {
+      testThrashSessions,
+      worstTestFailStreak,
+      redundantReads: redundantReadsTotal,
+      rereadSessions,
+      topRereadFiles: [...rereadFileAcc.entries()]
+        .map(([file, sessions]) => ({ file, sessions }))
+        .sort((a, b) => b.sessions - a.sessions || (a.file < b.file ? -1 : 1))
+        .slice(0, 10),
     },
     permissionModes: [...modeAcc.entries()]
       .map(([mode, a]) => ({
