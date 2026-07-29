@@ -56,6 +56,11 @@ export * from "../../src/core/cost-framing.ts";
 // the SPA's "copy as markdown" button produces byte-identical output to
 // `cc-analyzer report --md` with no extra endpoint.
 export * from "../../src/core/digest.ts";
+// The shared number formatters behind the digest's markdown — so a number in
+// the web digest card reads exactly as it does in the copied markdown and in
+// `cc-analyzer report`. (The SPA's own `format.ts` keeps the locale-aware
+// `Intl` helpers for everything else.)
+export * from "../../src/core/format-shared.ts";
 // Portfolio-diagnostic shapes, codes, and thresholds — bun-free, so the SPA
 // renders the same rule vocabulary the server computes findings with.
 export * from "../../src/core/portfolio-diagnostics.ts";
@@ -136,11 +141,6 @@ export interface AnalyticsResponse extends AnalyticsRollup {
   parseCoverage: ParseCoverageStats;
 }
 
-/** `/api/report` returns the core-built digest plus the cost-basis display
- *  preference, merged fresh per request at the route level (same reasoning as
- *  `/api/stats`). */
-export type ReportResponse = WeeklyDigest & { costBasis: CostBasis };
-
 /** `/api/prefs` response shape — same for GET and the PUT echo. */
 export interface PrefsResponse {
   costBasis: CostBasis;
@@ -189,5 +189,5 @@ export const api = {
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
   audit: () => get<SetupAudit>("/api/audit"),
   report: (week?: string) =>
-    get<ReportResponse>(week ? `/api/report?week=${encodeURIComponent(week)}` : "/api/report"),
+    get<WeeklyDigest>(week ? `/api/report?week=${encodeURIComponent(week)}` : "/api/report"),
 };

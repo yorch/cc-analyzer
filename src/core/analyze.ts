@@ -646,6 +646,23 @@ class SessionAnalyzer {
     this.currentTurnCost = 0;
   }
 
+  /**
+   * Finalize the open turn: record its depth, fold its interruption flag, and
+   * close its skill attribution, then reset the per-turn state. Called at both
+   * turn boundaries — the next real prompt, and `finish()` — from one place, so
+   * the two can never drift apart. With no turn open (`hasTurn` false, i.e.
+   * before the first real prompt) nothing is recorded: those events belong to
+   * no turn, never to the turn that follows.
+   */
+  private closeOpenTurn(): void {
+    if (this.hasTurn) {
+      this.turnDepths.push(this.currentDepth);
+      if (this.currentTurnInterrupted) this.interruptionTurns += 1;
+    }
+    this.currentTurnInterrupted = false;
+    this.closeTurnSkills(this.hasTurn);
+  }
+
   /** Attach a tool_result to its pending tool_use: count errors, patch the step. */
   private resolveResult(id: string, isError: boolean, rawContent: unknown): void {
     const p = this.pending.get(id);
@@ -761,14 +778,8 @@ class SessionAnalyzer {
         // turn's work is being redone. English-only keyword heuristic (see
         // `isCorrectionPrompt`) — undercounting is by design.
         if (isCorrectionPrompt(prompt)) this.correctionTurns += 1;
-        // Finalize the previous turn's depth, skill attribution, and
-        // interruption flag before opening this one.
-        if (this.hasTurn) {
-          this.turnDepths.push(this.currentDepth);
-          if (this.currentTurnInterrupted) this.interruptionTurns += 1;
-        }
-        this.currentTurnInterrupted = false;
-        this.closeTurnSkills(this.hasTurn);
+        // Finalize the previous turn before opening this one.
+        this.closeOpenTurn();
         this.hasTurn = true;
         this.currentDepth = 0;
         this.turnCount += 1;
@@ -1058,13 +1069,8 @@ class SessionAnalyzer {
   }
 
   finish(): SessionAnalysis {
-    // Finalize the last open turn's depth, skill attribution, and
-    // interruption flag.
-    if (this.hasTurn) {
-      this.turnDepths.push(this.currentDepth);
-      if (this.currentTurnInterrupted) this.interruptionTurns += 1;
-    }
-    this.closeTurnSkills(this.hasTurn);
+    // The session end is the last turn boundary.
+    this.closeOpenTurn();
 
     // Active time: sum gaps between consecutive timestamps ≤ ACTIVE_GAP_MS
     // (longer gaps are the session sitting idle). Sorting first makes the sum

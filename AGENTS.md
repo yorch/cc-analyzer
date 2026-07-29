@@ -307,10 +307,16 @@ the week containing any day (`isDayString` guards both). Period metrics are
 **session-day-scoped**: every query filters `day BETWEEN start AND end`, so a
 session counts wholly toward the period it *started* in and one running past
 midnight is not split; that sentence ships in the rendered footer, not just the
-docs. Period JSON-blob signals come from `analyticsRollup(db, projectId?,
-period?)` — the same single scan, one `AND day BETWEEN ? AND ?` — and the model
-mix and cache waste reuse the exported `addModelTotalsRow` / `CACHE_WASTE_EXPR`,
-so a digest number and an analytics number for the same span cannot disagree.
+docs. The digest owns **no query of its own** beyond its headline totals: the
+period-scoped rollups it needs already exist and take an optional `DayRange`
+(`analyticsRollup(db, projectId?, period?)` — the same single scan;
+`cacheSummary(db, period?)` — so `DigestCache` is literally `CacheSummary`;
+`spendByProject(db, limit, period?)` — the same project ranking `stats` shows),
+the model mix folds through the exported `addModelTotalsRow`, and the headline's
+token sums reuse the exported `IO_TOKENS` / `CACHE_TOKENS` expressions. So a
+digest number and an analytics number for the same span cannot disagree. Each
+takes two calls per period (current + prior) by choice: a CASE-bucketed
+single-pass query would save one scan and cost the reader the plain reading.
 Deltas are null-safe (`share: null` against an empty prior period → render
 "new"). The embedded `insights` are deliberately **not** period-scoped: they are
 `buildPortfolioDiagnostics` over the whole portfolio (current state), because one
@@ -322,9 +328,16 @@ the whole point of a weekly read — still shows, with 0 calls against its prior
 cost. Surfaces: `cc-analyzer report [--week] [--md|--json]`
 (`renderWeeklyDigest`; `--md` prints `buildDigestMarkdown` to stdout — no file
 writes; `--md` and `--json` are mutually exclusive and a valueless/flag-shaped
-`--week` both exit 2), `GET /api/report?week=` (memoized on
-`fingerprint():week:today` like `/api/audit`, with `costBasis` merged fresh per
-request as `/api/stats` does), and the web Dashboard's Weekly digest card, whose
+`--week` both exit 2), `GET /api/report?week=` (the period is resolved *before*
+the memo, so each ISO week gets its own `report:<start>` slot keyed
+`fingerprint():today` like `/api/audit` — two days of one week share an entry
+and an old week can't evict the default one; the slot name is the one memo
+keyspace a client can enumerate, so it is capped at the most recent
+`MAX_REPORT_SLOTS` weeks. `costBasis` is merged fresh per request as
+`/api/stats` does, and the insight snapshot is injected via
+`WeeklyDigestOptions.insights` from the same per-`fingerprint():today` memo
+`/api/insights` reads, so the two routes assemble those signals once between
+them; the CLI keeps assembling its own), and the web Dashboard's Weekly digest card, whose
 "copy as markdown" button imports the same bun-free `buildDigestMarkdown`
 instead of adding an endpoint (it refetches when the cost basis flips, and
 prints `CORRECTION_CAVEAT` beside its correction share).
@@ -505,6 +518,16 @@ interrupted.
   `types: ["vite/client"]`). Web code (`src/web` server aside) that touches the DOM
   belongs to the web config.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).
+- **One formatter family**: money, counts, and durations are formatted by the
+  bun-free `src/core/format-shared.ts` — `formatUSD`, `formatCount` (plus
+  `formatSignedCount` for deltas), `formatDuration` (terminal, with seconds) and
+  `formatCompactDuration` (whole minutes, for the digest and the web cards).
+  `src/cli/format.ts` re-exports them so terminal call sites keep one import
+  source; `digest.ts` and the SPA's digest card import them directly, so a number
+  reads the same in the terminal report, the copied markdown, and the browser.
+  `web/src/format.ts` keeps the SPA's locale-aware `Intl` helpers for everything
+  else. Never re-implement one locally: the copies drifted before (one printed
+  `1000.0k` where the other printed `1.0M`).
 - Formatting/linting is **Biome** (`biome.json`): 2-space indent, width 100, double
   quotes, semicolons, trailing commas. Biome excludes `web/dist` and the placeholder
   `src/web/spa.ts`.

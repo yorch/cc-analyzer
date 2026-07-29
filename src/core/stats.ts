@@ -60,8 +60,16 @@ import {
 
 export * from "./stats-types.ts";
 
-const IO_TOKENS = "input_tokens + output_tokens";
-const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+/** The two token roll-ups every table scan sums. Exported so period-scoped
+ * consumers (the weekly digest) reuse the exact expression instead of keeping a
+ * copy that could drift from the column list. */
+export const IO_TOKENS = "input_tokens + output_tokens";
+export const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
+
+/** `AND day BETWEEN ? AND ?` when a period is given — pair with the period's
+ * two bind values, appended after any project scope. */
+const periodScope = (period?: DayRange): string => (period ? "AND day BETWEEN ? AND ?" : "");
+const periodBinds = (period?: DayRange): string[] => (period ? [period.start, period.end] : []);
 
 /** `AND project_id = ?` when scoped — pair with `scopedAll` so the bind list
  * can't drift from the SQL fragment across the two branches. */
@@ -146,7 +154,10 @@ export function spendByMonth(db: Database, projectId?: string): MonthRow[] {
   );
 }
 
-export function spendByProject(db: Database, limit = 20): ProjectRow[] {
+/** Projects ranked by spend, optionally restricted to one day range (a session
+ * counts toward the period containing its start day — the weekly digest's
+ * attribution, and the only one the index supports). */
+export function spendByProject(db: Database, limit = 20, period?: DayRange): ProjectRow[] {
   return db
     .query(
       `SELECT project_id AS projectId,
@@ -155,10 +166,10 @@ export function spendByProject(db: Database, limit = 20): ProjectRow[] {
         COUNT(*) AS sessions,
         SUM(${IO_TOKENS}) AS ioTokens,
         SUM(${CACHE_TOKENS}) AS cacheTokens
-      FROM sessions
+      FROM sessions WHERE 1 = 1 ${periodScope(period)}
       GROUP BY project_id ORDER BY cost DESC LIMIT ?`,
     )
-    .all(limit) as ProjectRow[];
+    .all(...periodBinds(period), limit) as ProjectRow[];
 }
 
 export function topSessions(db: Database, limit = 10, projectId?: string): SessionRankRow[] {
@@ -258,17 +269,19 @@ const withRatio = <T extends { writeTokens: number; readTokens: number }>(
   ratio: r.writeTokens > 0 ? r.readTokens / r.writeTokens : 0,
 });
 
-/** Portfolio-wide cache totals for the insights header. */
-export function cacheSummary(db: Database): CacheSummary {
+/** Portfolio-wide cache totals for the insights header — or one period's, when
+ * a day range is given (the weekly digest's cache section is this same query
+ * with the `day` filter, so the two can't disagree about waste). */
+export function cacheSummary(db: Database, period?: DayRange): CacheSummary {
   return db
     .query(
       `SELECT COALESCE(SUM(cost_cache_write), 0) AS writeCost,
         COALESCE(SUM(cost_cache_read), 0) AS readCost,
         COALESCE(SUM(${CACHE_WASTE_EXPR}), 0) AS waste,
         COALESCE(SUM(cost_total), 0) AS totalCost
-      FROM sessions`,
+      FROM sessions WHERE 1 = 1 ${periodScope(period)}`,
     )
-    .get() as CacheSummary;
+    .get(...periodBinds(period)) as CacheSummary;
 }
 
 /** Projects ranked by un-amortized cache-write spend (worst offenders first). */
@@ -1375,10 +1388,9 @@ export function analyticsRollup(
         subagents_json, commands_json, command_errors_json, retries_json,
         permission_modes_json, stop_reasons_json, turn_depths_json,
         versions_json, branches_json
-      FROM sessions WHERE 1 = 1 ${projectScope(projectId)}
-        ${period ? "AND day BETWEEN ? AND ?" : ""}`,
+      FROM sessions WHERE 1 = 1 ${projectScope(projectId)} ${periodScope(period)}`,
     projectId,
-    ...(period ? [period.start, period.end] : []),
+    ...periodBinds(period),
   );
 
   const toolFold = newToolFold();

@@ -46,7 +46,7 @@ export function topEntries(rec: Record<string, number>, limit = Number.POSITIVE_
 /**
  * An inclusive YYYY-MM-DD day range, matched against the `day` column (a
  * session's start day). Used by the period-scoped rollups the weekly digest
- * builds on; `DigestPeriod` in `digest.ts` is this shape.
+ * builds on, and by the digest's own period math — one name for one shape.
  */
 export interface DayRange {
   start: string;

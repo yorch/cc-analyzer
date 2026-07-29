@@ -1,22 +1,20 @@
-/** Human-friendly formatting helpers for terminal output. */
+/**
+ * Human-friendly formatting helpers for terminal output.
+ *
+ * Money, counts, and durations live in the bun-free `core/format-shared.ts` —
+ * the digest's markdown and the web digest card print the same strings — and
+ * are re-exported here so terminal call sites keep one import source.
+ */
 
-export function formatUSD(n: number): string {
-  if (!Number.isFinite(n)) return "-";
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  if (abs === 0) return "$0.00";
-  if (abs < 0.01) return `${sign}$${abs.toFixed(4)}`;
-  return `${sign}$${abs.toFixed(2)}`;
-}
+import { formatCount } from "../core/format-shared.ts";
 
-export function formatCount(n: number): string {
-  if (!Number.isFinite(n)) return "-";
-  if (n < 1000) return String(n);
-  // Bucket on the rounded value so 999_960 renders as "1.0M", not "1000.0k".
-  if (Math.round(n / 100) < 10_000) return `${(n / 1000).toFixed(1)}k`;
-  if (Math.round(n / 100_000) < 10_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  return `${(n / 1_000_000_000).toFixed(2)}B`;
-}
+export {
+  formatCompactDuration,
+  formatCount,
+  formatDuration,
+  formatSignedCount,
+  formatUSD,
+} from "../core/format-shared.ts";
 
 /** Token count next to a cost: "213M" or "213M +52B cache". */
 export function formatTokens(io: number, cache: number): string {
@@ -28,16 +26,6 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function formatDuration(ms: number | undefined): string {
-  if (ms === undefined || Number.isNaN(ms)) return "-";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
 }
 
 export function formatRelativeTime(mtimeMs: number, now = Date.now()): string {

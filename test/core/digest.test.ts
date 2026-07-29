@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   buildDigestMarkdown,
   digestDelta,
-  digestDuration,
-  digestMoney,
   formatDigestDelta,
   isDayString,
   isEmptyPeriod,
@@ -13,6 +11,7 @@ import {
   type WeeklyDigest,
   weekPeriod,
 } from "../../src/core/digest.ts";
+import { formatCompactDuration, formatUSD } from "../../src/core/format-shared.ts";
 import { CORRECTION_CAVEAT, SKILL_COST_CAVEAT } from "../../src/core/stats-types.ts";
 
 describe("digest period resolution", () => {
@@ -73,17 +72,17 @@ describe("digest delta math", () => {
   });
 
   test("renders as an amount plus a signed percentage", () => {
-    expect(formatDigestDelta(digestDelta(12.4, 10.5), digestMoney)).toBe("+$1.90 (+18%)");
-    expect(formatDigestDelta(digestDelta(5, 10), digestMoney)).toBe("-$5.00 (-50%)");
+    expect(formatDigestDelta(digestDelta(12.4, 10.5), formatUSD)).toBe("+$1.90 (+18%)");
+    expect(formatDigestDelta(digestDelta(5, 10), formatUSD)).toBe("-$5.00 (-50%)");
     // No baseline → "new" instead of a division by zero.
-    expect(formatDigestDelta(digestDelta(3, 0), digestMoney)).toBe("+$3.00 (new)");
+    expect(formatDigestDelta(digestDelta(3, 0), formatUSD)).toBe("+$3.00 (new)");
     expect(formatDigestDelta(digestDelta(7, 7), (n) => String(n))).toBe("no change");
   });
 
-  test("durations render compactly in both directions", () => {
-    expect(digestDuration(45_000)).toBe("45s");
-    expect(digestDuration(1000 * 60 * 95)).toBe("1h 35m");
-    expect(digestDuration(-1000 * 60 * 10)).toBe("-10m");
+  test("durations render compactly in both directions (the shared formatter)", () => {
+    expect(formatCompactDuration(45_000)).toBe("45s");
+    expect(formatCompactDuration(1000 * 60 * 95)).toBe("1h 35m");
+    expect(formatCompactDuration(-1000 * 60 * 10)).toBe("-10m");
   });
 });
 

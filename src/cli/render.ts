@@ -1,13 +1,6 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
-import {
-  digestCount,
-  digestDuration,
-  digestMoney,
-  formatDigestDelta,
-  isEmptyPeriod,
-  type WeeklyDigest,
-} from "../core/digest.ts";
+import { formatDigestDelta, isEmptyPeriod, type WeeklyDigest } from "../core/digest.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import {
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
@@ -37,9 +30,11 @@ import {
   topEntries,
 } from "../core/stats-types.ts";
 import {
+  formatCompactDuration,
   formatCount,
   formatDuration,
   formatRelativeTime,
+  formatSignedCount,
   formatTokens,
   formatUSD,
   table,
@@ -409,7 +404,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
       lines.push(
         muted(
           `Prior period: ${h.sessions.prior} ${h.sessions.prior === 1 ? "session" : "sessions"} · ` +
-            `${digestMoney(h.cost.prior)}.`,
+            `${formatUSD(h.cost.prior)}.`,
           options,
         ),
       );
@@ -421,9 +416,9 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
         [
           [
             costNoun(d.costBasis),
-            digestMoney(h.cost.current),
-            digestMoney(h.cost.prior),
-            change(h.cost, digestMoney),
+            formatUSD(h.cost.current),
+            formatUSD(h.cost.prior),
+            change(h.cost, formatUSD),
           ],
           [
             "sessions",
@@ -433,21 +428,21 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
           ],
           [
             "active time",
-            digestDuration(h.activeMs.current),
-            digestDuration(h.activeMs.prior),
-            change(h.activeMs, digestDuration),
+            formatCompactDuration(h.activeMs.current),
+            formatCompactDuration(h.activeMs.prior),
+            change(h.activeMs, formatCompactDuration),
           ],
           [
             "tokens (in+out)",
-            digestCount(h.ioTokens.current),
-            digestCount(h.ioTokens.prior),
-            change(h.ioTokens, digestCount),
+            formatSignedCount(h.ioTokens.current),
+            formatSignedCount(h.ioTokens.prior),
+            change(h.ioTokens, formatSignedCount),
           ],
           [
             "cache tokens",
-            digestCount(h.cacheTokens.current),
-            digestCount(h.cacheTokens.prior),
-            change(h.cacheTokens, digestCount),
+            formatSignedCount(h.cacheTokens.current),
+            formatSignedCount(h.cacheTokens.prior),
+            change(h.cacheTokens, formatSignedCount),
           ],
         ],
         { align: ["left", "right", "right", "right"] },
@@ -460,9 +455,9 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
         table(
           ["cost", "sessions", "change", "project"],
           d.projects.map((p) => [
-            digestMoney(p.cost),
+            formatUSD(p.cost),
             String(p.sessions),
-            change(p.delta, digestMoney),
+            change(p.delta, formatUSD),
             truncate(p.projectPath ?? p.projectId, 44),
           ]),
           { align: ["right", "right", "right", "left"] },
@@ -477,9 +472,9 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
           ["model", "calls", "cost", "prior"],
           d.models.map((m) => [
             truncate(m.model, 32),
-            digestCount(m.calls),
-            digestMoney(m.cost),
-            digestMoney(m.priorCost),
+            formatSignedCount(m.calls),
+            formatUSD(m.cost),
+            formatUSD(m.priorCost),
           ]),
           { align: ["left", "right", "right", "right"] },
         ),
@@ -494,30 +489,30 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
         [
           [
             "cache",
-            `${digestMoney(d.cache.writeCost)} written · ${digestMoney(d.cache.readCost)} read · ` +
-              `${digestMoney(d.cache.waste)} never read back`,
+            `${formatUSD(d.cache.writeCost)} written · ${formatUSD(d.cache.readCost)} read · ` +
+              `${formatUSD(d.cache.waste)} never read back`,
           ],
           [
             "tool calls",
-            `${digestCount(r.toolCalls)} (${digestCount(r.toolErrors)} errors, ` +
+            `${formatSignedCount(r.toolCalls)} (${formatSignedCount(r.toolErrors)} errors, ` +
               `${(r.toolErrorRate * 100).toFixed(1)}%)`,
           ],
           [
             "test runs",
             r.testRuns > 0
-              ? `${digestCount(r.testRuns)} (${digestCount(r.testFailures)} failed) · ` +
+              ? `${formatSignedCount(r.testRuns)} (${formatSignedCount(r.testFailures)} failed) · ` +
                 `worst streak ${r.worstTestFailStreak}`
               : "none detected",
           ],
           [
             "churn",
-            `${digestCount(r.retries)} repeated calls · ${digestCount(r.redundantReads)} redundant reads`,
+            `${formatSignedCount(r.retries)} repeated calls · ${formatSignedCount(r.redundantReads)} redundant reads`,
           ],
           [
             "corrections",
-            `${digestCount(r.correctionTurns)} of ${digestCount(r.turns)} turns ` +
+            `${formatSignedCount(r.correctionTurns)} of ${formatSignedCount(r.turns)} turns ` +
               `(${(r.correctionShare * 100).toFixed(0)}%) · ` +
-              `${digestCount(r.interruptionTurns)} interrupted`,
+              `${formatSignedCount(r.interruptionTurns)} interrupted`,
           ],
         ],
       ),
@@ -531,9 +526,9 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
           ["skill", "invoc", "turns", "turn $"],
           d.skills.map((s) => [
             truncate(s.name, 28),
-            digestCount(s.invocations),
-            digestCount(s.attributedTurns),
-            digestMoney(s.attributedCost),
+            formatSignedCount(s.invocations),
+            formatSignedCount(s.attributedTurns),
+            formatUSD(s.attributedCost),
           ]),
           { align: ["left", "right", "right", "right"] },
         ),

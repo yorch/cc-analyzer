@@ -7,8 +7,8 @@ import {
   type CostBasis,
   type CostDistribution,
   costFramingNote,
-  digestMoney,
   formatDigestDelta,
+  formatUSD,
   isEmptyPeriod,
   type ModelRow,
   type MonthRow,
@@ -370,7 +370,7 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
           <Card
             label="Cost"
             value={usd(h.cost.current)}
-            sub={formatDigestDelta(h.cost, digestMoney)}
+            sub={formatDigestDelta(h.cost, formatUSD)}
           />
           <Card
             label="Sessions"

@@ -381,8 +381,15 @@ function attribute(
  * inherit `SKILL_COST_CAVEAT` (a turn invoking several skills counts its full
  * cost toward each). Sorted most expensive first, then by invocations.
  */
-export function buildPluginUsage(inventory: SetupInventory, usage: SetupUsage): PluginUsageRow[] {
-  const usedServers = observedMcpServers(usage.tools);
+export function buildPluginUsage(
+  inventory: SetupInventory,
+  usage: SetupUsage,
+  /** The observed MCP servers, when the caller already derived them (the audit
+   * needs the same set for its `unused-mcp-server` rule). Optional so the
+   * function stays callable with two arguments. */
+  observedServers?: Set<string>,
+): PluginUsageRow[] {
+  const usedServers = observedServers ?? observedMcpServers(usage.tools);
   const userSkills = userBareNames(inventory.skills);
   const userAgents = userBareNames(inventory.agents);
   const skillOwners = ownersByBareName(inventory.plugins, (p) => p.skills);
@@ -508,7 +515,10 @@ export function buildSetupAudit(
   today: string,
 ): SetupAudit {
   const findings: SetupAuditFinding[] = [];
-  const plugins = buildPluginUsage(inventory, usage);
+  // Derived once and shared with the plugin rollup — both ask the same question
+  // ("which MCP servers actually appear in the sessions?") of the same rows.
+  const usedServers = observedMcpServers(usage.tools);
+  const plugins = buildPluginUsage(inventory, usage, usedServers);
   // One finding per dead plugin, not one per component: a plugin whose every
   // component is unused reports `unused-plugin`, and its skills/agents skip
   // their own `unused-skill`/`unused-agent` findings below.
@@ -588,7 +598,6 @@ export function buildSetupAudit(
     });
   }
 
-  const usedServers = observedMcpServers(usage.tools);
   for (const server of inventory.mcpServers) {
     if (usedServers.has(server.name.toLowerCase())) continue;
     const scope =

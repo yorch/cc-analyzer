@@ -15,8 +15,9 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { DigestPeriod, WeeklyDigest } from "./digest.ts";
+import type { WeeklyDigest } from "./digest.ts";
 import { digestDelta, lastCompleteWeek, priorPeriod, weekPeriod } from "./digest.ts";
+import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
 import { buildPortfolioDiagnostics } from "./portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "./portfolio-signals.ts";
 import { getCostBasis } from "./prefs.ts";
@@ -24,10 +25,14 @@ import type { PricingTable } from "./pricing.ts";
 import {
   addModelTotalsRow,
   analyticsRollup,
-  CACHE_WASTE_EXPR,
+  CACHE_TOKENS,
+  cacheSummary,
+  IO_TOKENS,
   localDayOfMs,
   type ModelTotals,
+  spendByProject,
 } from "./stats.ts";
+import type { DayRange } from "./stats-types.ts";
 
 export interface WeeklyDigestOptions {
   /**
@@ -44,58 +49,42 @@ export interface WeeklyDigestOptions {
   today?: string;
   /** Skip the insight snapshot's setup-audit filesystem scan. */
   audit?: boolean;
+  /**
+   * Pre-built current-state diagnostics for the insight snapshot. The web
+   * server already memoizes these per index fingerprint for `/api/insights`, so
+   * `/api/report` hands them over instead of re-assembling the same signals
+   * (an index scan plus the audit's filesystem walk). Omitted — the CLI path —
+   * the digest assembles its own.
+   */
+  insights?: PortfolioDiagnostic[];
 }
 
-/** Per-period aggregates that come straight off indexed columns. */
+/** The headline aggregates, straight off indexed columns. Cache economics come
+ * from `cacheSummary(db, period)` instead — same table, one shared definition
+ * of "waste". */
 interface PeriodTotals {
   sessions: number;
   cost: number;
   activeMs: number;
   ioTokens: number;
   cacheTokens: number;
-  writeCost: number;
-  readCost: number;
-  waste: number;
 }
 
-function periodTotals(db: Database, p: DigestPeriod): PeriodTotals {
+function periodTotals(db: Database, p: DayRange): PeriodTotals {
   return db
     .query(
       `SELECT COUNT(*) AS sessions,
           COALESCE(SUM(cost_total), 0) AS cost,
           COALESCE(SUM(active_ms), 0) AS activeMs,
-          COALESCE(SUM(input_tokens + output_tokens), 0) AS ioTokens,
-          COALESCE(SUM(cache_write_5m + cache_write_1h + cache_read), 0) AS cacheTokens,
-          COALESCE(SUM(cost_cache_write), 0) AS writeCost,
-          COALESCE(SUM(cost_cache_read), 0) AS readCost,
-          COALESCE(SUM(${CACHE_WASTE_EXPR}), 0) AS waste
+          COALESCE(SUM(${IO_TOKENS}), 0) AS ioTokens,
+          COALESCE(SUM(${CACHE_TOKENS}), 0) AS cacheTokens
         FROM sessions WHERE day BETWEEN ? AND ?`,
     )
     .get(p.start, p.end) as PeriodTotals;
 }
 
-interface ProjectTotals {
-  projectId: string;
-  projectPath: string | null;
-  cost: number;
-  sessions: number;
-}
-
-function periodProjects(db: Database, p: DigestPeriod): ProjectTotals[] {
-  return db
-    .query(
-      `SELECT project_id AS projectId,
-          MAX(project_path) AS projectPath,
-          COALESCE(SUM(cost_total), 0) AS cost,
-          COUNT(*) AS sessions
-        FROM sessions WHERE day BETWEEN ? AND ?
-        GROUP BY project_id`,
-    )
-    .all(p.start, p.end) as ProjectTotals[];
-}
-
 /** Per-model totals for one period, through the same fold `spendByModel` uses. */
-function periodModels(db: Database, p: DigestPeriod): Map<string, ModelTotals> {
+function periodModels(db: Database, p: DayRange): Map<string, ModelTotals> {
   const rows = db
     .query("SELECT models_json FROM sessions WHERE day BETWEEN ? AND ?")
     .all(p.start, p.end) as { models_json: string | null }[];
@@ -106,6 +95,14 @@ function periodModels(db: Database, p: DigestPeriod): Map<string, ModelTotals> {
 
 /** How many projects the digest lists — a digest is a glance, not a report. */
 const TOP_PROJECTS = 5;
+/**
+ * Row cap for the two per-project period queries. The digest renders the top
+ * `TOP_PROJECTS`, but the prior period must be looked up in full: a project big
+ * this week may sit far down last week's ranking, and a truncated baseline
+ * would report it as "new". Far above any realistic count of projects touched
+ * in one week, so it bounds the query without cutting a real ranking.
+ */
+const PERIOD_PROJECT_CAP = 2000;
 /** Same reasoning for skills, ranked by turn-scoped (attributed) cost. */
 const TOP_SKILLS = 5;
 
@@ -134,9 +131,12 @@ export function buildWeeklyDigest(
   const cur = periodTotals(db, period);
   const prev = periodTotals(db, prior);
 
-  const priorProjects = new Map(periodProjects(db, prior).map((r) => [r.projectId, r.cost]));
-  const projects = periodProjects(db, period)
-    .sort((a, b) => b.cost - a.cost)
+  // The same project ranking the portfolio view uses, period-filtered — so the
+  // digest's "top projects" and `cc-analyzer stats` rank projects identically.
+  const priorProjects = new Map(
+    spendByProject(db, PERIOD_PROJECT_CAP, prior).map((r) => [r.projectId, r.cost]),
+  );
+  const projects = spendByProject(db, PERIOD_PROJECT_CAP, period)
     .slice(0, TOP_PROJECTS)
     .map((r) => ({
       projectId: r.projectId,
@@ -181,12 +181,7 @@ export function buildWeeklyDigest(
     },
     projects,
     models,
-    cache: {
-      writeCost: cur.writeCost,
-      readCost: cur.readCost,
-      waste: cur.waste,
-      totalCost: cur.cost,
-    },
+    cache: cacheSummary(db, period),
     reliability: {
       toolCalls,
       toolErrors,
@@ -210,9 +205,9 @@ export function buildWeeklyDigest(
         attributedTurns: s.attributedTurns,
         attributedCost: s.attributedCost,
       })),
-    insights: buildPortfolioDiagnostics(
-      assemblePortfolioSignals(db, pricing, opts.audit === false ? { audit: false } : {}),
-    ),
+    insights:
+      opts.insights ??
+      buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing, { audit: opts.audit })),
     // Display-only framing, read at this boundary like every other surface.
     costBasis: getCostBasis(),
   };

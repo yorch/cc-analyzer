@@ -19,21 +19,20 @@
  */
 
 import { type CostBasis, costFramingNote } from "./cost-framing.ts";
+import { formatCompactDuration, formatSignedCount, formatUSD } from "./format-shared.ts";
 import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
-import type { DayRange } from "./stats-types.ts";
+import type { CacheSummary, DayRange } from "./stats-types.ts";
 import { CORRECTION_CAVEAT, SKILL_COST_CAVEAT, shiftDay, weekOf } from "./stats-types.ts";
 
 /* ——— Period math ————————————————————————————————————————————————————
- * Periods are inclusive YYYY-MM-DD day ranges, Monday-anchored ISO weeks by
- * default — the same `weekOf`/`shiftDay` rules the rest of the stats layer
- * buckets weeks with, so a digest week and a trend week are the same week. */
-
-/** An inclusive day range (YYYY-MM-DD), oldest day first — the `DayRange` the
- * period-scoped rollups filter the `day` column with. */
-export type DigestPeriod = DayRange;
+ * Periods are inclusive `DayRange`s (YYYY-MM-DD, oldest day first) — the same
+ * shape the period-scoped rollups filter the `day` column with — and
+ * Monday-anchored ISO weeks by default, off the same `weekOf`/`shiftDay` rules
+ * the rest of the stats layer buckets weeks with, so a digest week and a trend
+ * week are the same week. */
 
 /** Whole ISO week (Mon–Sun) containing `day`. */
-export function weekPeriod(day: string): DigestPeriod {
+export function weekPeriod(day: string): DayRange {
   const start = weekOf(day);
   return { start, end: shiftDay(start, 6) };
 }
@@ -44,18 +43,18 @@ export function weekPeriod(day: string): DigestPeriod {
  * always look like a decline against a full prior week, so the default period
  * is only ever a week that has actually ended.
  */
-export function lastCompleteWeek(today: string): DigestPeriod {
+export function lastCompleteWeek(today: string): DayRange {
   return weekPeriod(shiftDay(weekOf(today), -7));
 }
 
 /** Days in an inclusive period (1 for a single day, 7 for a week). */
-export function periodDays(p: DigestPeriod): number {
+export function periodDays(p: DayRange): number {
   const ms = Date.parse(`${p.end}T00:00:00Z`) - Date.parse(`${p.start}T00:00:00Z`);
   return Math.round(ms / 86_400_000) + 1;
 }
 
 /** The equally long period immediately before `p` — the digest's baseline. */
-export function priorPeriod(p: DigestPeriod): DigestPeriod {
+export function priorPeriod(p: DayRange): DayRange {
   const days = periodDays(p);
   return { start: shiftDay(p.start, -days), end: shiftDay(p.end, -days) };
 }
@@ -117,14 +116,10 @@ export interface DigestModelRow {
   priorCost: number;
 }
 
-/** Period cache economics — the same four numbers as `CacheSummary`. */
-export interface DigestCache {
-  writeCost: number;
-  readCost: number;
-  /** Cache-write $ never read back (the shared un-amortized expression). */
-  waste: number;
-  totalCost: number;
-}
+/** Period cache economics. Literally `CacheSummary`, computed by the same
+ * `cacheSummary()` query with the period's day filter — a second shape would be
+ * a second place for the definition of "waste" to drift. */
+export type DigestCache = CacheSummary;
 
 /** Period reliability signals, all folded off the period's indexed rows. */
 export interface DigestReliability {
@@ -154,9 +149,9 @@ export interface DigestSkillRow {
 
 /** One week of usage, its deltas, and the current-state insight snapshot. */
 export interface WeeklyDigest {
-  period: DigestPeriod;
+  period: DayRange;
   /** The equally long period the deltas compare against. */
-  prior: DigestPeriod;
+  prior: DayRange;
   /** The local day the period was resolved from (`localDayOfMs(Date.now())`). */
   today: string;
   headline: DigestHeadline;
@@ -187,36 +182,10 @@ export function isEmptyPeriod(d: WeeklyDigest): boolean {
 
 /* ——— Markdown rendering ————————————————————————————————————————————
  * Plain CommonMark, no ANSI: the output is meant to be pasted into notes or
- * chat. Formatting helpers are local (and tiny) so this module stays bun-free
- * and independent of the terminal renderer's padding/colour helpers. */
-
-export function digestMoney(n: number): string {
-  if (!Number.isFinite(n)) return "-";
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  if (abs === 0) return "$0.00";
-  if (abs < 0.01) return `${sign}$${abs.toFixed(4)}`;
-  return `${sign}$${abs.toFixed(2)}`;
-}
-
-export function digestCount(n: number): string {
-  if (!Number.isFinite(n)) return "-";
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  if (abs < 1000) return `${sign}${abs}`;
-  if (abs < 1_000_000) return `${sign}${(abs / 1000).toFixed(1)}k`;
-  if (abs < 1_000_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
-  return `${sign}${(abs / 1_000_000_000).toFixed(2)}B`;
-}
-
-export function digestDuration(ms: number): string {
-  const s = Math.round(Math.abs(ms) / 1000);
-  const sign = ms < 0 ? "-" : "";
-  if (s < 60) return `${sign}${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${sign}${m}m`;
-  return `${sign}${Math.floor(m / 60)}h ${m % 60}m`;
-}
+ * chat. Numbers go through the shared bun-free formatter family
+ * (`format-shared.ts`) — the signed variants, since every delta cell can be
+ * negative — so a digest cell and the same number in the CLI or the web card
+ * are formatted identically. */
 
 const pct = (share: number): string => `${share >= 0 ? "+" : ""}${(share * 100).toFixed(0)}%`;
 
@@ -265,7 +234,7 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
     if (h.sessions.prior > 0) {
       out.push(
         `The prior period had ${h.sessions.prior} ${h.sessions.prior === 1 ? "session" : "sessions"} ` +
-          `and ${digestMoney(h.cost.prior)} of usage.`,
+          `and ${formatUSD(h.cost.prior)} of usage.`,
       );
       out.push("");
     }
@@ -279,9 +248,9 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
         [
           [
             "Cost",
-            digestMoney(h.cost.current),
-            digestMoney(h.cost.prior),
-            formatDigestDelta(h.cost, digestMoney),
+            formatUSD(h.cost.current),
+            formatUSD(h.cost.prior),
+            formatDigestDelta(h.cost, formatUSD),
           ],
           [
             "Sessions",
@@ -291,21 +260,21 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
           ],
           [
             "Active time",
-            digestDuration(h.activeMs.current),
-            digestDuration(h.activeMs.prior),
-            formatDigestDelta(h.activeMs, digestDuration),
+            formatCompactDuration(h.activeMs.current),
+            formatCompactDuration(h.activeMs.prior),
+            formatDigestDelta(h.activeMs, formatCompactDuration),
           ],
           [
             "Input+output tokens",
-            digestCount(h.ioTokens.current),
-            digestCount(h.ioTokens.prior),
-            formatDigestDelta(h.ioTokens, digestCount),
+            formatSignedCount(h.ioTokens.current),
+            formatSignedCount(h.ioTokens.prior),
+            formatDigestDelta(h.ioTokens, formatSignedCount),
           ],
           [
             "Cache tokens",
-            digestCount(h.cacheTokens.current),
-            digestCount(h.cacheTokens.prior),
-            formatDigestDelta(h.cacheTokens, digestCount),
+            formatSignedCount(h.cacheTokens.current),
+            formatSignedCount(h.cacheTokens.prior),
+            formatDigestDelta(h.cacheTokens, formatSignedCount),
           ],
         ],
       ),
@@ -321,9 +290,9 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
           ["left", "right", "right", "right"],
           d.projects.map((p) => [
             cell(p.projectPath ?? p.projectId),
-            digestMoney(p.cost),
+            formatUSD(p.cost),
             String(p.sessions),
-            formatDigestDelta(p.delta, digestMoney),
+            formatDigestDelta(p.delta, formatUSD),
           ]),
         ),
       );
@@ -339,9 +308,9 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
           ["left", "right", "right", "right"],
           d.models.map((m) => [
             cell(m.model),
-            digestCount(m.calls),
-            digestMoney(m.cost),
-            digestMoney(m.priorCost),
+            formatSignedCount(m.calls),
+            formatUSD(m.cost),
+            formatUSD(m.priorCost),
           ]),
         ),
       );
@@ -351,8 +320,8 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
     out.push("### Cache");
     out.push("");
     out.push(
-      `- Writes ${digestMoney(d.cache.writeCost)}, reads ${digestMoney(d.cache.readCost)}, ` +
-        `un-amortized ${digestMoney(d.cache.waste)} (written but never read back).`,
+      `- Writes ${formatUSD(d.cache.writeCost)}, reads ${formatUSD(d.cache.readCost)}, ` +
+        `un-amortized ${formatUSD(d.cache.waste)} (written but never read back).`,
     );
     out.push("");
 
@@ -360,22 +329,22 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
     out.push("### Reliability");
     out.push("");
     out.push(
-      `- Tool calls: ${digestCount(r.toolCalls)} (${digestCount(r.toolErrors)} errors, ` +
+      `- Tool calls: ${formatSignedCount(r.toolCalls)} (${formatSignedCount(r.toolErrors)} errors, ` +
         `${(r.toolErrorRate * 100).toFixed(1)}%)`,
     );
     out.push(
       r.testRuns > 0
-        ? `- Test runs: ${digestCount(r.testRuns)} (${digestCount(r.testFailures)} failed); ` +
+        ? `- Test runs: ${formatSignedCount(r.testRuns)} (${formatSignedCount(r.testFailures)} failed); ` +
             `worst failing streak ${r.worstTestFailStreak}`
         : "- Test runs: none detected",
     );
     out.push(
-      `- Repeated identical tool calls: ${digestCount(r.retries)} · ` +
-        `redundant file reads: ${digestCount(r.redundantReads)}`,
+      `- Repeated identical tool calls: ${formatSignedCount(r.retries)} · ` +
+        `redundant file reads: ${formatSignedCount(r.redundantReads)}`,
     );
     out.push(
-      `- Corrections: ${digestCount(r.correctionTurns)} of ${digestCount(r.turns)} turns ` +
-        `(${(r.correctionShare * 100).toFixed(0)}%) · ${digestCount(r.interruptionTurns)} interrupted`,
+      `- Corrections: ${formatSignedCount(r.correctionTurns)} of ${formatSignedCount(r.turns)} turns ` +
+        `(${(r.correctionShare * 100).toFixed(0)}%) · ${formatSignedCount(r.interruptionTurns)} interrupted`,
     );
     out.push("");
     out.push(`_${CORRECTION_CAVEAT}_`);
@@ -390,9 +359,9 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
           ["left", "right", "right", "right"],
           d.skills.map((s) => [
             cell(s.name),
-            digestCount(s.invocations),
-            digestCount(s.attributedTurns),
-            digestMoney(s.attributedCost),
+            formatSignedCount(s.invocations),
+            formatSignedCount(s.attributedTurns),
+            formatUSD(s.attributedCost),
           ]),
         ),
       );

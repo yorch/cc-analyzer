@@ -336,12 +336,19 @@ The two-layer split follows the house pattern: [src/core/digest.ts](https://gith
 (shapes, period math via the shared `weekOf`/`shiftDay` helpers, delta math, and
 `buildDigestMarkdown`), so the SPA imports it and its "copy as markdown" button
 emits exactly what `cc-analyzer report --md` prints; [src/core/digest-signals.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/digest-signals.ts)
-is the bun-side assembler that reads the index. Period-scoped JSON-blob signals
-come from `analyticsRollup(db, undefined, period)` — the same single-scan folds
-the portfolio rollup uses, with a `day BETWEEN ? AND ?` filter — so a digest
-number and the analytics number for the same span cannot disagree; the model mix
-reuses `addModelTotalsRow` (shared with `spendByModel` and `whatIfRepricing`) and
-the cache waste reuses the exported `CACHE_WASTE_EXPR`.
+is the bun-side assembler that reads the index. It owns almost no SQL of its
+own: the rollups it needs already exist and take an optional `DayRange`, so
+period-scoped JSON-blob signals come from `analyticsRollup(db, undefined,
+period)` (the same single-scan folds the portfolio rollup uses, with a `day
+BETWEEN ? AND ?` filter), the cache section from `cacheSummary(db, period)` —
+which is why `DigestCache` is simply `CacheSummary` — and the top projects from
+`spendByProject(db, limit, period)`, the same ranking `cc-analyzer stats` shows.
+The model mix reuses `addModelTotalsRow` (shared with `spendByModel` and
+`whatIfRepricing`) and the headline's token sums the exported `IO_TOKENS` /
+`CACHE_TOKENS` expressions, so a digest number and the analytics number for the
+same span cannot disagree. Each shared function is called twice, once per period
+(current and prior); a single CASE-bucketed pass would save a scan and cost the
+reader the plain reading, which is not a trade this codebase makes.
 
 Attribution honesty: the index holds one row per session dated by its **start
 day**, so a session counts wholly toward the period it began in and one that ran

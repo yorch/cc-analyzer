@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { analyzeSession } from "../core/analyze.ts";
 import type { CostBasis } from "../core/cost-framing.ts";
-import { isDayString } from "../core/digest.ts";
+import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { scanInventory } from "../core/inventory.ts";
@@ -53,6 +53,11 @@ import { buildTranscript } from "../core/transcript.ts";
 // unbounded JSON. Far above any realistic project count.
 const MAX_PROJECT_ROWS = 2000;
 
+// How many weeks of digest stay memoized at once. Generous for the one thing a
+// human does (page back through recent weeks) while bounding the one memo
+// keyspace a client can enumerate.
+const MAX_REPORT_SLOTS = 16;
+
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
@@ -87,6 +92,24 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     if (hit?.key !== key) objCache.set(name, { key, value: build() });
     return (objCache.get(name) as { value: T }).value;
   };
+  /** Keep at most `max` slots whose name starts with `prefix`, oldest first (a
+   * Map iterates in insertion order). Only routes whose slot name embeds a
+   * client-supplied value need this — every other keyspace here is bounded by
+   * the index itself, and unknown project ids 404 before reaching the memo. */
+  const capSlots = <T>(slots: Map<string, T>, prefix: string, max: number): void => {
+    const keys = [...slots.keys()].filter((k) => k.startsWith(prefix));
+    for (const k of keys.slice(0, Math.max(0, keys.length - max))) slots.delete(k);
+  };
+
+  // Current-state portfolio diagnostics, shared by /api/insights and the
+  // digest's insight snapshot on /api/report: both want the identical findings,
+  // and assembling the signals scans the index and rescans the setup inventory.
+  // Memoized on the index fingerprint plus the local day, because the audit's
+  // staleness rules roll over at midnight.
+  const portfolioDiagnostics = (today: string) =>
+    cachedValue("diagnostics", `${fingerprint()}:${today}`, () =>
+      buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
+    );
 
   api.get("/api/stats", (c) => {
     const today = localDayOfMs(Date.now());
@@ -142,7 +165,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
       projects: cacheWasteByProject(db, MAX_PROJECT_ROWS),
       ttl: cacheTtlSplit(db),
       idleBuckets: idleVsCache(db),
-      diagnostics: buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing)),
+      diagnostics: portfolioDiagnostics(today),
     }));
   });
 
@@ -198,21 +221,27 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   });
 
   // Weekly digest: one period's usage with deltas against the period before,
-  // plus the current-state insight snapshot. That snapshot embeds the setup
-  // audit's filesystem scan (same as /api/insights), so the memo key mirrors
-  // that route's `fingerprint():today` — with the requested week folded in,
-  // since one index can serve many weeks. `cachedValue` (not `cachedJson`) so
-  // the cost-basis display preference can be merged fresh per request, exactly
-  // like /api/stats does.
+  // plus the current-state insight snapshot (shared with /api/insights through
+  // the memo above, so the two routes assemble those signals once between
+  // them). The period is resolved BEFORE the memo, so each ISO week gets its
+  // own slot: two days of the same week share one entry, and asking for an
+  // older week doesn't evict the default one. `cachedValue` (not `cachedJson`)
+  // so the cost-basis display preference can be merged fresh per request,
+  // exactly like /api/stats does.
   api.get("/api/report", (c) => {
     const week = c.req.query("week");
     if (week !== undefined && !isDayString(week)) {
       return c.json({ error: "week must be a YYYY-MM-DD day" }, 400);
     }
     const today = localDayOfMs(Date.now());
-    const digest = cachedValue("report", `${fingerprint()}:${week ?? ""}:${today}`, () =>
-      buildWeeklyDigest(db, pricing, { week, today }),
+    const period = week ? weekPeriod(week) : lastCompleteWeek(today);
+    const digest = cachedValue(`report:${period.start}`, `${fingerprint()}:${today}`, () =>
+      buildWeeklyDigest(db, pricing, { week, today, insights: portfolioDiagnostics(today) }),
     );
+    // `week` is a client-supplied (if validated) day, so the slot name is the
+    // one keyspace here a caller can grow: keep the most recently *requested*
+    // weeks and drop the rest — a dropped week costs one rebuild, nothing more.
+    capSlots(objCache, "report:", MAX_REPORT_SLOTS);
     return c.json({ ...digest, costBasis: getCostBasis() });
   });
 
