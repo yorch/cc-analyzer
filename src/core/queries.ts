@@ -81,6 +81,8 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
     .query(
       `SELECT project_id AS projectId,
         MAX(project_path) AS projectPath,
+        -- MAX() is a "pick any": project_id is globally unique (root-qualified
+        -- at index time), so every row in a group shares one claude_dir.
         MAX(claude_dir) AS claudeDir,
         COUNT(*) AS sessions,
         SUM(cost_total) AS cost,

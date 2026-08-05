@@ -4,19 +4,19 @@ import { cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setClaudeRootsOverride } from "../../src/core/claude-roots.ts";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
-import { setClaudeRootsOverride } from "../../src/core/paths.ts";
+import { type TempStateDir, tempStateDir } from "../helpers/claude-dir.ts";
 import { samplePricing } from "../helpers/pricing.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 
 let work: string;
 let personal: string;
-let state: string;
+let state: TempStateDir;
 let db: Database;
 let savedClaude: string | undefined;
-let savedState: string | undefined;
 
 /** Seed a root with one project holding one session. */
 function seedRoot(root: string, sessionName: string): void {
@@ -40,15 +40,13 @@ const run = (...roots: string[]) => {
 
 beforeEach(() => {
   savedClaude = process.env.CC_ANALYZER_CLAUDE_DIR;
-  savedState = process.env.CC_ANALYZER_STATE_DIR;
   delete process.env.CC_ANALYZER_CLAUDE_DIR;
   work = mkdtempSync(join(tmpdir(), "cc-idx-work-"));
   personal = mkdtempSync(join(tmpdir(), "cc-idx-personal-"));
-  state = mkdtempSync(join(tmpdir(), "cc-idx-state-"));
-  process.env.CC_ANALYZER_STATE_DIR = state;
+  state = tempStateDir("cc-idx-state");
   seedRoot(work, "w1");
   seedRoot(personal, "p1");
-  db = openDb(join(state, "index.db"));
+  db = openDb(join(state.dir, "index.db"));
 });
 
 afterEach(() => {
@@ -56,9 +54,8 @@ afterEach(() => {
   setClaudeRootsOverride(null);
   if (savedClaude === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
   else process.env.CC_ANALYZER_CLAUDE_DIR = savedClaude;
-  if (savedState === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
-  else process.env.CC_ANALYZER_STATE_DIR = savedState;
-  for (const dir of [work, personal, state]) rmSync(dir, { recursive: true, force: true });
+  state.cleanup();
+  for (const dir of [work, personal]) rmSync(dir, { recursive: true, force: true });
 });
 
 test("indexes every root and keeps same-named projects apart", async () => {

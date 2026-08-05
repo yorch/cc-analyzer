@@ -66,9 +66,9 @@ export interface PermissionRuleCounts {
 
 /** Everything `scanInventory()` could read out of the Claude config dir. */
 export interface SetupInventory {
-  /** The primary dir that was scanned (absolute). */
-  claudeDir: string;
-  /** Every scanned dir, primary first — one entry unless several roots are configured. */
+  /** Every scanned dir, primary first — one entry unless several roots are
+   *  configured. The primary root is `claudeDirs[0]`; there is deliberately no
+   *  second field for it, since the two drifted when there was one. */
   claudeDirs: string[];
   /** False when no scanned dir exists — every list is then empty by default. */
   present: boolean;
@@ -700,7 +700,7 @@ export function buildSetupAudit(
         code: "missing-but-used",
         severity: "info",
         title: `${missingSkills.length} used ${missingSkills.length === 1 ? "skill is" : "skills are"} not in the current inventory`,
-        evidence: `Invoked in sessions but not installed under ${inventory.claudeDir}: ${namesLine(
+        evidence: `Invoked in sessions but not installed under ${inventory.claudeDirs.join(", ")}: ${namesLine(
           missingSkills.map((row) => `${row.name} (${row.invocations})`),
         )}.`,
         action:
@@ -721,7 +721,7 @@ export function buildSetupAudit(
         code: "missing-but-used",
         severity: "info",
         title: `${missingAgents.length} dispatched ${missingAgents.length === 1 ? "subagent is" : "subagents are"} not in the current inventory`,
-        evidence: `Dispatched in sessions but not defined under ${inventory.claudeDir}: ${namesLine(
+        evidence: `Dispatched in sessions but not defined under ${inventory.claudeDirs.join(", ")}: ${namesLine(
           missingAgents.map((row) => `${row.name} (${row.sessions})`),
         )}.`,
         action:

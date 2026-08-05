@@ -7,10 +7,12 @@
  * The setup is user-editable config that changes shape between Claude Code
  * versions, so a scan that throws would be a scan that breaks on upgrade.
  *
- * Scanning is confined to the configured Claude dir (`claudeDir()`, which
- * honours `CC_ANALYZER_CLAUDE_DIR`) plus its sibling `<claudeDir>.json` — the
- * `~/.claude.json` config file that carries global and per-project MCP servers.
- * Nothing here writes.
+ * `scanInventory()` reads one Claude root; `scanInventories()` reads every
+ * configured one and folds them together. Scanning is confined to those dirs
+ * plus each one's `.claude.json` — the config file carrying global and
+ * per-project MCP servers, read both as the dir's sibling (`~/.claude.json`, a
+ * default install) and from inside it (a dir relocated with
+ * `CLAUDE_CONFIG_DIR`). Nothing here writes.
  *
  * `node:fs` (not `bun:*`) so the module stays importable from any Bun entry;
  * the pure shapes and the cross-referencing rules live in `setup-audit.ts`.
@@ -18,7 +20,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { claudeDir, claudeRoots } from "./paths.ts";
+import { claudeDir, claudeRoots } from "./claude-roots.ts";
 import type {
   HookEntry,
   InventoryItem,
@@ -38,6 +40,11 @@ const PLUGIN_SCAN_LIMIT = 500;
 const SKIP_DIRS = new Set(["node_modules", ".git", "cache", ".cache"]);
 
 type Json = Record<string, unknown>;
+
+/** The two orderings every inventory list uses. Hoisted so the merge and the
+ *  per-root scans cannot sort the same shape two different ways. */
+const byName = <T extends { name: string }>(a: T, b: T): number => a.name.localeCompare(b.name);
+const byEvent = <T extends { event: string }>(a: T, b: T): number => a.event.localeCompare(b.event);
 
 const isObject = (v: unknown): v is Json =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -128,7 +135,7 @@ function scanHooks(settings: Json | undefined): HookEntry[] {
     }
     if (count > 0) entries.push({ event, hooks: count });
   }
-  return entries.sort((a, b) => a.event.localeCompare(b.event));
+  return entries.sort(byEvent);
 }
 
 function scanSettings(root: string): SettingsScan {
@@ -150,7 +157,7 @@ function scanSettings(root: string): SettingsScan {
 /* ——— MCP servers ————————————————————————————————————————————————————— */
 
 /**
- * Merge server names from `settings.json` with the sibling `<claudeDir>.json`
+ * Merge server names from `settings.json` with the root's `.claude.json`
  * (the `~/.claude.json` layout): its top-level `mcpServers` keys are global,
  * and each `projects.<path>.mcpServers` block is project-scoped. A name seen in
  * any global block wins the "global" label; the rest carry how many project
@@ -164,21 +171,21 @@ function scanMcpServers(root: string, fromSettings: string[]): McpServerEntry[] 
   // (`~/.claude` → `~/.claude.json`, the default install), and inside it, which
   // is where Claude Code keeps the file when the dir was relocated with
   // `CLAUDE_CONFIG_DIR`. `readJson` is tolerant, so probing both costs nothing.
-  const byProject = new Map<string, string[]>();
-  for (const config of [readJson(`${root}.json`), readJson(join(root, ".claude.json"))]) {
-    if (!config) continue;
+  const configs = [readJson(`${root}.json`), readJson(join(root, ".claude.json"))];
+  for (const config of configs) {
     for (const name of objectKeys(config, "mcpServers")) global.add(name);
-    const projects = config.projects;
-    if (!isObject(projects)) continue;
-    // Keyed by project path, so a root carrying both files doesn't count the
-    // same project's servers twice.
-    for (const [path, entry] of Object.entries(projects)) {
-      if (!isObject(entry)) continue;
-      byProject.set(path, objectKeys(entry, "mcpServers"));
-    }
   }
-  for (const names of byProject.values()) {
-    for (const name of names) projectCounts.set(name, (projectCounts.get(name) ?? 0) + 1);
+  // Merged by project path first, so a root carrying both files doesn't count
+  // the same project's servers twice.
+  const projects: Json = Object.assign(
+    {},
+    ...configs.map((c) => (isObject(c?.projects) ? c.projects : {})),
+  );
+  for (const entry of Object.values(projects)) {
+    if (!isObject(entry)) continue;
+    for (const name of objectKeys(entry, "mcpServers")) {
+      projectCounts.set(name, (projectCounts.get(name) ?? 0) + 1);
+    }
   }
 
   const names = new Set([...global, ...projectCounts.keys()]);
@@ -188,7 +195,7 @@ function scanMcpServers(root: string, fromSettings: string[]): McpServerEntry[] 
       scope: global.has(name) ? ("global" as const) : ("project" as const),
       projects: projectCounts.get(name) ?? 0,
     }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort(byName);
 }
 
 /* ——— Plugins ————————————————————————————————————————————————————————— */
@@ -310,14 +317,13 @@ function scanPlugins(root: string): PluginEntry[] {
     }
   }
 
-  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...found.values()].sort(byName);
 }
 
 /* ——— The scan ———————————————————————————————————————————————————————— */
 
 function emptyInventory(root: string, present: boolean): SetupInventory {
   return {
-    claudeDir: root,
     claudeDirs: [root],
     present,
     skills: [],
@@ -339,10 +345,9 @@ function emptyInventory(root: string, present: boolean): SetupInventory {
 export function scanInventories(
   roots: string[] = claudeRoots().map((r) => r.path),
 ): SetupInventory {
-  const scanned = roots.map((root) => scanInventory(root));
-  return scanned.length <= 1
-    ? (scanned[0] ?? emptyInventory(claudeDir(), false))
-    : mergeInventories(scanned);
+  // Merging one inventory is a no-op by construction, so there is no special
+  // case here — the single-root path is the same code as the multi-root one.
+  return mergeInventories(roots.map((root) => scanInventory(root)));
 }
 
 /**
@@ -382,18 +387,14 @@ function mergeInventories(parts: SetupInventory[]): SetupInventory {
     permissions.ask += part.permissions.ask;
   }
 
-  const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
   return {
-    claudeDir: parts[0]?.claudeDir ?? claudeDir(),
-    claudeDirs: parts.map((p) => p.claudeDir),
+    claudeDirs: parts.flatMap((p) => p.claudeDirs),
     present: parts.some((p) => p.present),
     skills: [...skills.values()].sort(byName),
     agents: [...agents.values()].sort(byName),
     plugins: [...plugins.values()].sort(byName),
     mcpServers: [...mcp.values()].sort(byName),
-    hooks: [...hooks.entries()]
-      .map(([event, count]) => ({ event, hooks: count }))
-      .sort((a, b) => a.event.localeCompare(b.event)),
+    hooks: [...hooks.entries()].map(([event, count]) => ({ event, hooks: count })).sort(byEvent),
     permissions,
     model: parts.find((p) => p.model !== null)?.model ?? null,
   };
@@ -414,11 +415,10 @@ export function scanInventory(root: string = claudeDir()): SetupInventory {
   }
 
   return {
-    claudeDir: root,
     claudeDirs: [root],
     present: true,
-    skills: skills.sort((a, b) => a.name.localeCompare(b.name)),
-    agents: agents.sort((a, b) => a.name.localeCompare(b.name)),
+    skills: skills.sort(byName),
+    agents: agents.sort(byName),
     plugins,
     mcpServers: scanMcpServers(root, settings.mcpServers),
     hooks: settings.hooks,

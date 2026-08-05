@@ -217,6 +217,9 @@ export interface HeatCell {
 export interface ProjectRow {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir the project lives under — what tells two same-named
+   *  projects from different roots apart in a ranked list. */
+  claudeDir: string;
   cost: number;
   sessions: number;
   ioTokens: number;

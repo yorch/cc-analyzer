@@ -75,7 +75,6 @@ test("several roots merge into one inventory that names them all", () => {
   addSkill(b, "review");
   addAgent(b, "auditor");
   const inv = scanInventories([a, b]);
-  expect(inv.claudeDir).toBe(a);
   expect(inv.claudeDirs).toEqual([a, b]);
   expect(inv.skills.map((s) => s.name)).toEqual(["deploy", "review"]);
   expect(inv.agents.map((s) => s.name)).toEqual(["auditor"]);

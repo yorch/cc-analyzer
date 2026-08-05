@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+
 import { analyzeSession } from "../core/analyze.ts";
+import {
+  type ClaudeRootSource,
+  claudeRoots,
+  expandPath,
+  setClaudeRootsOverride,
+  splitRootList,
+} from "../core/claude-roots.ts";
 import { openDb } from "../core/db.ts";
 import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
@@ -11,16 +17,11 @@ import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
-import {
-  type ClaudeRootSource,
-  claudeRoots,
-  setClaudeRootsOverride,
-  splitRootList,
-} from "../core/paths.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import { getClaudeDirs, getCostBasis, setClaudeDirs, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
+import { labelProjects } from "../core/project-labels.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
@@ -190,7 +191,14 @@ async function cmdProjects(): Promise<number> {
     );
     return 0;
   }
-  const multiRoot = new Set(projects.map((p) => p.root)).size > 1;
+  // Shared decision, table-shaped rendering: a terminal table has room for the
+  // full root path in its own column, so it disambiguates there rather than
+  // with the suffix the space-constrained surfaces use.
+  const { multiRoot } = labelProjects(
+    projects,
+    (p) => p.label,
+    (p) => p.root,
+  );
   console.log(
     table(
       multiRoot ? ["sessions", "project", "claude dir"] : ["sessions", "project"],
@@ -212,56 +220,59 @@ async function cmdProjects(): Promise<number> {
  * never touched, in keeping with the tool's read-only contract.
  */
 function cmdClaudeDir(action: string | undefined, operand: string | undefined): number {
-  const show = (): number => {
-    console.log(`Reading Claude Code data from:\n${rootLines().join("\n")}`);
-    const stored = getClaudeDirs();
-    if (stored.length === 0) {
-      console.log("\nNo directories are persisted; add one with `cc-analyzer claude-dir add`.");
-    }
+  /** The one report every branch ends with, so the wording can't drift. */
+  const report = (prefix = ""): number => {
+    console.log(`${prefix}Reading Claude Code data from:\n${rootLines().join("\n")}`);
     return 0;
   };
 
   switch (action) {
     case undefined:
-    case "show":
-      return show();
-    case "set":
-    case "add":
-    case "remove": {
-      if (!operand) {
-        console.error(`usage: cc-analyzer claude-dir ${action} <path>`);
-        return 2;
+    case "show": {
+      report();
+      if (getClaudeDirs().length === 0) {
+        console.log("\nNo directories are persisted; add one with `cc-analyzer claude-dir add`.");
       }
-      const path = resolve(operand.startsWith("~/") ? join(homedir(), operand.slice(2)) : operand);
-      const current = getClaudeDirs();
-      let next: string[];
-      if (action === "set") next = [path];
-      else if (action === "add") next = current.includes(path) ? current : [...current, path];
-      else next = current.filter((p) => p !== path);
-
-      if (action === "remove" && next.length === current.length) {
-        console.error(`error: '${path}' is not a persisted Claude directory.`);
-        return 1;
-      }
-      if (action !== "remove" && !existsSync(path)) {
-        // A warning, not an error: a synced or mounted directory can be absent
-        // right now and present on the next run.
-        console.error(`warning: '${path}' does not exist yet.`);
-      }
-      setClaudeDirs(next);
-      console.log(
-        "Reindex with `cc-analyzer index` to pick up the change.\n\n" +
-          `Reading Claude Code data from:\n${rootLines().join("\n")}`,
-      );
       return 0;
     }
-    case "reset":
-      setClaudeDirs([]);
-      console.log(
-        `Cleared. Reading Claude Code data from:\n${rootLines().join("\n")}\n\n` +
-          "Reindex with `cc-analyzer index` to pick up the change.",
-      );
+    case "set":
+    case "add":
+    case "remove":
+    case "reset": {
+      const current = getClaudeDirs();
+      let next: string[];
+
+      if (action === "reset") {
+        next = [];
+      } else {
+        if (!operand) {
+          console.error(`usage: cc-analyzer claude-dir ${action} <path>`);
+          return 2;
+        }
+        // Normalize with the same function resolution uses, so a path stored
+        // here and a path resolved later can never disagree.
+        const path = expandPath(operand);
+        if (action === "set") next = [path];
+        else if (action === "add") next = current.includes(path) ? current : [...current, path];
+        else {
+          next = current.filter((p) => p !== path);
+          if (next.length === current.length) {
+            console.error(`error: '${path}' is not a persisted Claude directory.`);
+            return 1;
+          }
+        }
+        if (action !== "remove" && !existsSync(path)) {
+          // A warning, not an error: a synced or mounted directory can be absent
+          // right now and present on the next run.
+          console.error(`warning: '${path}' does not exist yet.`);
+        }
+      }
+
+      setClaudeDirs(next);
+      report(action === "reset" ? "Cleared. " : "");
+      console.log("\nReindex with `cc-analyzer index` to pick up the change.");
       return 0;
+    }
     default:
       console.error(
         "usage: cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]",
@@ -794,10 +805,9 @@ function applyClaudeDirFlag(argv: string[]): string[] | null {
     console.error("error: --claude-dir takes its value inline, as --claude-dir=<path>.");
     return null;
   }
-  const paths = argv
-    .filter((a) => a.startsWith(PREFIX))
-    .flatMap((a) => splitRootList(a.slice(PREFIX.length)));
-  if (argv.some((a) => a.startsWith(PREFIX)) && paths.length === 0) {
+  const flags = argv.filter((a) => a.startsWith(PREFIX));
+  const paths = flags.flatMap((a) => splitRootList(a.slice(PREFIX.length)));
+  if (flags.length > 0 && paths.length === 0) {
     console.error("error: --claude-dir=<path> needs a path.");
     return null;
   }

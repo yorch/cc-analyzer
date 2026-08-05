@@ -7,8 +7,7 @@ import {
   projectIdParts,
   projectsDirOf,
   qualifyProjectId,
-  rootSlug,
-} from "./paths.ts";
+} from "./claude-roots.ts";
 
 export interface ProjectInfo {
   /** Globally unique id: the encoded directory name, root-qualified when the
@@ -54,12 +53,23 @@ export interface RootScan {
  * folder mid-setup — and callers that prune stale state need to tell that apart
  * from "the user removed this root", which is what makes deletion correct.
  */
-export async function scanRoots(): Promise<RootScan[]> {
-  const scans: RootScan[] = [];
-  for (const root of claudeRoots()) {
-    scans.push({ root, readable: await isDir(projectsDirOf(root.path)) });
-  }
-  return scans;
+export async function scanRoots(roots: ClaudeRoot[] = claudeRoots()): Promise<RootScan[]> {
+  return await Promise.all(
+    roots.map(async (root) => ({ root, readable: await isDir(projectsDirOf(root.path)) })),
+  );
+}
+
+/**
+ * The rule deciding whether an indexed row survives a scan that no longer sees
+ * its file, shared so `reindex()` and `inspectIndexStatus()` cannot disagree
+ * about what `index --check` is counting.
+ *
+ * A row is retained when its root is configured but was unreadable this scan;
+ * anything else (file deleted, or the root de-configured) is a real deletion.
+ */
+export function retainsMissingRows(scans: RootScan[]): (claudeDir: string) => boolean {
+  const unreadable = new Set(scans.filter((s) => !s.readable).map((s) => s.root.path));
+  return (claudeDir) => unreadable.has(claudeDir);
 }
 
 /** Projects under one root's `projects/` directory. */
@@ -90,37 +100,20 @@ async function listProjectsIn(root: ClaudeRoot): Promise<ProjectInfo[]> {
 }
 
 /** List all projects across every configured Claude root, each with a session count. */
-export async function listProjects(): Promise<ProjectInfo[]> {
-  const projects: ProjectInfo[] = [];
-  for (const root of claudeRoots()) {
-    projects.push(...(await listProjectsIn(root)));
-  }
-  projects.sort((a, b) => b.sessionCount - a.sessionCount);
-  return projects;
+export async function listProjects(roots: ClaudeRoot[] = claudeRoots()): Promise<ProjectInfo[]> {
+  const perRoot = await Promise.all(roots.map(listProjectsIn));
+  return perRoot.flat().sort((a, b) => b.sessionCount - a.sessionCount);
 }
 
-/**
- * Resolve a (possibly root-qualified) project id back to its directory.
- *
- * The slug identifies the root, so a qualified id keeps working even as roots
- * are added; an unqualified id belongs to the primary root.
- */
-function locateProject(projectId: string): { dir: string; root: string } | undefined {
-  const { slug, dirName } = projectIdParts(projectId);
-  const roots = claudeRoots();
-  const root = slug === null ? roots[0] : roots.find((r) => rootSlug(r.path) === slug);
-  if (!root) return undefined;
-  return { dir: join(projectsDirOf(root.path), dirName), root: root.path };
-}
-
-/** List session files within a project. */
-export async function listSessions(projectId: string): Promise<SessionInfo[]> {
-  const located = locateProject(projectId);
-  if (!located) return [];
-
+/** Session files in an already-located project directory. */
+async function listSessionsIn(project: {
+  id: string;
+  dir: string;
+  root: string;
+}): Promise<SessionInfo[]> {
   let files: string[];
   try {
-    files = await readdir(located.dir);
+    files = await readdir(project.dir);
   } catch {
     return [];
   }
@@ -128,14 +121,14 @@ export async function listSessions(projectId: string): Promise<SessionInfo[]> {
   const sessions: SessionInfo[] = [];
   for (const file of files) {
     if (!file.endsWith(".jsonl")) continue;
-    const path = join(located.dir, file);
+    const path = join(project.dir, file);
     const s = await stat(path).catch(() => null);
     if (!s) continue;
     sessions.push({
       id: basename(file, ".jsonl"),
-      projectId,
+      projectId: project.id,
       path,
-      root: located.root,
+      root: project.root,
       sizeBytes: s.size,
       mtimeMs: s.mtimeMs,
     });
@@ -144,20 +137,41 @@ export async function listSessions(projectId: string): Promise<SessionInfo[]> {
   return sessions;
 }
 
+/**
+ * List session files within a project, by id.
+ *
+ * The slug identifies the root, so a qualified id keeps working as roots are
+ * added; an unqualified id belongs to whichever root is primary.
+ */
+export async function listSessions(
+  projectId: string,
+  roots: ClaudeRoot[] = claudeRoots(),
+): Promise<SessionInfo[]> {
+  const { slug, dirName } = projectIdParts(projectId);
+  const root = slug === null ? roots[0] : roots.find((r) => r.slug === slug);
+  if (!root) return [];
+  return await listSessionsIn({
+    id: projectId,
+    dir: join(projectsDirOf(root.path), dirName),
+    root: root.path,
+  });
+}
+
 /** All session files across every project of every configured root. */
-export async function listAllSessions(): Promise<SessionInfo[]> {
-  const projects = await listProjects();
-  const all: SessionInfo[] = [];
-  for (const project of projects) {
-    all.push(...(await listSessions(project.id)));
-  }
-  return all;
+export async function listAllSessions(roots: ClaudeRoot[] = claudeRoots()): Promise<SessionInfo[]> {
+  const projects = await listProjects(roots);
+  // Each project is an independent directory walk; the id-based `listSessions`
+  // would re-resolve the root per project, so go straight to the located dir.
+  const perProject = await Promise.all(projects.map(listSessionsIn));
+  return perProject.flat();
 }
 
 /** Find a session by its id (basename) across every project of every root. */
-export async function findSessionById(id: string): Promise<SessionInfo | undefined> {
-  const projects = await listProjects();
-  for (const project of projects) {
+export async function findSessionById(
+  id: string,
+  roots: ClaudeRoot[] = claudeRoots(),
+): Promise<SessionInfo | undefined> {
+  for (const project of await listProjects(roots)) {
     const path = join(project.dir, `${id}.jsonl`);
     const s = await stat(path).catch(() => null);
     if (s) {

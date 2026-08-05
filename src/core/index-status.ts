@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { listAllSessions, scanRoots } from "./discover.ts";
+import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
+import { listAllSessions, retainsMissingRows, scanRoots } from "./discover.ts";
 import type { IndexStatus } from "./index-status-types.ts";
 
 export const LAST_SCAN_KEY = "last_scan_at";
@@ -14,12 +15,16 @@ export function lastIndexScanAt(db: Database): number | null {
 }
 
 /** Compare source file metadata with the SQLite cache without parsing sessions. */
-export async function inspectIndexStatus(db: Database, now = Date.now()): Promise<IndexStatus> {
-  const scans = await scanRoots();
-  const prunable = new Set(scans.filter((s) => s.readable).map((s) => s.root.path));
-  const configured = new Set(scans.map((s) => s.root.path));
+export async function inspectIndexStatus(
+  db: Database,
+  now = Date.now(),
+  roots: ClaudeRoot[] = claudeRoots(),
+): Promise<IndexStatus> {
+  // Same prune rule the indexer applies, from the same helper, so `--check`
+  // cannot report a deletion that `reindex` would not actually make.
+  const retained = retainsMissingRows(await scanRoots(roots));
 
-  const files = await listAllSessions();
+  const files = await listAllSessions(roots);
   const existingRows = db
     .query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions")
     .all() as {
@@ -43,9 +48,7 @@ export async function inspectIndexStatus(db: Database, now = Date.now()): Promis
   let deleted = 0;
   for (const [path, row] of existing) {
     if (sourcePaths.has(path)) continue;
-    // Matches the indexer's prune rule: a configured root that could not be read
-    // this scan keeps its rows, so an unmounted volume doesn't read as staleness.
-    if (configured.has(row.claude_dir) && !prunable.has(row.claude_dir)) continue;
+    if (retained(row.claude_dir)) continue;
     deleted++;
   }
 

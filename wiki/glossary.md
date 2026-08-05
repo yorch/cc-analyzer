@@ -100,7 +100,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **State dir** — `cc-analyzer`'s own writable directory (`~/.config/cc-analyzer/`, overridable via `CC_ANALYZER_STATE_DIR`) holding the index, pricing cache, preferences, and update-check cache. Distinct from the read-only Claude data dirs.
 
-**Claude root** — One Claude Code data directory (`~/.claude` by default). Several can be configured and are analyzed together as one portfolio; `claudeRoots()` resolves them from the `--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR`, the `claudeDirs` preference, `CLAUDE_CONFIG_DIR`, then the default, first non-empty tier winning. The first resolved root is the **primary** one, whose project ids stay unqualified.
+**Claude root** — One Claude Code data directory (`~/.claude` by default). Several can be configured and are analyzed together as one portfolio; `claudeRoots()` (in `claude-roots.ts`) resolves them from the `--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR`, the `claudeDirs` preference, `CLAUDE_CONFIG_DIR`, then the default, first non-empty tier winning. The first resolved root is the **primary** one, whose project ids stay unqualified.
 
 **Embedded version** — The build-time version, imported from `package.json` and bundled by `bun --compile`, so the running binary reports its own version ([src/core/version.ts:L1-L8](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/version.ts#L1-L8)).
 

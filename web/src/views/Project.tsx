@@ -1,3 +1,4 @@
+import { labelProjects } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -55,7 +56,11 @@ export function Project({ id }: { id: string }) {
   const project = projects.find((p) => p.projectId === id);
   // Only worth naming when more than one Claude data dir is configured —
   // otherwise every project would carry the same redundant path.
-  const multiRoot = new Set(projects.map((p) => p.claudeDir)).size > 1;
+  const { multiRoot } = labelProjects(
+    projects,
+    (p) => p.projectPath ?? p.projectId,
+    (p) => p.claudeDir,
+  );
 
   return (
     <>

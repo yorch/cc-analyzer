@@ -364,8 +364,7 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
   lines.push(reportTitle("cc-analyzer · setup audit", options));
   // Every scanned root, not just the primary: with several configured, naming
   // one would misreport where the inventory below actually came from.
-  const dirs = inv.claudeDirs?.length ? inv.claudeDirs : [inv.claudeDir];
-  lines.push(muted(`${dirs.join(", ")}${inv.present ? "" : " (not found)"}`, options));
+  lines.push(muted(`${inv.claudeDirs.join(", ")}${inv.present ? "" : " (not found)"}`, options));
 
   lines.push(`\n${section("Inventory", options)}`);
   const mcpScope =

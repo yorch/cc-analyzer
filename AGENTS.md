@@ -492,13 +492,20 @@ the authoritative project path comes from the session's `cwd` field, not by deco
 the id. Never round-trip a real path through the encoded id.
 
 **The Claude data directory is a list, and project ids carry the root.**
-`paths.ts` resolves `claudeRoots()` through five exclusive tiers — the
+`claude-roots.ts` resolves `claudeRoots()` through five exclusive tiers — the
 `--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR` (a `PATH`-style list, still the
 test hook), the `claudeDirs` pref, `CLAUDE_CONFIG_DIR` (what Claude Code itself
 reads, so a relocated install works unconfigured), then `~/.claude` — first
 non-empty tier wins, so a configured root never mixes the default back in.
 `claudeDir()` is the **primary** (first) root and remains what single-root call
-sites use. The flag is applied by `setClaudeRootsOverride()` at argv-parse time
+sites use. It lives apart from `paths.ts` (which stayed pure location algebra
+for cc-analyzer's own state) because resolution does I/O and needs `prefs.ts`,
+which reads `paths.ts` for its own location — one module would be a cycle, and
+the cycle is what previously forced a second, drifting reader of the same pref.
+The roots are resolved **once** and threaded down as a defaulted parameter
+(`listProjects`/`listAllSessions`/`scanRoots`/`ReindexOptions.roots`), so a
+portfolio scan reads `prefs.json` once rather than once per project — and the
+same parameter is the injection seam tests use instead of process globals. The flag is applied by `setClaudeRootsOverride()` at argv-parse time
 in `main()` (module state, not an env write, so `claudeRoots()` can report
 `source` accurately) and is stripped from argv before dispatch — it must be
 written `--claude-dir=<path>`, since the space form would survive
@@ -514,18 +521,25 @@ across roots **with no scoping clause anywhere in the query layer**. The
 `reindex()` drops rows whose root is no longer configured (removing a root
 removes its data) but **retains** rows under a configured root that was
 unreadable this scan, so an unmounted volume never silently wipes a portfolio —
-`scanRoots()` in `discover.ts` is what tells those two cases apart, and
-`inspectIndexStatus()` mirrors the same rule so `index --check` agrees. Skipped
+`scanRoots()` in `discover.ts` tells those two cases apart and
+`retainsMissingRows()` beside it is the single predicate both `reindex()` and
+`inspectIndexStatus()` call, so `index --check` cannot report a deletion the
+indexer would not make. Skipped
 files are re-stamped rather than re-parsed when a root change re-keys them.
 `scanInventories()` folds one inventory per root into one `SetupInventory`
 (same-named skills collapse — usage is recorded by name only, so two entries
 would report one unused on evidence that cannot tell them apart; hooks and
 permission counts sum; the pinned model is the primary root's), and
-`SetupInventory.claudeDirs` carries every scanned root so render sites name them
-all. `scanMcpServers()` reads `.claude.json` from **both** the sibling
+`SetupInventory.claudeDirs` carries every scanned root (primary first) and is
+the *only* field for it — an earlier `claudeDir` alongside it drifted between
+the CLI and web render sites within one change. `scanMcpServers()` reads `.claude.json` from **both** the sibling
 `<root>.json` of a default install and `<root>/.claude.json`, where Claude Code
 keeps it when the dir was relocated, keyed by project path so a root carrying
-both files doesn't double-count.
+both files doesn't double-count. Naming projects across roots is one bun-free
+decision in `project-labels.ts` (`labelProjects`), imported by the CLI, the TUI,
+and the SPA: it qualifies only labels that actually collide, and each surface
+renders that decision to fit its medium (the CLI table gets a full-path column,
+the space-constrained lists get a `[root]` suffix).
 
 **The parser never throws — and its tolerance is measured, not silent.**
 `parser.ts` is tolerant: invalid JSON → recorded `ParseError` and skipped; a

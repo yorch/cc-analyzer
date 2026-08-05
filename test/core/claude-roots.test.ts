@@ -10,19 +10,20 @@ import {
   qualifyProjectId,
   rootSlug,
   setClaudeRootsOverride,
-} from "../../src/core/paths.ts";
+} from "../../src/core/claude-roots.ts";
+import { type TempStateDir, tempStateDir } from "../helpers/claude-dir.ts";
 
-const ENV_KEYS = ["CC_ANALYZER_CLAUDE_DIR", "CLAUDE_CONFIG_DIR", "CC_ANALYZER_STATE_DIR"] as const;
+// These suites drive roots explicitly, so both env tiers must start unset.
+const ENV_KEYS = ["CC_ANALYZER_CLAUDE_DIR", "CLAUDE_CONFIG_DIR"] as const;
 
 let saved: Record<string, string | undefined>;
-let state: string;
+let state: TempStateDir;
 
 beforeEach(() => {
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   for (const k of ENV_KEYS) delete process.env[k];
   // Every tier below the flag can read prefs.json, so give each test its own.
-  state = mkdtempSync(join(tmpdir(), "cc-roots-state-"));
-  process.env.CC_ANALYZER_STATE_DIR = state;
+  state = tempStateDir("cc-roots-state");
   setClaudeRootsOverride(null);
 });
 
@@ -32,11 +33,11 @@ afterEach(() => {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k] as string;
   }
-  rmSync(state, { recursive: true, force: true });
+  state.cleanup();
 });
 
 function writePrefs(claudeDirs: string[]): void {
-  writeFileSync(join(state, "prefs.json"), JSON.stringify({ claudeDirs }));
+  writeFileSync(join(state.dir, "prefs.json"), JSON.stringify({ claudeDirs }));
 }
 
 describe("claudeRoots precedence", () => {
@@ -96,8 +97,20 @@ describe("claudeRoots precedence", () => {
 });
 
 describe("project id qualification", () => {
-  const primary = { path: "/srv/a", source: "env" as const, primary: true };
-  const secondary = { path: "/srv/b", source: "env" as const, primary: false };
+  // Built the way `claudeRoots()` builds them — the slug is stored on the root,
+  // not recomputed per project.
+  const primary = {
+    path: "/srv/a",
+    slug: rootSlug("/srv/a"),
+    source: "env" as const,
+    primary: true,
+  };
+  const secondary = {
+    path: "/srv/b",
+    slug: rootSlug("/srv/b"),
+    source: "env" as const,
+    primary: false,
+  };
 
   test("the primary root's ids are unqualified, so existing ids never re-key", () => {
     expect(qualifyProjectId(primary, "-Users-me-proj")).toBe("-Users-me-proj");

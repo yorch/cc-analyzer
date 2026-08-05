@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
-import { listAllSessions, type SessionInfo, scanRoots } from "./discover.ts";
+import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
+import { listAllSessions, retainsMissingRows, type SessionInfo, scanRoots } from "./discover.ts";
 import { LAST_SCAN_KEY } from "./index-status.ts";
 import { streamSessionEvents } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
@@ -267,6 +268,8 @@ export interface ReindexOptions {
   pricing?: PricingTable;
   /** Progress callback: (done, toDo). */
   onProgress?: (done: number, total: number) => void;
+  /** Claude roots to scan. Defaults to the configured ones; injectable for tests. */
+  roots?: ClaudeRoot[];
 }
 
 /**
@@ -278,14 +281,15 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const pricing = opts.pricing ?? (await loadPricing()).table;
   const now = Date.now();
 
-  // Roots that answered this scan. A configured-but-unreadable root (unmounted
-  // volume, a synced folder mid-setup) must not have its rows pruned — only a
-  // root the user actually de-configured should lose its data.
-  const scans = await scanRoots();
-  const prunable = new Set(scans.filter((s) => s.readable).map((s) => s.root.path));
-  const configured = new Set(scans.map((s) => s.root.path));
+  // Resolve the configured roots once and pass them down: resolution reads the
+  // filesystem, and the discovery helpers would otherwise repeat it per project.
+  const roots = opts.roots ?? claudeRoots();
+  // A configured-but-unreadable root (unmounted volume, a synced folder
+  // mid-setup) must not have its rows pruned — only a root the user actually
+  // de-configured should lose its data.
+  const retained = retainsMissingRows(await scanRoots(roots));
 
-  const files = await listAllSessions();
+  const files = await listAllSessions(roots);
   const currentPaths = new Set(files.map((f) => f.path));
 
   const existing = new Map<
@@ -359,9 +363,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const f of restamped) restamp.run(f.root, f.projectId, f.path);
     for (const [path, prev] of existing) {
       if (currentPaths.has(path)) continue;
-      // Retain rows belonging to a configured root that could not be read this
-      // scan; drop the rest (file deleted, or its root was de-configured).
-      if (configured.has(prev.claude_dir) && !prunable.has(prev.claude_dir)) continue;
+      if (retained(prev.claude_dir)) continue;
       deleteStmt.run(path);
       deleted++;
     }

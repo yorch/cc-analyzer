@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { basename } from "node:path";
 import { Text } from "ink";
 import { useMemo, useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
+import { labelProjects } from "../../core/project-labels.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { projectPreviewStats } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
@@ -34,21 +34,17 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
   // Two Claude roots can each hold a project for the same working directory, so
-  // the labels would be byte-identical. Qualify only the ones that actually
-  // collide — the common single-root list stays uncluttered.
-  const label = useMemo(() => {
-    const counts = new Map<string, Set<string>>();
-    for (const p of projects) {
-      const name = p.projectPath ?? p.projectId;
-      const roots = counts.get(name) ?? new Set<string>();
-      roots.add(p.claudeDir);
-      counts.set(name, roots);
-    }
-    return (p: IndexedProject): string => {
-      const name = p.projectPath ?? p.projectId;
-      return (counts.get(name)?.size ?? 0) > 1 ? `${name} [${basename(p.claudeDir)}]` : name;
-    };
-  }, [projects]);
+  // the labels would be byte-identical. The shared labeller qualifies only the
+  // ones that actually collide.
+  const { label } = useMemo(
+    () =>
+      labelProjects(
+        projects,
+        (p) => p.projectPath ?? p.projectId,
+        (p) => p.claudeDir,
+      ),
+    [projects],
+  );
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
   // Data acquisition stays at the screen boundary: the preview receives plain
   // props. Keyed on the stable projectId string (not the row object) so a

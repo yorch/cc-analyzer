@@ -28,3 +28,30 @@ export function tempClaudeDir(prefix: string): TempClaudeDir {
     },
   };
 }
+
+export interface TempStateDir {
+  /** The temp dir now set as CC_ANALYZER_STATE_DIR. */
+  dir: string;
+  /** Restore the previous env value and delete the dir. */
+  cleanup: () => void;
+}
+
+/**
+ * The CC_ANALYZER_STATE_DIR half of the same dance, for suites that need an
+ * isolated prefs/index/pricing dir. Separate from `tempClaudeDir` because the
+ * multi-root suites deliberately *unset* the Claude var (they drive roots
+ * through `setClaudeRootsOverride`) while still needing their own state dir.
+ */
+export function tempStateDir(prefix: string): TempStateDir {
+  const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
+  const prev = process.env.CC_ANALYZER_STATE_DIR;
+  process.env.CC_ANALYZER_STATE_DIR = dir;
+  return {
+    dir,
+    cleanup: () => {
+      if (prev === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prev;
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}

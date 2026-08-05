@@ -73,7 +73,7 @@ describe("scanInventory", () => {
     const inv = scanInventory();
 
     expect(inv.present).toBe(true);
-    expect(inv.claudeDir).toBe(dir);
+    expect(inv.claudeDirs[0]).toBe(dir);
     expect(inv.model).toBe("claude-opus-4");
     expect(inv.permissions).toEqual({ allow: 3, deny: 1, ask: 0 });
     // An event with no hooks is not a configured hook.
