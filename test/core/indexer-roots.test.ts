@@ -3,12 +3,13 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { setClaudeRootsOverride } from "../../src/core/paths.ts";
 import { samplePricing } from "../helpers/pricing.ts";
 
-const FIXTURE = new URL("../fixtures/sample-session.jsonl", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 
 let work: string;
 let personal: string;
