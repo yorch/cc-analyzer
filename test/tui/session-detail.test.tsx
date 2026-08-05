@@ -172,6 +172,28 @@ describe("SessionDetailScreen charts mode", () => {
     unmount();
   });
 
+  test("charts mode shows the cache hit line for a session with cache reads", async () => {
+    // The fixture's calls all read from cache (2000/3000/4000 cache_read_input_tokens),
+    // so the cache-efficiency line under the context chart should report a hit rate.
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={100}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
+    stdin.write("c"); // charts mode
+    await waitForFrame(lastFrame, "cache hit");
+    const frame = lastFrame() ?? "";
+    expect(frame).toMatch(/cache hit \d+% · \d+ cold calls?/);
+    unmount();
+  });
+
   test("s switches to the summary with actionable diagnostics", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen
@@ -188,6 +210,31 @@ describe("SessionDetailScreen charts mode", () => {
     stdin.write("s");
     await waitForFrame(lastFrame, "Actionable diagnostics");
     expect(lastFrame() ?? "").toContain("No notable context or cost patterns");
+    unmount();
+  });
+
+  test("summary mode shows the cost-per-outcome and what-if lines", async () => {
+    // The fixture mixes two models (opus + sonnet), so sessionWhatIf has real
+    // rows to compare rather than falling back to the canonical ladder.
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={100}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1");
+    await settleInput();
+    stdin.write("s");
+    await waitForFrame(lastFrame, "Cost per outcome");
+    const frame = lastFrame() ?? "";
+    expect(frame).toMatch(/per turn\s+\$/);
+    expect(frame).toContain("Outcome ratios pair spend with observable work products");
+    expect(frame).toContain("what-if: cheapest single model");
+    expect(frame).toContain("What-if repricing replays the actual token mix");
     unmount();
   });
 });
