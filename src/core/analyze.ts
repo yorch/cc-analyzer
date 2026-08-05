@@ -58,6 +58,21 @@ export interface Turn {
   tokens: TokenCounts;
   cost: CostBreakdown;
   toolCounts: Record<string, number>;
+  /** True when this turn carries a user interruption marker — the per-turn
+   * position behind the `interruptionTurns` counter, same attribution rule. */
+  interrupted?: boolean;
+  /** True when this turn's prompt opened with a correction marker
+   * (`isCorrectionPrompt`) — the per-turn position behind `correctionTurns`. */
+  correction?: boolean;
+  /** Retries (identical consecutive tool calls, any chain) issued in this turn. */
+  retries: number;
+  /** Failing test runs *issued* in this turn — attributed to the turn whose
+   * tool_use ran the test, even when the result line lands after the next
+   * prompt opened. Σ over turns can exceed nothing: it equals `testFailures`
+   * for results that arrived; a never-resolved test call counts nowhere. */
+  testFailures: number;
+  /** Redundant `Read`s (third-plus read of a file on one chain) in this turn. */
+  redundantReads: number;
 }
 
 /** Turn-scoped cost attributed to one skill (see `SessionAnalysis.skillTurnCosts`). */
@@ -103,6 +118,32 @@ export interface Compaction {
    * such a record describes the *parent's* compaction — portfolio rollups
    * must not count it again here. */
   inherited?: boolean;
+}
+
+/**
+ * One subagent burst: every sidechain API call sharing one chain (see
+ * `chainOf` — a chain roots at the first sidechain event whose parent is
+ * main-chain/unknown, so nested Task spawns inside a subagent fold into the
+ * spawning burst rather than starting their own).
+ *
+ * `subagentType` is **best-effort**: a burst's root user event carries the
+ * Task prompt verbatim, so bursts are matched to main-chain `Task`/`Agent`
+ * tool_uses by that prompt text (each spawn consumed once, in order); when no
+ * prompt matches — older files, truncated prompts — and the session's spawn
+ * count equals its burst count, spawns are zipped to bursts in start order.
+ * Otherwise the type stays undefined rather than guessed.
+ */
+export interface SidechainBurst {
+  /** Best-effort subagent type (Task `subagent_type`), when attributable. */
+  subagentType?: string;
+  /** Index of the turn open when the burst's first call landed. Undefined in
+   * aggregate mode (no materialized turns) or before the first real prompt. */
+  turnIndex?: number;
+  apiCalls: number;
+  cost: number;
+  tokens: TokenCounts;
+  startTime?: string;
+  endTime?: string;
 }
 
 export interface SessionTotals {
@@ -158,6 +199,13 @@ export interface SessionAnalysis {
    */
   skillTurnCosts: Record<string, SkillTurnCost>;
   subagents: string[];
+  /**
+   * Per-burst sidechain spend (see `SidechainBurst`), ordered by start time
+   * (timestamp-less bursts keep stream order, last). Available in aggregate
+   * mode too — only `turnIndex` needs the materialized turns. Empty when the
+   * session spawned no subagents. Not flattened into the index.
+   */
+  sidechainBursts: SidechainBurst[];
   filesTouched: string[];
   /** Count of API calls per stop_reason (end_turn, tool_use, max_tokens, …). */
   stopReasons: Record<string, number>;
@@ -397,6 +445,11 @@ function promptPreview(content: UserEvent["message"]["content"]): string {
   return text;
 }
 
+/** Normalize a prompt for the burst↔spawn join: whitespace collapsed, capped
+ * (both sides of the match run through this, so a cosmetic reflow can't
+ * break the join and MB-scale prompts don't become map keys). */
+const spawnKey = (prompt: string): string => prompt.replace(/\s+/g, " ").trim().slice(0, 200);
+
 function stringField(input: unknown, key: string): string | undefined {
   if (typeof input === "object" && input !== null && key in input) {
     const v = (input as Record<string, unknown>)[key];
@@ -419,6 +472,10 @@ interface PendingTool {
   heads?: string[];
   /** The step to patch when the result arrives — only in detail mode. */
   step?: TurnStep;
+  /** The turn whose tool_use issued this call (detail mode) — so a deferred
+   * test failure is charged to the turn that ran the test, not whichever turn
+   * happens to be open when the result line arrives. */
+  turn?: Turn;
 }
 
 /** Cursor tracking the previous tool call on a chain, for retry/churn detection. */
@@ -517,6 +574,16 @@ class SessionAnalyzer {
   private readonly readsByFile = new Map<string, number>();
   private readonly rereadFiles = new Set<string>();
   private redundantReads = 0;
+
+  // Sidechain bursts: per-chain spend accumulators, plus the two sides of the
+  // best-effort name match — main-chain Task/Agent spawns (their prompt +
+  // subagent_type, consumed in order at finish()) and each chain's root user
+  // prompt (a Task subagent's first sidechain event repeats the spawn prompt
+  // verbatim). Keys are normalized (whitespace-collapsed, capped) so cosmetic
+  // reformatting can't break the join.
+  private readonly burstByChain = new Map<string, SidechainBurst>();
+  private readonly taskSpawns: { prompt: string; type: string; used?: boolean }[] = [];
+  private readonly chainRootPrompt = new Map<string, string>();
 
   // One retry cursor per chain, reset at each new turn: a user-requested
   // re-run or an interleaved call from a *different* subagent must not read
@@ -627,7 +694,12 @@ class SessionAnalyzer {
       this.toolErrors[p.toolName] = (this.toolErrors[p.toolName] ?? 0) + 1;
       if (p.skillName) this.skillErrors[p.skillName] = (this.skillErrors[p.skillName] ?? 0) + 1;
       if (p.bashFamily) this.bashErrors[p.bashFamily] = (this.bashErrors[p.bashFamily] ?? 0) + 1;
-      if (p.isTest) this.testFailures += 1;
+      if (p.isTest) {
+        this.testFailures += 1;
+        // Charged to the issuing turn (recorded at tool_use time), because a
+        // result can land after the next prompt already opened a new turn.
+        if (p.turn) p.turn.testFailures += 1;
+      }
       for (const head of p.heads ?? []) {
         this.commandHeadErrors[head] = (this.commandHeadErrors[head] ?? 0) + 1;
       }
@@ -714,6 +786,12 @@ class SessionAnalyzer {
       // Resolve any tool_result blocks first (a user event may carry them
       // whether or not it is also a genuine prompt).
       const content = event.message.content;
+      // A Task subagent's first sidechain event repeats the spawn prompt
+      // verbatim; `chain === event.uuid` means this event just rooted its
+      // chain (see chainOf), so record that prompt for burst naming.
+      if (event.isSidechain === true && event.uuid && chain === event.uuid) {
+        this.chainRootPrompt.set(chain, spawnKey(promptPreview(content)));
+      }
       if (Array.isArray(content)) {
         for (const block of content) {
           const b = block as ContentBlock & {
@@ -732,7 +810,8 @@ class SessionAnalyzer {
         // A real prompt that opens with a correction marker: the previous
         // turn's work is being redone. English-only keyword heuristic (see
         // `isCorrectionPrompt`) — undercounting is by design.
-        if (isCorrectionPrompt(prompt)) this.correctionTurns += 1;
+        const correction = isCorrectionPrompt(prompt);
+        if (correction) this.correctionTurns += 1;
         // Finalize the previous turn before opening this one.
         this.closeOpenTurn();
         this.hasTurn = true;
@@ -757,7 +836,11 @@ class SessionAnalyzer {
             tokens: zeroTokens(),
             cost: zeroCost(),
             toolCounts: {},
+            retries: 0,
+            testFailures: 0,
+            redundantReads: 0,
           };
+          if (correction) this.current.correction = true;
           this.turns.push(this.current);
         }
       }
@@ -768,6 +851,7 @@ class SessionAnalyzer {
       // before any real prompt belongs to no turn and is dropped.
       if (event.isSidechain !== true && this.hasTurn && isInterruptionEvent(event)) {
         this.currentTurnInterrupted = true;
+        if (this.current) this.current.interrupted = true;
       }
       this.touchTime(event.timestamp);
       return;
@@ -843,6 +927,7 @@ class SessionAnalyzer {
         if (cursor.json === prevTool.json) {
           this.retries += 1;
           this.retriesByTool[tu.name] = (this.retriesByTool[tu.name] ?? 0) + 1;
+          if (this.current) this.current.retries += 1;
         }
       }
       this.prevToolByChain.set(chain, cursor);
@@ -857,7 +942,16 @@ class SessionAnalyzer {
         }
       } else if (tu.name === "Task" || tu.name === "Agent") {
         const t = stringField(tu.input, "subagent_type");
-        if (t) this.subagents.add(t);
+        if (t) {
+          this.subagents.add(t);
+          // Main-chain spawns only: a nested Task inside a subagent spawns
+          // onto its parent's chain (see chainOf), so it never roots a burst
+          // and must not consume a name in the finish() join.
+          const spawnPrompt = stringField(tu.input, "prompt");
+          if (event.isSidechain !== true && spawnPrompt) {
+            this.taskSpawns.push({ prompt: spawnKey(spawnPrompt), type: t });
+          }
+        }
       }
       if (FILE_TOOLS.has(tu.name)) {
         const fp = stringField(tu.input, "file_path");
@@ -878,6 +972,7 @@ class SessionAnalyzer {
           if (reads >= 3) {
             this.redundantReads += 1;
             this.rereadFiles.add(fp);
+            if (this.current) this.current.redundantReads += 1;
           }
         }
       }
@@ -929,6 +1024,7 @@ class SessionAnalyzer {
         isTest,
         heads,
         step,
+        turn: this.current,
       });
     }
 
@@ -980,6 +1076,24 @@ class SessionAnalyzer {
     if (isSidechain) {
       this.sidechainApiCalls += 1;
       this.sidechainCost += cost.total;
+      // Burst accounting: one accumulator per chain, on the de-duplicated
+      // call (continuation lines returned above, so usage counts once here
+      // exactly like the session totals).
+      let burst = this.burstByChain.get(chain);
+      if (!burst) {
+        burst = { apiCalls: 0, cost: 0, tokens: zeroTokens() };
+        const turnIndex = this.current?.index;
+        if (turnIndex !== undefined) burst.turnIndex = turnIndex;
+        this.burstByChain.set(chain, burst);
+      }
+      burst.apiCalls += 1;
+      burst.cost += cost.total;
+      burst.tokens = addTokens(burst.tokens, tokens);
+      const ts = event.timestamp;
+      if (ts) {
+        if (!burst.startTime || ts < burst.startTime) burst.startTime = ts;
+        if (!burst.endTime || ts > burst.endTime) burst.endTime = ts;
+      }
     } else if (this.hasTurn) {
       this.currentDepth += 1;
     }
@@ -1021,6 +1135,50 @@ class SessionAnalyzer {
         if (model && !this.current.models.includes(model)) this.current.models.push(model);
       }
     }
+  }
+
+  /**
+   * Assemble `sidechainBursts`: chains ordered by first-call time (timestamp-
+   * less bursts keep stream order, after the timed ones), then named by
+   * matching each burst's root prompt against the main-chain Task spawns —
+   * each spawn consumed at most once, in spawn order, so two same-prompt
+   * spawns of different types resolve in order rather than colliding. When
+   * nothing matched by prompt but the counts line up exactly, fall back to
+   * zipping spawns to bursts in order; otherwise leave types undefined.
+   */
+  private buildSidechainBursts(): SidechainBurst[] {
+    const entries = [...this.burstByChain.entries()];
+    entries.sort(([, a], [, b]) =>
+      a.startTime && b.startTime
+        ? a.startTime < b.startTime
+          ? -1
+          : a.startTime > b.startTime
+            ? 1
+            : 0
+        : a.startTime
+          ? -1
+          : b.startTime
+            ? 1
+            : 0,
+    );
+    let matched = 0;
+    for (const [chain, burst] of entries) {
+      const root = this.chainRootPrompt.get(chain);
+      if (!root) continue;
+      const spawn = this.taskSpawns.find((s) => !s.used && s.prompt === root);
+      if (spawn) {
+        spawn.used = true;
+        burst.subagentType = spawn.type;
+        matched += 1;
+      }
+    }
+    if (matched === 0 && entries.length > 0 && this.taskSpawns.length === entries.length) {
+      entries.forEach(([, burst], i) => {
+        const spawn = this.taskSpawns[i];
+        if (spawn) burst.subagentType = spawn.type;
+      });
+    }
+    return entries.map(([, burst]) => burst);
   }
 
   finish(): SessionAnalysis {
@@ -1072,6 +1230,7 @@ class SessionAnalyzer {
       skillErrors: this.skillErrors,
       skillTurnCosts: this.skillTurnCosts,
       subagents: [...this.subagents],
+      sidechainBursts: this.buildSidechainBursts(),
       filesTouched: [...this.filesTouched],
       stopReasons: this.stopReasons,
       permissionModes: this.permissionModes,

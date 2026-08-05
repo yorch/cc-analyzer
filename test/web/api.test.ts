@@ -190,6 +190,19 @@ describe("web API", () => {
     expect(body.totals.turns).toBe(2);
   });
 
+  test("GET /api/sessions/:id carries server-computed insights (what-if + rank)", async () => {
+    const res = await api.request("/api/sessions/sess-1");
+    const body = (await res.json()) as {
+      insights: {
+        whatIf: { summary: { actualCost: number } };
+        rank: { portfolio: { sessions: number; pct: number } } | null;
+      };
+    };
+    expect(body.insights.whatIf.summary.actualCost).toBeGreaterThan(0);
+    // The session is indexed, so the rank exists and covers the whole index.
+    expect(body.insights.rank?.portfolio.sessions).toBeGreaterThan(0);
+  });
+
   test("GET /api/sessions/:id/transcript returns transcript items", async () => {
     const res = await api.request("/api/sessions/sess-1/transcript");
     const body = (await res.json()) as { kind: string }[];

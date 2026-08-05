@@ -176,7 +176,8 @@ export function listAllSessions(db: Database): SessionWithProject[] {
 }
 
 /** Escape LIKE wildcards so user input matches literally (used with ESCAPE '\'). */
-const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+/** Escape `%`/`_`/`\` for a LIKE pattern (shared with stats.ts lookups). */
+export const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 /** Sessions across all projects matching a query on title / session id / project path. */
 export function searchSessions(db: Database, q: string, limit = 100): SessionWithProject[] {

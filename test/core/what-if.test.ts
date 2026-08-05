@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { openDb } from "../../src/core/db.ts";
 import type { PricingTable, TokenCounts } from "../../src/core/pricing.ts";
-import { FALLBACK_WHATIF_MODELS, whatIfRepricing } from "../../src/core/stats.ts";
+import { FALLBACK_WHATIF_MODELS, sessionCostRank, whatIfRepricing } from "../../src/core/stats.ts";
 import { cheapPricing, flatPricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
@@ -164,6 +164,30 @@ describe("whatIfRepricing", () => {
     expect(rows).toEqual([]);
     expect(summary.bestModel).toBeNull();
     expect(summary.bestDelta).toBe(0);
+    db.close();
+  });
+});
+
+describe("sessionCostRank", () => {
+  test("ranks a session's cost within the portfolio and its project", () => {
+    const db = openDb(":memory:");
+    insertSession(db, { path: "/s/a.jsonl", session_id: "a", project_id: "p1", cost_total: 1 });
+    insertSession(db, { path: "/s/b.jsonl", session_id: "b", project_id: "p1", cost_total: 5 });
+    insertSession(db, { path: "/s/c.jsonl", session_id: "c", project_id: "p2", cost_total: 10 });
+    insertSession(db, { path: "/s/d.jsonl", session_id: "d", project_id: "p2", cost_total: 20 });
+    const rank = sessionCostRank(db, "b");
+    expect(rank?.cost).toBe(5);
+    expect(rank?.portfolio).toEqual({ sessions: 4, pct: 50 });
+    expect(rank?.project).toEqual({ sessions: 2, pct: 100 });
+    // Unknown session → undefined, not a fabricated rank.
+    expect(sessionCostRank(db, "nope")).toBeUndefined();
+    db.close();
+  });
+
+  test("falls back to the path basename like sessionPathById", () => {
+    const db = openDb(":memory:");
+    insertSession(db, { path: "/s/abc123.jsonl", session_id: null, cost_total: 3 });
+    expect(sessionCostRank(db, "abc123")?.cost).toBe(3);
     db.close();
   });
 });

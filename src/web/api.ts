@@ -17,6 +17,7 @@ import {
   searchSessions,
   sessionPathById,
 } from "../core/queries.ts";
+import { sessionWhatIf } from "../core/session-insights.ts";
 import {
   activityHeatmap,
   analyticsRollup,
@@ -32,6 +33,7 @@ import {
   modelMixByDay,
   parseCoverage,
   projectTrends,
+  sessionCostRank,
   sessionScatter,
   sidechainByDay,
   sidechainByProject,
@@ -311,12 +313,26 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   };
   const staleIndex = { error: "session file is missing; re-run `cc-analyzer index`" };
 
+  // The analysis payload plus a server-computed `insights` sibling: the
+  // session-scoped what-if needs the pricing table and the cost rank needs the
+  // index — neither is available client-side, and folding them in here avoids
+  // a second parse of a potentially huge session file for a separate route.
+  // The outcome ratios are NOT here: `sessionOutcomes` is bun-free, so the
+  // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
-    const path = sessionPathById(db, c.req.param("id"));
+    const id = c.req.param("id");
+    const path = sessionPathById(db, id);
     if (!path) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
-    return c.json(analyzeSession(parsed.events, pricing, { coverage: parsed.coverage }));
+    const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    return c.json({
+      ...analysis,
+      insights: {
+        whatIf: sessionWhatIf(analysis.models, pricing),
+        rank: sessionCostRank(db, id) ?? null,
+      },
+    });
   });
 
   api.get("/api/sessions/:id/transcript", async (c) => {
