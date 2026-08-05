@@ -73,6 +73,8 @@ export * from "../../src/core/session-diagnostics.ts";
 // module so a session's repricing renders with the portfolio's vocabulary.
 export {
   OUTCOME_CAVEAT,
+  type OutcomeRow,
+  outcomeRows,
   type SessionOutcomes,
   sessionOutcomes,
 } from "../../src/core/session-insights.ts";

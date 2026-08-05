@@ -296,19 +296,7 @@ describe("projectHeadroom", () => {
 });
 
 describe("buildGapMarkers", () => {
-  test("marks gaps above the threshold, positioned on the call after", () => {
-    const burn = buildBurnSeries(analysis);
-    // Calls at +5s, +6s, +10s, +15s: with a 3-second threshold the 4s and 5s
-    // gaps mark positions 2 and 3.
-    expect(buildGapMarkers(burn, 3_000)).toEqual([
-      { pos: 2, durationMs: 4_000 },
-      { pos: 3, durationMs: 5_000 },
-    ]);
-    // Under the real 5-minute threshold this session has no idle gaps.
-    expect(buildGapMarkers(burn)).toEqual([]);
-  });
-
-  test("uses the shared 5-minute idle threshold by default", () => {
+  test("places the analyzer's idle periods on the call after each gap", () => {
     const idle = analyzeSession(
       [
         prompt("u1", 0, "p"),
@@ -317,10 +305,37 @@ describe("buildGapMarkers", () => {
       ],
       pricing,
     );
-    const gaps = buildGapMarkers(buildBurnSeries(idle));
-    expect(gaps).toHaveLength(1);
-    expect(gaps[0]?.pos).toBe(1);
-    expect(gaps[0]?.durationMs).toBe(895_000);
+    // The idle period is the analyzer's own: same clock as activeMs.
+    expect(idle.totals.idlePeriods).toHaveLength(1);
+    const gaps = buildGapMarkers(buildBurnSeries(idle), idle.totals.idlePeriods);
+    expect(gaps).toEqual([{ pos: 1, durationMs: 895_000 }]);
+    // No idle periods → no markers (this fixture's calls sit seconds apart).
+    expect(buildGapMarkers(buildBurnSeries(analysis), analysis.totals.idlePeriods)).toEqual([]);
+  });
+
+  test("a mid-gap tool_result keeps a long tool run ACTIVE, not idle", () => {
+    // API call at 0s, tool_result at +4min, next call at +8min: activeMs sees
+    // two ≤5-min gaps, so no idle period exists and no marker may appear —
+    // even though the API calls themselves are 8 minutes apart.
+    const busy = analyzeSession(
+      [
+        prompt("u1", 0, "run the suite"),
+        assistant("a", 5, { input_tokens: 1, output_tokens: 1 }),
+        {
+          type: "user",
+          uuid: "r1",
+          timestamp: ts(245),
+          message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+        } as unknown as SessionEvent,
+        assistant("b", 485, { input_tokens: 1, output_tokens: 1 }),
+      ],
+      pricing,
+    );
+    expect(busy.totals.idlePeriods).toEqual([]);
+    expect(buildGapMarkers(buildBurnSeries(busy), busy.totals.idlePeriods)).toEqual([]);
+    // The chart's idle total is exactly durationMs − activeMs: every gap
+    // (0→5s, 5s→245s, 245s→485s) is ≤ 5 min, so all 485s count as active.
+    expect(busy.totals.activeMs).toBe(485_000);
   });
 });
 

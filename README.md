@@ -177,6 +177,13 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   `213M +52B cache`.
 - **Tools**, **skills**, and **subagents** used; files touched. Skills carry the
   cost of the turns that invoked them (turn-scoped attribution).
+- **Cost per outcome**: spend divided into observable units — per turn, per file
+  touched, per test run, per active hour (a ratio is absent, not $0, when its
+  denominator is zero; the ratios measure activity, not value).
+- **What-if repricing** of this session's token mix at the other models' rates —
+  a rate comparison only, with the caveat printed alongside.
+- **Subagent bursts**: per-burst sidechain spend (calls, cost, spawning turn),
+  typed best-effort by matching burst root prompts to `Task` spawns.
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for

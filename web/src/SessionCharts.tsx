@@ -11,6 +11,7 @@ import {
   type Compaction,
   type ContextSeries,
   modelMixRows,
+  pct,
   pctOfLimit,
   projectHeadroom,
   type SessionAnalysis,
@@ -18,6 +19,7 @@ import {
   type SidechainBurst,
   summarizeCompactions,
   type TurnPoint,
+  turnFlags,
 } from "./api.ts";
 import { count, duration, usd } from "./format.ts";
 import { useHashParam } from "./router.ts";
@@ -40,14 +42,17 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
   const ctx = useMemo(() => buildContextSeries(a), [a]);
   const cache = useMemo(() => buildCacheSeries(ctx), [ctx]);
   const burn = useMemo(() => buildBurnSeries(a), [a]);
-  const gaps = useMemo(() => buildGapMarkers(burn), [burn]);
+  const gaps = useMemo(() => buildGapMarkers(burn, a.totals.idlePeriods), [burn, a]);
   const turns = useMemo(() => buildTurnSeries(a), [a]);
   const models = useMemo(() => modelMixRows(a), [a]);
+  const hasKinds = useMemo(() => turns.some((t) => Object.keys(t.kindCounts).length > 0), [turns]);
+  // Guard against a payload from an older server (same staleness assumption
+  // `insights` is optional for): absent means no bursts, not a crash.
+  const bursts = a.sidechainBursts ?? [];
 
   if (a.turns.length === 0) {
     return <p className="muted">No turns to chart in this session.</p>;
   }
-  const hasKinds = turns.some((t) => Object.keys(t.kindCounts).length > 0);
 
   return (
     <>
@@ -99,16 +104,16 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
         </section>
       )}
 
-      {a.sidechainBursts.length > 0 && (
+      {bursts.length > 0 && (
         <section className="trend-panel">
           <div className="trend-head">
             <h2>Subagent bursts</h2>
             <span className="muted">
-              {usd(a.totals.sidechainCost)} total sidechain cost across {a.sidechainBursts.length}{" "}
-              burst{a.sidechainBursts.length > 1 ? "s" : ""}
+              {usd(a.totals.sidechainCost)} total sidechain cost across {bursts.length} burst
+              {bursts.length > 1 ? "s" : ""}
             </span>
           </div>
-          <SidechainBursts bursts={a.sidechainBursts} />
+          <SidechainBursts bursts={bursts} />
         </section>
       )}
     </>
@@ -380,20 +385,6 @@ const turnValue = (t: TurnPoint, m: TurnMetric): number =>
 /** Metric label: dollars for cost, durations for time, counts otherwise. */
 const fmtTurn = (m: TurnMetric, v: number): string => (m === "time" ? duration(v) : fmt(m, v));
 
-/** The turn's attention/thrash signals, in tooltip words. */
-function turnFlags(t: TurnPoint): string[] {
-  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-  const flags: string[] = [];
-  if (t.interrupted) flags.push("interrupted");
-  if (t.correction) flags.push("correction prompt");
-  if (t.retries > 0) flags.push(plural(t.retries, "retry", "retries"));
-  if (t.testFailures > 0) flags.push(plural(t.testFailures, "failing test", "failing tests"));
-  if (t.redundantReads > 0)
-    flags.push(plural(t.redundantReads, "redundant read", "redundant reads"));
-  if (t.toolErrors > 0) flags.push(plural(t.toolErrors, "tool error", "tool errors"));
-  return flags;
-}
-
 /** The four cost categories, bottom-up in stacking order. */
 const COST_SEGS = [
   { cls: "tb-input", key: "costInput", label: "input" },
@@ -510,9 +501,13 @@ function groupCounts(kindCounts: Record<string, number>): number[] {
 function ToolActivity({ turns }: { turns: TurnPoint[] }) {
   const n = turns.length;
   const H = 160;
-  const perTurn = turns.map((t) => groupCounts(t.kindCounts));
-  const totals = perTurn.map((g) => g.reduce((s, v) => s + v, 0));
-  const max = Math.max(...totals, 1);
+  // Identical on every render while `turns` is stable (it's memoized
+  // upstream) — don't re-fold thousands of kind maps per re-render.
+  const { perTurn, totals, max } = useMemo(() => {
+    const perTurn = turns.map((t) => groupCounts(t.kindCounts));
+    const totals = perTurn.map((g) => g.reduce((s, v) => s + v, 0));
+    return { perTurn, totals, max: Math.max(...totals, 1) };
+  }, [turns]);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
   const legend = [
@@ -608,7 +603,7 @@ function ModelMixPanel({ rows }: { rows: SessionModelRow[] }) {
               <td>{r.model}</td>
               <td className="num">{count(r.apiCalls)}</td>
               <td className="num">{usd(r.cost)}</td>
-              <td className="num">{Math.round(r.share * 100)}%</td>
+              <td className="num">{pct(r.share)}</td>
               <td>
                 <div className="bar">
                   <span style={{ width: `${(r.cost / max) * 100}%` }} />

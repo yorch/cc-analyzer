@@ -3,7 +3,7 @@ import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type { PricingTable, TokenCounts } from "./pricing.ts";
 import { cacheTokens, ioTokens, zeroTokens } from "./pricing.ts";
-import { escapeLike } from "./queries.ts";
+import { sessionRowById } from "./queries.ts";
 import { compareVersions } from "./release.ts";
 import { repriceModelMixes } from "./session-insights.ts";
 import type {
@@ -1280,34 +1280,39 @@ export function whatIfRepricing(
 
 /**
  * Where one session's cost sits among every indexed session's (and among its
- * own project's). The percentile is the share of sessions costing no more than
- * this one — cheap enough to compute per request, and undefined when the
- * session isn't in the index (e.g. analyzed by path). Cohort sizes ride along
- * so render sites can hedge tiny cohorts ("p50 of 2 sessions" is noise).
+ * own project's). The percentile is the share of sessions costing STRICTLY
+ * LESS than this one (NULL costs read as $0), so a tied-cheapest session
+ * reads p0 rather than p100. Undefined when the session isn't in the index
+ * (e.g. analyzed by bare path). Cohort sizes ride along so render sites can
+ * hedge tiny cohorts (`MIN_RANK_COHORT` — "p50 of 2 sessions" is noise). Id
+ * resolution is `sessionRowById`, the same rule the session route uses, and
+ * both cohorts fold in one table scan.
  */
 export function sessionCostRank(db: Database, sessionId: string): SessionCostRank | undefined {
-  const row = db
-    .query(
-      `SELECT cost_total AS cost, project_id AS projectId FROM sessions
-       WHERE session_id = ? OR path LIKE ? ESCAPE '\\' LIMIT 1`,
-    )
-    .get(sessionId, `%/${escapeLike(sessionId)}.jsonl`) as
-    | { cost: number; projectId: string | null }
-    | undefined;
+  const row = sessionRowById(db, sessionId);
   if (!row) return undefined;
-  const cohort = (scopeSql: string, ...binds: (string | number)[]): CostRankCohort => {
-    const r = db
-      .query(
-        `SELECT COUNT(*) AS n, SUM(CASE WHEN cost_total <= ? THEN 1 ELSE 0 END) AS le
-         FROM sessions ${scopeSql}`,
-      )
-      .get(row.cost, ...binds) as { n: number; le: number | null };
-    return { sessions: r.n, pct: r.n > 0 ? Math.round((100 * (r.le ?? 0)) / r.n) : 0 };
+  const r = db
+    .query(
+      `SELECT COUNT(*) AS n,
+        COALESCE(SUM(CASE WHEN COALESCE(cost_total, 0) < ? THEN 1 ELSE 0 END), 0) AS below,
+        COALESCE(SUM(CASE WHEN project_id = ? THEN 1 ELSE 0 END), 0) AS pn,
+        COALESCE(SUM(CASE WHEN project_id = ? AND COALESCE(cost_total, 0) < ? THEN 1 ELSE 0 END), 0) AS pbelow
+       FROM sessions`,
+    )
+    .get(row.cost, row.projectId, row.projectId, row.cost) as {
+    n: number;
+    below: number;
+    pn: number;
+    pbelow: number;
   };
+  const cohort = (sessions: number, below: number): CostRankCohort => ({
+    sessions,
+    pct: sessions > 0 ? Math.round((100 * below) / sessions) : 0,
+  });
   return {
     cost: row.cost,
-    portfolio: cohort(""),
-    ...(row.projectId ? { project: cohort("WHERE project_id = ?", row.projectId) } : {}),
+    portfolio: cohort(r.n, r.below),
+    project: cohort(r.pn, r.pbelow),
   };
 }
 

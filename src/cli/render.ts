@@ -14,7 +14,7 @@ import {
 } from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
-import { OUTCOME_CAVEAT, sessionOutcomes } from "../core/session-insights.ts";
+import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
 import type {
   BashCommandRow,
@@ -41,6 +41,7 @@ import {
   formatDuration,
   formatRelativeTime,
   formatSignedCount,
+  formatSignedUSD,
   formatTokens,
   formatUSD,
   table,
@@ -218,24 +219,18 @@ export function renderSessionSummary(
     ),
   );
 
-  // Cost per outcome: what the spend bought, in observable units. Only rows
-  // whose denominator exists — an absent ratio is absent, not $0.
-  const outcomes = sessionOutcomes(a);
-  const outcomeRows: string[][] = [
-    ...(outcomes.costPerTurn !== undefined ? [["per turn", formatUSD(outcomes.costPerTurn)]] : []),
-    ...(outcomes.costPerFileTouched !== undefined
-      ? [[`per file touched (${outcomes.filesTouched})`, formatUSD(outcomes.costPerFileTouched)]]
-      : []),
-    ...(outcomes.costPerTestRun !== undefined
-      ? [[`per test run (${outcomes.testRuns})`, formatUSD(outcomes.costPerTestRun)]]
-      : []),
-    ...(outcomes.costPerActiveHour !== undefined
-      ? [["per active hour", formatUSD(outcomes.costPerActiveHour)]]
-      : []),
-  ];
-  if (outcomeRows.length) {
+  // Cost per outcome: what the spend bought, in observable units. The row
+  // set (and the absent-not-$0 rule) is the shared `outcomeRows`.
+  const outcomes = outcomeRows(sessionOutcomes(a));
+  if (outcomes.length) {
     lines.push(`\n${section("Cost per outcome", options)}`);
-    lines.push(table(["unit", "cost"], outcomeRows, { align: ["left", "right"] }));
+    lines.push(
+      table(
+        ["unit", "cost"],
+        outcomes.map((r) => [r.label, formatUSD(r.cost)]),
+        { align: ["left", "right"] },
+      ),
+    );
     lines.push(muted(OUTCOME_CAVEAT, options));
   }
 
@@ -264,7 +259,7 @@ export function renderSessionSummary(
     );
     lines.push(
       `  cheapest single model: ${s.bestModel} at ${formatUSD(s.bestCost)} ` +
-        `(${s.bestDelta <= 0 ? "-" : "+"}${formatUSD(Math.abs(s.bestDelta))} vs actual` +
+        `(${formatSignedUSD(s.bestDelta)} vs actual` +
         `${s.fallbackAlternatives ? ", stock alternatives" : ""})`,
     );
     lines.push(muted(WHATIF_CAVEAT, options));
@@ -293,8 +288,10 @@ export function renderSessionSummary(
     );
     lines.push(muted(SKILL_COST_CAVEAT, options));
   }
-  // Per-burst subagent spend, when the session spawned any; the type is a
-  // best-effort match (see SidechainBurst), so unnamed bursts stay honest.
+  // Per-burst subagent spend, when the session spawned any. The type column
+  // is a best-effort prompt match (see SidechainBurst) — say so — and the
+  // `Subagents:` line stays: it lists the exact types read off the Task
+  // tool_uses, which the join can fail to attribute.
   if (a.sidechainBursts.length > 0) {
     lines.push(`\n${section("Subagent bursts", options)}`);
     lines.push(
@@ -310,9 +307,9 @@ export function renderSessionSummary(
         { align: ["right", "left", "right", "right", "right"] },
       ),
     );
-  } else if (a.subagents.length) {
-    lines.push(`Subagents: ${a.subagents.join(", ")}`);
+    lines.push(muted("Types are matched best-effort from spawn prompts.", options));
   }
+  if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
   if (Object.keys(a.stopReasons).length) {
     lines.push(`Stop reasons: ${topEntries(a.stopReasons)}`);

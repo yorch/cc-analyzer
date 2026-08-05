@@ -176,8 +176,7 @@ export function listAllSessions(db: Database): SessionWithProject[] {
 }
 
 /** Escape LIKE wildcards so user input matches literally (used with ESCAPE '\'). */
-/** Escape `%`/`_`/`\` for a LIKE pattern (shared with stats.ts lookups). */
-export const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 /** Sessions across all projects matching a query on title / session id / project path. */
 export function searchSessions(db: Database, q: string, limit = 100): SessionWithProject[] {
@@ -197,10 +196,34 @@ export function isIndexEmpty(db: Database): boolean {
   return row.n === 0;
 }
 
+/** The fields id-shaped lookups resolve to (path plus what the cost-rank
+ * cohorts key on). `cost` is COALESCEd — a NULL `cost_total` reads as $0. */
+export interface SessionRefRow {
+  path: string;
+  projectId: string;
+  cost: number;
+}
+
+/**
+ * Resolve an id-shaped session reference to its indexed row — the ONE
+ * resolution rule (exact `session_id`, then path-basename LIKE) shared by
+ * `sessionPathById` and `sessionCostRank`, so the session route and its rank
+ * can never resolve two different rows for one id. The exact match runs
+ * alone first: it is indexed, while the OR'd LIKE forced a full scan.
+ */
+export function sessionRowById(db: Database, id: string): SessionRefRow | undefined {
+  const select =
+    "SELECT path, project_id AS projectId, COALESCE(cost_total, 0) AS cost FROM sessions";
+  const exact = db.query(`${select} WHERE session_id = ? LIMIT 1`).get(id) as
+    | SessionRefRow
+    | undefined;
+  if (exact) return exact;
+  return db
+    .query(`${select} WHERE path LIKE ? ESCAPE '\\' LIMIT 1`)
+    .get(`%/${escapeLike(id)}.jsonl`) as SessionRefRow | undefined;
+}
+
 /** Look up a session's file path from the index by session id. */
 export function sessionPathById(db: Database, id: string): string | undefined {
-  const row = db
-    .query("SELECT path FROM sessions WHERE session_id = ? OR path LIKE ? ESCAPE '\\' LIMIT 1")
-    .get(id, `%/${escapeLike(id)}.jsonl`) as { path: string } | undefined;
-  return row?.path;
+  return sessionRowById(db, id)?.path;
 }

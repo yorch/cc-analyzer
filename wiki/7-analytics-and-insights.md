@@ -60,7 +60,8 @@ The database sits on the left; the middle tier is the core computation in `stats
 | Module | Path | Responsibility |
 | ------ | ---- | -------------- |
 | stats-types | `src/core/stats-types.ts` | Bun-free shapes, date helpers, and series bucketing |
-| chart-series | `src/core/chart-series.ts` | Bun-free per-session chart builders (context/burn/turn/cache/idle-gaps/headroom/model-mix) |
+| chart-series | `src/core/chart-series.ts` | Bun-free per-session chart builders (context/burn/turn/cache/idle-gaps/headroom/model-mix/turn-flags/burst-grouping) |
+| session-insights | `src/core/session-insights.ts` | Bun-free session-scoped insights: the shared what-if repricing fold (`repriceModelMixes`, also used portfolio-wide by `stats.ts`), cost-per-outcome ratios and their shared row derivation, and `OUTCOME_CAVEAT` |
 | stats | `src/core/stats.ts` | SQL metric computations, single-scan rollups, portfolio bundle |
 | queries | `src/core/queries.ts` | Row-level session/project listings and search |
 | inventory | `src/core/inventory.ts` | Tolerant, read-only scan of the installed Claude setup |

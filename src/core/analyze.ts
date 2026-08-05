@@ -136,8 +136,8 @@ export interface Compaction {
 export interface SidechainBurst {
   /** Best-effort subagent type (Task `subagent_type`), when attributable. */
   subagentType?: string;
-  /** Index of the turn open when the burst's first call landed. Undefined in
-   * aggregate mode (no materialized turns) or before the first real prompt. */
+  /** Index of the turn open when the burst's first call landed; undefined
+   * before the first real prompt. */
   turnIndex?: number;
   apiCalls: number;
   cost: number;
@@ -161,6 +161,18 @@ export interface SessionTotals {
    * agent (or the human) was actively working, as opposed to the session
    * sitting open. Always ≤ durationMs. */
   activeMs: number;
+  /** The gaps `activeMs` excluded (each > ACTIVE_GAP_MS), in time order — so
+   * "idle" on a chart is the same clock the active-time metric uses. */
+  idlePeriods: IdlePeriod[];
+}
+
+/** One idle stretch: a gap > `ACTIVE_GAP_MS` between consecutive event
+ * timestamps — the exact gaps `activeMs` excludes, so a session's idle
+ * periods and its active time are complements of one clock. */
+export interface IdlePeriod {
+  /** Epoch ms of the last event before the gap. */
+  startMs: number;
+  durationMs: number;
 }
 
 export interface SessionAnalysis {
@@ -201,9 +213,10 @@ export interface SessionAnalysis {
   subagents: string[];
   /**
    * Per-burst sidechain spend (see `SidechainBurst`), ordered by start time
-   * (timestamp-less bursts keep stream order, last). Available in aggregate
-   * mode too — only `turnIndex` needs the materialized turns. Empty when the
-   * session spawned no subagents. Not flattened into the index.
+   * (timestamp-less bursts keep stream order, last). **Detail mode only** —
+   * always empty in aggregate mode, so the indexer's streaming path never
+   * pays for the per-chain accumulators it would immediately discard. Not
+   * flattened into the index.
    */
   sidechainBursts: SidechainBurst[];
   filesTouched: string[];
@@ -582,7 +595,7 @@ class SessionAnalyzer {
   // verbatim). Keys are normalized (whitespace-collapsed, capped) so cosmetic
   // reformatting can't break the join.
   private readonly burstByChain = new Map<string, SidechainBurst>();
-  private readonly taskSpawns: { prompt: string; type: string; used?: boolean }[] = [];
+  private readonly taskSpawns: { prompt: string; type: string }[] = [];
   private readonly chainRootPrompt = new Map<string, string>();
 
   // One retry cursor per chain, reset at each new turn: a user-requested
@@ -789,7 +802,8 @@ class SessionAnalyzer {
       // A Task subagent's first sidechain event repeats the spawn prompt
       // verbatim; `chain === event.uuid` means this event just rooted its
       // chain (see chainOf), so record that prompt for burst naming.
-      if (event.isSidechain === true && event.uuid && chain === event.uuid) {
+      // Detail mode only, like the burst accumulators it feeds.
+      if (this.detail && event.isSidechain === true && event.uuid && chain === event.uuid) {
         this.chainRootPrompt.set(chain, spawnKey(promptPreview(content)));
       }
       if (Array.isArray(content)) {
@@ -946,8 +960,9 @@ class SessionAnalyzer {
           this.subagents.add(t);
           // Main-chain spawns only: a nested Task inside a subagent spawns
           // onto its parent's chain (see chainOf), so it never roots a burst
-          // and must not consume a name in the finish() join.
-          const spawnPrompt = stringField(tu.input, "prompt");
+          // and must not consume a name in the finish() join. Detail mode
+          // only, like the burst accumulators the join runs over.
+          const spawnPrompt = this.detail ? stringField(tu.input, "prompt") : undefined;
           if (event.isSidechain !== true && spawnPrompt) {
             this.taskSpawns.push({ prompt: spawnKey(spawnPrompt), type: t });
           }
@@ -1078,21 +1093,25 @@ class SessionAnalyzer {
       this.sidechainCost += cost.total;
       // Burst accounting: one accumulator per chain, on the de-duplicated
       // call (continuation lines returned above, so usage counts once here
-      // exactly like the session totals).
-      let burst = this.burstByChain.get(chain);
-      if (!burst) {
-        burst = { apiCalls: 0, cost: 0, tokens: zeroTokens() };
-        const turnIndex = this.current?.index;
-        if (turnIndex !== undefined) burst.turnIndex = turnIndex;
-        this.burstByChain.set(chain, burst);
-      }
-      burst.apiCalls += 1;
-      burst.cost += cost.total;
-      burst.tokens = addTokens(burst.tokens, tokens);
-      const ts = event.timestamp;
-      if (ts) {
-        if (!burst.startTime || ts < burst.startTime) burst.startTime = ts;
-        if (!burst.endTime || ts > burst.endTime) burst.endTime = ts;
+      // exactly like the session totals). Detail mode only: the indexer's
+      // aggregate path never reads bursts, so it must not pay for the
+      // per-chain maps or the finish() join.
+      if (this.detail) {
+        let burst = this.burstByChain.get(chain);
+        if (!burst) {
+          burst = { apiCalls: 0, cost: 0, tokens: zeroTokens() };
+          const turnIndex = this.current?.index;
+          if (turnIndex !== undefined) burst.turnIndex = turnIndex;
+          this.burstByChain.set(chain, burst);
+        }
+        burst.apiCalls += 1;
+        burst.cost += cost.total;
+        burst.tokens = addTokens(burst.tokens, tokens);
+        const ts = event.timestamp;
+        if (ts) {
+          if (!burst.startTime || ts < burst.startTime) burst.startTime = ts;
+          if (!burst.endTime || ts > burst.endTime) burst.endTime = ts;
+        }
       }
     } else if (this.hasTurn) {
       this.currentDepth += 1;
@@ -1161,14 +1180,22 @@ class SessionAnalyzer {
             ? 1
             : 0,
     );
+    // O(bursts + spawns): spawn types queue up per normalized prompt, and
+    // each burst shifts from its prompt's queue — same-prompt spawns of
+    // different types still resolve in spawn order.
+    const spawnQueues = new Map<string, string[]>();
+    for (const s of this.taskSpawns) {
+      const queue = spawnQueues.get(s.prompt);
+      if (queue) queue.push(s.type);
+      else spawnQueues.set(s.prompt, [s.type]);
+    }
     let matched = 0;
     for (const [chain, burst] of entries) {
       const root = this.chainRootPrompt.get(chain);
       if (!root) continue;
-      const spawn = this.taskSpawns.find((s) => !s.used && s.prompt === root);
-      if (spawn) {
-        spawn.used = true;
-        burst.subagentType = spawn.type;
+      const type = spawnQueues.get(root)?.shift();
+      if (type !== undefined) {
+        burst.subagentType = type;
         matched += 1;
       }
     }
@@ -1190,9 +1217,12 @@ class SessionAnalyzer {
     // exact under any event interleaving and keeps activeMs ≤ durationMs.
     this.eventMs.sort((a, b) => a - b);
     let activeMs = 0;
+    const idlePeriods: IdlePeriod[] = [];
     for (let i = 1; i < this.eventMs.length; i++) {
-      const gap = (this.eventMs[i] as number) - (this.eventMs[i - 1] as number);
+      const prev = this.eventMs[i - 1] as number;
+      const gap = (this.eventMs[i] as number) - prev;
       if (gap <= ACTIVE_GAP_MS) activeMs += gap;
+      else idlePeriods.push({ startMs: prev, durationMs: gap });
     }
 
     const totals: SessionTotals = {
@@ -1208,6 +1238,7 @@ class SessionAnalyzer {
       sidechainApiCalls: this.sidechainApiCalls,
       sidechainCost: this.sidechainCost,
       activeMs,
+      idlePeriods,
     };
     return {
       sessionId: this.sessionId,

@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatCount,
   formatDuration,
+  formatSignedUSD,
   formatTokens,
   formatUSD,
+  pct,
   truncate,
 } from "../../cli/format.ts";
-import type { SessionAnalysis, SidechainBurst } from "../../core/analyze.ts";
+import type { SessionAnalysis } from "../../core/analyze.ts";
 import { analyzeSession } from "../../core/analyze.ts";
 import {
   buildBurnSeries,
@@ -15,16 +17,23 @@ import {
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
+  groupSidechainBursts,
   modelMixRows,
   pctOfLimit,
   projectHeadroom,
   summarizeCompactions,
+  turnFlags,
 } from "../../core/chart-series.ts";
 import { parseSessionFile } from "../../core/parser.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
 import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
-import { OUTCOME_CAVEAT, sessionOutcomes, sessionWhatIf } from "../../core/session-insights.ts";
+import {
+  OUTCOME_CAVEAT,
+  outcomeRows,
+  sessionOutcomes,
+  sessionWhatIf,
+} from "../../core/session-insights.ts";
 import { WHATIF_CAVEAT, type WhatIfRepricing } from "../../core/stats-types.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
@@ -115,7 +124,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
         )}
         {mode === "charts" && <ChartsView a={analysis} columns={columns} rows={rows} />}
         {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
-        {mode === "summary" && <SummaryView a={analysis} whatIf={whatIf} columns={columns} />}
+        {mode === "summary" && <SummaryView a={analysis} whatIf={whatIf} />}
       </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>
@@ -378,44 +387,6 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
   return next;
 }
 
-/** One subagent type's summed burst cost/calls — the "subagents:" line groups
- * bursts by best-effort type, undefined type folding into "(unmatched)". */
-interface SubagentRow {
-  type: string;
-  cost: number;
-  apiCalls: number;
-}
-
-function groupSidechainBursts(bursts: SidechainBurst[]): SubagentRow[] {
-  const byType = new Map<string, SubagentRow>();
-  for (const burst of bursts) {
-    const type = burst.subagentType ?? "(unmatched)";
-    const row = byType.get(type) ?? { type, cost: 0, apiCalls: 0 };
-    row.cost += burst.cost;
-    row.apiCalls += burst.apiCalls;
-    byType.set(type, row);
-  }
-  return [...byType.values()].sort((a, b) => b.cost - a.cost);
-}
-
-/** A turn worth flagging on the "cost per turn" chart: any of the
- * interruption/correction/thrash signals `analyze.ts` attributes to it. */
-function isFlaggedTurn(t: {
-  interrupted: boolean;
-  correction: boolean;
-  retries: number;
-  testFailures: number;
-  redundantReads: number;
-  toolErrors: number;
-}): boolean {
-  return (
-    t.interrupted ||
-    t.correction ||
-    t.retries + t.testFailures + t.redundantReads > 0 ||
-    t.toolErrors > 0
-  );
-}
-
 /** Session charts: context-window sawtooth (▼ = compaction), cache hit rate,
  * cost per call, and per-turn cost — series shared with the web charts via
  * chart-series.ts. */
@@ -424,7 +395,7 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   const cache = useMemo(() => buildCacheSeries(ctx), [ctx]);
   const headroom = useMemo(() => projectHeadroom(ctx), [ctx]);
   const burn = useMemo(() => buildBurnSeries(a), [a]);
-  const gaps = useMemo(() => buildGapMarkers(burn), [burn]);
+  const gaps = useMemo(() => buildGapMarkers(burn, a.totals.idlePeriods), [burn, a]);
   const turnSeries = useMemo(() => buildTurnSeries(a), [a]);
   const models = useMemo(() => modelMixRows(a), [a]);
   const subagents = useMemo(() => groupSidechainBursts(a.sidechainBursts), [a]);
@@ -476,16 +447,16 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
       ? ` · ${gaps.length} idle gap${gaps.length === 1 ? "" : "s"} (${formatDuration(totalGapMs)} idle)`
       : "";
 
-  const flaggedTurns = turnSeries
-    .map((t, i) => ({ i, flagged: isFlaggedTurn(t) }))
-    .filter((t) => t.flagged)
-    .map((t) => t.i);
-  const flagMarkers = markerRow(flaggedTurns, turnSeries.length, width, "▲");
+  const flaggedTurns = turnSeries.filter((t) => turnFlags(t).length > 0).map((t) => t.index);
+  // The sparkline underneath emits min(width, turns) characters, so the ▲ row
+  // must use that SAME width or its markers land past the sparkline's end.
+  const turnChartWidth = Math.min(width, turnSeries.length);
+  const flagMarkers = markerRow(flaggedTurns, turnSeries.length, turnChartWidth, "▲");
   const showFlags = flaggedTurns.length > 0;
 
   const showModels = models.length > 1;
   const modelsLabel = models
-    .map((m) => `${truncate(m.model, 22)} ${formatUSD(m.cost)} (${Math.round(m.share * 100)}%)`)
+    .map((m) => `${truncate(m.model, 22)} ${formatUSD(m.cost)} (${pct(m.share)})`)
     .join(" · ");
 
   const showSubagents = subagents.length > 0;
@@ -499,96 +470,118 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
       ? ` · +${subagents.length - SUBAGENT_ROWS_SHOWN} more`
       : "";
 
-  // The braille chart eats whatever height is left after every other line in
-  // this view — recount them here (base 8 fixed lines below the chart: header,
-  // call-range, cache hit + its sparkline, cost-per-call + its sparkline,
-  // cost-per-turn + its sparkline; plus the screen's own chrome) so newly
-  // toggled-on lines (models/subagents/flags) shrink the chart instead of
-  // overrunning the terminal and corrupting the frame.
-  const extraLines =
-    (ctx.markers.length > 0 ? 1 : 0) +
-    (showModels ? 1 : 0) +
-    (showSubagents ? 1 : 0) +
-    (showFlags ? 2 : 0);
-  const chartH = Math.max(3, rows - 22 - extraLines);
-  // Ceiling at the window limit (like the web chart): the empty rows above
-  // the sawtooth are the headroom signal.
-  const chart = brailleChart(values, width, chartH, ctx.contextLimit);
   const markers = markerRow(
     ctx.markers.map((m) => m.pos),
     ctx.points.length,
     width,
   );
+  // A rate series must not be bucket-SUMMED (sparkline's downsampling — right
+  // for cost, wrong for percentages): a one-row braille chart buckets by MAX
+  // and takes 100 as its fixed ceiling, so a flat 90% renders flat.
+  const cacheRow = brailleChart(
+    cache.points.map((p) => p.hitPct),
+    width,
+    1,
+    100,
+  )[0];
+
+  // Every line of this view EXCEPT the braille chart, as arrays — the chart's
+  // height is derived from their actual lengths, so a newly added or toggled
+  // line shrinks the chart instead of overrunning the terminal and corrupting
+  // the Ink frame. Only the screen chrome outside this component (title,
+  // vitals band, tab row, margins, footer) remains a constant.
+  const aboveChart = [
+    <Text key="head" color={role.muted} wrap="truncate-end">
+      context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>
+      {limitLabel} · {compactions}
+      {headroomLabel}
+    </Text>,
+    ...(ctx.markers.length > 0
+      ? [
+          <Text key="markers" color={role.error}>
+            {markers}
+          </Text>,
+        ]
+      : []),
+  ];
+  const belowChart = [
+    <Text key="axis" color={role.muted}>
+      call 1 {"─".repeat(Math.max(0, width - 14 - String(ctx.points.length).length))} call{" "}
+      {ctx.points.length}
+    </Text>,
+    <Text key="cache-head" color={role.muted}>
+      cache hit {cache.hitPct}% · {cache.coldCalls} cold call{cache.coldCalls === 1 ? "" : "s"}
+    </Text>,
+    <Text key="cache-row" color={palette.blue}>
+      {cacheRow}
+    </Text>,
+    ...(showModels
+      ? [
+          <Text key="models" color={role.muted} wrap="truncate-end">
+            models: {modelsLabel}
+          </Text>,
+        ]
+      : []),
+    ...(showSubagents
+      ? [
+          <Text key="subagents" color={role.muted} wrap="truncate-end">
+            subagents: {subagentsLabel}
+            {subagentsMore}
+          </Text>,
+        ]
+      : []),
+    <Text key="blank"> </Text>,
+    <Text key="burn-head" color={role.muted} wrap="truncate-end">
+      cost per call · <Text color={role.cost}>{formatUSD(totalCost)}</Text> total
+      {gapsLabel}
+    </Text>,
+    <Text key="burn-row" color={palette.amber}>
+      {sparkline(
+        burn.map((p) => p.callCost),
+        width,
+      )}
+    </Text>,
+    <Text key="turn-head" color={role.muted}>
+      cost per turn · peak{" "}
+      <Text color={role.cost}>{formatUSD(turnSeries[peakTurn]?.cost ?? 0)}</Text> (#
+      {peakTurn + 1})
+    </Text>,
+    <Text key="turn-row" color={palette.amber}>
+      {sparkline(
+        turnSeries.map((t) => t.cost),
+        width,
+      )}
+    </Text>,
+    ...(showFlags
+      ? [
+          <Text key="flag-row" color={role.error}>
+            {flagMarkers}
+          </Text>,
+          <Text key="flag-legend" color={role.muted}>
+            ▲ = interrupted/correction/thrash turns ({flaggedTurns.length})
+          </Text>,
+        ]
+      : []),
+  ];
+  // Rows the enclosing screen spends around this view (title, vitals band,
+  // tab row + margins, footer) — the one number left to keep in step with
+  // SessionDetailScreen's frame, everything else is counted from the arrays.
+  const SCREEN_CHROME_ROWS = 13;
+  const chartH = Math.max(3, rows - SCREEN_CHROME_ROWS - aboveChart.length - belowChart.length);
+  // Ceiling at the window limit (like the web chart): the empty rows above
+  // the sawtooth are the headroom signal.
+  const chart = brailleChart(values, width, chartH, ctx.contextLimit);
 
   return (
     <Box flexDirection="column">
-      <Text color={role.muted} wrap="truncate-end">
-        context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>
-        {limitLabel} · {compactions}
-        {headroomLabel}
-      </Text>
-      {ctx.markers.length > 0 && <Text color={role.error}>{markers}</Text>}
+      {aboveChart}
       {chart.map((line, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: fixed-order chart rows
         <Text key={i} color={palette.amberDim}>
           {line}
         </Text>
       ))}
-      <Text color={role.muted}>
-        call 1 {"─".repeat(Math.max(0, width - 14 - String(ctx.points.length).length))} call{" "}
-        {ctx.points.length}
-      </Text>
-      <Text color={role.muted}>
-        cache hit {cache.hitPct}% · {cache.coldCalls} cold call{cache.coldCalls === 1 ? "" : "s"}
-      </Text>
-      <Text color={palette.blue}>
-        {sparkline(
-          cache.points.map((p) => p.hitPct),
-          width,
-        )}
-      </Text>
-      {showModels && (
-        <Text color={role.muted} wrap="truncate-end">
-          models: {modelsLabel}
-        </Text>
-      )}
-      {showSubagents && (
-        <Text color={role.muted} wrap="truncate-end">
-          subagents: {subagentsLabel}
-          {subagentsMore}
-        </Text>
-      )}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={role.muted} wrap="truncate-end">
-          cost per call · <Text color={role.cost}>{formatUSD(totalCost)}</Text> total
-          {gapsLabel}
-        </Text>
-        <Text color={palette.amber}>
-          {sparkline(
-            burn.map((p) => p.callCost),
-            width,
-          )}
-        </Text>
-        <Text color={role.muted}>
-          cost per turn · peak{" "}
-          <Text color={role.cost}>{formatUSD(turnSeries[peakTurn]?.cost ?? 0)}</Text> (#
-          {peakTurn + 1})
-        </Text>
-        <Text color={palette.amber}>
-          {sparkline(
-            turnSeries.map((t) => t.cost),
-            width,
-          )}
-        </Text>
-        {showFlags && (
-          <>
-            <Text color={role.error}>{flagMarkers}</Text>
-            <Text color={role.muted}>
-              ▲ = interrupted/correction/thrash turns ({flaggedTurns.length})
-            </Text>
-          </>
-        )}
-      </Box>
+      {belowChart}
     </Box>
   );
 }
@@ -653,20 +646,13 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   );
 }
 
-function SummaryView({
-  a,
-  whatIf,
-  columns,
-}: {
-  a: SessionAnalysis;
-  whatIf: WhatIfRepricing | undefined;
-  columns: number;
-}) {
+function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricing | undefined }) {
   const c = a.totals.cost;
   const est = c.estimated ? " (estimated)" : "";
   const diagnostics = buildSessionDiagnostics(a);
-  const outcomes = useMemo(() => sessionOutcomes(a), [a]);
-  const caveatWidth = Math.max(20, columns - 2);
+  // The shared row set (labels, order, absent-not-$0 rule) — same list the
+  // CLI report and the web summary render.
+  const outcomes = useMemo(() => outcomeRows(sessionOutcomes(a)), [a]);
   const line = (k: string, v: string) => (
     <Text>
       {/* padEnd only helps up to 16 chars — the outcome rows carry a
@@ -675,11 +661,9 @@ function SummaryView({
       <Text color={role.body}>{v}</Text>
     </Text>
   );
-  const whatIfSummary = whatIf?.summary;
-  const showWhatIf = Boolean(whatIf && whatIf.rows.length > 0 && whatIfSummary?.bestModel);
-  const bestDelta = whatIfSummary?.bestDelta ?? 0;
-  const deltaLabel =
-    bestDelta <= 0 ? `−${formatUSD(Math.abs(bestDelta))}` : `+${formatUSD(bestDelta)}`;
+  // A non-null bestModel implies rows exist (repriceModelMixes nulls it for
+  // an empty fold), so this is the one guard the section needs.
+  const whatIfSummary = whatIf?.summary.bestModel ? whatIf.summary : undefined;
   return (
     <Box flexDirection="column">
       {line("project", a.projectPath ?? "?")}
@@ -723,29 +707,25 @@ function SummaryView({
             .join(", ")})`,
         )}
       {line("files touched", String(a.filesTouched.length))}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={role.heading}>Cost per outcome</Text>
-        {outcomes.costPerTurn !== undefined && line("per turn", formatUSD(outcomes.costPerTurn))}
-        {outcomes.costPerFileTouched !== undefined &&
-          line(
-            `per file touched (${outcomes.filesTouched})`,
-            formatUSD(outcomes.costPerFileTouched),
-          )}
-        {outcomes.costPerTestRun !== undefined &&
-          line(`per test run (${outcomes.testRuns})`, formatUSD(outcomes.costPerTestRun))}
-        {outcomes.costPerActiveHour !== undefined &&
-          line("per active hour", formatUSD(outcomes.costPerActiveHour))}
-        <Text color={role.muted}>{truncate(OUTCOME_CAVEAT, caveatWidth)}</Text>
-      </Box>
-      {showWhatIf && whatIfSummary && (
+      {outcomes.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color={role.heading}>Cost per outcome</Text>
+          {outcomes.map((r) => (
+            <Box key={r.label}>{line(r.label, formatUSD(r.cost))}</Box>
+          ))}
+          {/* Mandatory caveats print VERBATIM — Ink wraps long lines. */}
+          <Text color={role.muted}>{OUTCOME_CAVEAT}</Text>
+        </Box>
+      )}
+      {whatIfSummary && (
         <Box marginTop={1} flexDirection="column">
           <Text color={role.muted}>
             what-if: cheapest single model{" "}
             <Text color={role.accent}>{whatIfSummary.bestModel}</Text> at{" "}
-            <Text color={role.cost}>{formatUSD(whatIfSummary.bestCost)}</Text> ({deltaLabel} vs
-            actual)
+            <Text color={role.cost}>{formatUSD(whatIfSummary.bestCost)}</Text> (
+            {formatSignedUSD(whatIfSummary.bestDelta)} vs actual)
           </Text>
-          <Text color={role.muted}>{truncate(WHATIF_CAVEAT, caveatWidth)}</Text>
+          <Text color={role.muted}>{WHATIF_CAVEAT}</Text>
         </Box>
       )}
       <Box marginTop={1} flexDirection="column">

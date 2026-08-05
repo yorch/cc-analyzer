@@ -665,7 +665,7 @@ describe("per-turn signals and sidechain bursts", () => {
     expect(a.sidechainBursts[0]?.subagentType).toBe("digger");
   });
 
-  test("builds bursts in aggregate mode, without turn indices", async () => {
+  test("aggregate mode skips burst accounting entirely (the indexer never reads it)", async () => {
     const events = [
       prompt("u1", 0, "parallelize"),
       assistant({
@@ -681,8 +681,8 @@ describe("per-turn signals and sidechain bursts", () => {
     }
     const agg = await analyzeSessionStream(stream(), pricing, { detail: false });
     expect(agg.turns).toEqual([]);
-    expect(agg.sidechainBursts).toHaveLength(1);
-    expect(agg.sidechainBursts[0]?.subagentType).toBe("explorer");
-    expect(agg.sidechainBursts[0]?.turnIndex).toBeUndefined();
+    expect(agg.sidechainBursts).toEqual([]);
+    // The sidechain totals still count — only the per-burst detail is skipped.
+    expect(agg.totals.sidechainApiCalls).toBe(1);
   });
 });

@@ -135,6 +135,31 @@ export interface SessionOutcomes {
   testRuns: number;
 }
 
+/** One renderable cost-per-outcome row (label + dollar value). */
+export interface OutcomeRow {
+  /** Lowercase label, denominator included ("per file touched (3)") — render
+   * sites may adjust casing but never the wording or the row set. */
+  label: string;
+  cost: number;
+}
+
+/**
+ * The rows every render site shows, in one fixed order, with the
+ * absent-not-$0 rule applied once: a ratio whose denominator was zero simply
+ * has no row. The CLI, TUI, and web all render exactly this list.
+ */
+export function outcomeRows(o: SessionOutcomes): OutcomeRow[] {
+  const rows: OutcomeRow[] = [];
+  if (o.costPerTurn !== undefined) rows.push({ label: "per turn", cost: o.costPerTurn });
+  if (o.costPerFileTouched !== undefined)
+    rows.push({ label: `per file touched (${o.filesTouched})`, cost: o.costPerFileTouched });
+  if (o.costPerTestRun !== undefined)
+    rows.push({ label: `per test run (${o.testRuns})`, cost: o.costPerTestRun });
+  if (o.costPerActiveHour !== undefined)
+    rows.push({ label: "per active hour", cost: o.costPerActiveHour });
+  return rows;
+}
+
 /** Derive the cost-per-outcome ratios from a finished analysis. */
 export function sessionOutcomes(a: SessionAnalysis): SessionOutcomes {
   const cost = a.totals.cost.total;

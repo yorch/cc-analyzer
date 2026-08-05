@@ -177,10 +177,25 @@ describe("sessionCostRank", () => {
     insertSession(db, { path: "/s/d.jsonl", session_id: "d", project_id: "p2", cost_total: 20 });
     const rank = sessionCostRank(db, "b");
     expect(rank?.cost).toBe(5);
-    expect(rank?.portfolio).toEqual({ sessions: 4, pct: 50 });
-    expect(rank?.project).toEqual({ sessions: 2, pct: 100 });
+    // Strictly-below share: 1 of 4 sessions costs less than $5…
+    expect(rank?.portfolio).toEqual({ sessions: 4, pct: 25 });
+    // …and 1 of the 2 project sessions.
+    expect(rank?.project).toEqual({ sessions: 2, pct: 50 });
     // Unknown session → undefined, not a fabricated rank.
     expect(sessionCostRank(db, "nope")).toBeUndefined();
+    db.close();
+  });
+
+  test("ties and NULL costs cannot read as most-expensive", () => {
+    const db = openDb(":memory:");
+    insertSession(db, { path: "/s/a.jsonl", session_id: "a", cost_total: 0 });
+    insertSession(db, { path: "/s/b.jsonl", session_id: "b", cost_total: 0 });
+    insertSession(db, { path: "/s/c.jsonl", session_id: "c", cost_total: null });
+    // A tied-cheapest session is p0, never p100 — and a NULL cost reads as $0.
+    expect(sessionCostRank(db, "a")?.portfolio).toEqual({ sessions: 3, pct: 0 });
+    const nullRank = sessionCostRank(db, "c");
+    expect(nullRank?.cost).toBe(0);
+    expect(nullRank?.portfolio.pct).toBe(0);
     db.close();
   });
 

@@ -10,7 +10,7 @@
  * per-turn views, though session totals do include them.
  */
 
-import { ACTIVE_GAP_MS, type Compaction, type SessionAnalysis } from "./analyze.ts";
+import type { Compaction, IdlePeriod, SessionAnalysis, SidechainBurst } from "./analyze.ts";
 import { cacheTokens, ioTokens } from "./pricing.ts";
 
 /**
@@ -192,12 +192,13 @@ export interface HeadroomProjection {
 export function projectHeadroom(ctx: ContextSeries): HeadroomProjection | undefined {
   const { points, markers, contextLimit } = ctx;
   if (!contextLimit) return undefined;
-  const lastMarker = markers[markers.length - 1];
-  const segment = points.slice(lastMarker?.pos ?? 0);
-  const first = segment[0];
-  const last = segment[segment.length - 1];
-  if (segment.length < 3 || !first || !last) return undefined;
-  const perCallTokens = (last.contextTokens - first.contextTokens) / (segment.length - 1);
+  // Index math, not slice — the open segment can be the whole (large) series.
+  const start = markers[markers.length - 1]?.pos ?? 0;
+  const len = points.length - start;
+  const first = points[start];
+  const last = points[points.length - 1];
+  if (len < 3 || !first || !last) return undefined;
+  const perCallTokens = (last.contextTokens - first.contextTokens) / (len - 1);
   if (perCallTokens <= 0) return undefined;
   return {
     perCallTokens,
@@ -245,12 +246,13 @@ export function buildCacheSeries(ctx: ContextSeries): CacheSeries {
       turnIndex: p.turnIndex,
       cached: p.cachedTokens,
       fresh,
-      hitPct: p.contextTokens > 0 ? Math.round((p.cachedTokens / p.contextTokens) * 100) : 0,
+      // The one shared rounding policy for "percent of a token total".
+      hitPct: p.contextTokens > 0 ? pctOfLimit(p.cachedTokens, p.contextTokens) : 0,
     };
   });
   return {
     points,
-    hitPct: contextSum > 0 ? Math.round((cachedSum / contextSum) * 100) : 0,
+    hitPct: contextSum > 0 ? pctOfLimit(cachedSum, contextSum) : 0,
     coldCalls,
   };
 }
@@ -300,28 +302,78 @@ export function buildBurnSeries(analysis: SessionAnalysis): BurnPoint[] {
   });
 }
 
-/** An idle gap between consecutive burn-series calls (the same 5-minute
- * threshold `activeMs` uses, so "idle" means the same thing everywhere). */
+/** One of the analyzer's idle periods, mapped onto the burn-series call axis. */
 export interface BurnGap {
-  /** Index of the first call AFTER the gap. */
+  /** Index of the first call at-or-after the gap's end (may equal the series
+   * length when the session went idle after its last call). */
   pos: number;
   durationMs: number;
 }
 
-/** Idle gaps (> `gapMs`, default `ACTIVE_GAP_MS`) between consecutive
- * timestamped calls of a burn series — where "6h wall, 40min active" hides.
- * Timestamp-less calls are skipped, not treated as gaps. */
-export function buildGapMarkers(points: BurnPoint[], gapMs = ACTIVE_GAP_MS): BurnGap[] {
-  const gaps: BurnGap[] = [];
-  let prevMs: number | undefined;
-  points.forEach((p, i) => {
-    if (p.ms === undefined) return;
-    if (prevMs !== undefined && p.ms - prevMs > gapMs) {
-      gaps.push({ pos: i, durationMs: p.ms - prevMs });
+/**
+ * The analyzer's `idlePeriods` placed on a burn series — where "6h wall,
+ * 40min active" hides. The periods come from `analyze.ts` (gaps between ALL
+ * event timestamps, > `ACTIVE_GAP_MS`), so a chart's "idle" total is exactly
+ * `durationMs − activeMs` and can never contradict the active-time vitals —
+ * a long-running tool whose result event lands mid-gap is active, not idle.
+ */
+export function buildGapMarkers(points: BurnPoint[], idlePeriods: IdlePeriod[]): BurnGap[] {
+  // One cursor pass: points are time-ordered (buildBurnSeries sorts) and so
+  // are the idle periods.
+  let cursor = 0;
+  return idlePeriods.map((idle) => {
+    const endMs = idle.startMs + idle.durationMs;
+    while (cursor < points.length) {
+      const ms = points[cursor]?.ms;
+      if (ms !== undefined && ms >= endMs) break;
+      cursor++;
     }
-    prevMs = p.ms;
+    return { pos: cursor, durationMs: idle.durationMs };
   });
-  return gaps;
+}
+
+/**
+ * A turn's attention signals, as short labels — the ONE definition of "this
+ * turn is worth flagging", shared by the web tooltips/marks, the TUI ▲ row,
+ * and anything else that renders per-turn churn. A turn is flagged iff this
+ * returns a non-empty array.
+ */
+export function turnFlags(t: TurnPoint): string[] {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const flags: string[] = [];
+  if (t.interrupted) flags.push("interrupted");
+  if (t.correction) flags.push("correction prompt");
+  if (t.retries > 0) flags.push(plural(t.retries, "retry", "retries"));
+  if (t.testFailures > 0) flags.push(plural(t.testFailures, "failing test", "failing tests"));
+  if (t.redundantReads > 0)
+    flags.push(plural(t.redundantReads, "redundant read", "redundant reads"));
+  if (t.toolErrors > 0) flags.push(plural(t.toolErrors, "tool error", "tool errors"));
+  return flags;
+}
+
+/** One subagent type's summed burst spend (see `groupSidechainBursts`). */
+export interface SubagentTypeRow {
+  /** Best-effort type, with unmatched bursts folded into "(unmatched)". */
+  type: string;
+  bursts: number;
+  apiCalls: number;
+  cost: number;
+}
+
+/** Fold bursts into a per-type rollup, ranked by cost — the one grouping rule
+ * (label, fold, ordering) for every "what did the `finder` subagent cost this
+ * session" surface. */
+export function groupSidechainBursts(bursts: SidechainBurst[]): SubagentTypeRow[] {
+  const byType = new Map<string, SubagentTypeRow>();
+  for (const burst of bursts) {
+    const type = burst.subagentType ?? "(unmatched)";
+    const row = byType.get(type) ?? { type, bursts: 0, apiCalls: 0, cost: 0 };
+    row.bursts += 1;
+    row.apiCalls += burst.apiCalls;
+    row.cost += burst.cost;
+    byType.set(type, row);
+  }
+  return [...byType.values()].sort((a, b) => b.cost - a.cost || b.apiCalls - a.apiCalls);
 }
 
 export interface TurnPoint {

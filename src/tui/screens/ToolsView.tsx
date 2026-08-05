@@ -238,7 +238,8 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
             </Text>
             <Text color={role.muted}> invocations / week</Text>
           </Text>
-          <Text color={role.muted}>{truncate(SKILL_COST_CAVEAT, Math.max(20, columns - 2))}</Text>
+          {/* Mandatory caveats print VERBATIM — Ink wraps long lines. */}
+          <Text color={role.muted}>{SKILL_COST_CAVEAT}</Text>
         </Box>
       )}
     </Box>

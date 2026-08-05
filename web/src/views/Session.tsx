@@ -3,7 +3,11 @@ import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
+  type CostRankCohort,
+  formatSignedUSD,
+  MIN_RANK_COHORT,
   OUTCOME_CAVEAT,
+  outcomeRows,
   type SessionAnalysis,
   type SessionResponse,
   sessionOutcomes,
@@ -53,7 +57,7 @@ export function Session({ id }: { id: string }) {
   const [a, projects] = loaded;
   const project = projects.find((row) => row.projectPath === a.projectPath);
   const c = a.totals.cost;
-  const rank = a.insights?.rank;
+  const rankCard = pickRankCohort(a.insights?.rank ?? null);
 
   return (
     <>
@@ -87,16 +91,8 @@ export function Session({ id }: { id: string }) {
             sub={`${a.totals.sidechainApiCalls} sidechain calls`}
           />
         )}
-        {rank && (
-          <Card
-            label="Cost rank"
-            value={`p${(rank.project ?? rank.portfolio).pct}`}
-            sub={
-              rank.project
-                ? `of ${rank.project.sessions} project sessions`
-                : `of ${rank.portfolio.sessions} sessions`
-            }
-          />
+        {rankCard && (
+          <Card label="Cost rank" value={`p${rankCard.cohort.pct}`} sub={rankCard.sub} />
         )}
       </div>
 
@@ -146,22 +142,36 @@ export function Session({ id }: { id: string }) {
   );
 }
 
+/**
+ * Which cohort the Cost-rank card shows: the project's when it is big enough
+ * to mean something (`MIN_RANK_COHORT`), else the portfolio's; no card at all
+ * when both are tiny — "p50 of 2 sessions" is noise, not signal. When the
+ * project cohort is shown, the portfolio rank rides along in the sub-line.
+ */
+function pickRankCohort(
+  rank: { portfolio: CostRankCohort; project?: CostRankCohort } | null,
+): { cohort: CostRankCohort; sub: string } | undefined {
+  if (!rank) return undefined;
+  const { portfolio, project } = rank;
+  if (project && project.sessions >= MIN_RANK_COHORT) {
+    const overall =
+      portfolio.sessions > project.sessions ? ` · p${portfolio.pct} of all sessions` : "";
+    return { cohort: project, sub: `of ${project.sessions} project sessions${overall}` };
+  }
+  if (portfolio.sessions >= MIN_RANK_COHORT) {
+    return { cohort: portfolio, sub: `of ${portfolio.sessions} sessions` };
+  }
+  return undefined;
+}
+
 function Summary({ a }: { a: SessionResponse }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
-  const outcomes = useMemo(() => sessionOutcomes(a), [a]);
-  const outcomeRows: [string, string][] = [];
-  if (outcomes.costPerTurn !== undefined) outcomeRows.push(["Per turn", usd(outcomes.costPerTurn)]);
-  if (outcomes.costPerFileTouched !== undefined)
-    outcomeRows.push([
-      `Per file touched (${outcomes.filesTouched})`,
-      usd(outcomes.costPerFileTouched),
-    ]);
-  if (outcomes.costPerTestRun !== undefined)
-    outcomeRows.push([`Per test run (${outcomes.testRuns})`, usd(outcomes.costPerTestRun)]);
-  if (outcomes.costPerActiveHour !== undefined)
-    outcomeRows.push(["Per active hour", usd(outcomes.costPerActiveHour)]);
+  // The shared row set (labels, order, absent-not-$0 rule) — same list the
+  // CLI report and TUI summary render; only the leading capital is local.
+  const outcomes = useMemo(() => outcomeRows(sessionOutcomes(a)), [a]);
+  const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   const whatIf = a.insights?.whatIf;
   return (
     <section>
@@ -222,24 +232,21 @@ function Summary({ a }: { a: SessionResponse }) {
           <Row k="Files touched" v={String(a.filesTouched.length)} />
           <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
         </SummaryGroup>
-        {outcomeRows.length > 0 && (
+        {outcomes.length > 0 && (
           <SummaryGroup title="Cost per outcome">
-            {outcomeRows.map(([k, v]) => (
-              <Row key={k} k={k} v={v} />
+            {outcomes.map((r) => (
+              <Row key={r.label} k={capitalize(r.label)} v={usd(r.cost)} />
             ))}
           </SummaryGroup>
         )}
       </div>
-      {outcomeRows.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
-      {whatIf && whatIf.rows.length > 0 && whatIf.summary.bestModel && (
+      {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
+      {whatIf?.summary.bestModel && (
         <section className="summary-group" style={{ marginTop: 12 }}>
           <h2>What-if repricing</h2>
           <p>
             cheapest single model: {whatIf.summary.bestModel} at {usd(whatIf.summary.bestCost)} (
-            {whatIf.summary.bestDelta <= 0
-              ? `−${usd(-whatIf.summary.bestDelta)}`
-              : `+${usd(whatIf.summary.bestDelta)}`}{" "}
-            vs actual {usd(whatIf.summary.actualCost)})
+            {formatSignedUSD(whatIf.summary.bestDelta)} vs actual {usd(whatIf.summary.actualCost)})
           </p>
           <p className="muted">{WHATIF_CAVEAT}</p>
         </section>
@@ -350,6 +357,9 @@ function Timeline({ a }: { a: SessionAnalysis }) {
             const y = i * rowH + 4;
             const sx = x(t.startMs);
             const ex = x(t.endMs);
+            // Deliberately the user-intervention subset, not the full
+            // `turnFlags` thrash predicate: a red lane means "the human
+            // stepped in here"; tool errors already mark their own call dots.
             const flags = [
               ...(t.turn.interrupted ? ["interrupted"] : []),
               ...(t.turn.correction ? ["correction prompt"] : []),

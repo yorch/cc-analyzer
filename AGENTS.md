@@ -183,8 +183,10 @@ Around that spine sit the derived series, all in the same module: the **cache
 series** (`buildCacheSeries`, cached vs fresh prompt-side split + token-weighted
 hit rate + cold-call count, derived from the context series' points so the two
 charts describe the same calls), **idle-gap markers** on the burn series
-(`buildGapMarkers`, gaps > the same `ACTIVE_GAP_MS` the `activeMs` metric uses,
-imported from `analyze.ts` so "idle" means one thing), the **headroom
+(`buildGapMarkers` places the analyzer's `totals.idlePeriods` — the exact gaps
+`activeMs` excluded, over ALL event timestamps — onto the call axis, so a
+chart's "idle" total is `durationMs − activeMs` and a long-running tool whose
+result lands mid-gap is active, never phantom idle), the **headroom
 projection** (`projectHeadroom`: linear context growth over the calls since the
 last compaction, ≥ 3 points and a known window required, flat/shrinking →
 undefined — a projection, not a promise), a per-marker `reclaimed` token count
@@ -192,14 +194,23 @@ undefined — a projection, not a promise), a per-marker `reclaimed` token count
 absent when either side is unknown), the in-session **model mix**
 (`modelMixRows`), and the widened `TurnPoint` (the four cost categories which
 sum to `cost`, `wallMs`, operation-step `kindCounts` + `toolErrors`, and the
-per-turn signal flags below). The analyzer also groups sidechain calls into
+per-turn signal flags below). `turnFlags()` is the ONE "is this turn worth
+flagging" predicate (interrupted / correction / retries / test failures /
+redundant reads / tool errors) — the web tooltips and marks and the TUI ▲ row
+both render exactly its output; the web timeline's red lanes are deliberately
+the narrower user-intervention subset (interrupted/correction only). The
+analyzer also groups sidechain calls into
 **`SessionAnalysis.sidechainBursts`** — one entry per chain, so "which subagent
 burst cost $3" is answerable — with a **best-effort** `subagentType`: a burst's
 root sidechain user event repeats the Task prompt verbatim, so bursts join to
 main-chain `Task`/`Agent` spawns by normalized prompt (each spawn consumed
 once, in order), falling back to an order-zip only when nothing matched and the
-counts align exactly; anything else stays unnamed rather than guessed. Bursts
-survive aggregate mode (only `turnIndex` needs materialized turns) and are not
+counts align exactly; anything else stays unnamed rather than guessed —
+which is why render sites keep the accurate `subagents` type list alongside
+the burst table instead of replacing it. `groupSidechainBursts()` is the one
+per-type rollup (label, fold, ordering) over them. Bursts are **detail-mode
+only** (always empty in aggregate mode — the indexer's streaming path never
+reads them and must not pay for the per-chain accumulators) and are not
 flattened into the index.
 Pricing's `maxInputTokens` (LiteLLM `max_input_tokens`, also in the bundled
 snapshot; the pricing cache is format-versioned so pre-upgrade caches refresh)
@@ -262,20 +273,30 @@ fold as the portfolio, and `sessionOutcomes(analysis)` derives the
 cost-per-outcome ratios (per turn / per file touched / per test run / per
 active hour — a ratio is **absent, not $0**, when its denominator is zero) with
 the exported `OUTCOME_CAVEAT` ("activity, not value") printed verbatim at every
-render site. `sessionCostRank(db, id)` in `stats.ts` places one session's cost
-among the indexed sessions (portfolio + same-project cohorts, share ≤ this
-session's cost, cohort sizes included so render sites can hedge tiny cohorts);
-it resolves ids like `sessionPathById` (session_id, then path-basename LIKE)
-and returns undefined for un-indexed sessions. Surfaces: `cc-analyzer analyze`
+render site; `outcomeRows()` is the one label/order/skip-undefined row
+derivation all three renderers print, and signed dollar deltas go through
+`formatSignedUSD` (format-shared) so "saving vs overspend" reads identically
+everywhere. `sessionCostRank(db, id)` in `stats.ts` places one session's cost
+among the indexed sessions: the percentile is the share costing **strictly
+less** (NULL costs read as $0), so a tied-cheapest session is p0, never p100;
+portfolio + same-project cohorts fold in ONE table scan; ids resolve through
+`sessionRowById` in `queries.ts` — the same rule `sessionPathById` uses, so
+the session route and its rank can never resolve different rows — and
+un-indexed sessions return undefined. Cohort sizes ride along and render
+sites hide the rank below `MIN_RANK_COHORT` (stats-types) sessions — "p50 of
+2 sessions" is noise. Surfaces: `cc-analyzer analyze`
 appends "Cost per outcome", "What-if repricing" (the what-if is computed in
 `cmdAnalyze` and passed in — the renderer never sees the pricing table), and a
-"Subagent bursts" table; `GET /api/sessions/:id` returns the analysis plus an
-`insights` sibling (`{ whatIf, rank }` — computed server-side because pricing
-and the index live there, in the same handler so a huge session parses once);
-the SPA derives outcomes client-side from the same payload (`sessionOutcomes`
-is bun-free) and renders rank/what-if from `insights`, guarding
-`insights === undefined`; the TUI computes its what-if at the screen boundary
-from its `pricing` prop.
+"Subagent bursts" table (plus the accurate `Subagents:` type list, which the
+best-effort burst join must never replace); `GET /api/sessions/:id` returns
+the analysis plus an `insights` sibling (`{ whatIf, rank }` — computed
+server-side because pricing and the index live there, in the same handler so a
+huge session parses once; the rank memoizes per session id on the index
+fingerprint); the SPA derives outcomes client-side from the same payload
+(`sessionOutcomes` is bun-free) and renders rank/what-if from `insights`,
+guarding `insights === undefined`; the TUI computes its what-if at the screen
+boundary from its `pricing` prop. TUI caveat lines render verbatim and wrap —
+never `truncate()` a mandatory caveat.
 
 **Setup audit is the one surface that reads config, not transcripts.**
 `inventory.ts` (`node:fs`, read-only, never throws) scans the configured

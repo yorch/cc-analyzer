@@ -55,6 +55,11 @@ const MAX_PROJECT_ROWS = 2000;
 // keyspace a client can enumerate.
 const MAX_REPORT_SLOTS = 16;
 
+// How many per-session cost ranks stay memoized. The keyspace is bounded by
+// sessions that actually resolve in the index (unknown ids 404 first), but a
+// crawl over a big portfolio could still bloat the Map — cap it by recency.
+const MAX_RANK_SLOTS = 256;
+
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable): Hono {
   const api = new Hono();
@@ -326,12 +331,14 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
     const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    // The rank depends only on the index, so it memoizes on the fingerprint —
+    // flipping between two sessions doesn't rescan the table. The what-if is
+    // a pure fold over the handful of models just analyzed; not worth a slot.
+    const rank = memo(`rank:${id}`, fingerprint(), () => sessionCostRank(db, id) ?? null);
+    capSlots("rank:", MAX_RANK_SLOTS);
     return c.json({
       ...analysis,
-      insights: {
-        whatIf: sessionWhatIf(analysis.models, pricing),
-        rank: sessionCostRank(db, id) ?? null,
-      },
+      insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
     });
   });
 
