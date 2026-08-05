@@ -3,11 +3,15 @@ import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
+  OUTCOME_CAVEAT,
   type SessionAnalysis,
+  type SessionResponse,
+  sessionOutcomes,
   type TranscriptItem,
   type Turn,
   type TurnStep,
   topEntries,
+  WHATIF_CAVEAT,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { DiagnosticList } from "../DiagnosticList.tsx";
@@ -49,6 +53,7 @@ export function Session({ id }: { id: string }) {
   const [a, projects] = loaded;
   const project = projects.find((row) => row.projectPath === a.projectPath);
   const c = a.totals.cost;
+  const rank = a.insights?.rank;
 
   return (
     <>
@@ -80,6 +85,17 @@ export function Session({ id }: { id: string }) {
             label="Subagents"
             value={usd(a.totals.sidechainCost)}
             sub={`${a.totals.sidechainApiCalls} sidechain calls`}
+          />
+        )}
+        {rank && (
+          <Card
+            label="Cost rank"
+            value={`p${(rank.project ?? rank.portfolio).pct}`}
+            sub={
+              rank.project
+                ? `of ${rank.project.sessions} project sessions`
+                : `of ${rank.portfolio.sessions} sessions`
+            }
           />
         )}
       </div>
@@ -130,10 +146,23 @@ export function Session({ id }: { id: string }) {
   );
 }
 
-function Summary({ a }: { a: SessionAnalysis }) {
+function Summary({ a }: { a: SessionResponse }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
+  const outcomes = useMemo(() => sessionOutcomes(a), [a]);
+  const outcomeRows: [string, string][] = [];
+  if (outcomes.costPerTurn !== undefined) outcomeRows.push(["Per turn", usd(outcomes.costPerTurn)]);
+  if (outcomes.costPerFileTouched !== undefined)
+    outcomeRows.push([
+      `Per file touched (${outcomes.filesTouched})`,
+      usd(outcomes.costPerFileTouched),
+    ]);
+  if (outcomes.costPerTestRun !== undefined)
+    outcomeRows.push([`Per test run (${outcomes.testRuns})`, usd(outcomes.costPerTestRun)]);
+  if (outcomes.costPerActiveHour !== undefined)
+    outcomeRows.push(["Per active hour", usd(outcomes.costPerActiveHour)]);
+  const whatIf = a.insights?.whatIf;
   return (
     <section>
       <section className="session-diagnostics" aria-labelledby="session-diagnostics-title">
@@ -193,7 +222,28 @@ function Summary({ a }: { a: SessionAnalysis }) {
           <Row k="Files touched" v={String(a.filesTouched.length)} />
           <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
         </SummaryGroup>
+        {outcomeRows.length > 0 && (
+          <SummaryGroup title="Cost per outcome">
+            {outcomeRows.map(([k, v]) => (
+              <Row key={k} k={k} v={v} />
+            ))}
+          </SummaryGroup>
+        )}
       </div>
+      {outcomeRows.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
+      {whatIf && whatIf.rows.length > 0 && whatIf.summary.bestModel && (
+        <section className="summary-group" style={{ marginTop: 12 }}>
+          <h2>What-if repricing</h2>
+          <p>
+            cheapest single model: {whatIf.summary.bestModel} at {usd(whatIf.summary.bestCost)} (
+            {whatIf.summary.bestDelta <= 0
+              ? `−${usd(-whatIf.summary.bestDelta)}`
+              : `+${usd(whatIf.summary.bestDelta)}`}{" "}
+            vs actual {usd(whatIf.summary.actualCost)})
+          </p>
+          <p className="muted">{WHATIF_CAVEAT}</p>
+        </section>
+      )}
       <div style={{ marginTop: 12 }}>
         {Object.entries(a.tools).map(([t, n]) => (
           <span className="tag" key={t}>
@@ -282,7 +332,8 @@ function Timeline({ a }: { a: SessionAnalysis }) {
     <section>
       <p className="muted">
         {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn; dots are
-        API calls (teal = subagent sidechain, red ring = tool error in that call)
+        API calls (teal = subagent sidechain, red ring = tool error in that call, red-tinted lane =
+        interrupted or correction turn)
         {timed.length > limit ? ` · showing ${limit}/${timed.length} turns` : ""}
       </p>
       <div className="timelinewrap">
@@ -299,17 +350,21 @@ function Timeline({ a }: { a: SessionAnalysis }) {
             const y = i * rowH + 4;
             const sx = x(t.startMs);
             const ex = x(t.endMs);
+            const flags = [
+              ...(t.turn.interrupted ? ["interrupted"] : []),
+              ...(t.turn.correction ? ["correction prompt"] : []),
+            ];
             return (
               <g key={t.turn.index}>
                 <rect
-                  className="tl-turn"
+                  className={`tl-turn${flags.length > 0 ? " flagged" : ""}`}
                   x={sx}
                   y={y + 2}
                   width={Math.max(ex - sx, 2)}
                   height={8}
                   rx={2}
                 >
-                  <title>{`#${t.turn.index + 1} +${offset(t.startMs)} · ${usd(t.turn.cost.total)} · ${t.turn.apiCalls.length} calls\n${t.turn.prompt.slice(0, 160)}`}</title>
+                  <title>{`#${t.turn.index + 1} +${offset(t.startMs)} · ${usd(t.turn.cost.total)} · ${t.turn.apiCalls.length} calls${flags.length > 0 ? ` · ⚠ ${flags.join(" · ")}` : ""}\n${t.turn.prompt.slice(0, 160)}`}</title>
                 </rect>
                 {t.calls.map(({ ms, hasError, ci }) => {
                   const call = t.turn.apiCalls[ci] as Turn["apiCalls"][number];
