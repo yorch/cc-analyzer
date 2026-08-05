@@ -172,9 +172,9 @@ without adding fields to the disposable aggregate index.
 ### Setup audit: inventory vs observed usage
 
 The setup audit is the only analytics surface whose input is *configuration*
-rather than transcripts. `scanInventory()` in
+rather than transcripts. `scanInventories()` (over every configured Claude root) in
 [src/core/inventory.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/inventory.ts)
-reads the configured Claude dir — `settings.json` (permission rule counts, hook
+reads each configured Claude dir — `settings.json` (permission rule counts, hook
 events, a pinned `model`, any `mcpServers`), `skills/<name>/SKILL.md`,
 `agents/<name>.md`, a best-effort walk of `plugins/` (a dir counts as a plugin
 when it declares `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`,

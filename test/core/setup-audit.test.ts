@@ -18,6 +18,7 @@ const TODAY = "2026-07-28";
 function inventory(over: Partial<SetupInventory> = {}): SetupInventory {
   return {
     claudeDir: "/tmp/claude",
+    claudeDirs: ["/tmp/claude"],
     present: true,
     skills: [],
     agents: [],

@@ -53,6 +53,9 @@ export function Project({ id }: { id: string }) {
   if (!data) return null;
 
   const project = projects.find((p) => p.projectId === id);
+  // Only worth naming when more than one Claude data dir is configured —
+  // otherwise every project would carry the same redundant path.
+  const multiRoot = new Set(projects.map((p) => p.claudeDir)).size > 1;
 
   return (
     <>
@@ -68,6 +71,7 @@ export function Project({ id }: { id: string }) {
           {project && project.compactions > 0
             ? ` · ${count(project.compactions)} compaction${project.compactions === 1 ? "" : "s"}`
             : ""}
+          {multiRoot && project ? ` · ${project.claudeDir}` : ""}
         </span>
       </header>
 

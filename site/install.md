@@ -151,6 +151,35 @@ cc-analyzer serve --refresh     # refresh, then serve
 `index --check` exits non-zero when the cache is stale, making it suitable for
 scripts. `serve --open` is opt-in and only opens a browser for loopback hosts.
 
+## Claude data directories
+
+cc-analyzer reads `~/.claude` by default, and honours `CLAUDE_CONFIG_DIR` when
+you have relocated Claude Code's data directory — a relocated install needs no
+configuration.
+
+You can also name directories yourself, and **several are analyzed together as
+one portfolio** — useful for a work profile alongside a personal one, or for
+several machines' data synced into a single folder:
+
+```sh
+cc-analyzer claude-dir                      # what is in effect, and why
+cc-analyzer claude-dir add ~/work/.claude   # append a directory
+cc-analyzer claude-dir remove ~/work/.claude
+cc-analyzer claude-dir reset                # back to the default resolution
+cc-analyzer index                           # pick up the change
+
+cc-analyzer --claude-dir=/path/to/.claude stats   # just this once
+```
+
+If you see an empty portfolio, run `cc-analyzer claude-dir`: it prints every
+directory being searched and which setting put it there.
+
+Two directories can hold sessions for the same working directory; they stay
+separate projects, and lists name the directory when the labels would collide.
+The index mirrors your configured list, so removing a directory removes its
+sessions on the next `cc-analyzer index` — a directory that is merely
+unreachable at that moment (an unmounted volume) keeps its data instead.
+
 ## Telemetry & privacy
 
 `cc-analyzer` reports **anonymous, cookieless** usage stats to a self-hosted
@@ -214,7 +243,8 @@ rm "$(command -v cc-analyzer)"
 rm -rf ~/.config/cc-analyzer   # pricing cache + session index (safe to delete)
 ```
 
-Your Claude Code data in `~/.claude` is never touched.
+Your Claude Code data in `~/.claude` — or any other directory you pointed
+cc-analyzer at — is never touched.
 
 ---
 

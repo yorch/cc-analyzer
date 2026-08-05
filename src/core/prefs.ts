@@ -13,6 +13,7 @@ import { prefsConfigPath } from "./paths.ts";
 
 interface PrefsConfig {
   costBasis?: CostBasis;
+  claudeDirs?: string[];
   [key: string]: unknown;
 }
 
@@ -44,4 +45,25 @@ export function getCostBasis(): CostBasis {
  *  Merge-tolerant: preserves any other keys already in prefs.json. */
 export function setCostBasis(basis: CostBasis): void {
   writeConfig({ ...readConfig(), costBasis: basis });
+}
+
+/**
+ * Claude data directories persisted by `cc-analyzer claude-dir`. Empty means
+ * unset — resolution then falls through to `CLAUDE_CONFIG_DIR` and `~/.claude`.
+ *
+ * `paths.ts` reads this key with its own tolerant reader (it cannot import this
+ * module without a cycle); this is the typed read/write the CLI command uses.
+ */
+export function getClaudeDirs(): string[] {
+  const dirs = readConfig().claudeDirs;
+  if (!Array.isArray(dirs)) return [];
+  return dirs.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
+}
+
+/** Persist the Claude data directories. An empty list clears the preference. */
+export function setClaudeDirs(dirs: string[]): void {
+  const cfg = { ...readConfig() };
+  if (dirs.length === 0) delete cfg.claudeDirs;
+  else cfg.claudeDirs = dirs;
+  writeConfig(cfg);
 }

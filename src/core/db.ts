@@ -12,6 +12,7 @@ const META_SCHEMA = `CREATE TABLE IF NOT EXISTS meta (
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   path TEXT PRIMARY KEY,
+  claude_dir TEXT NOT NULL,
   project_id TEXT NOT NULL,
   project_path TEXT,
   session_id TEXT,
@@ -75,6 +76,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_claude_dir ON sessions(claude_dir);
 CREATE INDEX IF NOT EXISTS idx_sessions_month ON sessions(month);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
@@ -129,7 +131,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // `isTestCommand`-style trade-off, made the other way here: the correction
 // marker list is baked in at index time, so evolving the phrase heuristics
 // requires a reindex (unlike command heads, which classify at query time).
-export const SCHEMA_VERSION = "13";
+// v14: adds `claude_dir` — which Claude Code data directory a session was
+// discovered under, now that `claudeRoots()` can resolve more than one. It is
+// what scopes the indexer's prune (a row whose root is no longer configured is
+// dropped, so removing a root removes its data) and what `index --check`
+// counts against. Project ids are made globally unique at index time instead
+// (`qualifyProjectId`), so no aggregate query needs a root clause. Same
+// rationale as v8–v13: the incremental indexer skips unchanged files, so rows
+// written by v13 would carry no root forever and the first multi-root prune
+// would treat every one of them as de-configured — the bump forces the rebuild.
+export const SCHEMA_VERSION = "14";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

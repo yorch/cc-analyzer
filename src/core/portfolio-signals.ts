@@ -10,7 +10,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { scanInventory } from "./inventory.ts";
+import { scanInventories } from "./inventory.ts";
 import type { PortfolioSignals } from "./portfolio-diagnostics.ts";
 import type { PricingTable } from "./pricing.ts";
 import { buildSetupAudit } from "./setup-audit.ts";
@@ -63,6 +63,6 @@ export function assemblePortfolioSignals(
     contextTax: contextTax(db),
     whatIf: whatIfRepricing(db, pricing),
     parseCoverage: parseCoverage(db),
-    ...(opts.audit === false ? {} : { audit: buildSetupAudit(scanInventory(), rollup, today) }),
+    ...(opts.audit === false ? {} : { audit: buildSetupAudit(scanInventories(), rollup, today) }),
   };
 }

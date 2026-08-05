@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { analyzeSession } from "../core/analyze.ts";
 import { openDb } from "../core/db.ts";
 import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
@@ -6,11 +9,17 @@ import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
-import { scanInventory } from "../core/inventory.ts";
+import { scanInventories } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
+import {
+  type ClaudeRootSource,
+  claudeRoots,
+  setClaudeRootsOverride,
+  splitRootList,
+} from "../core/paths.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
-import { getCostBasis, setCostBasis } from "../core/prefs.ts";
+import { getClaudeDirs, getCostBasis, setClaudeDirs, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
@@ -49,7 +58,7 @@ import {
   renderWeeklyDigest,
 } from "./render.ts";
 
-const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions in ~/.claude
+const HELP = `cc-analyzer ${VERSION} — analyze Claude Code sessions
 
 Usage:
   cc-analyzer                          Launch the interactive TUI
@@ -76,10 +85,25 @@ Usage:
                                        View or change anonymous usage telemetry
   cc-analyzer cost-basis [api|subscription]
                                        View or change how dollar figures are framed
+  cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
+                                       View or change which Claude data dirs are read
   cc-analyzer help                     Show this help
+
+Global options:
+  --claude-dir=<path>                  Read this Claude data dir for one invocation
+                                       (repeatable, or a ${
+                                         process.platform === "win32" ? ";" : ":"
+}-separated list)
 
 Notes:
   <id> is a session uuid (searched across all projects) or a path to a .jsonl file.
+
+Claude data directories:
+  By default cc-analyzer reads ~/.claude, and honours CLAUDE_CONFIG_DIR when
+  Claude Code has been relocated. Configure one or more directories of your own
+  with \`cc-analyzer claude-dir add <path>\` — several are analyzed together as a
+  single portfolio. Run \`cc-analyzer claude-dir\` to see what is in effect, and
+  \`cc-analyzer index\` after a change.
 
 Telemetry:
   cc-analyzer reports anonymous, cookieless usage stats (no session content,
@@ -141,20 +165,109 @@ function cmdCostBasis(action: string | undefined): number {
   }
 }
 
+/** One line per configured root, for the `claude-dir` report and empty states. */
+function rootLines(): string[] {
+  return claudeRoots().map((r) => `  ${r.path}  (${ROOT_SOURCE_LABEL[r.source]})`);
+}
+
+const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
+  flag: "--claude-dir",
+  env: "CC_ANALYZER_CLAUDE_DIR",
+  prefs: "cc-analyzer claude-dir",
+  "claude-code": "CLAUDE_CONFIG_DIR",
+  default: "default",
+};
+
 async function cmdProjects(): Promise<number> {
   const projects = await listProjects();
   if (projects.length === 0) {
-    console.log("No projects found under ~/.claude/projects.");
+    // Name the directories actually searched and why: the commonest cause of an
+    // empty portfolio is a relocated Claude dir, and "~/.claude" would be a lie.
+    console.log(
+      `No projects found under:\n${rootLines().join("\n")}\n\n` +
+        "Point cc-analyzer at another directory with `cc-analyzer claude-dir add <path>` " +
+        "or --claude-dir=<path>.",
+    );
     return 0;
   }
+  const multiRoot = new Set(projects.map((p) => p.root)).size > 1;
   console.log(
     table(
-      ["sessions", "project"],
-      projects.map((p) => [String(p.sessionCount), truncate(p.label, 80)]),
+      multiRoot ? ["sessions", "project", "claude dir"] : ["sessions", "project"],
+      projects.map((p) =>
+        multiRoot
+          ? [String(p.sessionCount), truncate(p.label, 60), truncate(p.root, 40)]
+          : [String(p.sessionCount), truncate(p.label, 80)],
+      ),
     ),
   );
   console.log(`\n${projects.length} projects`);
   return 0;
+}
+
+/**
+ * Show or change the Claude data directories cc-analyzer reads.
+ *
+ * Writes only cc-analyzer's own prefs.json — the directories themselves are
+ * never touched, in keeping with the tool's read-only contract.
+ */
+function cmdClaudeDir(action: string | undefined, operand: string | undefined): number {
+  const show = (): number => {
+    console.log(`Reading Claude Code data from:\n${rootLines().join("\n")}`);
+    const stored = getClaudeDirs();
+    if (stored.length === 0) {
+      console.log("\nNo directories are persisted; add one with `cc-analyzer claude-dir add`.");
+    }
+    return 0;
+  };
+
+  switch (action) {
+    case undefined:
+    case "show":
+      return show();
+    case "set":
+    case "add":
+    case "remove": {
+      if (!operand) {
+        console.error(`usage: cc-analyzer claude-dir ${action} <path>`);
+        return 2;
+      }
+      const path = resolve(operand.startsWith("~/") ? join(homedir(), operand.slice(2)) : operand);
+      const current = getClaudeDirs();
+      let next: string[];
+      if (action === "set") next = [path];
+      else if (action === "add") next = current.includes(path) ? current : [...current, path];
+      else next = current.filter((p) => p !== path);
+
+      if (action === "remove" && next.length === current.length) {
+        console.error(`error: '${path}' is not a persisted Claude directory.`);
+        return 1;
+      }
+      if (action !== "remove" && !existsSync(path)) {
+        // A warning, not an error: a synced or mounted directory can be absent
+        // right now and present on the next run.
+        console.error(`warning: '${path}' does not exist yet.`);
+      }
+      setClaudeDirs(next);
+      console.log(
+        "Reindex with `cc-analyzer index` to pick up the change.\n\n" +
+          `Reading Claude Code data from:\n${rootLines().join("\n")}`,
+      );
+      return 0;
+    }
+    case "reset":
+      setClaudeDirs([]);
+      console.log(
+        `Cleared. Reading Claude Code data from:\n${rootLines().join("\n")}\n\n` +
+          "Reindex with `cc-analyzer index` to pick up the change.",
+      );
+      return 0;
+    default:
+      console.error(
+        "usage: cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]",
+      );
+      return 2;
+  }
 }
 
 async function cmdSessions(projectId: string | undefined): Promise<number> {
@@ -388,7 +501,7 @@ function cmdAudit(json: boolean): number {
   }
   const usage = analyticsRollup(db);
   db.close();
-  const audit = buildSetupAudit(scanInventory(), usage, localDayOfMs(Date.now()));
+  const audit = buildSetupAudit(scanInventories(), usage, localDayOfMs(Date.now()));
   console.log(
     json
       ? JSON.stringify(audit, null, 2)
@@ -644,6 +757,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdTelemetry(positional[0]);
     case "cost-basis":
       return cmdCostBasis(positional[0]);
+    case "claude-dir":
+      return cmdClaudeDir(positional[0], positional[1]);
     // Hidden re-entry point: the detached child that delivers one telemetry
     // event after its parent has exited. Reads argv directly (the payload is
     // JSON, not a flag) and prints nothing. Never itself tracked.
@@ -665,8 +780,36 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
   }
 }
 
+/**
+ * Pull `--claude-dir=<path>` (repeatable, or one `PATH`-style list) out of argv
+ * and apply it before anything resolves a directory.
+ *
+ * Only the `--flag=value` form is accepted, matching `--port=`/`--host=`: the
+ * space-separated form would leave the path in argv as a positional and quietly
+ * break `sessions <projectId>`.
+ */
+function applyClaudeDirFlag(argv: string[]): string[] | null {
+  const PREFIX = "--claude-dir=";
+  if (argv.includes("--claude-dir")) {
+    console.error("error: --claude-dir takes its value inline, as --claude-dir=<path>.");
+    return null;
+  }
+  const paths = argv
+    .filter((a) => a.startsWith(PREFIX))
+    .flatMap((a) => splitRootList(a.slice(PREFIX.length)));
+  if (argv.some((a) => a.startsWith(PREFIX)) && paths.length === 0) {
+    console.error("error: --claude-dir=<path> needs a path.");
+    return null;
+  }
+  if (paths.length > 0) setClaudeRootsOverride(paths);
+  return argv.filter((a) => !a.startsWith(PREFIX));
+}
+
 async function main(): Promise<number> {
-  const [, , command, ...rest] = process.argv;
+  // Strip the global flag before the command is read, so it may appear anywhere.
+  const argv = applyClaudeDirFlag(process.argv.slice(2));
+  if (argv === null) return 2;
+  const [command, ...rest] = argv;
   const code = await runCommand(command, rest);
 
   // Best-effort, non-blocking "update available" notice for quick commands.

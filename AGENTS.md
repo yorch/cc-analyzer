@@ -5,7 +5,8 @@ This file provides guidance to AI Agents when working with code in this reposito
 > The file `CLAUDE.md` is a symlink to `AGENTS.md`, so any changes in either file are reflected in the other.
 
 `cc-analyzer` is a **read-only** CLI that browses and analyzes Claude Code sessions
-stored in `~/.claude`. It never writes to `~/.claude`; its own state (pricing cache,
+stored in `~/.claude` (or any other configured Claude data directory, several at
+once). It never writes to them; its own state (pricing cache,
 SQLite index) lives under `~/.config/cc-analyzer/`. Runtime is **Bun ≥ 1.3**;
 it ships as a single compiled binary.
 
@@ -32,8 +33,9 @@ bun run build                # build:web, disposable embed, compile → dist/cc-
 There are **two separate typecheck commands** because there are two tsconfigs with
 incompatible settings (see below). CI runs both; run both before claiming types pass.
 
-Env overrides (used in tests): `CC_ANALYZER_CLAUDE_DIR` (Claude data dir),
-`CC_ANALYZER_STATE_DIR` (cc-analyzer state dir).
+Env overrides (used in tests): `CC_ANALYZER_CLAUDE_DIR` (Claude data dir; a
+`PATH`-style list is accepted), `CC_ANALYZER_STATE_DIR` (cc-analyzer state dir).
+`CLAUDE_CONFIG_DIR` is read too — see the Claude-roots note below.
 
 ## Architecture: one core, three frontends
 
@@ -477,16 +479,53 @@ never requires a reindex.
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at
 `~/.config/cc-analyzer/index.db`. It's **incremental** — files unchanged by (size,
-mtime) are skipped, deleted files are pruned — and safe to delete and rebuild. The
+mtime) are skipped, deleted files are pruned (root-scoped — see the Claude-roots
+note below) — and safe to delete and rebuild. The
 TUI and `serve` build an empty index automatically; `serve --refresh` requests an
 incremental refresh. Every successful scan persists `last_scan_at`, while
 `index --check` and the CLI/TUI/web freshness surfaces compare source (path, size,
 mtime) metadata with indexed rows without parsing session content.
 
 **Project ids are lossy encodings.** A project's stable id is its encoded directory
-name under `~/.claude/projects/`. `decodeProjectLabel()` is best-effort display only;
+name under `<claudeRoot>/projects/`. `decodeProjectLabel()` is best-effort display only;
 the authoritative project path comes from the session's `cwd` field, not by decoding
 the id. Never round-trip a real path through the encoded id.
+
+**The Claude data directory is a list, and project ids carry the root.**
+`paths.ts` resolves `claudeRoots()` through five exclusive tiers — the
+`--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR` (a `PATH`-style list, still the
+test hook), the `claudeDirs` pref, `CLAUDE_CONFIG_DIR` (what Claude Code itself
+reads, so a relocated install works unconfigured), then `~/.claude` — first
+non-empty tier wins, so a configured root never mixes the default back in.
+`claudeDir()` is the **primary** (first) root and remains what single-root call
+sites use. The flag is applied by `setClaudeRootsOverride()` at argv-parse time
+in `main()` (module state, not an env write, so `claudeRoots()` can report
+`source` accurately) and is stripped from argv before dispatch — it must be
+written `--claude-dir=<path>`, since the space form would survive
+`rest.filter(a => !a.startsWith("--"))` as a positional and shadow
+`sessions <projectId>`. Two roots can hold a project for the *same* cwd, whose
+encoded names are byte-identical, so `qualifyProjectId()` makes the id globally
+unique at **index time**: the primary root's ids stay bare (adding a second root
+never re-keys what a user already had) and others carry `rootSlug(path)~`. That
+is deliberate leverage — because the stored `project_id` is unique, every
+`GROUP BY project_id` and the `projectScope()` helper in `stats.ts` aggregate
+across roots **with no scoping clause anywhere in the query layer**. The
+`claude_dir` column (schema v14) exists for prune scoping, not for querying:
+`reindex()` drops rows whose root is no longer configured (removing a root
+removes its data) but **retains** rows under a configured root that was
+unreadable this scan, so an unmounted volume never silently wipes a portfolio —
+`scanRoots()` in `discover.ts` is what tells those two cases apart, and
+`inspectIndexStatus()` mirrors the same rule so `index --check` agrees. Skipped
+files are re-stamped rather than re-parsed when a root change re-keys them.
+`scanInventories()` folds one inventory per root into one `SetupInventory`
+(same-named skills collapse — usage is recorded by name only, so two entries
+would report one unused on evidence that cannot tell them apart; hooks and
+permission counts sum; the pinned model is the primary root's), and
+`SetupInventory.claudeDirs` carries every scanned root so render sites name them
+all. `scanMcpServers()` reads `.claude.json` from **both** the sibling
+`<root>.json` of a default install and `<root>/.claude.json`, where Claude Code
+keeps it when the dir was relocated, keyed by project path so a root carrying
+both files doesn't double-count.
 
 **The parser never throws — and its tolerance is measured, not silent.**
 `parser.ts` is tolerant: invalid JSON → recorded `ParseError` and skipped; a

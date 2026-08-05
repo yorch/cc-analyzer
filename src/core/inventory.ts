@@ -18,7 +18,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { claudeDir } from "./paths.ts";
+import { claudeDir, claudeRoots } from "./paths.ts";
 import type {
   HookEntry,
   InventoryItem,
@@ -160,16 +160,25 @@ function scanMcpServers(root: string, fromSettings: string[]): McpServerEntry[] 
   const global = new Set(fromSettings);
   const projectCounts = new Map<string, number>();
 
-  const config = readJson(`${root}.json`);
-  for (const name of objectKeys(config, "mcpServers")) global.add(name);
-  const projects = config?.projects;
-  if (isObject(projects)) {
-    for (const entry of Object.values(projects)) {
+  // Two layouts, both read because either can be the live one: alongside the dir
+  // (`~/.claude` → `~/.claude.json`, the default install), and inside it, which
+  // is where Claude Code keeps the file when the dir was relocated with
+  // `CLAUDE_CONFIG_DIR`. `readJson` is tolerant, so probing both costs nothing.
+  const byProject = new Map<string, string[]>();
+  for (const config of [readJson(`${root}.json`), readJson(join(root, ".claude.json"))]) {
+    if (!config) continue;
+    for (const name of objectKeys(config, "mcpServers")) global.add(name);
+    const projects = config.projects;
+    if (!isObject(projects)) continue;
+    // Keyed by project path, so a root carrying both files doesn't count the
+    // same project's servers twice.
+    for (const [path, entry] of Object.entries(projects)) {
       if (!isObject(entry)) continue;
-      for (const name of objectKeys(entry, "mcpServers")) {
-        projectCounts.set(name, (projectCounts.get(name) ?? 0) + 1);
-      }
+      byProject.set(path, objectKeys(entry, "mcpServers"));
     }
+  }
+  for (const names of byProject.values()) {
+    for (const name of names) projectCounts.set(name, (projectCounts.get(name) ?? 0) + 1);
   }
 
   const names = new Set([...global, ...projectCounts.keys()]);
@@ -309,6 +318,7 @@ function scanPlugins(root: string): PluginEntry[] {
 function emptyInventory(root: string, present: boolean): SetupInventory {
   return {
     claudeDir: root,
+    claudeDirs: [root],
     present,
     skills: [],
     agents: [],
@@ -321,10 +331,74 @@ function emptyInventory(root: string, present: boolean): SetupInventory {
 }
 
 /**
- * Scan the configured Claude dir for installed skills, subagents, plugins, MCP
- * servers, hooks, and permission rules. Never throws: an absent dir yields an
- * empty inventory flagged `present: false`.
+ * Scan every configured Claude root and fold the results into one inventory.
+ *
+ * This is what the audit surfaces call: with a single root it is exactly
+ * `scanInventory()`, and with several it merges them (see `mergeInventories`).
  */
+export function scanInventories(
+  roots: string[] = claudeRoots().map((r) => r.path),
+): SetupInventory {
+  const scanned = roots.map((root) => scanInventory(root));
+  return scanned.length <= 1
+    ? (scanned[0] ?? emptyInventory(claudeDir(), false))
+    : mergeInventories(scanned);
+}
+
+/**
+ * Fold several roots' inventories into one.
+ *
+ * Observed usage is keyed by name only — the index records that a `deploy`
+ * skill ran, never which root's copy — so same-named items from two roots must
+ * collapse into one entry or the audit would report one of them unused on the
+ * strength of evidence it cannot attribute. Counts that *are* additive (hooks,
+ * permission rules) sum; the pinned model is the primary root's, since that is
+ * the one whose settings.json Claude Code would have read first.
+ */
+function mergeInventories(parts: SetupInventory[]): SetupInventory {
+  const skills = new Map<string, InventoryItem>();
+  const agents = new Map<string, InventoryItem>();
+  const plugins = new Map<string, PluginEntry>();
+  const mcp = new Map<string, McpServerEntry>();
+  const hooks = new Map<string, number>();
+  const permissions: PermissionRuleCounts = { allow: 0, deny: 0, ask: 0 };
+
+  for (const part of parts) {
+    for (const item of part.skills) skills.set(`${item.source} ${item.name}`, item);
+    for (const item of part.agents) agents.set(`${item.source} ${item.name}`, item);
+    for (const plugin of part.plugins) plugins.set(plugin.name, plugin);
+    for (const server of part.mcpServers) {
+      const prev = mcp.get(server.name);
+      mcp.set(server.name, {
+        name: server.name,
+        // Global anywhere wins the label, matching the single-root rule.
+        scope: prev?.scope === "global" || server.scope === "global" ? "global" : "project",
+        projects: (prev?.projects ?? 0) + server.projects,
+      });
+    }
+    for (const hook of part.hooks) hooks.set(hook.event, (hooks.get(hook.event) ?? 0) + hook.hooks);
+    permissions.allow += part.permissions.allow;
+    permissions.deny += part.permissions.deny;
+    permissions.ask += part.permissions.ask;
+  }
+
+  const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+  return {
+    claudeDir: parts[0]?.claudeDir ?? claudeDir(),
+    claudeDirs: parts.map((p) => p.claudeDir),
+    present: parts.some((p) => p.present),
+    skills: [...skills.values()].sort(byName),
+    agents: [...agents.values()].sort(byName),
+    plugins: [...plugins.values()].sort(byName),
+    mcpServers: [...mcp.values()].sort(byName),
+    hooks: [...hooks.entries()]
+      .map(([event, count]) => ({ event, hooks: count }))
+      .sort((a, b) => a.event.localeCompare(b.event)),
+    permissions,
+    model: parts.find((p) => p.model !== null)?.model ?? null,
+  };
+}
+
 export function scanInventory(root: string = claudeDir()): SetupInventory {
   if (!exists(root)) return emptyInventory(root, false);
 
@@ -341,6 +415,7 @@ export function scanInventory(root: string = claudeDir()): SetupInventory {
 
   return {
     claudeDir: root,
+    claudeDirs: [root],
     present: true,
     skills: skills.sort((a, b) => a.name.localeCompare(b.name)),
     agents: agents.sort((a, b) => a.name.localeCompare(b.name)),

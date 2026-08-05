@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
-import { listAllSessions, type SessionInfo } from "./discover.ts";
+import { listAllSessions, type SessionInfo, scanRoots } from "./discover.ts";
 import { LAST_SCAN_KEY } from "./index-status.ts";
 import { streamSessionEvents } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
@@ -9,6 +9,7 @@ import { loadPricing } from "./pricing-source.ts";
 
 export interface SessionRow {
   path: string;
+  claude_dir: string;
   project_id: string;
   project_path: string | null;
   session_id: string | null;
@@ -93,6 +94,7 @@ export function toSessionRow(
   const day = analysis.startTime ? localDay(analysis.startTime) : null;
   return {
     path: info.path,
+    claude_dir: info.root,
     project_id: info.projectId,
     project_path: analysis.projectPath ?? null,
     session_id: analysis.sessionId ?? info.id,
@@ -163,6 +165,7 @@ export function toSessionRow(
 
 const COLUMNS: (keyof SessionRow)[] = [
   "path",
+  "claude_dir",
   "project_id",
   "project_path",
   "session_id",
@@ -275,17 +278,38 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const pricing = opts.pricing ?? (await loadPricing()).table;
   const now = Date.now();
 
+  // Roots that answered this scan. A configured-but-unreadable root (unmounted
+  // volume, a synced folder mid-setup) must not have its rows pruned — only a
+  // root the user actually de-configured should lose its data.
+  const scans = await scanRoots();
+  const prunable = new Set(scans.filter((s) => s.readable).map((s) => s.root.path));
+  const configured = new Set(scans.map((s) => s.root.path));
+
   const files = await listAllSessions();
   const currentPaths = new Set(files.map((f) => f.path));
 
-  const existing = new Map<string, { mtime_ms: number; size_bytes: number }>();
+  const existing = new Map<
+    string,
+    { mtime_ms: number; size_bytes: number; claude_dir: string; project_id: string }
+  >();
   {
-    const rows = db.query("SELECT path, mtime_ms, size_bytes FROM sessions").all() as {
+    const rows = db
+      .query("SELECT path, mtime_ms, size_bytes, claude_dir, project_id FROM sessions")
+      .all() as {
       path: string;
       mtime_ms: number;
       size_bytes: number;
+      claude_dir: string;
+      project_id: string;
     }[];
-    for (const r of rows) existing.set(r.path, { mtime_ms: r.mtime_ms, size_bytes: r.size_bytes });
+    for (const r of rows) {
+      existing.set(r.path, {
+        mtime_ms: r.mtime_ms,
+        size_bytes: r.size_bytes,
+        claude_dir: r.claude_dir,
+        project_id: r.project_id,
+      });
+    }
   }
 
   // On rebuild, ignore existing state for skipping — but still prune below.
@@ -313,7 +337,18 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     }
   });
 
+  // Files this scan skipped keep whatever identity they were last written with,
+  // but reconfiguring roots re-keys project ids (a new primary root unqualifies
+  // a different set of them). Re-stamping the skipped rows is far cheaper than
+  // re-parsing them, and it keeps a root change from stranding rows under ids
+  // nothing queries any more.
+  const restamped = files.filter((f) => {
+    const prev = existing.get(f.path);
+    return prev && (prev.claude_dir !== f.root || prev.project_id !== f.projectId);
+  });
+
   const upsert = upsertStatement(db);
+  const restamp = db.query("UPDATE sessions SET claude_dir = ?, project_id = ? WHERE path = ?");
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
 
   let deleted = 0;
@@ -321,11 +356,14 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const row of rows) {
       if (row) upsert.run(...rowValues(row));
     }
-    for (const path of existing.keys()) {
-      if (!currentPaths.has(path)) {
-        deleteStmt.run(path);
-        deleted++;
-      }
+    for (const f of restamped) restamp.run(f.root, f.projectId, f.path);
+    for (const [path, prev] of existing) {
+      if (currentPaths.has(path)) continue;
+      // Retain rows belonging to a configured root that could not be read this
+      // scan; drop the rest (file deleted, or its root was de-configured).
+      if (configured.has(prev.claude_dir) && !prunable.has(prev.claude_dir)) continue;
+      deleteStmt.run(path);
+      deleted++;
     }
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
       LAST_SCAN_KEY,

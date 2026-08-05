@@ -66,9 +66,11 @@ export interface PermissionRuleCounts {
 
 /** Everything `scanInventory()` could read out of the Claude config dir. */
 export interface SetupInventory {
-  /** The dir that was scanned (absolute). */
+  /** The primary dir that was scanned (absolute). */
   claudeDir: string;
-  /** False when the dir does not exist — every list is then empty by default. */
+  /** Every scanned dir, primary first — one entry unless several roots are configured. */
+  claudeDirs: string[];
+  /** False when no scanned dir exists — every list is then empty by default. */
   present: boolean;
   skills: InventoryItem[];
   agents: InventoryItem[];

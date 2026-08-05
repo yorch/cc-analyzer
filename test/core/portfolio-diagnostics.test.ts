@@ -83,6 +83,7 @@ function auditWith(findings: Partial<SetupAuditFinding>[]): SetupAudit {
   return {
     inventory: {
       claudeDir: "/tmp/claude",
+      claudeDirs: ["/tmp/claude"],
       present: true,
       skills: [],
       agents: [],

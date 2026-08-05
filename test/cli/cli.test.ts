@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -546,5 +546,108 @@ describe("CLI dispatch & exit codes", () => {
     } finally {
       rmSync(added, { force: true });
     }
+  });
+});
+
+describe("Claude data directories", () => {
+  const second = join(tmpDir, "claude-2");
+
+  test("--claude-dir= overrides the environment for one invocation", async () => {
+    const r = await run([`--claude-dir=${second}`, "projects"]);
+    expect(r.code, r.stderr).toBe(0);
+    // The second root is empty, so the env-configured projects must not appear.
+    expect(r.stdout).toContain("No projects found under:");
+    expect(r.stdout).toContain(second);
+  });
+
+  test("the flag may appear before the command", async () => {
+    const r = await run([`--claude-dir=${second}`, "projects"]);
+    expect(r.code, r.stderr).toBe(0);
+    const after = await run(["projects", `--claude-dir=${second}`]);
+    expect(after.stdout).toBe(r.stdout);
+  });
+
+  test("the flag is stripped from argv rather than read as a positional", async () => {
+    // Without stripping, the path would land in positional[0] and be taken as
+    // the project id, so this would fail on a missing operand instead.
+    const r = await run([`--claude-dir=${second}`, "sessions"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("missing <projectId>");
+  });
+
+  test("the space-separated form is rejected rather than silently ignored", async () => {
+    const r = await run(["--claude-dir", second, "projects"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("--claude-dir=<path>");
+  });
+
+  test("a valueless flag exits 2", async () => {
+    const r = await run(["--claude-dir=", "projects"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("needs a path");
+  });
+
+  test("several roots are analyzed together, each project tagged with its dir", async () => {
+    mkdirSync(join(second, "projects", "proj-c"), { recursive: true });
+    const sample = readFileSync(fixture, "utf8");
+    writeFileSync(join(second, "projects", "proj-c", "sess-3.jsonl"), sample);
+    try {
+      const r = await run([`--claude-dir=${join(tmpDir, "claude")}:${second}`, "projects"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).toContain("3 projects");
+      expect(r.stdout).toContain("claude dir");
+    } finally {
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  test("the empty state names the directories actually searched", async () => {
+    const r = await run([`--claude-dir=${join(tmpDir, "nowhere")}`, "projects"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(join(tmpDir, "nowhere"));
+    expect(r.stdout).toContain("--claude-dir");
+  });
+
+  test("claude-dir reports the resolved dirs and where they came from", async () => {
+    const r = await run(["claude-dir"], { CC_ANALYZER_CLAUDE_DIR: undefined });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Reading Claude Code data from:");
+  });
+
+  test("claude-dir honours CLAUDE_CONFIG_DIR when nothing else is configured", async () => {
+    const r = await run(["claude-dir"], {
+      CC_ANALYZER_CLAUDE_DIR: undefined,
+      CLAUDE_CONFIG_DIR: second,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(second);
+    expect(r.stdout).toContain("CLAUDE_CONFIG_DIR");
+  });
+
+  test("claude-dir set/add/remove persist, and reset clears", async () => {
+    const prefsState = join(tmpDir, "prefs-state");
+    mkdirSync(prefsState, { recursive: true });
+    const env = { CC_ANALYZER_STATE_DIR: prefsState, CC_ANALYZER_CLAUDE_DIR: undefined };
+    try {
+      expect((await run(["claude-dir", "set", second], env)).code).toBe(0);
+      const added = await run(["claude-dir", "add", join(tmpDir, "claude")], env);
+      expect(added.stdout).toContain(second);
+      expect(added.stdout).toContain(join(tmpDir, "claude"));
+
+      const removed = await run(["claude-dir", "remove", second], env);
+      expect(removed.code).toBe(0);
+      expect(removed.stdout).not.toContain(`${second}  (`);
+
+      const reset = await run(["claude-dir", "reset"], env);
+      expect(reset.code).toBe(0);
+      expect(reset.stdout).toContain("Cleared.");
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  test("claude-dir rejects a bad subcommand and a missing operand", async () => {
+    expect((await run(["claude-dir", "frobnicate"])).code).toBe(2);
+    expect((await run(["claude-dir", "add"])).code).toBe(2);
   });
 });
