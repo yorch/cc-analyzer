@@ -49,6 +49,7 @@ The pipeline is strictly forward: [src/core/discover.ts](https://github.com/yorc
 | `session-health` | `src/core/session-health.ts` | Classify structural health from events and parse errors, with evidence and read-only guidance |
 | `transcript` | [src/core/transcript.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/transcript.ts) | Flatten events into a linear `TranscriptItem[]` reading view |
 | `steps` | [src/core/steps.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/steps.ts) | Tool-aware one-line summaries and result hints for turn steps |
+| `session-insights` | `src/core/session-insights.ts` | Bun-free: per-session what-if repricing and cost-per-outcome ratios |
 | `discover` | [src/core/discover.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/discover.ts) | Enumerate projects and session files under every configured Claude root |
 | `paths` | [src/core/paths.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/paths.ts) | Locate cc-analyzer's own state dir and the files inside it |
 | `claude-roots` | [src/core/claude-roots.ts](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/claude-roots.ts) | Resolve the configured Claude data directories and qualify project ids across them |
