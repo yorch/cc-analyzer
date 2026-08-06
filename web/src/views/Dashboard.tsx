@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -48,7 +49,7 @@ const PROJECT_SORT: Accessors<ProjectRow> = {
   cost: (p) => p.cost,
   tokens: (p) => p.ioTokens + p.cacheTokens,
   sessions: (p) => p.sessions,
-  project: (p) => p.projectPath ?? p.projectId,
+  project: (p) => projectDisplayName(p.projectPath, p.projectId),
 };
 const MODEL_SORT: Accessors<ModelRow> = {
   model: (m) => m.model,
@@ -80,11 +81,18 @@ export function Dashboard() {
   };
   const byMonth = data?.byMonth ?? [];
   const byProject = data?.byProject ?? [];
+  // Two Claude roots can hold a project for the same working directory; the
+  // shared labeller names the root only on the rows that actually collide.
+  const projectLabel = labelProjects(
+    byProject,
+    (p) => projectDisplayName(p.projectPath, p.projectId),
+    (p) => p.claudeDir,
+  ).label;
   const byModel = data?.byModel ?? [];
   const top = data?.top ?? [];
   const pq = projectQuery.toLowerCase();
   const projectFiltered = pq
-    ? byProject.filter((p) => (p.projectPath ?? p.projectId).toLowerCase().includes(pq))
+    ? byProject.filter((p) => projectLabel(p).toLowerCase().includes(pq))
     : byProject;
   const monthSort = useSort(byMonth, MONTH_SORT, "month", "asc");
   const projectSort = useSort(projectFiltered, PROJECT_SORT, "cost");
@@ -220,7 +228,7 @@ export function Dashboard() {
                   <td className="num">{tokens(p.ioTokens, p.cacheTokens)}</td>
                   <td className="num">{p.sessions}</td>
                   <td>
-                    <a href={link.project(p.projectId)}>{p.projectPath ?? p.projectId}</a>
+                    <a href={link.project(p.projectId)}>{projectLabel(p)}</a>
                   </td>
                 </tr>
               ))}

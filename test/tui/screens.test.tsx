@@ -11,6 +11,7 @@ const projects: IndexedProject[] = [
   {
     projectId: "proj-a",
     projectPath: "/Users/dev/alpha",
+    claudeDir: "/tmp/claude",
     sessions: 3,
     cost: 12.5,
     ioTokens: 1000,
@@ -21,6 +22,7 @@ const projects: IndexedProject[] = [
   {
     projectId: "proj-b",
     projectPath: "/Users/dev/beta",
+    claudeDir: "/tmp/claude",
     sessions: 1,
     cost: 0.4,
     ioTokens: 1000,

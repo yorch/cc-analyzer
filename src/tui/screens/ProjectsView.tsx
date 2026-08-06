@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { Text } from "ink";
 import { useMemo, useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
+import { labelProjects, projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { projectPreviewStats } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
@@ -15,7 +16,7 @@ const SORT_FIELDS: SortField<IndexedProject>[] = [
   { key: "cost", label: "cost", value: (p) => p.cost },
   { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
   { key: "sessions", label: "sessions", value: (p) => p.sessions },
-  { key: "name", label: "name", value: (p) => p.projectPath ?? p.projectId },
+  { key: "name", label: "name", value: (p) => projectDisplayName(p.projectPath, p.projectId) },
 ];
 
 interface Props {
@@ -32,6 +33,18 @@ interface Props {
 export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen, onBack }: Props) {
   const sort = useSort(SORT_FIELDS);
   const rows = sort.sorted(projects);
+  // Two Claude roots can each hold a project for the same working directory, so
+  // the labels would be byte-identical. The shared labeller qualifies only the
+  // ones that actually collide.
+  const { label } = useMemo(
+    () =>
+      labelProjects(
+        projects,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      ),
+    [projects],
+  );
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
   // Data acquisition stays at the screen boundary: the preview receives plain
   // props. Keyed on the stable projectId string (not the row object) so a
@@ -58,11 +71,11 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
           sortLabel={sort.label}
           onCycleSort={sort.cycle}
           onReverseSort={sort.reverse}
-          filterText={(p) => p.projectPath ?? p.projectId}
+          filterText={label}
           renderItem={(p, sel) => (
             <Text {...selection(sel)}>
               {gutter(sel)}
-              {formatUSD(p.cost).padStart(9)} {truncate(p.projectPath ?? p.projectId, nameW)}
+              {formatUSD(p.cost).padStart(9)} {truncate(label(p), nameW)}
             </Text>
           )}
         />

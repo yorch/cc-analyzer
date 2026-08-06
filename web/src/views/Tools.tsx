@@ -456,7 +456,13 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
     <>
       <h2 className="section-h">Setup audit · what’s installed vs what you use</h2>
       <p className="muted">
-        Installed under <code>{inv.claudeDir}</code>
+        Installed under{" "}
+        {inv.claudeDirs.map((dir, i) => (
+          <span key={dir}>
+            {i > 0 ? ", " : ""}
+            <code>{dir}</code>
+          </span>
+        ))}
         {inv.present ? "" : " (not found)"}
         {inv.model ? ` · model pinned to ${inv.model}` : ""}
       </p>

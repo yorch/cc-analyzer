@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
-import { listAllSessions, type SessionInfo } from "./discover.ts";
+import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
+import { listAllSessions, retainsMissingRows, type SessionInfo, scanRoots } from "./discover.ts";
 import { LAST_SCAN_KEY } from "./index-status.ts";
 import { streamSessionEvents } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
@@ -9,6 +10,7 @@ import { loadPricing } from "./pricing-source.ts";
 
 export interface SessionRow {
   path: string;
+  claude_dir: string;
   project_id: string;
   project_path: string | null;
   session_id: string | null;
@@ -93,6 +95,7 @@ export function toSessionRow(
   const day = analysis.startTime ? localDay(analysis.startTime) : null;
   return {
     path: info.path,
+    claude_dir: info.root,
     project_id: info.projectId,
     project_path: analysis.projectPath ?? null,
     session_id: analysis.sessionId ?? info.id,
@@ -163,6 +166,7 @@ export function toSessionRow(
 
 const COLUMNS: (keyof SessionRow)[] = [
   "path",
+  "claude_dir",
   "project_id",
   "project_path",
   "session_id",
@@ -264,6 +268,8 @@ export interface ReindexOptions {
   pricing?: PricingTable;
   /** Progress callback: (done, toDo). */
   onProgress?: (done: number, total: number) => void;
+  /** Claude roots to scan. Defaults to the configured ones; injectable for tests. */
+  roots?: ClaudeRoot[];
 }
 
 /**
@@ -275,17 +281,32 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const pricing = opts.pricing ?? (await loadPricing()).table;
   const now = Date.now();
 
-  const files = await listAllSessions();
+  // Resolve the configured roots once and pass them down: resolution reads the
+  // filesystem, and the discovery helpers would otherwise repeat it per project.
+  const roots = opts.roots ?? claudeRoots();
+  // A configured-but-unreadable root (unmounted volume, a synced folder
+  // mid-setup) must not have its rows pruned — only a root the user actually
+  // de-configured should lose its data.
+  const retained = retainsMissingRows(await scanRoots(roots));
+
+  const files = await listAllSessions(roots);
   const currentPaths = new Set(files.map((f) => f.path));
 
-  const existing = new Map<string, { mtime_ms: number; size_bytes: number }>();
+  const existing = new Map<string, { mtime_ms: number; size_bytes: number; claude_dir: string }>();
   {
-    const rows = db.query("SELECT path, mtime_ms, size_bytes FROM sessions").all() as {
+    const rows = db.query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions").all() as {
       path: string;
       mtime_ms: number;
       size_bytes: number;
+      claude_dir: string;
     }[];
-    for (const r of rows) existing.set(r.path, { mtime_ms: r.mtime_ms, size_bytes: r.size_bytes });
+    for (const r of rows) {
+      existing.set(r.path, {
+        mtime_ms: r.mtime_ms,
+        size_bytes: r.size_bytes,
+        claude_dir: r.claude_dir,
+      });
+    }
   }
 
   // On rebuild, ignore existing state for skipping — but still prune below.
@@ -313,6 +334,10 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     }
   });
 
+  // No re-stamp pass: a project id is derived only from its root's path and its
+  // own directory name, so a row's identity cannot change while its file path
+  // stays the same. (It could when qualification depended on which root sorted
+  // first — that is one of the mechanisms uniform qualification removed.)
   const upsert = upsertStatement(db);
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
 
@@ -321,11 +346,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const row of rows) {
       if (row) upsert.run(...rowValues(row));
     }
-    for (const path of existing.keys()) {
-      if (!currentPaths.has(path)) {
-        deleteStmt.run(path);
-        deleted++;
-      }
+    for (const [path, prev] of existing) {
+      if (currentPaths.has(path)) continue;
+      if (retained(prev.claude_dir)) continue;
+      deleteStmt.run(path);
+      deleted++;
     }
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
       LAST_SCAN_KEY,

@@ -1,9 +1,11 @@
+import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
+import { resolveIndexedProject } from "../../src/core/queries.ts";
 import {
   analyticsRollup,
   contextTax,
@@ -14,6 +16,13 @@ import {
 } from "../../src/core/stats.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
+
+/** The stored (root-qualified) id for a fixture project's bare name. */
+function indexedId(db: Database, bareName: string): string {
+  const match = resolveIndexedProject(db, bareName);
+  if (match.status !== "found") throw new Error(`no indexed project '${bareName}'`);
+  return match.id;
+}
 
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 let claude: ReturnType<typeof tempClaudeDir>;
@@ -187,7 +196,7 @@ describe("reindex · context tax (schema v9)", () => {
     expect(byId.get("sess-notax")).toBeNull();
 
     // …and the column is what contextTax reads.
-    expect(contextTax(db, "proj-b").summary.sessions).toBeGreaterThan(0);
+    expect(contextTax(db, indexedId(db, "proj-b")).summary.sessions).toBeGreaterThan(0);
     db.close();
     rmSync(withCall, { force: true });
     rmSync(noCall, { force: true });
@@ -258,7 +267,9 @@ describe("reindex · turn-scoped skill cost (schema v10)", () => {
     expect(attributed.docx?.cost).toBeLessThan(row.cost_total);
 
     // …and the column is what analyticsRollup reads.
-    const skill = analyticsRollup(db, "proj-b").skills.find((s) => s.name === "docx");
+    const skill = analyticsRollup(db, indexedId(db, "proj-b")).skills.find(
+      (s) => s.name === "docx",
+    );
     expect(skill?.attributedTurns).toBe(1);
     expect(skill?.attributedCost).toBeCloseTo(attributed.docx?.cost as number, 12);
     db.close();

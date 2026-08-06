@@ -217,6 +217,9 @@ export interface HeatCell {
 export interface ProjectRow {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir the project lives under — what tells two same-named
+   *  projects from different roots apart in a ranked list. */
+  claudeDir: string;
   cost: number;
   sessions: number;
   ioTokens: number;
@@ -839,7 +842,10 @@ export interface CostRankCohort {
 export interface SessionCostRank {
   cost: number;
   portfolio: CostRankCohort;
-  /** Absent when the session's row carries no project id. */
+  /** The session's own project. Optional for forward compatibility, but
+   *  `sessionCostRank` always populates it — `project_id` is NOT NULL, so the
+   *  cohort holds at least the session itself. Render sites gate on
+   *  `sessions` being large enough to be worth showing, not on presence. */
   project?: CostRankCohort;
 }
 

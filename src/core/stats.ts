@@ -165,6 +165,9 @@ export function spendByProject(db: Database, limit = 20, period?: DayRange): Pro
     .query(
       `SELECT project_id AS projectId,
         MAX(project_path) AS projectPath,
+        -- MAX() is a "pick any": project_id is globally unique (root-qualified
+        -- at index time), so every row in a group shares one claude_dir.
+        MAX(claude_dir) AS claudeDir,
         SUM(cost_total) AS cost,
         COUNT(*) AS sessions,
         SUM(${IO_TOKENS}) AS ioTokens,

@@ -4,8 +4,9 @@
 [![Docs](https://img.shields.io/badge/docs-cc--analyzer-3451b2)](https://cc-analyzer.brnby.com/)
 
 A read-only CLI to browse and analyze [Claude Code](https://claude.com/claude-code)
-sessions stored in `~/.claude` — tokens, cost, tools, skills, models, and a
-per-turn breakdown. Built with TypeScript + Bun; ships as a single binary.
+sessions stored in `~/.claude` — or in any other Claude data directory, several
+at once — reporting tokens, cost, tools, skills, models, and a per-turn
+breakdown. Built with TypeScript + Bun; ships as a single binary.
 
 **Docs & landing page:** <https://cc-analyzer.brnby.com/>
 
@@ -148,6 +149,12 @@ cc-analyzer update [--check]         # self-update to the latest release (or jus
 cc-analyzer version                  # print the version
 cc-analyzer cost-basis [api|subscription]
                                      # view or change how dollar figures are framed
+cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
+                                     # view or change which Claude data dirs are read
+
+# global: read a different Claude data dir for one invocation (repeatable).
+# Only for the commands that read session files directly.
+cc-analyzer --claude-dir=/path/to/.claude projects
 ```
 
 The CLI checks for a newer release at most once a day and prints a one-line
@@ -220,10 +227,89 @@ were reported (or the session was not found), and `2` means invalid usage. Use
 
 ## Configuration
 
-Environment overrides (mainly for testing):
+### Claude data directories
 
-- `CC_ANALYZER_CLAUDE_DIR` — Claude Code data dir (default `~/.claude`).
+Find your case below — most people are the first one and have nothing to do.
+
+**Default `~/.claude`.** Nothing to configure:
+
+```bash
+cc-analyzer index && cc-analyzer stats
+```
+
+**Relocated data directory.** If you set `CLAUDE_CONFIG_DIR` for Claude Code,
+cc-analyzer reads the same variable — no cc-analyzer configuration at all:
+
+```bash
+export CLAUDE_CONFIG_DIR=~/dotfiles/claude   # you already have this
+cc-analyzer index
+```
+
+**Several profiles** (work + personal, or several machines synced into one
+folder). Name each once; they are analyzed together as a single portfolio:
+
+```bash
+cc-analyzer claude-dir add ~/work/.claude
+cc-analyzer claude-dir add ~/personal/.claude
+cc-analyzer index          # the index mirrors the configured set
+cc-analyzer stats          # both profiles, one report
+```
+
+`cc-analyzer projects` then gains a **claude dir** column, and other lists name
+the directory only where two labels would otherwise be identical.
+
+**A one-off peek at another directory:**
+
+```bash
+cc-analyzer --claude-dir=/mnt/backup/.claude projects
+```
+
+Managing the persisted list:
+
+```bash
+cc-analyzer claude-dir                      # what is in effect, and why
+cc-analyzer claude-dir add|set|remove <path>
+cc-analyzer claude-dir reset                # back to the default resolution
+cc-analyzer index                           # after any change
+```
+
+The `--claude-dir=<path>` flag (repeatable, or a `:`-separated list — `;` on
+Windows, always inline with `=`) applies **only** to the commands that read
+session files directly: `projects`, `sessions`, `analyze`, `doctor`. It is
+refused on anything index-backed (`index`, `stats`, `audit`, `insights`,
+`report`, `serve`, the TUI), because the index always covers every configured
+directory: a one-off scope would be silently ignored on a report and would drop
+the other directories' rows on `index`. Configure with `claude-dir set` and
+reindex to scope those for real.
+
+Directories resolve in this order, first tier that names anything wins — so a
+directory you configure is never silently mixed with `~/.claude`:
+
+1. `--claude-dir=<path>`
+2. `CC_ANALYZER_CLAUDE_DIR` (a `PATH`-style list; also the test/CI hook)
+3. `cc-analyzer claude-dir` (persisted in `~/.config/cc-analyzer/prefs.json`)
+4. `CLAUDE_CONFIG_DIR` (Claude Code's own)
+5. `~/.claude`
+
+If your portfolio looks empty, `cc-analyzer claude-dir` prints every directory
+searched, the setting that put it there, and marks any holding no `projects/`
+directory.
+
+Notes when several directories are configured:
+
+- Two directories can each hold sessions for the *same* working directory. They
+  stay separate projects rather than merging, and the directory is named
+  wherever the labels would collide.
+- The index mirrors your configured list: **removing a directory removes its
+  sessions from the index** on the next `cc-analyzer index`. A directory that is
+  merely unreadable right now (an unmounted volume) keeps its data instead.
+- Adding a directory never re-parses the ones you already had.
+
+### Environment overrides
+
+- `CC_ANALYZER_CLAUDE_DIR` — Claude Code data dir(s) (default `~/.claude`).
 - `CC_ANALYZER_STATE_DIR` — cc-analyzer state dir (default `~/.config/cc-analyzer`).
+- `CLAUDE_CONFIG_DIR` — read, not written; Claude Code's own relocation variable.
 
 ## Telemetry & privacy
 
@@ -277,7 +363,8 @@ architecture, examples, and help text accurate in the same change.
 
 ### Portfolio analytics
 
-`cc-analyzer index` scans every session under `~/.claude/projects`, computes its
+`cc-analyzer index` scans every session under each configured Claude data
+directory's `projects/` (`~/.claude/projects` by default), computes its
 metrics, and stores them in a local SQLite cache at
 `~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
 files (by size + mtime) are re-parsed — and the cache is disposable (delete and
@@ -307,8 +394,10 @@ it with `cc-analyzer index`.
 ### Setup audit
 
 `cc-analyzer audit` reads your *setup* — skills, subagents, plugins, MCP
-servers, hooks, and permission rules under `~/.claude` (plus the `~/.claude.json`
-MCP config) — and cross-references it with what the indexed sessions actually
+servers, hooks, and permission rules under each configured Claude data directory
+(plus its `.claude.json` MCP config, read from either the sibling `~/.claude.json`
+of a default install or from inside a relocated dir) — and cross-references it
+with what the indexed sessions actually
 used. It reports an inventory summary and findings such as an **unused MCP
 server** (a warning: its tool schemas are re-sent to the model every turn, so an
 unused one is pure context tax), an **unused skill or subagent**, an

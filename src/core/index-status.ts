@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { listAllSessions } from "./discover.ts";
+import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
+import { listAllSessions, retainsMissingRows, scanRoots } from "./discover.ts";
 import type { IndexStatus } from "./index-status-types.ts";
 
 export const LAST_SCAN_KEY = "last_scan_at";
@@ -14,12 +15,23 @@ export function lastIndexScanAt(db: Database): number | null {
 }
 
 /** Compare source file metadata with the SQLite cache without parsing sessions. */
-export async function inspectIndexStatus(db: Database, now = Date.now()): Promise<IndexStatus> {
-  const files = await listAllSessions();
-  const existingRows = db.query("SELECT path, mtime_ms, size_bytes FROM sessions").all() as {
+export async function inspectIndexStatus(
+  db: Database,
+  now = Date.now(),
+  roots: ClaudeRoot[] = claudeRoots(),
+): Promise<IndexStatus> {
+  // Same prune rule the indexer applies, from the same helper, so `--check`
+  // cannot report a deletion that `reindex` would not actually make.
+  const retained = retainsMissingRows(await scanRoots(roots));
+
+  const files = await listAllSessions(roots);
+  const existingRows = db
+    .query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions")
+    .all() as {
     path: string;
     mtime_ms: number;
     size_bytes: number;
+    claude_dir: string;
   }[];
   const existing = new Map(existingRows.map((row) => [row.path, row]));
   const sourcePaths = new Set<string>();
@@ -34,8 +46,10 @@ export async function inspectIndexStatus(db: Database, now = Date.now()): Promis
   }
 
   let deleted = 0;
-  for (const path of existing.keys()) {
-    if (!sourcePaths.has(path)) deleted++;
+  for (const [path, row] of existing) {
+    if (sourcePaths.has(path)) continue;
+    if (retained(row.claude_dir)) continue;
+    deleted++;
   }
 
   const lastScan = lastIndexScanAt(db);

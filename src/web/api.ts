@@ -14,8 +14,10 @@ import type { PricingTable } from "../core/pricing.ts";
 import {
   listIndexedProjects,
   listIndexedSessions,
+  resolveIndexedProject,
   searchSessions,
   sessionPathById,
+  sessionRowById,
 } from "../core/queries.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
 import {
@@ -190,9 +192,34 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     });
   });
 
-  api.get("/api/insights/:id/sessions", (c) =>
-    c.json(cacheWasteBySession(db, c.req.param("id"), 200)),
-  );
+  /**
+   * Resolve `:id` leniently to a stored project id, or produce the response
+   * that explains why it could not. Stored ids are root-qualified, so a bare
+   * name — an old bookmark, a hand-typed reference — resolves when exactly one
+   * root holds that project; when several do, saying so beats picking one.
+   */
+  const projectParam = (c: Context): { id: string } | { error: Response } => {
+    const ref = c.req.param("id") ?? "";
+    const match = resolveIndexedProject(db, ref);
+    if (match.status === "found") return { id: match.id };
+    if (match.status === "ambiguous") {
+      return {
+        error: c.json(
+          {
+            error: `'${ref}' matches ${match.candidates.length} projects; use a full id`,
+            candidates: match.candidates,
+          },
+          409,
+        ),
+      };
+    }
+    return { error: c.json({ error: "project not found" }, 404) };
+  };
+
+  api.get("/api/insights/:id/sessions", (c) => {
+    const p = projectParam(c);
+    return "error" in p ? p.error : c.json(cacheWasteBySession(db, p.id, 200));
+  });
 
   // Time-series for the trends view: raw daily spend series (also feeds the
   // contribution calendar client-side), weekday×hour heatmap, model mix,
@@ -282,21 +309,28 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     return body;
   });
 
-  api.get("/api/projects/:id/sessions", (c) => c.json(listIndexedSessions(db, c.req.param("id"))));
+  api.get("/api/projects/:id/sessions", (c) => {
+    const p = projectParam(c);
+    return "error" in p ? p.error : c.json(listIndexedSessions(db, p.id));
+  });
 
   // Project-scoped chart series: burn, model mix, scatter, and distributions.
-  // Memoized per project id against the same index fingerprint. Unknown ids
-  // 404 *before* touching the memo Map — its keyspace must stay bounded by
-  // real projects, not by whatever ids clients probe.
+  // Memoized per project id against the same index fingerprint. Unresolvable
+  // ids are rejected *before* touching the memo Map — its keyspace must stay
+  // bounded by real projects, not by whatever ids clients probe. The memo is
+  // keyed by the *resolved* id, so a bare and a qualified reference to one
+  // project share a slot instead of each minting their own.
   api.get("/api/projects/:id/trends", (c) => {
-    const id = c.req.param("id");
-    const known = db.query("SELECT 1 FROM sessions WHERE project_id = ? LIMIT 1").get(id);
-    if (!known) return c.json({ error: "project not found" }, 404);
-    return cachedJson(c, `ptrends:${id}`, fingerprint(), () => projectTrends(db, id));
+    const p = projectParam(c);
+    if ("error" in p) return p.error;
+    return cachedJson(c, `ptrends:${p.id}`, fingerprint(), () => projectTrends(db, p.id));
   });
 
   // Files Claude touched across a project's sessions, hottest first.
-  api.get("/api/projects/:id/files", (c) => c.json(hotFiles(db, c.req.param("id"))));
+  api.get("/api/projects/:id/files", (c) => {
+    const p = projectParam(c);
+    return "error" in p ? p.error : c.json(hotFiles(db, p.id));
+  });
 
   // Registered before "/api/sessions/:id" so "search" isn't captured as an id.
   api.get("/api/sessions/search", (c) => {
@@ -326,9 +360,13 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
-    const path = sessionPathById(db, id);
-    if (!path) return c.json({ error: "session not found" }, 404);
-    const parsed = await readSession(path);
+    // The indexed row, not just its path: `projectId` rides along so the client
+    // can resolve the session's project by its globally unique id. Matching on
+    // `projectPath` would be ambiguous once two Claude roots hold a project for
+    // the same working directory.
+    const row = sessionRowById(db, id);
+    if (!row) return c.json({ error: "session not found" }, 404);
+    const parsed = await readSession(row.path);
     if (!parsed) return c.json(staleIndex, 404);
     const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
     // The rank depends only on the index, so it memoizes on the fingerprint —
@@ -338,6 +376,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     capSlots("rank:", MAX_RANK_SLOTS);
     return c.json({
       ...analysis,
+      projectId: row.projectId,
       insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
     });
   });

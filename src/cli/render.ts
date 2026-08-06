@@ -13,6 +13,7 @@ import {
   type PortfolioDiagnostic,
 } from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
+import { projectDisplayName } from "../core/project-labels.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
@@ -362,7 +363,9 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
   const inv = audit.inventory;
 
   lines.push(reportTitle("cc-analyzer · setup audit", options));
-  lines.push(muted(`${inv.claudeDir}${inv.present ? "" : " (not found)"}`, options));
+  // Every scanned root, not just the primary: with several configured, naming
+  // one would misreport where the inventory below actually came from.
+  lines.push(muted(`${inv.claudeDirs.join(", ")}${inv.present ? "" : " (not found)"}`, options));
 
   lines.push(`\n${section("Inventory", options)}`);
   const mcpScope =
@@ -451,7 +454,11 @@ export function renderPortfolioInsights(
       ),
     );
   } else {
-    pushFindings(lines, diagnostics, options, (d) => d.projectPath ?? d.projectId);
+    // A portfolio finding may be unscoped, in which case there is no project
+    // line to print at all.
+    pushFindings(lines, diagnostics, options, (d) =>
+      d.projectId ? projectDisplayName(d.projectPath, d.projectId) : d.projectPath,
+    );
     lines.push(
       muted(
         `\n${diagnostics.length} of ${ruleCount} rules fired. Drill into sessions with ` +
@@ -519,7 +526,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
             formatUSD(p.cost),
             String(p.sessions),
             change(p.delta, formatUSD),
-            truncate(p.projectPath ?? p.projectId, 44),
+            truncate(projectDisplayName(p.projectPath, p.projectId), 44),
           ]),
           { align: ["right", "right", "right", "left"] },
         ),
@@ -832,7 +839,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
           formatUSD(p.cost),
           formatTokens(p.ioTokens, p.cacheTokens),
           String(p.sessions),
-          truncate(p.projectPath ?? p.projectId, 52),
+          truncate(projectDisplayName(p.projectPath, p.projectId), 52),
         ]),
         { align: ["right", "right", "right", "left"] },
       ),
@@ -911,7 +918,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             formatCount(Math.round(p.p90Tokens)),
             formatCount(Math.round(p.avgTokens)),
             String(p.sessions),
-            truncate(p.projectPath ?? p.projectId, 44),
+            truncate(projectDisplayName(p.projectPath, p.projectId), 44),
           ]),
         { align: ["right", "right", "right", "right", "left"] },
       ),

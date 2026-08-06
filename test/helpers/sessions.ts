@@ -10,6 +10,7 @@ export function insertSession(
   row: Record<string, string | number | null> & { path: string },
 ): void {
   const defaults: Record<string, string | number | null> = {
+    claude_dir: "/tmp/claude",
     project_id: "p1",
     project_path: "/p/one",
     session_id: row.path,

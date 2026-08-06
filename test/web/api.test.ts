@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { getCostBasis, setCostBasis } from "../../src/core/prefs.ts";
+import { projectIdParts } from "../../src/core/project-labels.ts";
 import { createApi } from "../../src/web/api.ts";
 import { createApp, isLoopbackHost } from "../../src/web/server.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
@@ -174,7 +175,7 @@ describe("web API", () => {
     const res = await api.request("/api/projects");
     const body = (await res.json()) as { projectId: string }[];
     expect(body).toHaveLength(1);
-    expect(body[0]?.projectId).toBe("proj-a");
+    expect(projectIdParts(body[0]?.projectId ?? "").dirName).toBe("proj-a");
   });
 
   test("GET /api/projects/:id/sessions lists sessions", async () => {
@@ -201,6 +202,29 @@ describe("web API", () => {
     expect(body.insights.whatIf.summary.actualCost).toBeGreaterThan(0);
     // The session is indexed, so the rank exists and covers the whole index.
     expect(body.insights.rank?.portfolio.sessions).toBeGreaterThan(0);
+  });
+
+  test("GET /api/sessions/:id carries the project id, not just its path", async () => {
+    // The SPA resolves a session's project from this. Two Claude roots can hold
+    // a project for the same working directory, so a `projectPath` match would
+    // link to whichever row happened to sort first — the id is unambiguous.
+    const res = await api.request("/api/sessions/sess-1");
+    const body = (await res.json()) as { projectId?: string; projectPath?: string };
+    expect(body.projectId).toBeString();
+    expect(projectIdParts(body.projectId ?? "").dirName).toBe("proj-a");
+  });
+
+  test("a project route accepts a bare id, so old bookmarks keep working", async () => {
+    // Stored ids are root-qualified; a URL saved before that (or typed by hand)
+    // resolves when only one root holds the project.
+    const res = await api.request("/api/projects/proj-a/sessions");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  test("an unknown project id is a 404", async () => {
+    const res = await api.request("/api/projects/nope/sessions");
+    expect(res.status).toBe(404);
   });
 
   test("GET /api/sessions/:id/transcript returns transcript items", async () => {
@@ -237,7 +261,7 @@ describe("web API", () => {
     };
     expect(body.summary.writeCost).toBeGreaterThan(0);
     expect(body.projects).toHaveLength(1); // proj-a has cache-write activity
-    expect(body.projects[0]?.projectId).toBe("proj-a");
+    expect(projectIdParts(body.projects[0]?.projectId ?? "").dirName).toBe("proj-a");
     // fixture: 1000 written, 9000 read → ratio 9, well amortized
     expect(body.projects[0]?.ratio).toBeCloseTo(9, 5);
   });
@@ -339,7 +363,7 @@ describe("web API", () => {
     };
     // The fixture session makes main-chain calls, so it carries a baseline.
     expect(body.contextTax.summary.sessions).toBe(1);
-    expect(body.contextTax.byProject[0]?.projectId).toBe("proj-a");
+    expect(projectIdParts(body.contextTax.byProject[0]?.projectId ?? "").dirName).toBe("proj-a");
     // Both fixture models are priceable, so each is the other's alternative.
     expect(body.whatIf.rows.length).toBeGreaterThan(0);
     expect(body.whatIf.rows[0]?.alternatives.length).toBeGreaterThan(0);
@@ -427,7 +451,7 @@ describe("web API", () => {
     };
     expect(body.period).toEqual({ start: "2026-06-29", end: "2026-07-05" });
     expect(body.headline.sessions.current).toBe(1);
-    expect(body.projects[0]?.projectId).toBe("proj-a");
+    expect(projectIdParts(body.projects[0]?.projectId ?? "").dirName).toBe("proj-a");
 
     // Same index, different week → a different payload (the memo key carries
     // the requested week, so one week's digest can't be served for another).

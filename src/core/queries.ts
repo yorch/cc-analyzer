@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import { type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 /** SQL fragments summing the two token buckets shown next to cost. */
 const IO_TOKENS = "input_tokens + output_tokens";
@@ -9,6 +10,9 @@ const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
 export interface IndexedProject {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir this project lives under — what tells two same-named
+   *  projects from different roots apart in a list. */
+  claudeDir: string;
   sessions: number;
   cost: number;
   ioTokens: number;
@@ -78,6 +82,9 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
     .query(
       `SELECT project_id AS projectId,
         MAX(project_path) AS projectPath,
+        -- MAX() is a "pick any": project_id is globally unique (root-qualified
+        -- at index time), so every row in a group shares one claude_dir.
+        MAX(claude_dir) AS claudeDir,
         COUNT(*) AS sessions,
         SUM(cost_total) AS cost,
         SUM(${IO_TOKENS}) AS ioTokens,
@@ -116,7 +123,30 @@ export function indexedProjectForPath(
       const rel = relative(canonicalPath(row.projectPath), cwd);
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
     })
-    .sort((a, b) => canonicalPath(b.projectPath).length - canonicalPath(a.projectPath).length)[0];
+    .sort(
+      (a, b) =>
+        canonicalPath(b.projectPath).length - canonicalPath(a.projectPath).length ||
+        // Several roots can hold a project for the same cwd; break the tie on id
+        // so `stats --current` picks the same one every run rather than at random.
+        a.projectId.localeCompare(b.projectId),
+    )[0];
+}
+
+/**
+ * Resolve a project reference against the ids the index actually holds.
+ *
+ * Same lenient rule the filesystem side uses (`findProject` in `discover.ts`),
+ * over the same shared `resolveProjectRef`: a fully qualified id matches
+ * exactly, a bare name resolves when only one root holds that project, and
+ * several roots make it ambiguous rather than silently picking one. This is
+ * what keeps a bookmarked `/api/projects/<bare-id>` URL working.
+ */
+export function resolveIndexedProject(db: Database, ref: string): ProjectRefMatch {
+  const rows = db.query("SELECT DISTINCT project_id AS id FROM sessions").all() as { id: string }[];
+  return resolveProjectRef(
+    ref,
+    rows.map((r) => r.id),
+  );
 }
 
 /** Sessions within a project, most recent first. */

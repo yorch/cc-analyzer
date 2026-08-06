@@ -1,3 +1,4 @@
+import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -53,6 +54,13 @@ export function Project({ id }: { id: string }) {
   if (!data) return null;
 
   const project = projects.find((p) => p.projectId === id);
+  // Only worth naming when more than one Claude data dir is configured —
+  // otherwise every project would carry the same redundant path.
+  const { multiRoot } = labelProjects(
+    projects,
+    (p) => projectDisplayName(p.projectPath, p.projectId),
+    (p) => p.claudeDir,
+  );
 
   return (
     <>
@@ -60,7 +68,7 @@ export function Project({ id }: { id: string }) {
         <a href={link.dashboard()}>← Dashboard</a>
       </div>
       <header className="top">
-        <h1>{project?.projectPath ?? id}</h1>
+        <h1>{projectDisplayName(project?.projectPath, id)}</h1>
         <span className="muted">
           {sessions.length}
           {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
@@ -68,6 +76,7 @@ export function Project({ id }: { id: string }) {
           {project && project.compactions > 0
             ? ` · ${count(project.compactions)} compaction${project.compactions === 1 ? "" : "s"}`
             : ""}
+          {multiRoot && project ? ` · ${project.claudeDir}` : ""}
         </span>
       </header>
 

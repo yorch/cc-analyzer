@@ -6,6 +6,7 @@ import {
   formatUSD,
   truncate,
 } from "../../cli/format.ts";
+import { projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
 import { type CacheMetrics, cacheVerdict, type ProjectPreviewStats } from "../../core/stats.ts";
 import { sparkline } from "../charts.ts";
@@ -46,7 +47,7 @@ export function ProjectPreview({
   return (
     <Box flexDirection="column">
       <Text bold color={role.heading}>
-        {truncate(project.projectPath ?? project.projectId, 48)}
+        {truncate(projectDisplayName(project.projectPath, project.projectId), 48)}
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Field label="spend">

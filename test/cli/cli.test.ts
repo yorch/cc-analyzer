@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -296,7 +296,7 @@ describe("CLI dispatch & exit codes", () => {
     };
     expect(parsed.scope).toEqual({
       type: "project",
-      projectId: "proj-a",
+      projectId: expect.stringMatching(/^[0-9a-f]{8}~proj-a$/),
       projectPath,
     });
     expect(parsed.summary.sessions).toBe(1);
@@ -546,5 +546,270 @@ describe("CLI dispatch & exit codes", () => {
     } finally {
       rmSync(added, { force: true });
     }
+  });
+});
+
+describe("Claude data directories", () => {
+  const second = join(tmpDir, "claude-2");
+
+  test("--claude-dir= overrides the environment for one invocation", async () => {
+    const r = await run([`--claude-dir=${second}`, "projects"]);
+    expect(r.code, r.stderr).toBe(0);
+    // The second root is empty, so the env-configured projects must not appear.
+    expect(r.stdout).toContain("No projects found under:");
+    expect(r.stdout).toContain(second);
+  });
+
+  test("the flag may appear before the command", async () => {
+    const r = await run([`--claude-dir=${second}`, "projects"]);
+    expect(r.code, r.stderr).toBe(0);
+    const after = await run(["projects", `--claude-dir=${second}`]);
+    expect(after.stdout).toBe(r.stdout);
+  });
+
+  test("the flag is stripped from argv rather than read as a positional", async () => {
+    // Without stripping, the path would land in positional[0] and be taken as
+    // the project id, so this would fail on a missing operand instead.
+    const r = await run([`--claude-dir=${second}`, "sessions"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("missing <projectId>");
+  });
+
+  test("the space-separated form is rejected rather than silently ignored", async () => {
+    const r = await run(["--claude-dir", second, "projects"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("--claude-dir=<path>");
+  });
+
+  test("a valueless flag exits 2", async () => {
+    const r = await run(["--claude-dir=", "projects"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("needs a path");
+  });
+
+  test("several roots are analyzed together, each project tagged with its dir", async () => {
+    mkdirSync(join(second, "projects", "proj-c"), { recursive: true });
+    const sample = readFileSync(fixture, "utf8");
+    writeFileSync(join(second, "projects", "proj-c", "sess-3.jsonl"), sample);
+    try {
+      const r = await run([`--claude-dir=${join(tmpDir, "claude")}:${second}`, "projects"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).toContain("3 projects");
+      expect(r.stdout).toContain("claude dir");
+    } finally {
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  test("the empty state names the directories actually searched", async () => {
+    const r = await run([`--claude-dir=${join(tmpDir, "nowhere")}`, "projects"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(join(tmpDir, "nowhere"));
+    expect(r.stdout).toContain("--claude-dir");
+  });
+
+  test("claude-dir reports the resolved dirs and where they came from", async () => {
+    const r = await run(["claude-dir"], { CC_ANALYZER_CLAUDE_DIR: undefined });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Reading Claude Code data from:");
+  });
+
+  test("claude-dir does not nudge a working setup to configure anything", async () => {
+    // The default ~/.claude and an inherited CLAUDE_CONFIG_DIR persist nothing
+    // and are both fine; telling those users to set something reads as a fault.
+    const r = await run(["claude-dir"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(join(tmpDir, "claude"));
+    expect(r.stdout).not.toContain("claude-dir set");
+    expect(r.stdout).not.toContain("No Claude sessions found");
+  });
+
+  test("claude-dir marks a directory with no projects/ and then offers a fix", async () => {
+    const r = await run(["claude-dir"], { CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "nowhere") });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("no projects/ directory");
+    expect(r.stdout).toContain("No Claude sessions found");
+    expect(r.stdout).toContain("cc-analyzer claude-dir set");
+  });
+
+  test("claude-dir honours CLAUDE_CONFIG_DIR when nothing else is configured", async () => {
+    const r = await run(["claude-dir"], {
+      CC_ANALYZER_CLAUDE_DIR: undefined,
+      CLAUDE_CONFIG_DIR: second,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(second);
+    expect(r.stdout).toContain("CLAUDE_CONFIG_DIR");
+  });
+
+  test("claude-dir set/add/remove persist, and reset clears", async () => {
+    const prefsState = join(tmpDir, "prefs-state");
+    mkdirSync(prefsState, { recursive: true });
+    const env = { CC_ANALYZER_STATE_DIR: prefsState, CC_ANALYZER_CLAUDE_DIR: undefined };
+    try {
+      expect((await run(["claude-dir", "set", second], env)).code).toBe(0);
+      const added = await run(["claude-dir", "add", join(tmpDir, "claude")], env);
+      expect(added.stdout).toContain(second);
+      expect(added.stdout).toContain(join(tmpDir, "claude"));
+
+      const removed = await run(["claude-dir", "remove", second], env);
+      expect(removed.code).toBe(0);
+      expect(removed.stdout).not.toContain(`${second}  (`);
+
+      const reset = await run(["claude-dir", "reset"], env);
+      expect(reset.code).toBe(0);
+      expect(reset.stdout).toContain("Cleared.");
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  // The index always covers every configured directory, so a one-invocation
+  // scope is either ignored (reads) or destructive (`index` prunes the rest).
+  for (const cmd of ["index", "stats", "audit", "insights", "report", "serve"]) {
+    test(`--claude-dir is refused on \`${cmd}\`, which reads the index`, async () => {
+      const r = await run([`--claude-dir=${second}`, cmd]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("--claude-dir cannot be used with");
+      expect(r.stderr).toContain("cc-analyzer claude-dir set <path>");
+    });
+  }
+
+  test("the refusal on `index` names the destructive consequence, not just the no-op", async () => {
+    const r = await run([`--claude-dir=${second}`, "index"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("drop the rows");
+  });
+
+  test("--claude-dir still works on the commands that read session files", async () => {
+    for (const cmd of [["projects"], ["sessions"], ["analyze"], ["doctor"]]) {
+      const r = await run([`--claude-dir=${second}`, ...cmd]);
+      // 0 or a usage/not-found code — anything but the guard's refusal.
+      expect(r.stderr).not.toContain("--claude-dir cannot be used with");
+    }
+  });
+
+  test("the env override is not guarded — it stays the test/CI escape hatch", async () => {
+    // Every other CLI test drives index-backed commands through this variable.
+    const r = await run(["stats"], { CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "claude") });
+    expect(r.stderr).not.toContain("cannot be used with");
+  });
+
+  test("the first `add` keeps the root already in effect", async () => {
+    // With nothing persisted, the effective root comes from a lower tier. Since
+    // the prefs tier is exclusive, writing a one-element list would silently
+    // drop it — and the next `index` would prune every one of its rows.
+    const prefsState = join(tmpDir, "add-state");
+    mkdirSync(prefsState, { recursive: true });
+    const inEffect = join(tmpDir, "claude");
+    try {
+      const r = await run(["claude-dir", "add", second], {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: inEffect,
+      });
+      expect(r.code, r.stderr).toBe(0);
+      // Both the previously-effective root and the newly added one.
+      expect(r.stdout).toContain(inEffect);
+      expect(r.stdout).toContain(second);
+
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      expect(stored.claudeDirs).toEqual([inEffect, second]);
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  test("`set` still replaces rather than appending", async () => {
+    const prefsState = join(tmpDir, "set-state");
+    mkdirSync(prefsState, { recursive: true });
+    try {
+      const env = {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: join(tmpDir, "claude"),
+      };
+      await run(["claude-dir", "set", second], env);
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      expect(stored.claudeDirs).toEqual([second]);
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  test("`sessions` accepts a bare project name, not just the stored id", async () => {
+    // Stored ids are root-qualified; nobody should have to type a hash.
+    const r = await run(["sessions", "proj-a"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("sessions");
+  });
+
+  test("`sessions` accepts the full stored id too", async () => {
+    const list = await run(["projects"]);
+    expect(list.code, list.stderr).toBe(0);
+    // Round-trip through the index-independent path: resolve, then use.
+    const r = await run(["sessions", "proj-a"]);
+    expect(r.code).toBe(0);
+  });
+
+  test("an ambiguous bare name lists the candidates instead of picking one", async () => {
+    // Same encoded project name under two roots — the collision the id scheme
+    // exists to preserve. Silently choosing one would be the old failure mode.
+    const other = join(tmpDir, "amb-root");
+    mkdirSync(join(other, "projects", "proj-a"), { recursive: true });
+    writeFileSync(join(other, "projects", "proj-a", "s.jsonl"), readFileSync(fixture, "utf8"));
+    try {
+      const r = await run([
+        `--claude-dir=${join(tmpDir, "claude")}:${other}`,
+        "sessions",
+        "proj-a",
+      ]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("matches 2 projects");
+      expect(r.stderr).toContain("Use the full id");
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  test("an unknown project name is reported as unknown", async () => {
+    const r = await run(["sessions", "-no-such-project"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("No project");
+  });
+
+  test("`add` does not bake a one-invocation --claude-dir root into prefs", async () => {
+    // The flag is scoped to a single command; persisting it would silently make
+    // a throwaway directory permanent, and drop the real one on the next index.
+    const prefsState = join(tmpDir, "transient-state");
+    mkdirSync(prefsState, { recursive: true });
+    const persistent = join(tmpDir, "claude");
+    try {
+      const r = await run([`--claude-dir=${second}`, "claude-dir", "add", join(tmpDir, "added")], {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: persistent,
+      });
+      expect(r.code, r.stderr).toBe(0);
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      // The persistent root plus the added one — not the flag's.
+      expect(stored.claudeDirs).toEqual([persistent, join(tmpDir, "added")]);
+      expect(stored.claudeDirs).not.toContain(second);
+      // …and the confirmation admits the flag is still overriding.
+      expect(r.stdout).toContain("overriding the stored list");
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  test("claude-dir rejects a bad subcommand and a missing operand", async () => {
+    expect((await run(["claude-dir", "frobnicate"])).code).toBe(2);
+    expect((await run(["claude-dir", "add"])).code).toBe(2);
   });
 });

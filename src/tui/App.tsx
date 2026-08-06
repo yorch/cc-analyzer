@@ -6,6 +6,7 @@ import type { IndexStatus } from "../core/index-status-types.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
 import { getCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
+import { projectDisplayName } from "../core/project-labels.ts";
 import {
   type IndexedProject,
   type IndexedSession,
@@ -165,7 +166,7 @@ export function App({ db, pricing, indexStatus }: Props) {
   const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0) - (indexNotice ? 1 : 0));
 
   const breadcrumb = drill
-    ? `projects ▸ ${truncate(drill.projectPath ?? drill.projectId, 40)}`
+    ? `projects ▸ ${truncate(projectDisplayName(drill.projectPath, drill.projectId), 40)}`
     : view;
 
   const keyHints =

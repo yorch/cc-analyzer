@@ -1,3 +1,4 @@
+import { projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -30,7 +31,7 @@ const PROJECT_SORT: Accessors<ProjectCacheRow> = {
   write: (r) => r.writeCost,
   read: (r) => r.readCost,
   sessions: (r) => r.sessions,
-  project: (r) => r.projectPath ?? r.projectId,
+  project: (r) => projectDisplayName(r.projectPath, r.projectId),
 };
 
 export function Insights() {
@@ -44,7 +45,7 @@ export function Insights() {
   const q = query.toLowerCase();
   const all = data?.projects ?? [];
   const filtered = q
-    ? all.filter((p) => (p.projectPath ?? p.projectId).toLowerCase().includes(q))
+    ? all.filter((p) => projectDisplayName(p.projectPath, p.projectId).toLowerCase().includes(q))
     : all;
   const sort = useSort(filtered, PROJECT_SORT, "waste");
   const rows = sort.sorted;
@@ -119,7 +120,9 @@ export function Insights() {
                 <td className="num">{usd(p.readCost)}</td>
                 <td className="num">{p.sessions}</td>
                 <td>
-                  <a href={link.insightsProject(p.projectId)}>{p.projectPath ?? p.projectId}</a>
+                  <a href={link.insightsProject(p.projectId)}>
+                    {projectDisplayName(p.projectPath, p.projectId)}
+                  </a>
                 </td>
               </tr>
             ))}
@@ -157,7 +160,9 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
           extra={(d) =>
             d.projectId && (
               <p>
-                <a href={link.project(d.projectId)}>{d.projectPath ?? d.projectId}</a>
+                <a href={link.project(d.projectId)}>
+                  {projectDisplayName(d.projectPath, d.projectId)}
+                </a>
               </p>
             )
           }
@@ -218,7 +223,9 @@ function ContextTaxPanel({ tax }: { tax: ContextTax }) {
                 <td className="num">{count(Math.round(p.avgTokens))}</td>
                 <td className="num">{p.sessions}</td>
                 <td>
-                  <a href={link.project(p.projectId)}>{p.projectPath ?? p.projectId}</a>
+                  <a href={link.project(p.projectId)}>
+                    {projectDisplayName(p.projectPath, p.projectId)}
+                  </a>
                 </td>
               </tr>
             ))}
@@ -361,7 +368,9 @@ export function InsightsProject({ id }: { id: string }) {
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load insight sessions." />;
   if (!data) return null;
 
-  const projectPath = all[0]?.projectPath ?? id;
+  // Never `?? id`: a project with no cache-active sessions (or a NULL
+  // project_path) would put a raw `<slug>~<name>` in the heading.
+  const projectPath = projectDisplayName(all[0]?.projectPath, id);
 
   return (
     <>
