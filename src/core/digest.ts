@@ -18,10 +18,10 @@
  * only attribution the index supports, and the rendered footer says so.
  */
 
-import { type CostBasis, costFramingNote } from "./cost-framing.ts";
+import { type CostBasis, costFramingNote, costNoun } from "./cost-framing.ts";
 import { formatCompactDuration, formatSignedCount, formatUSD } from "./format-shared.ts";
 import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
-import { projectDisplayName } from "./project-labels.ts";
+import { labelProjects, projectDisplayName, rootTag } from "./project-labels.ts";
 import type { CacheSummary, DayRange } from "./stats-types.ts";
 import { CORRECTION_CAVEAT, SKILL_COST_CAVEAT, shiftDay, weekOf } from "./stats-types.ts";
 
@@ -293,12 +293,18 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
   } else {
     out.push("### Summary");
     out.push("");
+    // The label goes through the same `costNoun` the terminal renderer uses
+    // (Title Cased here, since markdown headers are Title Case) so a pasted
+    // subscription-basis digest doesn't call the same number "Cost" here and
+    // "API-equivalent value" in the terminal.
+    const costNounLabel = costNoun(d.costBasis);
+    const costLabel = `${costNounLabel[0]?.toUpperCase() ?? ""}${costNounLabel.slice(1)}`;
     out.push(
       mdTable(
         ["Metric", "This period", "Prior", "Change"],
         ["left", "right", "right", "right"],
         digestSummaryRows(d, [
-          "Cost",
+          costLabel,
           "Sessions",
           "Active time",
           "Input+output tokens",
@@ -309,18 +315,34 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
     out.push("");
 
     if (d.projects.length > 0) {
+      // Two roots can hold a project for the same cwd, so the table gets a
+      // root column the moment more than one root is in play — same rule the
+      // terminal renderer and `cmdProjects` apply.
+      const { multiRoot } = labelProjects(
+        d.projects,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      );
+      const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
       out.push("### Top projects");
       out.push("");
       out.push(
         mdTable(
-          ["Project", "Cost", "Sessions", "Change"],
-          ["left", "right", "right", "right"],
-          d.projects.map((p) => [
-            cell(projectDisplayName(p.projectPath, p.projectId)),
-            formatUSD(p.cost),
-            String(p.sessions),
-            formatDigestDelta(p.delta, formatUSD),
-          ]),
+          multiRoot
+            ? ["Project", "Cost", "Sessions", "Change", "Claude dir"]
+            : ["Project", "Cost", "Sessions", "Change"],
+          multiRoot
+            ? ["left", "right", "right", "right", "left"]
+            : ["left", "right", "right", "right"],
+          d.projects.map((p) => {
+            const base = [
+              cell(projectDisplayName(p.projectPath, p.projectId)),
+              formatUSD(p.cost),
+              String(p.sessions),
+              formatDigestDelta(p.delta, formatUSD),
+            ];
+            return multiRoot ? [...base, cell(rootTag(p.claudeDir, projectRoots))] : base;
+          }),
         ),
       );
       out.push("");
@@ -374,8 +396,10 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
         `(${(r.correctionShare * 100).toFixed(0)}%) · ${formatSignedCount(r.interruptionTurns)} interrupted`,
     );
     out.push("");
-    out.push(`_${CORRECTION_CAVEAT}_`);
-    out.push("");
+    if (r.correctionTurns > 0 || r.interruptionTurns > 0) {
+      out.push(`_${CORRECTION_CAVEAT}_`);
+      out.push("");
+    }
 
     if (d.skills.length > 0) {
       out.push("### Skills");
