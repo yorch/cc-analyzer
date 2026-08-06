@@ -4,8 +4,11 @@ import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from ".
 import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 export interface ProjectInfo {
-  /** Globally unique id: the encoded directory name, root-qualified when the
-   *  project lives outside the primary Claude root. */
+  /** Globally unique id: the encoded directory name qualified by its root's
+   *  slug (`<rootSlug>~<name>`), uniformly for every root — see
+   *  `qualifyProjectId`. Storage identity, not something to show or to expect
+   *  a user to type: `projectDisplayName` renders it, `findProject` accepts a
+   *  bare name back. */
   id: string;
   /** Best-effort human label (authoritative path comes from session cwd). */
   label: string;
