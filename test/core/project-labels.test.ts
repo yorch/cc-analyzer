@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   decodeProjectLabel,
   labelProjects,
@@ -177,5 +180,70 @@ describe("id algebra", () => {
   test("decodes both qualified and bare ids to the same label", () => {
     expect(decodeProjectLabel("deadbeef~-Users-me-proj")).toBe("/Users/me/proj");
     expect(decodeProjectLabel("-Users-me-proj")).toBe("/Users/me/proj");
+  });
+});
+
+/**
+ * A source guard, in the spirit of the `CORRECTION_PATTERN_SOURCE` pinning test:
+ * it fails on a *shape* of code rather than on a behaviour.
+ *
+ * Two shipped defects put a raw `<rootSlug>~<encodedName>` in a page heading,
+ * both written as `projectPath ?? id`. Since ids became uniformly qualified,
+ * any such fallback shows a hash to a person. `projectDisplayName()` exists
+ * precisely so there is one rule; this makes forgetting it a test failure
+ * rather than something a reviewer has to notice.
+ *
+ * The rule: a `projectPath ??` fallback may only default to a *literal*
+ * (a string, `null`, `undefined`) — never to an expression that could be an id.
+ * Anything richer belongs in `projectDisplayName`.
+ */
+describe("source guard · no raw project id as a display fallback", () => {
+  const repo = fileURLToPath(new URL("../../", import.meta.url));
+  const roots = [join(repo, "src"), join(repo, "web", "src")];
+  const CODE = new Set([".ts", ".tsx"]);
+  // The helper that *implements* the rule necessarily contains the pattern.
+  const EXEMPT = new Set(["src/core/project-labels.ts"]);
+  const LITERAL = /^("|'|`|null\b|undefined\b)/;
+
+  function sourceFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...sourceFiles(full));
+      else if (CODE.has(extname(entry.name))) out.push(full);
+    }
+    return out;
+  }
+
+  test("every `projectPath ??` defaults to a literal, not to an id", () => {
+    const offenders: string[] = [];
+    for (const root of roots) {
+      for (const file of sourceFiles(root)) {
+        const rel = relative(repo, file).replaceAll("\\", "/");
+        if (EXEMPT.has(rel)) continue;
+        readFileSync(file, "utf8")
+          .split("\n")
+          .forEach((line, i) => {
+            const at = line.indexOf("projectPath ??");
+            if (at === -1) return;
+            const rhs = line.slice(at + "projectPath ??".length).trim();
+            if (!LITERAL.test(rhs)) offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+          });
+      }
+    }
+    expect(
+      offenders,
+      `Use projectDisplayName(path, id) — a project id is storage identity and ` +
+        `must never be shown:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("the guard actually rejects the shape that shipped twice", () => {
+    // Guard the guard: a rule that cannot fail is not a rule.
+    expect(LITERAL.test("id")).toBe(false);
+    expect(LITERAL.test("p.projectId")).toBe(false);
+    expect(LITERAL.test('"—"')).toBe(true);
+    expect(LITERAL.test("null,")).toBe(true);
+    expect(LITERAL.test("undefined }")).toBe(true);
   });
 });

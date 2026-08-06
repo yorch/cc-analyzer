@@ -190,11 +190,19 @@ Work and personal, or several machines' data synced into one folder. Name each
 directory once; they are then **analyzed together as a single portfolio**:
 
 ```sh
-cc-analyzer claude-dir add ~/work/.claude
-cc-analyzer claude-dir add ~/personal/.claude
+cc-analyzer claude-dir set ~/work/.claude       # start the list with this one
+cc-analyzer claude-dir add ~/personal/.claude   # append the next
 cc-analyzer index          # the index mirrors the configured set
 cc-analyzer stats          # both profiles, one report
 ```
+
+`set` for the first one, `add` for the rest. That is deliberate: `add` appends
+to whatever is **already in effect**, which — before you have configured
+anything — is `~/.claude` (or your `CLAUDE_CONFIG_DIR`). Two `add`s from a
+clean slate would therefore give you *three* directories, keeping the default
+alongside the two you named. That is the safe behaviour when you genuinely are
+adding to an existing setup, but if you want exactly the directories you list,
+begin with `set`.
 
 `cc-analyzer projects` gains a **claude dir** column so you can tell them apart,
 and lists elsewhere name the directory only where two labels would otherwise be
@@ -204,7 +212,7 @@ Managing the list:
 
 ```sh
 cc-analyzer claude-dir                        # what is in effect, and why
-cc-analyzer claude-dir add <path>             # append one
+cc-analyzer claude-dir add <path>             # append to what is in effect
 cc-analyzer claude-dir set <path>             # replace the list with one
 cc-analyzer claude-dir remove <path>          # drop one
 cc-analyzer claude-dir reset                  # back to default resolution
