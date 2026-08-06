@@ -15,6 +15,7 @@ import { loadPricing } from "../core/pricing-source.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
+import { sessionWhatIf } from "../core/session-insights.ts";
 import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
@@ -203,6 +204,9 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
     console.log(
       renderSessionSummary(analysis, {
         color: process.stdout.isTTY && !process.env.NO_COLOR,
+        // Session-scoped what-if: computed here because the renderer never
+        // sees the pricing table.
+        whatIf: sessionWhatIf(analysis.models, pricing),
       }),
     );
     // Parse coverage, not just the error count: a line kept as a tolerant

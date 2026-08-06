@@ -553,3 +553,136 @@ describe("correction and interruption turns", () => {
     expect(full.interruptionTurns).toBe(1);
   });
 });
+
+describe("per-turn signals and sidechain bursts", () => {
+  const prompt = (uuid: string, min: number, text: string) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    message: { content: text },
+  });
+  const sideRoot = (uuid: string, min: number, text: string) => ({
+    type: "user",
+    uuid,
+    timestamp: at(min),
+    isSidechain: true,
+    message: { content: text },
+  });
+  const sideCall = (uuid: string, min: number, parentUuid: string) =>
+    assistantEvent({
+      uuid,
+      timestamp: at(min),
+      parentUuid,
+      isSidechain: true,
+      requestId: `req-${uuid}`,
+      messageId: `msg-${uuid}`,
+    });
+
+  test("attributes retries, redundant reads, and deferred test failures to the issuing turn", () => {
+    const a = analyze([
+      prompt("u1", 0, "run the suite"),
+      assistant({ id: "1", min: 1, content: [toolUse("t1", "Bash", { command: "bun test" })] }),
+      // The next prompt opens turn 2 BEFORE the test result lands…
+      prompt("u2", 2, "meanwhile, clean up"),
+      // …so the failure must still charge turn 1, which issued the call.
+      toolResult("t1", true),
+      assistant({
+        id: "2",
+        min: 3,
+        content: [
+          toolUse("t2", "Read", { file_path: "/f" }),
+          toolUse("t3", "Bash", { command: "ls" }),
+          toolUse("t4", "Bash", { command: "ls" }),
+          toolUse("t5", "Read", { file_path: "/f" }),
+          toolUse("t6", "Read", { file_path: "/f", offset: 5 }),
+        ],
+      }),
+    ]);
+    expect(a.turns.map((t) => t.testFailures)).toEqual([1, 0]);
+    expect(a.turns.map((t) => t.retries)).toEqual([0, 1]);
+    expect(a.turns.map((t) => t.redundantReads)).toEqual([0, 1]);
+    // The per-turn positions must sum to the session counters.
+    expect(a.testFailures).toBe(1);
+    expect(a.retries).toBe(1);
+    expect(a.redundantReads).toBe(1);
+  });
+
+  test("flags interrupted and correction turns on the detail timeline", () => {
+    const a = analyze([
+      prompt("u1", 0, "build the thing"),
+      assistant({ id: "1", min: 1 }),
+      prompt("u2", 2, "[Request interrupted by user]"),
+      prompt("u3", 3, "no, use tabs instead"),
+    ]);
+    expect(a.turns.map((t) => t.interrupted === true)).toEqual([false, true, false]);
+    expect(a.turns.map((t) => t.correction === true)).toEqual([false, false, true]);
+    expect(a.interruptionTurns).toBe(1);
+    expect(a.correctionTurns).toBe(1);
+  });
+
+  test("groups sidechain calls into bursts named by spawn prompt, not spawn order", () => {
+    const a = analyze([
+      prompt("u1", 0, "parallelize"),
+      assistant({
+        id: "1",
+        min: 1,
+        content: [
+          toolUse("t1", "Task", { subagent_type: "explorer", prompt: "find the config" }),
+          toolUse("t2", "Task", { subagent_type: "planner", prompt: "plan the change" }),
+        ],
+      }),
+      // The planner's chain starts FIRST even though it was spawned second.
+      sideRoot("sb", 2, "plan the change"),
+      sideCall("b1", 3, "sb"),
+      sideRoot("sa", 4, "find the config"),
+      sideCall("a1", 5, "sa"),
+      sideCall("b2", 6, "b1"),
+    ]);
+    expect(a.sidechainBursts).toHaveLength(2);
+    const [first, second] = a.sidechainBursts;
+    expect(first?.subagentType).toBe("planner");
+    expect(first?.apiCalls).toBe(2);
+    expect(second?.subagentType).toBe("explorer");
+    expect(second?.apiCalls).toBe(1);
+    expect(first?.turnIndex).toBe(0);
+    const burstCost = a.sidechainBursts.reduce((s, b) => s + b.cost, 0);
+    expect(burstCost).toBeCloseTo(a.totals.sidechainCost, 10);
+  });
+
+  test("zips spawns to bursts in order when nothing matches by prompt and counts align", () => {
+    const a = analyze([
+      prompt("u1", 0, "go"),
+      assistant({
+        id: "1",
+        min: 1,
+        content: [toolUse("t1", "Task", { subagent_type: "digger", prompt: "dig here" })],
+      }),
+      // Root prompt does not repeat the spawn prompt (older/truncated file).
+      sideRoot("sr", 2, "something else entirely"),
+      sideCall("s1", 3, "sr"),
+    ]);
+    expect(a.sidechainBursts).toHaveLength(1);
+    expect(a.sidechainBursts[0]?.subagentType).toBe("digger");
+  });
+
+  test("aggregate mode skips burst accounting entirely (the indexer never reads it)", async () => {
+    const events = [
+      prompt("u1", 0, "parallelize"),
+      assistant({
+        id: "1",
+        min: 1,
+        content: [toolUse("t1", "Task", { subagent_type: "explorer", prompt: "find the config" })],
+      }),
+      sideRoot("sa", 2, "find the config"),
+      sideCall("a1", 3, "sa"),
+    ];
+    async function* stream() {
+      for (const e of events) yield e as Events[number];
+    }
+    const agg = await analyzeSessionStream(stream(), pricing, { detail: false });
+    expect(agg.turns).toEqual([]);
+    expect(agg.sidechainBursts).toEqual([]);
+    // The sidechain totals still count — only the per-burst detail is skipped.
+    expect(agg.totals.sidechainApiCalls).toBe(1);
+  });
+});

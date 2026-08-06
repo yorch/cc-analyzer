@@ -2,8 +2,10 @@ import type { Database } from "bun:sqlite";
 import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type { PricingTable, TokenCounts } from "./pricing.ts";
-import { cacheTokens, computeCost, ioTokens, resolveModel, zeroTokens } from "./pricing.ts";
+import { cacheTokens, ioTokens, zeroTokens } from "./pricing.ts";
+import { sessionRowById } from "./queries.ts";
 import { compareVersions } from "./release.ts";
+import { repriceModelMixes } from "./session-insights.ts";
 import type {
   AnalyticsRollup,
   CacheSummary,
@@ -15,6 +17,7 @@ import type {
   ContextTaxRow,
   CostBucket,
   CostDistribution,
+  CostRankCohort,
   DayRange,
   DayRow,
   DepthBucket,
@@ -37,6 +40,7 @@ import type {
   RunRate,
   ScatterSession,
   SessionCacheRow,
+  SessionCostRank,
   SessionRankRow,
   SidechainDayRow,
   SidechainProjectRow,
@@ -47,7 +51,6 @@ import type {
   WebToolsProjectRow,
   WebToolsSummary,
   WhatIfRepricing,
-  WhatIfRow,
 } from "./stats-types.ts";
 import {
   bucketSeries,
@@ -1247,88 +1250,69 @@ export function contextTax(db: Database, projectId?: string, limit = 30): Contex
   };
 }
 
-/**
- * Alternatives to compare against when the portfolio itself doesn't contain at
- * least two priceable models — one model per family, the newest of each present
- * in the bundled pricing snapshot. Filtered at use to ids the live pricing
- * table can actually resolve, so a snapshot that drifts ahead of (or behind)
- * LiteLLM degrades to whatever does resolve instead of inventing a rate.
- */
-export const FALLBACK_WHATIF_MODELS = ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"];
+// The repricing fold itself lives bun-free in session-insights.ts, shared
+// with the per-session what-if — re-exported here so existing callers keep
+// their import site.
+export { FALLBACK_WHATIF_MODELS } from "./session-insights.ts";
 
 /**
- * Replay each model's ACTUAL token mix at the other models' rates — the
- * "should I have routed this work somewhere cheaper?" signal.
- *
- * Alternatives are the other models the user actually ran (that's the realistic
- * comparison set), falling back to `FALLBACK_WHATIF_MODELS` when fewer than two
- * of their models can be priced. All four token categories and both cache-write
- * TTLs are repriced through `computeCost`, so cache accounting — where most of
- * the spend hides — is not silently dropped.
- *
- * Strictly a rate comparison, and the caveat must survive to every render site:
- * a different model would produce a different number of tokens (and different
- * output quality); neither is priced in here.
+ * Replay each model's ACTUAL portfolio-wide token mix at the other models'
+ * rates — the "should I have routed this work somewhere cheaper?" signal.
+ * The fold (alternative selection, all four token categories, both cache-write
+ * TTLs, the caveat contract) is `repriceModelMixes` in `session-insights.ts`,
+ * shared with the per-session what-if so the two scopes cannot disagree.
  */
 export function whatIfRepricing(
   db: Database,
   pricing: PricingTable,
   projectId?: string,
 ): WhatIfRepricing {
-  // Only models the pricing table can resolve can be repriced at all; an
-  // unresolvable id would silently price at $0 and read as a huge saving.
-  const actual = [...modelTotals(db, projectId).entries()].filter(
-    ([model, v]) => v.calls > 0 && resolveModel(pricing, model) !== undefined,
-  );
-
-  const used = actual.map(([model]) => model);
-  const fallbackAlternatives = used.length < 2;
-  const candidates = fallbackAlternatives
-    ? FALLBACK_WHATIF_MODELS.filter((m) => resolveModel(pricing, m) !== undefined)
-    : used;
-
-  const rows: WhatIfRow[] = actual
-    .map(([model, v]) => ({
+  return repriceModelMixes(
+    [...modelTotals(db, projectId).entries()].map(([model, v]) => ({
       model,
       calls: v.calls,
       cost: v.cost,
-      alternatives: candidates
-        .filter((c) => c !== model)
-        .map((c) => {
-          const cost = computeCost(v.tokens, resolveModel(pricing, c)?.pricing).total;
-          return { model: c, cost, delta: cost - v.cost };
-        })
-        .sort((a, b) => a.cost - b.cost),
-    }))
-    .sort((a, b) => b.cost - a.cost);
+      tokens: v.tokens,
+    })),
+    pricing,
+  );
+}
 
-  // Headline: if EVERY repriced model's mix had run on one model, which is
-  // cheapest? A model's own rows keep their actual cost in its own total.
-  const actualCost = rows.reduce((s, r) => s + r.cost, 0);
-  let bestModel: string | null = null;
-  let bestCost = 0;
-  for (const c of candidates) {
-    const total = rows.reduce(
-      (s, r) =>
-        s + (r.model === c ? r.cost : (r.alternatives.find((a) => a.model === c)?.cost ?? 0)),
-      0,
-    );
-    if (bestModel === null || total < bestCost) {
-      bestModel = c;
-      bestCost = total;
-    }
-  }
-  if (rows.length === 0) bestModel = null;
-
+/**
+ * Where one session's cost sits among every indexed session's (and among its
+ * own project's). The percentile is the share of sessions costing STRICTLY
+ * LESS than this one (NULL costs read as $0), so a tied-cheapest session
+ * reads p0 rather than p100. Undefined when the session isn't in the index
+ * (e.g. analyzed by bare path). Cohort sizes ride along so render sites can
+ * hedge tiny cohorts (`MIN_RANK_COHORT` — "p50 of 2 sessions" is noise). Id
+ * resolution is `sessionRowById`, the same rule the session route uses, and
+ * both cohorts fold in one table scan.
+ */
+export function sessionCostRank(db: Database, sessionId: string): SessionCostRank | undefined {
+  const row = sessionRowById(db, sessionId);
+  if (!row) return undefined;
+  const r = db
+    .query(
+      `SELECT COUNT(*) AS n,
+        COALESCE(SUM(CASE WHEN COALESCE(cost_total, 0) < ? THEN 1 ELSE 0 END), 0) AS below,
+        COALESCE(SUM(CASE WHEN project_id = ? THEN 1 ELSE 0 END), 0) AS pn,
+        COALESCE(SUM(CASE WHEN project_id = ? AND COALESCE(cost_total, 0) < ? THEN 1 ELSE 0 END), 0) AS pbelow
+       FROM sessions`,
+    )
+    .get(row.cost, row.projectId, row.projectId, row.cost) as {
+    n: number;
+    below: number;
+    pn: number;
+    pbelow: number;
+  };
+  const cohort = (sessions: number, below: number): CostRankCohort => ({
+    sessions,
+    pct: sessions > 0 ? Math.round((100 * below) / sessions) : 0,
+  });
   return {
-    summary: {
-      actualCost,
-      bestModel,
-      bestCost: bestModel === null ? 0 : bestCost,
-      bestDelta: bestModel === null ? 0 : bestCost - actualCost,
-      fallbackAlternatives,
-    },
-    rows,
+    cost: row.cost,
+    portfolio: cohort(r.n, r.below),
+    project: cohort(r.pn, r.pbelow),
   };
 }
 

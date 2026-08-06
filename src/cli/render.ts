@@ -14,6 +14,7 @@ import {
 } from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
+import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
 import type {
   BashCommandRow,
@@ -33,12 +34,14 @@ import {
   THRASH_REREAD_MIN,
   THRASH_STREAK_MIN,
   topEntries,
+  WHATIF_CAVEAT,
 } from "../core/stats-types.ts";
 import {
   formatCount,
   formatDuration,
   formatRelativeTime,
   formatSignedCount,
+  formatSignedUSD,
   formatTokens,
   formatUSD,
   table,
@@ -117,7 +120,12 @@ function totalTokens(t: TokenCounts): number {
 }
 
 /** Render a full single-session analysis as a text report. */
-export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions = {}): string {
+export function renderSessionSummary(
+  a: SessionAnalysis,
+  // `whatIf` is computed by the caller (it needs the pricing table, which the
+  // renderer deliberately never sees) — absent, the section is skipped.
+  options: RenderOptions & { whatIf?: WhatIfRepricing } = {},
+): string {
   const lines: string[] = [];
   const est = a.totals.cost.estimated ? " (estimated)" : "";
 
@@ -211,12 +219,50 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
     ),
   );
 
+  // Cost per outcome: what the spend bought, in observable units. The row
+  // set (and the absent-not-$0 rule) is the shared `outcomeRows`.
+  const outcomes = outcomeRows(sessionOutcomes(a));
+  if (outcomes.length) {
+    lines.push(`\n${section("Cost per outcome", options)}`);
+    lines.push(
+      table(
+        ["unit", "cost"],
+        outcomes.map((r) => [r.label, formatUSD(r.cost)]),
+        { align: ["left", "right"] },
+      ),
+    );
+    lines.push(muted(OUTCOME_CAVEAT, options));
+  }
+
   const modelRows = Object.entries(a.models)
     .sort((x, y) => y[1].cost.total - x[1].cost.total)
     .map(([m, u]) => [m, String(u.apiCalls), formatUSD(u.cost.total)]);
   if (modelRows.length) {
     lines.push(`\n${section("Models", options)}`);
     lines.push(table(["model", "calls", "cost"], modelRows, { align: ["left", "right", "right"] }));
+  }
+
+  // Session-scoped what-if: this session's token mix at other models' rates.
+  const whatIf = options.whatIf;
+  if (whatIf && whatIf.rows.length > 0 && whatIf.summary.bestModel) {
+    const s = whatIf.summary;
+    lines.push(`\n${section("What-if repricing", options)}`);
+    lines.push(
+      table(
+        ["model", "cost", "cheapest alternative", "at rate"],
+        whatIf.rows.map((r) => {
+          const alt = r.alternatives[0];
+          return [r.model, formatUSD(r.cost), alt?.model ?? "-", alt ? formatUSD(alt.cost) : "-"];
+        }),
+        { align: ["left", "right", "left", "right"] },
+      ),
+    );
+    lines.push(
+      `  cheapest single model: ${s.bestModel} at ${formatUSD(s.bestCost)} ` +
+        `(${formatSignedUSD(s.bestDelta)} vs actual` +
+        `${s.fallbackAlternatives ? ", stock alternatives" : ""})`,
+    );
+    lines.push(muted(WHATIF_CAVEAT, options));
   }
 
   const toolRows = Object.entries(a.tools)
@@ -241,6 +287,27 @@ export function renderSessionSummary(a: SessionAnalysis, options: RenderOptions 
       ),
     );
     lines.push(muted(SKILL_COST_CAVEAT, options));
+  }
+  // Per-burst subagent spend, when the session spawned any. The type column
+  // is a best-effort prompt match (see SidechainBurst) — say so — and the
+  // `Subagents:` line stays: it lists the exact types read off the Task
+  // tool_uses, which the join can fail to attribute.
+  if (a.sidechainBursts.length > 0) {
+    lines.push(`\n${section("Subagent bursts", options)}`);
+    lines.push(
+      table(
+        ["#", "type", "turn", "calls", "cost"],
+        a.sidechainBursts.map((b, i) => [
+          String(i + 1),
+          b.subagentType ?? "(unmatched)",
+          b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-",
+          String(b.apiCalls),
+          formatUSD(b.cost),
+        ]),
+        { align: ["right", "left", "right", "right", "right"] },
+      ),
+    );
+    lines.push(muted("Types are matched best-effort from spawn prompts.", options));
   }
   if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
   if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);

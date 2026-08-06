@@ -29,6 +29,7 @@ import type {
   ProjectTrends,
   ScatterSession,
   SessionCacheRow,
+  SessionCostRank,
   SidechainDayRow,
   SidechainProjectRow,
   SidechainSummary,
@@ -43,6 +44,7 @@ export type {
   Compaction,
   SessionAnalysis,
   SessionTotals,
+  SidechainBurst,
   Turn,
 } from "../../src/core/analyze.ts";
 // Runtime chart and diagnostic builders are bun-free core code, so the SPA
@@ -66,6 +68,16 @@ export * from "../../src/core/format-shared.ts";
 export * from "../../src/core/portfolio-diagnostics.ts";
 export type { CostBreakdown, TokenCounts } from "../../src/core/pricing.ts";
 export * from "../../src/core/session-diagnostics.ts";
+// Session-scoped cost insights: the outcome ratios are bun-free and computed
+// client-side off the session payload; the what-if shapes ride on the same
+// module so a session's repricing renders with the portfolio's vocabulary.
+export {
+  OUTCOME_CAVEAT,
+  type OutcomeRow,
+  outcomeRows,
+  type SessionOutcomes,
+  sessionOutcomes,
+} from "../../src/core/session-insights.ts";
 // Setup-audit shapes, thresholds, and the mandatory caveat string — bun-free,
 // so the SPA renders the same audit vocabulary as the CLI.
 export * from "../../src/core/setup-audit.ts";
@@ -146,6 +158,19 @@ export interface PrefsResponse {
   costBasis: CostBasis;
 }
 
+/** Server-computed session insights riding on `/api/sessions/:id`: the
+ * what-if needs the pricing table and the rank needs the index, so neither
+ * can be derived client-side (unlike `sessionOutcomes`, which can). */
+export interface SessionInsightsPayload {
+  whatIf: WhatIfRepricing;
+  /** Null when the session isn't in the index (analyzed by bare path). */
+  rank: SessionCostRank | null;
+}
+
+/** The session payload: the full analysis plus the insights sibling.
+ * `insights` stays optional so a cached/older server response still renders. */
+export type SessionResponse = SessionAnalysis & { insights?: SessionInsightsPayload };
+
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${url}`);
@@ -177,7 +202,7 @@ export const api = {
     get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`),
   projectTrends: (projectId: string) =>
     get<ProjectTrends>(`/api/projects/${encodeURIComponent(projectId)}/trends`),
-  session: (id: string) => get<SessionAnalysis>(`/api/sessions/${encodeURIComponent(id)}`),
+  session: (id: string) => get<SessionResponse>(`/api/sessions/${encodeURIComponent(id)}`),
   transcript: (id: string) =>
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
   searchSessions: (q: string) =>

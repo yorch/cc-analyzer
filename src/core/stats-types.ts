@@ -816,6 +816,33 @@ export interface WhatIfRepricing {
   rows: WhatIfRow[];
 }
 
+/** Every render site of a what-if repricing (portfolio or single-session)
+ * prints this verbatim. */
+export const WHATIF_CAVEAT =
+  "What-if repricing replays the actual token mix at other models' rates. A different model " +
+  "would produce a different number of tokens, and output quality is not priced in — read it " +
+  "as a rate comparison, not a bill.";
+
+/** A cohort below this size makes a percentile noise, not signal — render
+ * sites hide the rank rather than show "p50 of 2 sessions". */
+export const MIN_RANK_COHORT = 5;
+
+/** One comparison cohort for a session's cost rank. */
+export interface CostRankCohort {
+  sessions: number;
+  /** Share of the cohort costing STRICTLY LESS than this session, in whole
+   * percent — so a tied-cheapest session reads p0, never p100. */
+  pct: number;
+}
+
+/** Where one session's cost sits among indexed sessions (see `sessionCostRank`). */
+export interface SessionCostRank {
+  cost: number;
+  portfolio: CostRankCohort;
+  /** Absent when the session's row carries no project id. */
+  project?: CostRankCohort;
+}
+
 export interface ConcurrencyDayRow {
   day: string;
   maxConcurrent: number;

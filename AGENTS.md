@@ -122,7 +122,13 @@ prompts; false negatives are fine, false positives are the failure mode; like
 `testFailStreak` the phrase list is baked into the index and needs a reindex to
 evolve — a pinning test over the exported `CORRECTION_PATTERN_SOURCE` fails on
 any edit and says to bump `SCHEMA_VERSION`). The two counters are independent — an interrupted turn followed by a
-"no, …" prompt counts once in each. Share = `correctionTurns / totals.turns`
+"no, …" prompt counts once in each. In **detail mode** each `Turn` additionally
+carries its own signal positions — `retries`, `redundantReads`, `testFailures`
+(attributed to the *issuing* turn through the pending-tool map, since a test's
+result can land after the next prompt already opened a new turn), and the
+`interrupted`/`correction` flags — which is what lets the session charts mark
+*where* the churn happened; the session counters, aggregate mode, and the index
+columns are unchanged. Share = `correctionTurns / totals.turns`
 (turns counts exactly the real prompts); every render site prints the shared
 `CORRECTION_CAVEAT` from `stats-types.ts`. They feed the `correction-loop`
 session diagnostic and the `correction-heavy` insight rule, and roll up (with a
@@ -173,6 +179,39 @@ module (like `stats-types.ts`) the SPA imports directly, so both frontends chart
 identical numbers: context-window fill per main-chain API call (sidechains run in
 their own context windows and are excluded), cumulative burn (main + sidechain),
 per-turn cost/tokens/calls, and compaction markers mapped onto the call axis.
+Around that spine sit the derived series, all in the same module: the **cache
+series** (`buildCacheSeries`, cached vs fresh prompt-side split + token-weighted
+hit rate + cold-call count, derived from the context series' points so the two
+charts describe the same calls), **idle-gap markers** on the burn series
+(`buildGapMarkers` places the analyzer's `totals.idlePeriods` — the exact gaps
+`activeMs` excluded, over ALL event timestamps — onto the call axis, so a
+chart's "idle" total is `durationMs − activeMs` and a long-running tool whose
+result lands mid-gap is active, never phantom idle), the **headroom
+projection** (`projectHeadroom`: linear context growth over the calls since the
+last compaction, ≥ 3 points and a known window required, flat/shrinking →
+undefined — a projection, not a promise), a per-marker `reclaimed` token count
+(`preTokens` minus the first post-compaction call's context, clamped at 0,
+absent when either side is unknown), the in-session **model mix**
+(`modelMixRows`), and the widened `TurnPoint` (the four cost categories which
+sum to `cost`, `wallMs`, operation-step `kindCounts` + `toolErrors`, and the
+per-turn signal flags below). `turnFlags()` is the ONE "is this turn worth
+flagging" predicate (interrupted / correction / retries / test failures /
+redundant reads / tool errors) — the web tooltips and marks and the TUI ▲ row
+both render exactly its output; the web timeline's red lanes are deliberately
+the narrower user-intervention subset (interrupted/correction only). The
+analyzer also groups sidechain calls into
+**`SessionAnalysis.sidechainBursts`** — one entry per chain, so "which subagent
+burst cost $3" is answerable — with a **best-effort** `subagentType`: a burst's
+root sidechain user event repeats the Task prompt verbatim, so bursts join to
+main-chain `Task`/`Agent` spawns by normalized prompt (each spawn consumed
+once, in order), falling back to an order-zip only when nothing matched and the
+counts align exactly; anything else stays unnamed rather than guessed —
+which is why render sites keep the accurate `subagents` type list alongside
+the burst table instead of replacing it. `groupSidechainBursts()` is the one
+per-type rollup (label, fold, ordering) over them. Bursts are **detail-mode
+only** (always empty in aggregate mode — the indexer's streaming path never
+reads them and must not pay for the per-chain accumulators) and are not
+flattened into the index.
 Pricing's `maxInputTokens` (LiteLLM `max_input_tokens`, also in the bundled
 snapshot; the pricing cache is format-versioned so pre-upgrade caches refresh)
 flows through `resolveModel` into `ModelUsage.contextLimit` →
@@ -210,19 +249,54 @@ mean through the same `percentile` helper as `costDistribution`; it is a
 heuristic baseline, so keep the "continuation sessions and big opening pastes
 inflate it — read the median" caveat at every render site.
 *What-if repricing* (`whatIfRepricing()`) replays each model's actual token mix
-at other models' rates. It folds `models_json` through `modelTotals()` — the
-same accumulator `spendByModel()` uses, so the two can't disagree — and prices
-through the existing `computeCost`, covering all four categories and both
-cache-write TTLs. Alternatives are the *other models the user actually ran*,
-capped to ids `resolveModel()` can price (an unresolvable id would cost $0 and
-read as a huge saving), falling back to `FALLBACK_WHATIF_MODELS` (one model per
-family, newest in the bundled snapshot) when fewer than two of theirs resolve.
-It is a **rate comparison only**: a different model would produce different
-tokens, and quality is not priced in — that caveat is mandatory wherever it
-renders. Both ride on `/api/analytics` (memoized on the same fingerprint), both
-are sections of `cc-analyzer stats` (and its `--json`), the web Insights view
-renders both as tables, and the TUI Insights header carries them as two summary
-lines computed at the screen boundary.
+at other models' rates. The fold itself — alternative selection, all four
+categories, both cache-write TTLs — is `repriceModelMixes()` in the **bun-free**
+`session-insights.ts`; `whatIfRepricing()` only feeds it `modelTotals()` (the
+same accumulator `spendByModel()` uses, so the two can't disagree), and prices
+through the existing `computeCost`. Alternatives are the *other models in the
+mix*, capped to ids `resolveModel()` can price (an unresolvable id would cost
+$0 and read as a huge saving), falling back to `FALLBACK_WHATIF_MODELS` (one
+model per family, newest in the bundled snapshot; now exported from
+`session-insights.ts`, re-exported by `stats.ts`) when fewer than two of theirs
+resolve. It is a **rate comparison only**: a different model would produce
+different tokens, and quality is not priced in — that caveat is the exported
+`WHATIF_CAVEAT` in `stats-types.ts`, mandatory wherever it renders. Both ride
+on `/api/analytics` (memoized on the same fingerprint), both are sections of
+`cc-analyzer stats` (and its `--json`), the web Insights view renders both as
+tables, and the TUI Insights header carries them as two summary lines computed
+at the screen boundary.
+
+**Session-scoped insights share the portfolio's folds.** `session-insights.ts`
+(bun-free) is the per-session half of the cost-optimization story:
+`sessionWhatIf(analysis.models, pricing)` runs the *same* `repriceModelMixes`
+fold as the portfolio, and `sessionOutcomes(analysis)` derives the
+cost-per-outcome ratios (per turn / per file touched / per test run / per
+active hour — a ratio is **absent, not $0**, when its denominator is zero) with
+the exported `OUTCOME_CAVEAT` ("activity, not value") printed verbatim at every
+render site; `outcomeRows()` is the one label/order/skip-undefined row
+derivation all three renderers print, and signed dollar deltas go through
+`formatSignedUSD` (format-shared) so "saving vs overspend" reads identically
+everywhere. `sessionCostRank(db, id)` in `stats.ts` places one session's cost
+among the indexed sessions: the percentile is the share costing **strictly
+less** (NULL costs read as $0), so a tied-cheapest session is p0, never p100;
+portfolio + same-project cohorts fold in ONE table scan; ids resolve through
+`sessionRowById` in `queries.ts` — the same rule `sessionPathById` uses, so
+the session route and its rank can never resolve different rows — and
+un-indexed sessions return undefined. Cohort sizes ride along and render
+sites hide the rank below `MIN_RANK_COHORT` (stats-types) sessions — "p50 of
+2 sessions" is noise. Surfaces: `cc-analyzer analyze`
+appends "Cost per outcome", "What-if repricing" (the what-if is computed in
+`cmdAnalyze` and passed in — the renderer never sees the pricing table), and a
+"Subagent bursts" table (plus the accurate `Subagents:` type list, which the
+best-effort burst join must never replace); `GET /api/sessions/:id` returns
+the analysis plus an `insights` sibling (`{ whatIf, rank }` — computed
+server-side because pricing and the index live there, in the same handler so a
+huge session parses once; the rank memoizes per session id on the index
+fingerprint); the SPA derives outcomes client-side from the same payload
+(`sessionOutcomes` is bun-free) and renders rank/what-if from `insights`,
+guarding `insights === undefined`; the TUI computes its what-if at the screen
+boundary from its `pricing` prop. TUI caveat lines render verbatim and wrap —
+never `truncate()` a mandatory caveat.
 
 **Setup audit is the one surface that reads config, not transcripts.**
 `inventory.ts` (`node:fs`, read-only, never throws) scans the configured

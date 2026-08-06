@@ -3,11 +3,19 @@ import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
+  type CostRankCohort,
+  formatSignedUSD,
+  MIN_RANK_COHORT,
+  OUTCOME_CAVEAT,
+  outcomeRows,
   type SessionAnalysis,
+  type SessionResponse,
+  sessionOutcomes,
   type TranscriptItem,
   type Turn,
   type TurnStep,
   topEntries,
+  WHATIF_CAVEAT,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { DiagnosticList } from "../DiagnosticList.tsx";
@@ -49,6 +57,7 @@ export function Session({ id }: { id: string }) {
   const [a, projects] = loaded;
   const project = projects.find((row) => row.projectPath === a.projectPath);
   const c = a.totals.cost;
+  const rankCard = pickRankCohort(a.insights?.rank ?? null);
 
   return (
     <>
@@ -81,6 +90,9 @@ export function Session({ id }: { id: string }) {
             value={usd(a.totals.sidechainCost)}
             sub={`${a.totals.sidechainApiCalls} sidechain calls`}
           />
+        )}
+        {rankCard && (
+          <Card label="Cost rank" value={`p${rankCard.cohort.pct}`} sub={rankCard.sub} />
         )}
       </div>
 
@@ -130,10 +142,37 @@ export function Session({ id }: { id: string }) {
   );
 }
 
-function Summary({ a }: { a: SessionAnalysis }) {
+/**
+ * Which cohort the Cost-rank card shows: the project's when it is big enough
+ * to mean something (`MIN_RANK_COHORT`), else the portfolio's; no card at all
+ * when both are tiny — "p50 of 2 sessions" is noise, not signal. When the
+ * project cohort is shown, the portfolio rank rides along in the sub-line.
+ */
+function pickRankCohort(
+  rank: { portfolio: CostRankCohort; project?: CostRankCohort } | null,
+): { cohort: CostRankCohort; sub: string } | undefined {
+  if (!rank) return undefined;
+  const { portfolio, project } = rank;
+  if (project && project.sessions >= MIN_RANK_COHORT) {
+    const overall =
+      portfolio.sessions > project.sessions ? ` · p${portfolio.pct} of all sessions` : "";
+    return { cohort: project, sub: `of ${project.sessions} project sessions${overall}` };
+  }
+  if (portfolio.sessions >= MIN_RANK_COHORT) {
+    return { cohort: portfolio, sub: `of ${portfolio.sessions} sessions` };
+  }
+  return undefined;
+}
+
+function Summary({ a }: { a: SessionResponse }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
+  // The shared row set (labels, order, absent-not-$0 rule) — same list the
+  // CLI report and TUI summary render; only the leading capital is local.
+  const outcomes = useMemo(() => outcomeRows(sessionOutcomes(a)), [a]);
+  const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const whatIf = a.insights?.whatIf;
   return (
     <section>
       <section className="session-diagnostics" aria-labelledby="session-diagnostics-title">
@@ -193,7 +232,25 @@ function Summary({ a }: { a: SessionAnalysis }) {
           <Row k="Files touched" v={String(a.filesTouched.length)} />
           <Row k="Shell commands" v={topEntries(a.bashCommands, 8) || "-"} />
         </SummaryGroup>
+        {outcomes.length > 0 && (
+          <SummaryGroup title="Cost per outcome">
+            {outcomes.map((r) => (
+              <Row key={r.label} k={capitalize(r.label)} v={usd(r.cost)} />
+            ))}
+          </SummaryGroup>
+        )}
       </div>
+      {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
+      {whatIf?.summary.bestModel && (
+        <section className="summary-group" style={{ marginTop: 12 }}>
+          <h2>What-if repricing</h2>
+          <p>
+            cheapest single model: {whatIf.summary.bestModel} at {usd(whatIf.summary.bestCost)} (
+            {formatSignedUSD(whatIf.summary.bestDelta)} vs actual {usd(whatIf.summary.actualCost)})
+          </p>
+          <p className="muted">{WHATIF_CAVEAT}</p>
+        </section>
+      )}
       <div style={{ marginTop: 12 }}>
         {Object.entries(a.tools).map(([t, n]) => (
           <span className="tag" key={t}>
@@ -282,7 +339,8 @@ function Timeline({ a }: { a: SessionAnalysis }) {
     <section>
       <p className="muted">
         {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn; dots are
-        API calls (teal = subagent sidechain, red ring = tool error in that call)
+        API calls (teal = subagent sidechain, red ring = tool error in that call, red-tinted lane =
+        interrupted or correction turn)
         {timed.length > limit ? ` · showing ${limit}/${timed.length} turns` : ""}
       </p>
       <div className="timelinewrap">
@@ -299,17 +357,24 @@ function Timeline({ a }: { a: SessionAnalysis }) {
             const y = i * rowH + 4;
             const sx = x(t.startMs);
             const ex = x(t.endMs);
+            // Deliberately the user-intervention subset, not the full
+            // `turnFlags` thrash predicate: a red lane means "the human
+            // stepped in here"; tool errors already mark their own call dots.
+            const flags = [
+              ...(t.turn.interrupted ? ["interrupted"] : []),
+              ...(t.turn.correction ? ["correction prompt"] : []),
+            ];
             return (
               <g key={t.turn.index}>
                 <rect
-                  className="tl-turn"
+                  className={`tl-turn${flags.length > 0 ? " flagged" : ""}`}
                   x={sx}
                   y={y + 2}
                   width={Math.max(ex - sx, 2)}
                   height={8}
                   rx={2}
                 >
-                  <title>{`#${t.turn.index + 1} +${offset(t.startMs)} · ${usd(t.turn.cost.total)} · ${t.turn.apiCalls.length} calls\n${t.turn.prompt.slice(0, 160)}`}</title>
+                  <title>{`#${t.turn.index + 1} +${offset(t.startMs)} · ${usd(t.turn.cost.total)} · ${t.turn.apiCalls.length} calls${flags.length > 0 ? ` · ⚠ ${flags.join(" · ")}` : ""}\n${t.turn.prompt.slice(0, 160)}`}</title>
                 </rect>
                 {t.calls.map(({ ms, hasError, ci }) => {
                   const call = t.turn.apiCalls[ci] as Turn["apiCalls"][number];

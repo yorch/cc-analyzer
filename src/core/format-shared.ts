@@ -50,6 +50,14 @@ export function formatCount(n: number, opts: SignOptions = {}): string {
 /** A count that may be a delta: `-30.0k` rather than `-30000`. */
 export const formatSignedCount = (n: number): string => formatCount(n, { signed: true });
 
+/** A signed dollar delta ("-$3.20" / "+$0.45") — savings vs overspend read
+ * the same in the CLI report, the TUI line, and the web card. `-0` and `0`
+ * both render "+$0.00" so a zero delta never looks like a saving. */
+export function formatSignedUSD(n: number): string {
+  if (!Number.isFinite(n)) return "-";
+  return n < 0 ? formatUSD(n) : `+${formatUSD(n)}`;
+}
+
 /** A ratio as a whole-percent string ("25%") — the form every findings/evidence
  * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
 export const pct = (value: number): string => `${Math.round(value * 100)}%`;

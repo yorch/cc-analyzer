@@ -177,6 +177,13 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   `213M +52B cache`.
 - **Tools**, **skills**, and **subagents** used; files touched. Skills carry the
   cost of the turns that invoked them (turn-scoped attribution).
+- **Cost per outcome**: spend divided into observable units — per turn, per file
+  touched, per test run, per active hour (a ratio is absent, not $0, when its
+  denominator is zero; the ratios measure activity, not value).
+- **What-if repricing** of this session's token mix at the other models' rates —
+  a rate comparison only, with the caveat printed alongside.
+- **Subagent bursts**: per-burst sidechain spend (calls, cost, spawning turn),
+  typed best-effort by matching burst root prompts to `Task` spawns.
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for
@@ -395,9 +402,17 @@ causal: a turn or session touching several skills counts its full cost toward
 each.) Opening a session
 zooms to
 a full-screen view with a vitals band and its own two-pane **turns → steps**
-(each step expands an amber card with its input/result), plus **transcript** and
-**summary** modes (`t` / `s`). The summary includes the same evidence-backed
-context and cost diagnostics as the CLI and web app. It reads from the index;
+(each step expands an amber card with its input/result), plus **charts**,
+**transcript**, and **summary** modes (`c` / `t` / `s`). The charts mode draws
+the braille context-window sawtooth (with `▼` compaction markers, "% of
+window", and a headroom projection when the context is growing), a per-call
+**cache-hit sparkline** with cold-call count, cost-per-call and cost-per-turn
+sparklines annotated with idle gaps and `▲` markers on
+interrupted/correction/thrash turns, plus in-session model-mix and per-burst
+subagent spend lines. The summary includes the same evidence-backed
+context and cost diagnostics as the CLI and web app, along with
+**cost-per-outcome** ratios and a session-scoped **what-if repricing** line
+(each with its caveat). It reads from the index;
 on first use it builds an empty cache automatically. Later source changes are
 reported in the shell so you know when to run `cc-analyzer index`.
 
@@ -440,9 +455,21 @@ into a **step timeline** — assistant narration, thinking markers, and tool
 operations with a one-line summary and a result status/hint (`✓ 71 lines`,
 `✗ error…`), each step click-to-expand for its full input and result; and the
 color-coded **transcript** reader is windowed ("show more") so very large
-sessions stay responsive. Session summaries group spend/tokens, execution, and
+sessions stay responsive. The session **Charts** tab renders the
+context-window fill per API call (with compaction markers annotated with the
+tokens each compaction reclaimed, a dashed window-limit line, and a headroom
+projection when the context is growing), a **cache-efficiency** chart (per-call
+hit rate, cold calls), cumulative cost with **idle-gap** markers, per-turn bars
+toggling cost/tokens/calls/depth/time — the cost metric stacks the four token
+categories, and turns flagged as interrupted/correction/thrash carry warning
+markers — plus **tool-activity** bars, an in-session **model mix**, and a
+**subagent bursts** table attributing sidechain spend to the specific agents
+that ran (typed best-effort from their spawn prompts). Session summaries group
+spend/tokens, execution, and
 environment details, followed by explainable context and cost diagnostics with
-suggested next actions. The SPA is built
+suggested next actions, **cost-per-outcome** ratios, a session-scoped
+**what-if repricing** summary, and a **cost rank** card placing the session's
+spend among its project's (and the portfolio's) sessions. The SPA is built
 by Vite into a single self-contained HTML file (`bun run build:web`) and baked
 into the binary, so the release build serves the whole UI with no external
 assets.

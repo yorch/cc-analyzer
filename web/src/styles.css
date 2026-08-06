@@ -730,6 +730,62 @@ th.num {
 .turnbar:hover {
   opacity: 1;
 }
+/* idle-gap marker on the cumulative-cost chart (muted, unlike the red
+   compaction marker) */
+.gap-marker {
+  stroke: var(--faint);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+/* per-turn cost composition (stacked segments on the .turnbar base) */
+.turnbar.tb-input {
+  fill: var(--signal);
+}
+.turnbar.tb-output {
+  fill: var(--teal);
+}
+.turnbar.tb-write {
+  fill: #8f7ff0;
+}
+.turnbar.tb-read {
+  fill: #5c8fb6;
+}
+/* per-turn tool activity (stacked step-kind segments) */
+.turnbar.tk-run {
+  fill: var(--signal);
+}
+.turnbar.tk-read {
+  fill: var(--teal);
+}
+.turnbar.tk-edit {
+  fill: #8f7ff0;
+}
+.turnbar.tk-search {
+  fill: #5c8fb6;
+}
+.turnbar.tk-other {
+  fill: var(--faint);
+}
+.legend-swatch.tk-run {
+  background: var(--signal);
+}
+.legend-swatch.tk-read {
+  background: var(--teal);
+}
+.legend-swatch.tk-edit {
+  background: #8f7ff0;
+}
+.legend-swatch.tk-search {
+  background: #5c8fb6;
+}
+.legend-swatch.tk-other {
+  background: var(--faint);
+}
+/* per-turn signal mark: interruption/correction/thrash/tool-error glyph row */
+.turn-signal {
+  fill: var(--red);
+}
 .axis {
   display: flex;
   justify-content: space-between;
@@ -1549,6 +1605,13 @@ p.muted {
 }
 .tl-turn {
   fill: var(--border-strong);
+}
+.tl-turn.flagged {
+  fill: var(--red);
+  fill-opacity: 0.35;
+  stroke: var(--red);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 .tl-call {
   fill: var(--signal);

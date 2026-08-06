@@ -17,6 +17,7 @@ import {
   searchSessions,
   sessionPathById,
 } from "../core/queries.ts";
+import { sessionWhatIf } from "../core/session-insights.ts";
 import {
   activityHeatmap,
   analyticsRollup,
@@ -32,6 +33,7 @@ import {
   modelMixByDay,
   parseCoverage,
   projectTrends,
+  sessionCostRank,
   sessionScatter,
   sidechainByDay,
   sidechainByProject,
@@ -52,6 +54,11 @@ const MAX_PROJECT_ROWS = 2000;
 // human does (page back through recent weeks) while bounding the one memo
 // keyspace a client can enumerate.
 const MAX_REPORT_SLOTS = 16;
+
+// How many per-session cost ranks stay memoized. The keyspace is bounded by
+// sessions that actually resolve in the index (unknown ids 404 first), but a
+// crawl over a big portfolio could still bloat the Map — cap it by recency.
+const MAX_RANK_SLOTS = 256;
 
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable): Hono {
@@ -311,12 +318,28 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   };
   const staleIndex = { error: "session file is missing; re-run `cc-analyzer index`" };
 
+  // The analysis payload plus a server-computed `insights` sibling: the
+  // session-scoped what-if needs the pricing table and the cost rank needs the
+  // index — neither is available client-side, and folding them in here avoids
+  // a second parse of a potentially huge session file for a separate route.
+  // The outcome ratios are NOT here: `sessionOutcomes` is bun-free, so the
+  // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
-    const path = sessionPathById(db, c.req.param("id"));
+    const id = c.req.param("id");
+    const path = sessionPathById(db, id);
     if (!path) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
-    return c.json(analyzeSession(parsed.events, pricing, { coverage: parsed.coverage }));
+    const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    // The rank depends only on the index, so it memoizes on the fingerprint —
+    // flipping between two sessions doesn't rescan the table. The what-if is
+    // a pure fold over the handful of models just analyzed; not worth a slot.
+    const rank = memo(`rank:${id}`, fingerprint(), () => sessionCostRank(db, id) ?? null);
+    capSlots("rank:", MAX_RANK_SLOTS);
+    return c.json({
+      ...analysis,
+      insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
+    });
   });
 
   api.get("/api/sessions/:id/transcript", async (c) => {

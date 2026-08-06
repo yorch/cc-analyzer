@@ -47,6 +47,68 @@ describe("renderSessionSummary · skills", () => {
   });
 });
 
+describe("renderSessionSummary · outcomes, what-if, and subagent bursts", () => {
+  test("prints cost-per-outcome rows with the caveat", () => {
+    const out = renderSessionSummary(sessionWithSkill());
+    expect(out).toContain("Cost per outcome");
+    expect(out).toContain("per turn");
+    expect(out).toContain("they measure activity, not value delivered");
+  });
+
+  test("prints the what-if section only when the caller computed one", () => {
+    const a = sessionWithSkill();
+    const bare = renderSessionSummary(a);
+    expect(bare).not.toContain("What-if repricing");
+    const withWhatIf = renderSessionSummary(a, {
+      whatIf: {
+        summary: {
+          actualCost: 12,
+          bestModel: "claude-haiku-4-5",
+          bestCost: 3,
+          bestDelta: -9,
+          fallbackAlternatives: true,
+        },
+        rows: [
+          {
+            model: "claude-opus-4-7",
+            calls: 1,
+            cost: 12,
+            alternatives: [{ model: "claude-haiku-4-5", cost: 3, delta: -9 }],
+          },
+        ],
+      },
+    });
+    expect(withWhatIf).toContain("What-if repricing");
+    expect(withWhatIf).toContain("cheapest single model: claude-haiku-4-5");
+    expect(withWhatIf).toContain("read it as a rate comparison, not a bill");
+  });
+
+  test("renders a burst table when subagents ran", () => {
+    const a: SessionAnalysis = {
+      ...sessionWithSkill(),
+      subagents: ["explorer"],
+      sidechainBursts: [
+        {
+          subagentType: "explorer",
+          turnIndex: 0,
+          apiCalls: 3,
+          cost: 0.5,
+          tokens: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheWrite5mTokens: 0,
+            cacheWrite1hTokens: 0,
+            cacheReadTokens: 0,
+          },
+        },
+      ],
+    };
+    const out = renderSessionSummary(a);
+    expect(out).toContain("Subagent bursts");
+    expect(out).toContain("explorer");
+  });
+});
+
 describe("renderStats · skills", () => {
   test("shows turn-scoped cost as the primary column with session-scoped beside it", () => {
     const db = openDb(":memory:");
