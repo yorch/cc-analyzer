@@ -62,14 +62,15 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     keys: [
       ["type", "filter"],
       ["tab / shift-tab", "cycle sort / flip direction"],
-      ["↑/↓", "move · updates the preview"],
+      ["↑/↓ · j/k", "move · updates the preview"],
       ["↵", "open (drill in)"],
+      ["space", "expand (where the row supports it)"],
     ],
   },
   {
     title: "Trends",
     keys: [
-      ["tab / 1 / 2", "burn / heatmap panel"],
+      ["tab / 1 / 2 / 3", "burn / heatmap / calendar panel"],
       ["m", "cycle metric"],
       ["g", "cycle granularity (burn)"],
     ],
@@ -79,17 +80,26 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     keys: [
       ["tab / 1 / 2 / 3", "tools / skills / subagents"],
       ["s", "cycle sort (tools / skills)"],
-      ["↑/↓", "move · skills: pick one for the adoption detail"],
+      ["↑/↓ · j/k", "move · skills: pick one for the adoption detail"],
     ],
   },
   {
     title: "Session detail",
     keys: [
-      ["1 / 2 / 3", "turns / transcript / summary"],
-      ["u / t / s", "turns / transcript / summary"],
+      ["1 / 2 / 3 / 4", "turns / charts / transcript / summary"],
+      ["u / c / t / s", "turns / charts / transcript / summary"],
       ["→ / tab", "focus steps (turns mode)"],
-      ["↑/↓ · enter", "move · expand row"],
+      ["↑/↓ · j/k", "move"],
+      ["↵ / space", "expand row"],
       ["g / G", "jump to top / bottom"],
+    ],
+  },
+  {
+    title: "Session charts legend",
+    keys: [
+      ["▼", "context compaction"],
+      ["▲", "flagged turn (interrupted/correction/thrash)"],
+      ["braille rows", "the plotted series (context, burn, …)"],
     ],
   },
 ];

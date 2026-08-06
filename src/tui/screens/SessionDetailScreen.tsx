@@ -34,7 +34,7 @@ import {
   sessionOutcomes,
   sessionWhatIf,
 } from "../../core/session-insights.ts";
-import { WHATIF_CAVEAT, type WhatIfRepricing } from "../../core/stats-types.ts";
+import { CORRECTION_CAVEAT, WHATIF_CAVEAT, type WhatIfRepricing } from "../../core/stats-types.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
 import { brailleChart, markerRow, sparkline } from "../charts.ts";
@@ -130,7 +130,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
         <Text color={role.muted}>
           {mode === "turns"
             ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · esc back"
-            : mode === "charts"
+            : mode === "charts" || mode === "summary"
               ? "1-4 modes · esc turns"
               : "↑↓ move · ↵ expand · g/G jump · esc turns"}
           {" · "}
@@ -404,9 +404,11 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
     return <Text color={role.muted}>No main-chain API calls to chart.</Text>;
   }
 
-  // Same horizontal margin the trends burn chart uses — a braille row that
-  // wraps destroys the whole layout, so stay well inside the terminal.
-  const width = Math.max(16, Math.min(columns - 18, 120));
+  // Unlike the trends burn chart, this screen renders standalone with no nav
+  // rail — only a small padding is needed to stay clear of the terminal edge
+  // (a wrapped braille row destroys the whole layout).
+  const CHART_MARGIN = 4;
+  const width = Math.max(16, Math.min(columns - CHART_MARGIN, 120));
   const values = ctx.points.map((p) => p.contextTokens);
 
   // One canonical split (chart-series.ts): own compactions get ▼ markers;
@@ -501,12 +503,15 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
           <Text key="markers" color={role.error}>
             {markers}
           </Text>,
+          <Text key="markers-legend" color={role.muted}>
+            ▼ = context compaction
+          </Text>,
         ]
       : []),
   ];
   const belowChart = [
     <Text key="axis" color={role.muted}>
-      call 1 {"─".repeat(Math.max(0, width - 14 - String(ctx.points.length).length))} call{" "}
+      call 1 {"─".repeat(Math.max(0, width - 13 - String(ctx.points.length).length))} call{" "}
       {ctx.points.length}
     </Text>,
     <Text key="cache-head" color={role.muted}>
@@ -532,7 +537,8 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
       : []),
     <Text key="blank"> </Text>,
     <Text key="burn-head" color={role.muted} wrap="truncate-end">
-      cost per call · <Text color={role.cost}>{formatUSD(totalCost)}</Text> total
+      cost per call{burn.length > width ? " (bucketed)" : ""} ·{" "}
+      <Text color={role.cost}>{formatUSD(totalCost)}</Text> total
       {gapsLabel}
     </Text>,
     <Text key="burn-row" color={palette.amber}>
@@ -542,7 +548,7 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
       )}
     </Text>,
     <Text key="turn-head" color={role.muted}>
-      cost per turn · peak{" "}
+      cost per turn{turnSeries.length > width ? " (bucketed)" : ""} · peak{" "}
       <Text color={role.cost}>{formatUSD(turnSeries[peakTurn]?.cost ?? 0)}</Text> (#
       {peakTurn + 1})
     </Text>,
@@ -559,6 +565,15 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
           </Text>,
           <Text key="flag-legend" color={role.muted}>
             ▲ = interrupted/correction/thrash turns ({flaggedTurns.length})
+          </Text>,
+        ]
+      : []),
+    // Mandatory caveat prints VERBATIM (wrap is fine, truncation is not) —
+    // only when the session actually has corrections/interruptions to caveat.
+    ...(a.correctionTurns > 0 || a.interruptionTurns > 0
+      ? [
+          <Text key="correction-caveat" color={role.muted}>
+            {CORRECTION_CAVEAT}
           </Text>,
         ]
       : []),
@@ -707,6 +722,28 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
             .join(", ")})`,
         )}
       {line("files touched", String(a.filesTouched.length))}
+      {/* Diagnostics sit right after the totals/header, above the outcome and
+       * what-if sections, so a fixed-height pane on a small terminal never
+       * clips them below the scroll fold. */}
+      <Box marginTop={1} flexDirection="column">
+        <Text color={role.heading}>Actionable diagnostics</Text>
+        {diagnostics.length === 0 ? (
+          <Text color={role.muted}>
+            No notable context or cost patterns crossed the thresholds.
+          </Text>
+        ) : (
+          diagnostics.map((diagnostic) => (
+            <Box key={diagnostic.code} flexDirection="column" marginBottom={1}>
+              <Text color={diagnostic.severity === "warning" ? palette.red : palette.blue}>
+                {diagnostic.severity === "warning" ? "! " : "· "}
+                {diagnostic.title}
+              </Text>
+              <Text color={role.body}>{diagnostic.evidence}</Text>
+              <Text color={role.muted}>Next: {diagnostic.action}</Text>
+            </Box>
+          ))
+        )}
+      </Box>
       {outcomes.length > 0 && (
         <Box marginTop={1} flexDirection="column">
           <Text color={role.heading}>Cost per outcome</Text>
@@ -728,25 +765,6 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
           <Text color={role.muted}>{WHATIF_CAVEAT}</Text>
         </Box>
       )}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={role.heading}>Actionable diagnostics</Text>
-        {diagnostics.length === 0 ? (
-          <Text color={role.muted}>
-            No notable context or cost patterns crossed the thresholds.
-          </Text>
-        ) : (
-          diagnostics.map((diagnostic) => (
-            <Box key={diagnostic.code} flexDirection="column" marginBottom={1}>
-              <Text color={diagnostic.severity === "warning" ? palette.red : palette.blue}>
-                {diagnostic.severity === "warning" ? "! " : "· "}
-                {diagnostic.title}
-              </Text>
-              <Text color={role.body}>{diagnostic.evidence}</Text>
-              <Text color={role.muted}>Next: {diagnostic.action}</Text>
-            </Box>
-          ))
-        )}
-      </Box>
     </Box>
   );
 }

@@ -8,7 +8,7 @@ import {
 } from "../../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../../core/portfolio-signals.ts";
 import type { PricingTable } from "../../core/pricing.ts";
-import { projectDisplayName } from "../../core/project-labels.ts";
+import { labelProjects, projectDisplayName } from "../../core/project-labels.ts";
 import {
   type CacheMetrics,
   type ContextTaxRow,
@@ -37,6 +37,10 @@ const SESSION_SORT: SortField<SessionCacheRow>[] = [
   { key: "write", label: "write$", value: (r) => r.writeCost },
   { key: "title", label: "title", value: (r) => r.title ?? r.sessionId ?? "" },
 ];
+
+/** Longest verdict word ("efficient") — pads the master-row verdict column so
+ * rows stay aligned regardless of which verdict a row carries. */
+const VERDICT_WIDTH = Math.max(...Object.keys(VERDICT_COLOR).map((v) => v.length));
 
 interface Props {
   db: Database;
@@ -81,6 +85,27 @@ export function InsightsView({
     () => (drilled ? cacheWasteBySession(db, drilled.projectId) : []),
     [db, drilled],
   );
+  // Two Claude roots can each hold a project for the same working directory,
+  // so the labels would be byte-identical — qualify only the ones that
+  // actually collide, same rule ProjectsView applies.
+  const { label: projectLabel } = useMemo(
+    () =>
+      labelProjects(
+        projects,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      ),
+    [projects],
+  );
+  const { label: taxProjectLabel } = useMemo(
+    () =>
+      labelProjects(
+        tax.byProject,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      ),
+    [tax.byProject],
+  );
 
   const shownFindings = diagnostics.slice(0, MAX_FINDING_LINES);
   const overflow = diagnostics.length - shownFindings.length;
@@ -98,7 +123,7 @@ export function InsightsView({
         <Text color={role.cost}>{formatUSD(summary.waste)}</Text> un-amortized · {wastePct}% of
         spend
       </Text>
-      <ContextTaxLine summary={tax.summary} top={tax.byProject[0]} />
+      <ContextTaxLine summary={tax.summary} top={tax.byProject[0]} label={taxProjectLabel} />
       <WhatIfLine summary={whatIf.summary} />
     </Box>
   );
@@ -148,9 +173,9 @@ export function InsightsView({
         pageSize={listSize}
         isActive={isActive}
         sortFields={PROJECT_SORT}
-        filterText={(p) => projectDisplayName(p.projectPath, p.projectId)}
-        label={(p) => projectDisplayName(p.projectPath, p.projectId)}
-        previewTitle={(p) => projectDisplayName(p.projectPath, p.projectId)}
+        filterText={projectLabel}
+        label={projectLabel}
+        previewTitle={projectLabel}
         previewHint="↵ break down this project's sessions"
         onOpen={setDrilled}
         onBack={onBack}
@@ -204,16 +229,20 @@ function FindingLines({
 function ContextTaxLine({
   summary,
   top,
+  label,
 }: {
   summary: ContextTaxSummary;
   top: ContextTaxRow | undefined;
+  /** Root-qualified label (see `labelProjects`) so two roots holding the same
+   * project path stay distinguishable. */
+  label: (row: ContextTaxRow) => string;
 }) {
   if (summary.sessions === 0) return null;
   return (
     <Text color={role.muted}>
       context tax: <Text color={role.body}>{formatCount(Math.round(summary.medianTokens))}</Text>{" "}
       median · {formatCount(Math.round(summary.p90Tokens))} p90 tokens before you type
-      {top ? ` · heaviest ${truncate(projectDisplayName(top.projectPath, top.projectId), 28)}` : ""}
+      {top ? ` · heaviest ${truncate(label(top), 28)}` : ""}
     </Text>
   );
 }
@@ -262,7 +291,10 @@ function CacheHitList<T extends CacheMetrics>({
   const sort = useSort(sortFields);
   const rows = sort.sorted(items);
   const [highlighted, setHighlighted] = useState<T | undefined>(rows[0]);
-  const nameW = Math.max(10, masterWidth(columns) - 22);
+  // Dot + waste + ratio budget, plus the verdict word (padded to the longest
+  // value, "efficient") and its separating space — the master row's colored
+  // dot was color-only, invisible to colorblind users, so the word joins it.
+  const nameW = Math.max(10, masterWidth(columns) - 22 - (VERDICT_WIDTH + 1));
 
   return (
     <MasterDetail
@@ -279,14 +311,19 @@ function CacheHitList<T extends CacheMetrics>({
           onCycleSort={sort.cycle}
           onReverseSort={sort.reverse}
           filterText={filterText}
-          renderItem={(r, sel) => (
-            <Text {...selection(sel)}>
-              {gutter(sel)}
-              {formatUSD(r.waste).padStart(8)} {`${r.ratio.toFixed(1)}×`.padStart(6)}{" "}
-              <Text color={sel ? palette.bg : VERDICT_COLOR[cacheVerdict(r.ratio)]}>●</Text>{" "}
-              {truncate(label(r), nameW)}
-            </Text>
-          )}
+          renderItem={(r, sel) => {
+            const verdict = cacheVerdict(r.ratio);
+            return (
+              <Text {...selection(sel)}>
+                {gutter(sel)}
+                {formatUSD(r.waste).padStart(8)} {`${r.ratio.toFixed(1)}×`.padStart(6)}{" "}
+                <Text color={sel ? palette.bg : VERDICT_COLOR[verdict]}>
+                  ● {verdict.padEnd(VERDICT_WIDTH)}
+                </Text>{" "}
+                {truncate(label(r), nameW)}
+              </Text>
+            );
+          }}
         />
       }
       detail={

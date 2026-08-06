@@ -79,8 +79,12 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
     panel === "tools" ? sortedTools : panel === "skills" ? sortedSkills : subagents;
 
   // The skills panel reserves rows for the adoption detail strip below the
-  // table (divider + head + sparkline + cost caveat, plus its top margin).
-  const detailRows = panel === "skills" ? 5 : 0;
+  // table: a fixed part (top margin + divider + head + sparkline) plus
+  // however many terminal-width lines SKILL_COST_CAVEAT actually wraps to —
+  // a constant undercounted this at narrow widths and let the table overflow.
+  const SKILLS_DETAIL_FIXED_ROWS = 4;
+  const caveatRows = Math.ceil(SKILL_COST_CAVEAT.length / Math.max(1, columns));
+  const detailRows = panel === "skills" ? SKILLS_DETAIL_FIXED_ROWS + caveatRows : 0;
   const pageSize = Math.max(3, rows - 10 - detailRows);
 
   // Clamp cursor + window: switching panel/sort or shrinking the terminal can
@@ -147,7 +151,9 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
         ))}
         <Text color={role.muted}>
           {" "}
-          tab · 1/2/3{sortKey ? ` · s sort: ${sortKey}` : ""} · esc menu
+          {/* Comparators are hardcoded descending — no reverse toggle here (unlike
+           * the list views' tab/shift-tab sort), so the arrow is constant. */}
+          tab · 1/2/3{sortKey ? ` · s sort: ${sortKey} ↓` : ""} · esc menu
         </Text>
       </Box>
 

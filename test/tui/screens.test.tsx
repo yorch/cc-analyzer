@@ -4,6 +4,7 @@ import { openDb } from "../../src/core/db.ts";
 import type { IndexedProject, IndexedSession } from "../../src/core/queries.ts";
 import { ProjectsView } from "../../src/tui/screens/ProjectsView.tsx";
 import { SessionListView } from "../../src/tui/screens/SessionListView.tsx";
+import { TrendsView } from "../../src/tui/screens/TrendsView.tsx";
 import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
 
@@ -149,5 +150,32 @@ describe("TUI list views (smoke render)", () => {
     expect(frame).toContain("$3.20");
     expect(frame).toContain("turns"); // preview pane field
     unmount();
+  });
+});
+
+describe("TrendsView heatmap axis alignment", () => {
+  test("hour ticks land on their grid column, and 23h right-aligns instead of overhanging", async () => {
+    const heatDb = openDb(":memory:");
+    insertSession(heatDb, {
+      path: "/h/1.jsonl",
+      day: "2026-07-01",
+      start_time: "2026-07-01T14:00:00.000Z",
+      cost_total: 5,
+    });
+    const { stdin, lastFrame, unmount } = render(
+      <TrendsView db={heatDb} columns={120} rows={30} isActive onBack={noop} />,
+    );
+    stdin.write("2"); // heatmap panel
+    await waitForFrame(lastFrame, "Mon");
+    const frame = lastFrame() ?? "";
+    // The grid row is 4 weekday-label chars ("Mon ") + 24 one-char hour cells
+    // = 28 columns; each tick sits at column `4 + hour`, and "23h" — which
+    // would run past column 28 there — right-aligns to end at the last
+    // column instead. This is a pinning test on the exact 28-char axis.
+    const axisLine = "    0h    6h    12h   18h23h";
+    expect(axisLine).toHaveLength(28);
+    expect(frame).toContain(axisLine);
+    unmount();
+    heatDb.close();
   });
 });

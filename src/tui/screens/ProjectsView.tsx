@@ -11,13 +11,18 @@ import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
 import { gutter, selection } from "../theme.ts";
 import { type SortField, useSort } from "../useSort.ts";
 
-const SORT_FIELDS: SortField<IndexedProject>[] = [
-  { key: "recent", label: "recent", value: (p) => p.lastActivityMs },
-  { key: "cost", label: "cost", value: (p) => p.cost },
-  { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
-  { key: "sessions", label: "sessions", value: (p) => p.sessions },
-  { key: "name", label: "name", value: (p) => projectDisplayName(p.projectPath, p.projectId) },
-];
+/** Sort/filter fields; `name` is built per-render against the qualified label
+ * (see `labelProjects` below) so a `[root]`-suffixed name sorts and filters
+ * exactly as displayed rather than by its unqualified path. */
+function sortFields(label: (p: IndexedProject) => string): SortField<IndexedProject>[] {
+  return [
+    { key: "recent", label: "recent", value: (p) => p.lastActivityMs },
+    { key: "cost", label: "cost", value: (p) => p.cost },
+    { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
+    { key: "sessions", label: "sessions", value: (p) => p.sessions },
+    { key: "name", label: "name", value: label },
+  ];
+}
 
 interface Props {
   projects: IndexedProject[];
@@ -31,8 +36,6 @@ interface Props {
 
 /** Projects list (master) driving a live project preview (detail). */
 export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen, onBack }: Props) {
-  const sort = useSort(SORT_FIELDS);
-  const rows = sort.sorted(projects);
   // Two Claude roots can each hold a project for the same working directory, so
   // the labels would be byte-identical. The shared labeller qualifies only the
   // ones that actually collide.
@@ -45,6 +48,8 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
       ),
     [projects],
   );
+  const sort = useSort(useMemo(() => sortFields(label), [label]));
+  const rows = sort.sorted(projects);
   const [highlighted, setHighlighted] = useState<IndexedProject | undefined>(rows[0]);
   // Data acquisition stays at the screen boundary: the preview receives plain
   // props. Keyed on the stable projectId string (not the row object) so a
