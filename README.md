@@ -249,11 +249,15 @@ cc-analyzer index
 folder). Name each once; they are analyzed together as a single portfolio:
 
 ```bash
-cc-analyzer claude-dir add ~/work/.claude
-cc-analyzer claude-dir add ~/personal/.claude
+cc-analyzer claude-dir set ~/work/.claude       # start the list with this one
+cc-analyzer claude-dir add ~/personal/.claude   # append the next
 cc-analyzer index          # the index mirrors the configured set
 cc-analyzer stats          # both profiles, one report
 ```
+
+`set` first, `add` after: `add` appends to whatever is already in effect, which
+before any configuration is `~/.claude` (or `CLAUDE_CONFIG_DIR`) — so two `add`s
+from a clean slate keep the default alongside the two you named.
 
 `cc-analyzer projects` then gains a **claude dir** column, and other lists name
 the directory only where two labels would otherwise be identical.

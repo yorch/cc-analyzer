@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import {
   claudeDir,
   claudeRoots,
+  expandPath,
   qualifyProjectId,
   rootSlug,
   setClaudeRootsOverride,
@@ -225,4 +226,96 @@ describe("discovery across roots", () => {
     const scans = await scanRoots();
     expect(scans.map((s) => s.readable)).toEqual([true, false]);
   });
+});
+
+/**
+ * Nasty inputs for the pure path/id algebra.
+ *
+ * Three shipped defects lived here — a trailing slash making one root look like
+ * two, a `~` inside a directory name parsed as a root slug, and a
+ * delimiter-only env var normalizing to an empty tier that then won. All three
+ * passed a green suite whose fixtures were tidy (`/srv/a`, `/srv/b`). These
+ * tables exist so the tidy case is never the only one exercised.
+ */
+describe("expandPath · path shapes that have broken it before", () => {
+  const home = homedir();
+  const cases: [label: string, input: string, expected: string][] = [
+    ["plain absolute", "/srv/a", "/srv/a"],
+    ["trailing slash", "/srv/a/", "/srv/a"],
+    ["several trailing slashes", "/srv/a///", "/srv/a"],
+    ["duplicate inner separators", "/srv//a", "/srv/a"],
+    ["dot segment", "/srv/./a", "/srv/a"],
+    ["parent segment", "/srv/b/../a", "/srv/a"],
+    ["surrounding whitespace", "  /srv/a  ", "/srv/a"],
+    ["bare tilde", "~", home],
+    ["tilde with slash", "~/data", join(home, "data")],
+    ["tilde with trailing slash", "~/data/", join(home, "data")],
+    ["tilde-leading dir that is NOT home", "/tmp/~data", "/tmp/~data"],
+    ["dir name containing a tilde", "/tmp/my~proj", "/tmp/my~proj"],
+    ["empty string", "", ""],
+    ["whitespace only", "   ", ""],
+  ];
+  for (const [label, input, expected] of cases) {
+    test(label, () => expect(expandPath(input)).toBe(expected));
+  }
+
+  test("every spelling of one directory collapses to a single root", () => {
+    // The defect: each spelling became its own root, so every project and
+    // session was discovered — and indexed — once per spelling.
+    process.env.CC_ANALYZER_CLAUDE_DIR = ["/srv/a", "/srv/a/", "/srv//a", "/srv/b/../a"].join(
+      delimiter,
+    );
+    expect(claudeRoots().map((r) => r.path)).toEqual(["/srv/a"]);
+  });
+});
+
+describe("project id algebra · inputs that have broken it before", () => {
+  const slug = "deadbeef";
+  const cases: [label: string, id: string, expected: { slug: string | null; dirName: string }][] = [
+    ["qualified", `${slug}~-a-b`, { slug, dirName: "-a-b" }],
+    ["bare", "-a-b", { slug: null, dirName: "-a-b" }],
+    ["dir name contains a tilde", "-tmp-my~proj", { slug: null, dirName: "-tmp-my~proj" }],
+    [
+      "qualified, dir name contains a tilde",
+      `${slug}~-tmp-my~proj`,
+      { slug, dirName: "-tmp-my~proj" },
+    ],
+    ["prefix too short", "deadbee~-a", { slug: null, dirName: "deadbee~-a" }],
+    ["prefix too long", "deadbeef0~-a", { slug: null, dirName: "deadbeef0~-a" }],
+    ["prefix uppercase", "DEADBEEF~-a", { slug: null, dirName: "DEADBEEF~-a" }],
+    ["prefix non-hex", "deadbeeg~-a", { slug: null, dirName: "deadbeeg~-a" }],
+    ["leading separator", "~-a", { slug: null, dirName: "~-a" }],
+    ["empty", "", { slug: null, dirName: "" }],
+  ];
+  for (const [label, id, expected] of cases) {
+    test(label, () => expect(projectIdParts(id)).toEqual(expected));
+  }
+
+  test("qualification round-trips for any encoded name", () => {
+    const root = { path: "/srv/b", slug: rootSlug("/srv/b"), source: "env" as const };
+    for (const name of ["-a", "-Users-me-proj", "-tmp-my~proj", "-a-b-c-d", "-"]) {
+      const parts = projectIdParts(qualifyProjectId(root, name));
+      expect(parts).toEqual({ slug: root.slug, dirName: name });
+    }
+  });
+});
+
+describe("tier resolution · values that have broken it before", () => {
+  const emptyish = [
+    ["delimiter only", delimiter],
+    ["two delimiters", `${delimiter}${delimiter}`],
+    ["whitespace between delimiters", `${delimiter}  ${delimiter}`],
+    ["whitespace only", "   "],
+  ] as const;
+  for (const [label, value] of emptyish) {
+    test(`${label} falls through instead of winning empty`, () => {
+      // Non-empty by string length, empty after normalizing. Winning here left
+      // `claudeDir()` with no primary root and threw.
+      process.env.CC_ANALYZER_CLAUDE_DIR = value;
+      const roots = claudeRoots();
+      expect(roots.length).toBeGreaterThan(0);
+      expect(roots[0]?.source).toBe("default");
+      expect(() => claudeDir()).not.toThrow();
+    });
+  }
 });
