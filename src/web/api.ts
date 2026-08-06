@@ -16,6 +16,7 @@ import {
   listIndexedSessions,
   searchSessions,
   sessionPathById,
+  sessionRowById,
 } from "../core/queries.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
 import {
@@ -326,9 +327,13 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
-    const path = sessionPathById(db, id);
-    if (!path) return c.json({ error: "session not found" }, 404);
-    const parsed = await readSession(path);
+    // The indexed row, not just its path: `projectId` rides along so the client
+    // can resolve the session's project by its globally unique id. Matching on
+    // `projectPath` would be ambiguous once two Claude roots hold a project for
+    // the same working directory.
+    const row = sessionRowById(db, id);
+    if (!row) return c.json({ error: "session not found" }, 404);
+    const parsed = await readSession(row.path);
     if (!parsed) return c.json(staleIndex, 404);
     const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
     // The rank depends only on the index, so it memoizes on the fingerprint —
@@ -338,6 +343,7 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     capSlots("rank:", MAX_RANK_SLOTS);
     return c.json({
       ...analysis,
+      projectId: row.projectId,
       insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
     });
   });

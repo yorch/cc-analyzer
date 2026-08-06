@@ -203,6 +203,16 @@ describe("web API", () => {
     expect(body.insights.rank?.portfolio.sessions).toBeGreaterThan(0);
   });
 
+  test("GET /api/sessions/:id carries the project id, not just its path", async () => {
+    // The SPA resolves a session's project from this. Two Claude roots can hold
+    // a project for the same working directory, so a `projectPath` match would
+    // link to whichever row happened to sort first — the id is unambiguous.
+    const res = await api.request("/api/sessions/sess-1");
+    const body = (await res.json()) as { projectId?: string; projectPath?: string };
+    expect(body.projectId).toBeString();
+    expect(body.projectId).toBe("proj-a");
+  });
+
   test("GET /api/sessions/:id/transcript returns transcript items", async () => {
     const res = await api.request("/api/sessions/sess-1/transcript");
     const body = (await res.json()) as { kind: string }[];

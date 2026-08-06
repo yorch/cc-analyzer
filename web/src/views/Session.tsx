@@ -55,7 +55,9 @@ export function Session({ id }: { id: string }) {
   const loaded = analysis.data;
   if (!loaded) return null;
   const [a, projects] = loaded;
-  const project = projects.find((row) => row.projectPath === a.projectPath);
+  // By id, not by path: two Claude roots can hold a project for the same
+  // working directory, and a path match would link to whichever sorted first.
+  const project = projects.find((row) => row.projectId === a.projectId);
   const c = a.totals.cost;
   const rankCard = pickRankCohort(a.insights?.rank ?? null);
 

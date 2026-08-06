@@ -171,7 +171,12 @@ export interface SessionInsightsPayload {
 
 /** The session payload: the full analysis plus the insights sibling.
  * `insights` stays optional so a cached/older server response still renders. */
-export type SessionResponse = SessionAnalysis & { insights?: SessionInsightsPayload };
+export type SessionResponse = SessionAnalysis & {
+  /** The session's project, by globally unique id. `projectPath` alone is
+   *  ambiguous when two Claude roots hold a project for the same directory. */
+  projectId?: string;
+  insights?: SessionInsightsPayload;
+};
 
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url);
