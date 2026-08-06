@@ -1,6 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,6 +136,31 @@ test("index --check does not report an unreadable root's rows as deleted", async
     expect((await inspectIndexStatus(db)).deleted).toBe(1);
   } finally {
     renameSync(away, personal);
+  }
+});
+
+// Root bypasses directory permissions, so the only portable way to make a
+// directory statable-but-unlistable does not work when the suite runs as uid 0
+// (containers, some CI images). Skipped rather than silently asserting nothing.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+test.skipIf(isRoot)("a root that stats but cannot be listed is retained, not pruned", async () => {
+  await run(work, personal);
+  const projectsDir = join(personal, "projects");
+  // Statable, unlistable — lost permissions, a half-mounted volume. Probing
+  // with stat() would call this "configured and empty" and prune every row.
+  chmodSync(projectsDir, 0o000);
+  try {
+    const { scanRoots } = await import("../../src/core/discover.ts");
+    setClaudeRootsOverride([work, personal]);
+    const scans = await scanRoots();
+    expect(scans.find((s) => s.root.path === personal)?.readable).toBe(false);
+
+    const result = await run(work, personal);
+    expect(result.deleted).toBe(0);
+    expect(rows()).toHaveLength(2);
+  } finally {
+    chmodSync(projectsDir, 0o755);
   }
 });
 

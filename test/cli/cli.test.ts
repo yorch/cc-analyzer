@@ -782,6 +782,32 @@ describe("Claude data directories", () => {
     expect(r.stderr).toContain("No project");
   });
 
+  test("`add` does not bake a one-invocation --claude-dir root into prefs", async () => {
+    // The flag is scoped to a single command; persisting it would silently make
+    // a throwaway directory permanent, and drop the real one on the next index.
+    const prefsState = join(tmpDir, "transient-state");
+    mkdirSync(prefsState, { recursive: true });
+    const persistent = join(tmpDir, "claude");
+    try {
+      const r = await run([`--claude-dir=${second}`, "claude-dir", "add", join(tmpDir, "added")], {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: persistent,
+      });
+      expect(r.code, r.stderr).toBe(0);
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      // The persistent root plus the added one — not the flag's.
+      expect(stored.claudeDirs).toEqual([persistent, join(tmpDir, "added")]);
+      expect(stored.claudeDirs).not.toContain(second);
+      // …and the confirmation admits the flag is still overriding.
+      expect(r.stdout).toContain("overriding the stored list");
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
   test("claude-dir rejects a bad subcommand and a missing operand", async () => {
     expect((await run(["claude-dir", "frobnicate"])).code).toBe(2);
     expect((await run(["claude-dir", "add"])).code).toBe(2);

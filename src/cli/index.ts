@@ -6,6 +6,7 @@ import {
   type ClaudeRootSource,
   claudeRoots,
   expandPath,
+  persistentClaudeRoots,
   projectsDirOf,
   setClaudeRootsOverride,
   splitRootList,
@@ -22,7 +23,7 @@ import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import { getClaudeDirs, getCostBasis, setClaudeDirs, setCostBasis } from "../core/prefs.ts";
 import { loadPricing } from "../core/pricing-source.ts";
-import { labelProjects } from "../core/project-labels.ts";
+import { labelProjects, rootTag } from "../core/project-labels.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
@@ -220,12 +221,16 @@ async function cmdProjects(): Promise<number> {
     (p) => p.label,
     (p) => p.root,
   );
+  // The root column carries `rootTag`, not the raw path: truncating full paths
+  // renders roots that share a long prefix identically — the synced-machines
+  // case the docs recommend — so the column would disambiguate nothing.
+  const allRoots = [...new Set(projects.map((p) => p.root))];
   console.log(
     table(
       multiRoot ? ["sessions", "project", "claude dir"] : ["sessions", "project"],
       projects.map((p) =>
         multiRoot
-          ? [String(p.sessionCount), truncate(p.label, 60), truncate(p.root, 40)]
+          ? [String(p.sessionCount), truncate(p.label, 60), truncate(rootTag(p.root, allRoots), 40)]
           : [String(p.sessionCount), truncate(p.label, 80)],
       ),
     ),
@@ -281,12 +286,14 @@ function cmdClaudeDir(action: string | undefined, operand: string | undefined): 
         const path = expandPath(operand);
         if (action === "set") next = [path];
         else if (action === "add") {
-          // `add` must *append to what is in effect*, not to an empty pref.
-          // With nothing persisted the effective root is `~/.claude` (or
-          // CLAUDE_CONFIG_DIR); writing a one-element list would make the prefs
-          // tier win and silently drop it — and the next `index` would prune
-          // every one of its rows as de-configured.
-          const base = current.length > 0 ? current : claudeRoots().map((r) => r.path);
+          // `add` appends to what is *persistently* in effect. With nothing
+          // stored that is `~/.claude` (or CLAUDE_CONFIG_DIR): writing a
+          // one-element list would make the exclusive prefs tier win and
+          // silently drop it, and the next `index` would prune all its rows.
+          // Deliberately not `claudeRoots()` — that would bake a `--claude-dir=`
+          // or `CC_ANALYZER_CLAUDE_DIR` root, scoped to one command, into
+          // prefs.json permanently.
+          const base = current.length > 0 ? current : persistentClaudeRoots().map((r) => r.path);
           next = base.includes(path) ? base : [...base, path];
         } else {
           next = current.filter((p) => p !== path);
@@ -304,6 +311,16 @@ function cmdClaudeDir(action: string | undefined, operand: string | undefined): 
 
       setClaudeDirs(next);
       report(action === "reset" ? "Cleared. " : "");
+      // A `--claude-dir=`/`CC_ANALYZER_CLAUDE_DIR` root outranks the pref, so the
+      // list above is *not* what was just written. Say so rather than letting the
+      // confirmation contradict the change.
+      const overriding = claudeRoots()[0]?.source;
+      if (overriding === "flag" || overriding === "env") {
+        console.log(
+          `\nNote: ${ROOT_SOURCE_LABEL[overriding]} is overriding the stored list for this ` +
+            `invocation. Persisted: ${next.length > 0 ? next.join(", ") : "(none)"}`,
+        );
+      }
       console.log("\nReindex with `cc-analyzer index` to pick up the change.");
       return 0;
     }

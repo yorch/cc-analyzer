@@ -87,6 +87,32 @@ function normalizeRoots(raw: string[], source: ClaudeRootSource): ClaudeRoot[] {
   return roots;
 }
 
+function resolveTiers(tiers: [string[], ClaudeRootSource][]): ClaudeRoot[] {
+  // A tier only wins if it normalizes to at least one usable path. A value that
+  // is non-empty but yields nothing (`CC_ANALYZER_CLAUDE_DIR=":"`) must fall
+  // through rather than win with an empty list — every caller, `claudeDir()`
+  // included, relies on there always being a primary root.
+  for (const [raw, source] of tiers) {
+    const roots = normalizeRoots(raw, source);
+    if (roots.length > 0) return roots;
+  }
+  // Unreachable: the default tier is a literal absolute path.
+  return normalizeRoots([join(homedir(), ".claude")], "default");
+}
+
+/** The two tiers that are transient — scoped to one invocation, not persisted. */
+const transientTiers = (): [string[], ClaudeRootSource][] => [
+  [flagRoots ?? [], "flag"],
+  [splitRootList(process.env.CC_ANALYZER_CLAUDE_DIR ?? ""), "env"],
+];
+
+/** The tiers that outlive this process: the pref, Claude Code's own var, the default. */
+const persistentTiers = (): [string[], ClaudeRootSource][] => [
+  [getClaudeDirs(), "prefs"],
+  [splitRootList(process.env.CLAUDE_CONFIG_DIR ?? ""), "claude-code"],
+  [[join(homedir(), ".claude")], "default"],
+];
+
 /**
  * Every configured Claude Code data directory, primary first.
  *
@@ -110,23 +136,18 @@ function normalizeRoots(raw: string[], source: ClaudeRootSource): ClaudeRoot[] {
  * parameter.
  */
 export function claudeRoots(): ClaudeRoot[] {
-  // A tier only wins if it normalizes to at least one usable path. A value that
-  // is non-empty but yields nothing (`CC_ANALYZER_CLAUDE_DIR=":"`) must fall
-  // through rather than win with an empty list — every caller, `claudeDir()`
-  // included, relies on there always being a primary root.
-  const tiers: [string[], ClaudeRootSource][] = [
-    [flagRoots ?? [], "flag"],
-    [splitRootList(process.env.CC_ANALYZER_CLAUDE_DIR ?? ""), "env"],
-    [getClaudeDirs(), "prefs"],
-    [splitRootList(process.env.CLAUDE_CONFIG_DIR ?? ""), "claude-code"],
-    [[join(homedir(), ".claude")], "default"],
-  ];
-  for (const [raw, source] of tiers) {
-    const roots = normalizeRoots(raw, source);
-    if (roots.length > 0) return roots;
-  }
-  // Unreachable: the default tier is a literal absolute path.
-  return normalizeRoots([join(homedir(), ".claude")], "default");
+  return resolveTiers([...transientTiers(), ...persistentTiers()]);
+}
+
+/**
+ * What would be in effect ignoring the one-invocation tiers.
+ *
+ * `cc-analyzer claude-dir add` appends to this rather than to `claudeRoots()`:
+ * appending to a `--claude-dir=` or `CC_ANALYZER_CLAUDE_DIR` root would bake a
+ * directory the user scoped to a single command into `prefs.json` permanently.
+ */
+export function persistentClaudeRoots(): ClaudeRoot[] {
+  return resolveTiers(persistentTiers());
 }
 
 /** Root of the Claude Code data directory (the primary one; default `~/.claude`). */

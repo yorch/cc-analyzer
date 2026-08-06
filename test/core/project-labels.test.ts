@@ -142,6 +142,21 @@ describe("resolveProjectRef", () => {
   });
 });
 
+describe("rootTag in the CLI's column", () => {
+  test("roots sharing a long prefix still differ (truncating full paths would not)", () => {
+    // The documented synced-machines case: `truncate(root, 40)` keeps the head,
+    // so both render identically and the column disambiguates nothing.
+    const all = [
+      "/mnt/backups/machine-a/home/me/.claude",
+      "/mnt/backups/machine-b/home/me/.claude",
+    ];
+    const tags = all.map((r) => rootTag(r, all));
+    expect(tags[0]).not.toBe(tags[1]);
+    expect(tags[0]).toContain("machine-a");
+    expect(tags[1]).toContain("machine-b");
+  });
+});
+
 describe("projectDisplayName", () => {
   test("prefers the authoritative path", () => {
     expect(projectDisplayName("/Users/me/proj", "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");

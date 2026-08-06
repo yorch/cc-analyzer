@@ -34,6 +34,25 @@ async function isDir(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Whether a directory can actually be *listed*.
+ *
+ * Deliberately `readdir`, not `stat`: discovery enumerates with `readdir` and
+ * swallows its errors, so a directory that stats fine but cannot be read (lost
+ * permissions, a half-mounted volume) would otherwise look "configured and
+ * empty" — and the indexer would prune every one of its rows, which is exactly
+ * the data loss the readable/unreadable split exists to prevent. Probing with
+ * the same call discovery makes keeps the two answers in agreement.
+ */
+async function canList(path: string): Promise<boolean> {
+  try {
+    await readdir(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface RootScan {
   root: ClaudeRoot;
   /** Whether the root's `projects/` directory could be read this scan. */
@@ -49,7 +68,7 @@ export interface RootScan {
  */
 export async function scanRoots(roots: ClaudeRoot[] = claudeRoots()): Promise<RootScan[]> {
   return await Promise.all(
-    roots.map(async (root) => ({ root, readable: await isDir(projectsDirOf(root.path)) })),
+    roots.map(async (root) => ({ root, readable: await canList(projectsDirOf(root.path)) })),
   );
 }
 

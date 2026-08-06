@@ -368,7 +368,9 @@ export function InsightsProject({ id }: { id: string }) {
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load insight sessions." />;
   if (!data) return null;
 
-  const projectPath = all[0]?.projectPath ?? id;
+  // Never `?? id`: a project with no cache-active sessions (or a NULL
+  // project_path) would put a raw `<slug>~<name>` in the heading.
+  const projectPath = projectDisplayName(all[0]?.projectPath, id);
 
   return (
     <>

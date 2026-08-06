@@ -68,7 +68,7 @@ export function Project({ id }: { id: string }) {
         <a href={link.dashboard()}>← Dashboard</a>
       </div>
       <header className="top">
-        <h1>{project?.projectPath ?? id}</h1>
+        <h1>{projectDisplayName(project?.projectPath, id)}</h1>
         <span className="muted">
           {sessions.length}
           {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
