@@ -229,36 +229,61 @@ were reported (or the session was not found), and `2` means invalid usage. Use
 
 ### Claude data directories
 
-By default cc-analyzer reads `~/.claude`. If you relocated Claude Code's data
-directory with `CLAUDE_CONFIG_DIR`, cc-analyzer honours that variable too — a
-relocated install needs no configuration at all.
+Find your case below — most people are the first one and have nothing to do.
 
-You can also name directories yourself, and **more than one is analyzed together
-as a single portfolio** (a work profile and a personal one, several machines'
-data synced into one folder):
+**Default `~/.claude`.** Nothing to configure:
+
+```bash
+cc-analyzer index && cc-analyzer stats
+```
+
+**Relocated data directory.** If you set `CLAUDE_CONFIG_DIR` for Claude Code,
+cc-analyzer reads the same variable — no cc-analyzer configuration at all:
+
+```bash
+export CLAUDE_CONFIG_DIR=~/dotfiles/claude   # you already have this
+cc-analyzer index
+```
+
+**Several profiles** (work + personal, or several machines synced into one
+folder). Name each once; they are analyzed together as a single portfolio:
+
+```bash
+cc-analyzer claude-dir add ~/work/.claude
+cc-analyzer claude-dir add ~/personal/.claude
+cc-analyzer index          # the index mirrors the configured set
+cc-analyzer stats          # both profiles, one report
+```
+
+`cc-analyzer projects` then gains a **claude dir** column, and other lists name
+the directory only where two labels would otherwise be identical.
+
+**A one-off peek at another directory:**
+
+```bash
+cc-analyzer --claude-dir=/mnt/backup/.claude projects
+```
+
+Managing the persisted list:
 
 ```bash
 cc-analyzer claude-dir                      # what is in effect, and why
-cc-analyzer claude-dir add ~/work/.claude   # append a directory
-cc-analyzer claude-dir set ~/work/.claude   # replace the list with one
-cc-analyzer claude-dir remove ~/work/.claude
+cc-analyzer claude-dir add|set|remove <path>
 cc-analyzer claude-dir reset                # back to the default resolution
-cc-analyzer index                           # pick up the change
+cc-analyzer index                           # after any change
 ```
 
-For a single invocation, use the global `--claude-dir=<path>` flag (repeatable,
-or a `:`-separated list — `;` on Windows). It must be written inline with `=`.
+The `--claude-dir=<path>` flag (repeatable, or a `:`-separated list — `;` on
+Windows, always inline with `=`) applies **only** to the commands that read
+session files directly: `projects`, `sessions`, `analyze`, `doctor`. It is
+refused on anything index-backed (`index`, `stats`, `audit`, `insights`,
+`report`, `serve`, the TUI), because the index always covers every configured
+directory: a one-off scope would be silently ignored on a report and would drop
+the other directories' rows on `index`. Configure with `claude-dir set` and
+reindex to scope those for real.
 
-The flag applies only to the commands that read session files directly —
-`projects`, `sessions`, `analyze`, `doctor`. It is **refused** on anything
-index-backed (`index`, `stats`, `audit`, `insights`, `report`, `serve`, and the
-TUI), because the index always covers every configured directory: a one-off
-scope would be silently ignored on a read, and would prune the other
-directories' rows on `index`. To scope those for real, configure the
-directories with `cc-analyzer claude-dir set` and reindex.
-
-Directories resolve in this order, and the first tier that yields anything wins —
-a directory you configure is never silently mixed with `~/.claude`:
+Directories resolve in this order, first tier that names anything wins — so a
+directory you configure is never silently mixed with `~/.claude`:
 
 1. `--claude-dir=<path>`
 2. `CC_ANALYZER_CLAUDE_DIR` (a `PATH`-style list; also the test/CI hook)
@@ -266,16 +291,19 @@ a directory you configure is never silently mixed with `~/.claude`:
 4. `CLAUDE_CONFIG_DIR` (Claude Code's own)
 5. `~/.claude`
 
+If your portfolio looks empty, `cc-analyzer claude-dir` prints every directory
+searched, the setting that put it there, and marks any holding no `projects/`
+directory.
+
 Notes when several directories are configured:
 
 - Two directories can each hold sessions for the *same* working directory. They
-  stay separate projects; lists that would otherwise show two identical labels
-  name the directory alongside them.
+  stay separate projects rather than merging, and the directory is named
+  wherever the labels would collide.
 - The index mirrors your configured list: **removing a directory removes its
   sessions from the index** on the next `cc-analyzer index`. A directory that is
   merely unreadable right now (an unmounted volume) keeps its data instead.
-- Reindex after any change. Adding a directory never re-parses the ones you
-  already had.
+- Adding a directory never re-parses the ones you already had.
 
 ### Environment overrides
 

@@ -77,6 +77,8 @@ flowchart LR
 | `SessionCharts` | [web/src/SessionCharts.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/SessionCharts.tsx) | Per-session context, cost, and per-turn charts |
 | views | [web/src/views/](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx) | Dashboard, Project, Session, Insights, Trends, Tools |
 
+When more than one Claude data directory is configured, the Dashboard's project table and the Project header name the directory through the bun-free `labelProjects()` in `src/core/project-labels.ts` — the same helper the CLI and TUI import, so the three surfaces cannot disagree about whether a label is ambiguous. It qualifies only labels that actually collide across roots, so a single-root portfolio renders exactly as before.
+
 Sources: [web/src/App.tsx#L1-L46](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L1-L46) [web/src/api.ts#L108-L133](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/api.ts#L108-L133)
 
 ## Routing and shell
