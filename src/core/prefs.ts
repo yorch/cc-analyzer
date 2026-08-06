@@ -51,8 +51,9 @@ export function setCostBasis(basis: CostBasis): void {
  * Claude data directories persisted by `cc-analyzer claude-dir`. Empty means
  * unset — resolution then falls through to `CLAUDE_CONFIG_DIR` and `~/.claude`.
  *
- * `paths.ts` reads this key with its own tolerant reader (it cannot import this
- * module without a cycle); this is the typed read/write the CLI command uses.
+ * `claude-roots.ts` calls this at resolution time — it imports this module,
+ * which is why root resolution lives there rather than in `paths.ts` (this
+ * module reads `paths.ts` for its own location, so the two would cycle).
  */
 export function getClaudeDirs(): string[] {
   const dirs = readConfig().claudeDirs;

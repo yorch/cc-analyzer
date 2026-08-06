@@ -371,7 +371,24 @@ function mergeInventories(parts: SetupInventory[]): SetupInventory {
   for (const part of parts) {
     for (const item of part.skills) skills.set(`${item.source} ${item.name}`, item);
     for (const item of part.agents) agents.set(`${item.source} ${item.name}`, item);
-    for (const plugin of part.plugins) plugins.set(plugin.name, plugin);
+    for (const plugin of part.plugins) {
+      // Union its components rather than last-wins: a plugin installed under two
+      // roots may ship a different subset from each, and dropping one root's
+      // list would make `unused-plugin` fire for a plugin whose used components
+      // came from the other.
+      const prev = plugins.get(plugin.name);
+      plugins.set(
+        plugin.name,
+        prev
+          ? {
+              name: plugin.name,
+              skills: [...new Set([...prev.skills, ...plugin.skills])].sort(),
+              agents: [...new Set([...prev.agents, ...plugin.agents])].sort(),
+              mcpServers: [...new Set([...prev.mcpServers, ...plugin.mcpServers])].sort(),
+            }
+          : plugin,
+      );
+    }
     for (const server of part.mcpServers) {
       const prev = mcp.get(server.name);
       mcp.set(server.name, {
@@ -396,7 +413,10 @@ function mergeInventories(parts: SetupInventory[]): SetupInventory {
     mcpServers: [...mcp.values()].sort(byName),
     hooks: [...hooks.entries()].map(([event, count]) => ({ event, hooks: count })).sort(byEvent),
     permissions,
-    model: parts.find((p) => p.model !== null)?.model ?? null,
+    // The primary root's pin, not the first root that happens to have one:
+    // that is the settings.json Claude Code would read first, and reporting a
+    // secondary root's model would misdescribe the setup.
+    model: parts[0]?.model ?? null,
   };
 }
 

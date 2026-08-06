@@ -280,8 +280,15 @@ function cmdClaudeDir(action: string | undefined, operand: string | undefined): 
         // here and a path resolved later can never disagree.
         const path = expandPath(operand);
         if (action === "set") next = [path];
-        else if (action === "add") next = current.includes(path) ? current : [...current, path];
-        else {
+        else if (action === "add") {
+          // `add` must *append to what is in effect*, not to an empty pref.
+          // With nothing persisted the effective root is `~/.claude` (or
+          // CLAUDE_CONFIG_DIR); writing a one-element list would make the prefs
+          // tier win and silently drop it — and the next `index` would prune
+          // every one of its rows as de-configured.
+          const base = current.length > 0 ? current : claudeRoots().map((r) => r.path);
+          next = base.includes(path) ? base : [...base, path];
+        } else {
           next = current.filter((p) => p !== path);
           if (next.length === current.length) {
             console.error(`error: '${path}' is not a persisted Claude directory.`);

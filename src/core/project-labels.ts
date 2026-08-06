@@ -10,10 +10,28 @@
  * "am I multi-root?" from whatever rows it happens to be holding.
  */
 
-/** Last path segment, without `node:path` so this stays browser-importable. */
-export function rootTag(root: string): string {
-  const parts = root.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? root;
+const segments = (path: string): string[] => path.split(/[\\/]/).filter(Boolean);
+
+/**
+ * A short tag naming one root among `all`, without `node:path` so this stays
+ * browser-importable.
+ *
+ * The shortest trailing path segments that tell it apart from the others —
+ * because the common case is `~/.claude` beside `/mnt/work/.claude`, where the
+ * last segment alone is `.claude` for both and would disambiguate nothing.
+ */
+export function rootTag(root: string, all: readonly string[] = [root]): string {
+  const own = segments(root);
+  if (own.length === 0) return root;
+  const others = all.filter((p) => p !== root).map(segments);
+  for (let take = 1; take <= own.length; take++) {
+    const tail = own.slice(-take);
+    const clashes = others.some(
+      (o) => o.length >= take && o.slice(-take).join("/") === tail.join("/"),
+    );
+    if (!clashes) return tail.join("/");
+  }
+  return own.join("/");
 }
 
 export interface ProjectLabelling<T> {
@@ -49,12 +67,18 @@ export function labelProjects<T>(
     rootsByLabel.set(name, seen);
   }
   const multiRoot = roots.size > 1;
+  // Tags are computed against the whole root set, so two roots that end in the
+  // same directory name (`~/.claude` and `/mnt/work/.claude`) still get tags
+  // that differ.
+  const all = [...roots];
   return {
     multiRoot,
     label: (row) => {
       const name = label(row);
       if (!multiRoot) return name;
-      return (rootsByLabel.get(name)?.size ?? 0) > 1 ? `${name} [${rootTag(root(row))}]` : name;
+      return (rootsByLabel.get(name)?.size ?? 0) > 1
+        ? `${name} [${rootTag(root(row), all)}]`
+        : name;
     },
   };
 }

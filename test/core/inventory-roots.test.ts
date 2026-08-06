@@ -108,6 +108,35 @@ test("additive counts sum and the pinned model comes from the primary root", () 
   expect(inv.model).toBe("claude-opus-4");
 });
 
+test("a plugin installed under two roots keeps every component it ships", () => {
+  const [a, b] = roots as [string, string];
+  const plug = (root: string, skill: string, agent: string) => {
+    mkdirSync(join(root, "plugins", "toolkit", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(root, "plugins", "toolkit", ".claude-plugin", "plugin.json"), "{}");
+    mkdirSync(join(root, "plugins", "toolkit", "skills", skill), { recursive: true });
+    writeFileSync(join(root, "plugins", "toolkit", "skills", skill, "SKILL.md"), "# s");
+    mkdirSync(join(root, "plugins", "toolkit", "agents"), { recursive: true });
+    writeFileSync(join(root, "plugins", "toolkit", "agents", `${agent}.md`), "# a");
+  };
+  plug(a, "fmt", "auditor");
+  plug(b, "lint", "scribe");
+
+  // Last-wins would drop one root's components, which can make `unused-plugin`
+  // fire for a plugin whose used components lived in the other root.
+  const toolkit = scanInventories([a, b]).plugins.find((p) => p.name === "toolkit");
+  expect(toolkit?.skills.sort()).toEqual(["fmt", "lint"]);
+  expect(toolkit?.agents.sort()).toEqual(["auditor", "scribe"]);
+});
+
+test("the pinned model is the primary root's, even when it pins none", () => {
+  const [a, b] = roots as [string, string];
+  writeJson(join(a, "settings.json"), { permissions: { allow: ["Read"] } });
+  writeJson(join(b, "settings.json"), { model: "claude-haiku-4-5" });
+  // Not "the first root that happens to pin one" — that would report a
+  // secondary root's model as the setup's.
+  expect(scanInventories([a, b]).model).toBeNull();
+});
+
 test("an absent root shrinks the merge instead of failing it", () => {
   const [a] = roots as [string];
   addSkill(a, "deploy");

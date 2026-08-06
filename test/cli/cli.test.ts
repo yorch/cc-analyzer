@@ -695,6 +695,52 @@ describe("Claude data directories", () => {
     expect(r.stderr).not.toContain("cannot be used with");
   });
 
+  test("the first `add` keeps the root already in effect", async () => {
+    // With nothing persisted, the effective root comes from a lower tier. Since
+    // the prefs tier is exclusive, writing a one-element list would silently
+    // drop it — and the next `index` would prune every one of its rows.
+    const prefsState = join(tmpDir, "add-state");
+    mkdirSync(prefsState, { recursive: true });
+    const inEffect = join(tmpDir, "claude");
+    try {
+      const r = await run(["claude-dir", "add", second], {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: inEffect,
+      });
+      expect(r.code, r.stderr).toBe(0);
+      // Both the previously-effective root and the newly added one.
+      expect(r.stdout).toContain(inEffect);
+      expect(r.stdout).toContain(second);
+
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      expect(stored.claudeDirs).toEqual([inEffect, second]);
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
+  test("`set` still replaces rather than appending", async () => {
+    const prefsState = join(tmpDir, "set-state");
+    mkdirSync(prefsState, { recursive: true });
+    try {
+      const env = {
+        CC_ANALYZER_STATE_DIR: prefsState,
+        CC_ANALYZER_CLAUDE_DIR: undefined,
+        CLAUDE_CONFIG_DIR: join(tmpDir, "claude"),
+      };
+      await run(["claude-dir", "set", second], env);
+      const stored = JSON.parse(readFileSync(join(prefsState, "prefs.json"), "utf8")) as {
+        claudeDirs: string[];
+      };
+      expect(stored.claudeDirs).toEqual([second]);
+    } finally {
+      rmSync(prefsState, { recursive: true, force: true });
+    }
+  });
+
   test("claude-dir rejects a bad subcommand and a missing operand", async () => {
     expect((await run(["claude-dir", "frobnicate"])).code).toBe(2);
     expect((await run(["claude-dir", "add"])).code).toBe(2);

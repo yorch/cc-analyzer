@@ -90,6 +90,28 @@ describe("claudeRoots precedence", () => {
     expect(claudeDir()).toBe("/srv/a");
   });
 
+  test("a tier that normalizes to nothing falls through instead of winning empty", () => {
+    // ":" is non-empty but splits to no entries. Winning with an empty list
+    // would leave `claudeDir()` with no primary root and throw.
+    process.env.CC_ANALYZER_CLAUDE_DIR = delimiter;
+    const roots = claudeRoots();
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.source).toBe("default");
+    expect(() => claudeDir()).not.toThrow();
+  });
+
+  test("a trailing slash is the same root, not a second one", () => {
+    // What shell tab-completion produces. Two entries would double every
+    // project, every session, and every indexed row.
+    process.env.CC_ANALYZER_CLAUDE_DIR = ["/srv/a", "/srv/a/"].join(delimiter);
+    expect(claudeRoots().map((r) => r.path)).toEqual(["/srv/a"]);
+  });
+
+  test("redundant path segments normalize to one root", () => {
+    process.env.CC_ANALYZER_CLAUDE_DIR = ["/srv/a", "/srv/b/../a", "/srv//a"].join(delimiter);
+    expect(claudeRoots().map((r) => r.path)).toEqual(["/srv/a"]);
+  });
+
   test("expands ~ and drops duplicates and blanks", () => {
     process.env.CC_ANALYZER_CLAUDE_DIR = ["~/data", "", "/srv/a", "/srv/a"].join(delimiter);
     expect(claudeRoots().map((r) => r.path)).toEqual([join(homedir(), "data"), "/srv/a"]);
@@ -131,6 +153,21 @@ describe("project id qualification", () => {
     const id = qualifyProjectId(secondary, "-Users-me-proj");
     expect(projectIdParts(id)).toEqual({ slug: rootSlug("/srv/b"), dirName: "-Users-me-proj" });
     expect(projectIdParts("-Users-me-proj")).toEqual({ slug: null, dirName: "-Users-me-proj" });
+  });
+
+  test("a `~` in the working directory is not mistaken for a root slug", () => {
+    // /tmp/my~proj encodes to -tmp-my~proj. Splitting on the first `~` would
+    // decode the label as "/proj" and resolve to a root slug matching nothing,
+    // so `sessions <id>` would find nothing for a project `projects` just listed.
+    expect(projectIdParts("-tmp-my~proj")).toEqual({ slug: null, dirName: "-tmp-my~proj" });
+    expect(decodeProjectLabel("-tmp-my~proj")).toBe("/tmp/my~proj");
+  });
+
+  test("only an 8-hex prefix counts as a slug", () => {
+    expect(projectIdParts("deadbeef~-a").slug).toBe("deadbeef");
+    expect(projectIdParts("DEADBEEF~-a").slug).toBeNull(); // uppercase
+    expect(projectIdParts("deadbee~-a").slug).toBeNull(); // 7 chars
+    expect(projectIdParts("deadbeef0~-a").slug).toBeNull(); // 9 chars
   });
 
   test("labels decode from the directory-name half of a qualified id", () => {

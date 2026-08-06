@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, join, normalize, resolve } from "node:path";
 import { getClaudeDirs } from "./prefs.ts";
 
 /**
@@ -57,11 +57,18 @@ export function setClaudeRootsOverride(paths: string[] | null): void {
  */
 export function expandPath(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed === "~") return homedir();
-  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
-    return join(homedir(), trimmed.slice(2));
-  }
-  return isAbsolute(trimmed) ? trimmed : resolve(trimmed);
+  if (trimmed.length === 0) return "";
+  const tilde =
+    trimmed === "~"
+      ? homedir()
+      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+        ? join(homedir(), trimmed.slice(2))
+        : trimmed;
+  // `normalize` + `resolve` collapse `.`/`..`, duplicate separators, and the
+  // trailing slash that shell tab-completion adds. Without it `~/.claude/` and
+  // `~/.claude` are two distinct strings, so the dedupe below misses them and
+  // every project under that root is discovered — and indexed — twice.
+  return resolve(normalize(tilde));
 }
 
 /** Split a `PATH`-style list (`:` on posix, `;` on Windows) into entries. */
@@ -108,25 +115,28 @@ function normalizeRoots(raw: string[], source: ClaudeRootSource): ClaudeRoot[] {
  * parameter.
  */
 export function claudeRoots(): ClaudeRoot[] {
-  if (flagRoots) return normalizeRoots(flagRoots, "flag");
-
-  const env = process.env.CC_ANALYZER_CLAUDE_DIR;
-  if (env && env.trim().length > 0) return normalizeRoots(splitRootList(env), "env");
-
-  const prefs = getClaudeDirs();
-  if (prefs.length > 0) return normalizeRoots(prefs, "prefs");
-
-  const claudeCode = process.env.CLAUDE_CONFIG_DIR;
-  if (claudeCode && claudeCode.trim().length > 0) {
-    return normalizeRoots(splitRootList(claudeCode), "claude-code");
+  // A tier only wins if it normalizes to at least one usable path. A value that
+  // is non-empty but yields nothing (`CC_ANALYZER_CLAUDE_DIR=":"`) must fall
+  // through rather than win with an empty list — every caller, `claudeDir()`
+  // included, relies on there always being a primary root.
+  const tiers: [string[], ClaudeRootSource][] = [
+    [flagRoots ?? [], "flag"],
+    [splitRootList(process.env.CC_ANALYZER_CLAUDE_DIR ?? ""), "env"],
+    [getClaudeDirs(), "prefs"],
+    [splitRootList(process.env.CLAUDE_CONFIG_DIR ?? ""), "claude-code"],
+    [[join(homedir(), ".claude")], "default"],
+  ];
+  for (const [raw, source] of tiers) {
+    const roots = normalizeRoots(raw, source);
+    if (roots.length > 0) return roots;
   }
-
+  // Unreachable: the default tier is a literal absolute path.
   return normalizeRoots([join(homedir(), ".claude")], "default");
 }
 
 /** Root of the Claude Code data directory (the primary one; default `~/.claude`). */
 export function claudeDir(): string {
-  // normalizeRoots always yields at least one entry for the default tier.
+  // claudeRoots() always yields at least one entry (see its tier loop).
   return (claudeRoots()[0] as ClaudeRoot).path;
 }
 
@@ -173,11 +183,23 @@ export function qualifyProjectId(root: ClaudeRoot, dirName: string): string {
   return root.primary ? dirName : `${root.slug}${PROJECT_ID_SEPARATOR}${dirName}`;
 }
 
-/** Split a project id back into its optional root slug and encoded name. */
+/** A root slug is exactly 8 lowercase hex characters (see `rootSlug`). */
+const SLUG_PATTERN = /^[0-9a-f]{8}$/;
+
+/**
+ * Split a project id back into its optional root slug and encoded name.
+ *
+ * The prefix counts as a slug only if it *looks* like one. A working directory
+ * may legitimately contain `~` (`/tmp/my~proj` encodes to `-tmp-my~proj`), and
+ * treating that as a qualified id would decode the wrong label and resolve the
+ * project to a root slug that matches nothing.
+ */
 export function projectIdParts(id: string): { slug: string | null; dirName: string } {
   const at = id.indexOf(PROJECT_ID_SEPARATOR);
   if (at === -1) return { slug: null, dirName: id };
-  return { slug: id.slice(0, at), dirName: id.slice(at + 1) };
+  const slug = id.slice(0, at);
+  if (!SLUG_PATTERN.test(slug)) return { slug: null, dirName: id };
+  return { slug, dirName: id.slice(at + 1) };
 }
 
 /**

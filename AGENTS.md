@@ -301,17 +301,19 @@ boundary from its `pricing` prop. TUI caveat lines render verbatim and wrap —
 never `truncate()` a mandatory caveat.
 
 **Setup audit is the one surface that reads config, not transcripts.**
-`inventory.ts` (`node:fs`, read-only, never throws) scans the configured
-Claude dir for `settings.json` (permission rule counts, hook events, a pinned
+`inventory.ts` (`node:fs`, read-only, never throws) scans **each** configured
+Claude root — `scanInventory(root)` per root, folded by `scanInventories()`
+(see the Claude-roots note below) — for `settings.json` (permission rule counts, hook events, a pinned
 `model`, any `mcpServers`), `skills/<name>/SKILL.md`, `agents/<name>.md`, and a
 best-effort walk of `plugins/` — a dir counts as a plugin when it declares
 `.claude-plugin/plugin.json` or ships `skills`/`agents`/`commands`, and its own
 skills/agents/MCP servers are recorded against it (servers from the plugin's own
 `.mcp.json` or a manifest `mcpServers` field, inline or by path; they stay on
 `PluginEntry` and are never merged into `SetupInventory.mcpServers`, which
-describes what the *user* configured) — plus the sibling `<claudeDir>.json`
-(computed as `claudeDir() + ".json"` so `CC_ANALYZER_CLAUDE_DIR` keeps tests
-hermetic): its top-level `mcpServers` are global, `projects.<path>.mcpServers`
+describes what the *user* configured) — plus that root's `.claude.json`, read
+from **both** the sibling `<root>.json` of a default install and
+`<root>/.claude.json` where Claude Code keeps it once the dir has been
+relocated: its top-level `mcpServers` are global, `projects.<path>.mcpServers`
 are project-scoped. Every read is wrapped; a missing dir or malformed JSON
 shrinks the inventory instead of throwing, because this is user-editable config
 whose shape moves between Claude Code releases. `setup-audit.ts` is the
