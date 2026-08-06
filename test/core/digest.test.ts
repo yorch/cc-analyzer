@@ -103,6 +103,7 @@ function sampleDigest(overrides: Partial<WeeklyDigest> = {}): WeeklyDigest {
       {
         projectId: "p1",
         projectPath: "/p/one",
+        claudeDir: "/home/u/.claude",
         cost: 9,
         sessions: 5,
         delta: digestDelta(9, 6),

@@ -103,6 +103,9 @@ export interface DigestHeadline {
 export interface DigestProjectRow {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir the project lives under — what tells two same-named
+   *  projects from different roots apart in a ranked list. */
+  claudeDir: string;
   cost: number;
   sessions: number;
   /** Cost against the same project in the prior period. */
