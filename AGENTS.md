@@ -510,7 +510,12 @@ in `main()` (module state, not an env write, so `claudeRoots()` can report
 `source` accurately) and is stripped from argv before dispatch — it must be
 written `--claude-dir=<path>`, since the space form would survive
 `rest.filter(a => !a.startsWith("--"))` as a positional and shadow
-`sessions <projectId>`. Two roots can hold a project for the *same* cwd, whose
+`sessions <projectId>`. It is accepted **only** on the commands that read
+session files directly (`projects`/`sessions`/`analyze`/`doctor`) and refused
+on every index-backed one: the index always covers the whole configured set, so
+a one-invocation scope would be silently ignored on a read and would prune the
+un-pointed-at roots on `index`. `CC_ANALYZER_CLAUDE_DIR` stays unguarded as the
+hermetic test hook. Two roots can hold a project for the *same* cwd, whose
 encoded names are byte-identical, so `qualifyProjectId()` makes the id globally
 unique at **index time**: the primary root's ids stay bare (adding a second root
 never re-keys what a user already had) and others carry `rootSlug(path)~`. That

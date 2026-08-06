@@ -614,6 +614,24 @@ describe("Claude data directories", () => {
     expect(r.stdout).toContain("Reading Claude Code data from:");
   });
 
+  test("claude-dir does not nudge a working setup to configure anything", async () => {
+    // The default ~/.claude and an inherited CLAUDE_CONFIG_DIR persist nothing
+    // and are both fine; telling those users to set something reads as a fault.
+    const r = await run(["claude-dir"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(join(tmpDir, "claude"));
+    expect(r.stdout).not.toContain("claude-dir set");
+    expect(r.stdout).not.toContain("No Claude sessions found");
+  });
+
+  test("claude-dir marks a directory with no projects/ and then offers a fix", async () => {
+    const r = await run(["claude-dir"], { CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "nowhere") });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("no projects/ directory");
+    expect(r.stdout).toContain("No Claude sessions found");
+    expect(r.stdout).toContain("cc-analyzer claude-dir set");
+  });
+
   test("claude-dir honours CLAUDE_CONFIG_DIR when nothing else is configured", async () => {
     const r = await run(["claude-dir"], {
       CC_ANALYZER_CLAUDE_DIR: undefined,
@@ -644,6 +662,37 @@ describe("Claude data directories", () => {
     } finally {
       rmSync(prefsState, { recursive: true, force: true });
     }
+  });
+
+  // The index always covers every configured directory, so a one-invocation
+  // scope is either ignored (reads) or destructive (`index` prunes the rest).
+  for (const cmd of ["index", "stats", "audit", "insights", "report", "serve"]) {
+    test(`--claude-dir is refused on \`${cmd}\`, which reads the index`, async () => {
+      const r = await run([`--claude-dir=${second}`, cmd]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("--claude-dir cannot be used with");
+      expect(r.stderr).toContain("cc-analyzer claude-dir set <path>");
+    });
+  }
+
+  test("the refusal on `index` names the destructive consequence, not just the no-op", async () => {
+    const r = await run([`--claude-dir=${second}`, "index"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("drop the rows");
+  });
+
+  test("--claude-dir still works on the commands that read session files", async () => {
+    for (const cmd of [["projects"], ["sessions"], ["analyze"], ["doctor"]]) {
+      const r = await run([`--claude-dir=${second}`, ...cmd]);
+      // 0 or a usage/not-found code — anything but the guard's refusal.
+      expect(r.stderr).not.toContain("--claude-dir cannot be used with");
+    }
+  });
+
+  test("the env override is not guarded — it stays the test/CI escape hatch", async () => {
+    // Every other CLI test drives index-backed commands through this variable.
+    const r = await run(["stats"], { CC_ANALYZER_CLAUDE_DIR: join(tmpDir, "claude") });
+    expect(r.stderr).not.toContain("cannot be used with");
   });
 
   test("claude-dir rejects a bad subcommand and a missing operand", async () => {

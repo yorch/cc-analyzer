@@ -152,8 +152,9 @@ cc-analyzer cost-basis [api|subscription]
 cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
                                      # view or change which Claude data dirs are read
 
-# global: read a different Claude data dir for one invocation (repeatable)
-cc-analyzer --claude-dir=/path/to/.claude stats
+# global: read a different Claude data dir for one invocation (repeatable).
+# Only for the commands that read session files directly.
+cc-analyzer --claude-dir=/path/to/.claude projects
 ```
 
 The CLI checks for a newer release at most once a day and prints a one-line
@@ -247,6 +248,14 @@ cc-analyzer index                           # pick up the change
 
 For a single invocation, use the global `--claude-dir=<path>` flag (repeatable,
 or a `:`-separated list — `;` on Windows). It must be written inline with `=`.
+
+The flag applies only to the commands that read session files directly —
+`projects`, `sessions`, `analyze`, `doctor`. It is **refused** on anything
+index-backed (`index`, `stats`, `audit`, `insights`, `report`, `serve`, and the
+TUI), because the index always covers every configured directory: a one-off
+scope would be silently ignored on a read, and would prune the other
+directories' rows on `index`. To scope those for real, configure the
+directories with `cc-analyzer claude-dir set` and reindex.
 
 Directories resolve in this order, and the first tier that yields anything wins —
 a directory you configure is never silently mixed with `~/.claude`:

@@ -168,11 +168,17 @@ cc-analyzer claude-dir remove ~/work/.claude
 cc-analyzer claude-dir reset                # back to the default resolution
 cc-analyzer index                           # pick up the change
 
-cc-analyzer --claude-dir=/path/to/.claude stats   # just this once
+cc-analyzer --claude-dir=/path/to/.claude projects   # just this once
 ```
 
 If you see an empty portfolio, run `cc-analyzer claude-dir`: it prints every
-directory being searched and which setting put it there.
+directory being searched, which setting put it there, and flags any that hold
+no `projects/` directory.
+
+The one-off `--claude-dir=` flag covers `projects`, `sessions`, `analyze`, and
+`doctor`. Index-backed commands refuse it — the index always covers every
+configured directory, so use `cc-analyzer claude-dir set <path>` and reindex to
+scope those.
 
 Two directories can hold sessions for the same working directory; they stay
 separate projects, and lists name the directory when the labels would collide.

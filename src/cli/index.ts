@@ -6,6 +6,7 @@ import {
   type ClaudeRootSource,
   claudeRoots,
   expandPath,
+  projectsDirOf,
   setClaudeRootsOverride,
   splitRootList,
 } from "../core/claude-roots.ts";
@@ -94,17 +95,25 @@ Global options:
   --claude-dir=<path>                  Read this Claude data dir for one invocation
                                        (repeatable, or a ${
                                          process.platform === "win32" ? ";" : ":"
-}-separated list)
+}-separated list).
+                                       Only for the commands that read session
+                                       files directly: projects, sessions,
+                                       analyze, doctor. Use \`claude-dir set\` for
+                                       anything index-backed.
 
 Notes:
   <id> is a session uuid (searched across all projects) or a path to a .jsonl file.
 
 Claude data directories:
   By default cc-analyzer reads ~/.claude, and honours CLAUDE_CONFIG_DIR when
-  Claude Code has been relocated. Configure one or more directories of your own
-  with \`cc-analyzer claude-dir add <path>\` — several are analyzed together as a
-  single portfolio. Run \`cc-analyzer claude-dir\` to see what is in effect, and
-  \`cc-analyzer index\` after a change.
+  Claude Code has been relocated — a relocated install needs no configuration.
+  To read somewhere else, or to analyze several directories together as one
+  portfolio:
+
+    cc-analyzer claude-dir set <path>     # or: add / remove / reset
+    cc-analyzer index                     # the index mirrors the configured set
+
+  Run \`cc-analyzer claude-dir\` to see which directories are in effect and why.
 
 Telemetry:
   cc-analyzer reports anonymous, cookieless usage stats (no session content,
@@ -166,10 +175,22 @@ function cmdCostBasis(action: string | undefined): number {
   }
 }
 
-/** One line per configured root, for the `claude-dir` report and empty states. */
+/**
+ * One line per configured root, for the `claude-dir` report and empty states.
+ *
+ * A root with no `projects/` directory is marked: that is the same condition
+ * the indexer treats as "unreadable this scan", and it is the one thing worth
+ * telling the user about — the rest is working by definition.
+ */
 function rootLines(): string[] {
-  return claudeRoots().map((r) => `  ${r.path}  (${ROOT_SOURCE_LABEL[r.source]})`);
+  return claudeRoots().map((r) => {
+    const missing = existsSync(projectsDirOf(r.path)) ? "" : " — no projects/ directory";
+    return `  ${r.path}  (${ROOT_SOURCE_LABEL[r.source]})${missing}`;
+  });
 }
+
+/** True when not one configured root holds a `projects/` directory. */
+const noReadableRoot = (): boolean => !claudeRoots().some((r) => existsSync(projectsDirOf(r.path)));
 
 const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
   flag: "--claude-dir",
@@ -230,8 +251,14 @@ function cmdClaudeDir(action: string | undefined, operand: string | undefined): 
     case undefined:
     case "show": {
       report();
-      if (getClaudeDirs().length === 0) {
-        console.log("\nNo directories are persisted; add one with `cc-analyzer claude-dir add`.");
+      // Only nudge when something is actually wrong. The default `~/.claude` and
+      // an inherited CLAUDE_CONFIG_DIR are both working setups that persist
+      // nothing, and telling those users to configure something reads as a fault.
+      if (noReadableRoot()) {
+        console.log(
+          "\nNo Claude sessions found in any of these. If Claude Code stores its data " +
+            "elsewhere, point cc-analyzer at it:\n  cc-analyzer claude-dir set <path>",
+        );
       }
       return 0;
     }
@@ -676,9 +703,43 @@ const NOTIFY_COMMANDS = new Set([
   "pricing",
 ]);
 
+/**
+ * Commands that read or write the SQLite index, and therefore cannot honour a
+ * one-invocation `--claude-dir` scope. `undefined` (the TUI) is checked
+ * alongside them.
+ *
+ * The index always covers *every* configured Claude directory — that is what
+ * lets the query layer aggregate with no root clause anywhere. So a one-off
+ * scope is either silently ignored (a read command would still report the whole
+ * portfolio) or quietly destructive (`index` would prune the directories it was
+ * not pointed at). Refusing is the honest option; `claude-dir set` is the way to
+ * scope these for real.
+ */
+const INDEX_BACKED = new Set(["index", "stats", "audit", "insights", "report", "serve"]);
+
+/** Whether the roots in effect came from `--claude-dir=` rather than config. */
+const flagScoped = (): boolean => claudeRoots()[0]?.source === "flag";
+
 async function runCommand(command: string | undefined, rest: string[]): Promise<number> {
   const json = rest.includes("--json");
   const positional = rest.filter((a) => !a.startsWith("--"));
+
+  if (flagScoped() && (command === undefined || INDEX_BACKED.has(command))) {
+    const name = command ?? "the interactive TUI";
+    console.error(
+      `error: --claude-dir cannot be used with \`${name}\`, which ${
+        command === "index" ? "writes" : "reads"
+      } the session index.\n` +
+        "The index covers every configured Claude directory, so a one-off scope would be " +
+        (command === "index"
+          ? "destructive here: it would drop the rows of every directory it was not pointed at."
+          : "ignored — you would still see the whole portfolio.") +
+        "\nConfigure the directories instead, then reindex:\n" +
+        "  cc-analyzer claude-dir set <path>\n" +
+        "  cc-analyzer index",
+    );
+    return 2;
+  }
 
   // Fire at dispatch time (before serve/tui block forever). `telemetry`, `version`,
   // and help are never tracked; undefined command means the TUI is launching.
