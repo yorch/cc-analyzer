@@ -1,4 +1,4 @@
-import { projectDisplayName } from "../../../src/core/project-labels.ts";
+import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -25,14 +25,29 @@ function Verdict({ ratio }: { ratio: number }) {
   return <span className={`verdict ${v}`}>{v}</span>;
 }
 
-const PROJECT_SORT: Accessors<ProjectCacheRow> = {
+/** Sorting the project column orders by the string the cell renders — the
+ *  root-qualified label, since two Claude roots can hold the same path. */
+const projectAccessors = (label: (row: ProjectCacheRow) => string): Accessors<ProjectCacheRow> => ({
   waste: (r) => r.waste,
   ratio: (r) => r.ratio,
   write: (r) => r.writeCost,
   read: (r) => r.readCost,
   sessions: (r) => r.sessions,
-  project: (r) => projectDisplayName(r.projectPath, r.projectId),
-};
+  project: label,
+});
+
+/** The one labelling rule for a set of project rows: qualify a name with its
+ *  Claude root only when another root holds a project of the same name. */
+const rootLabeller = <
+  T extends { projectPath: string | null; projectId: string; claudeDir: string },
+>(
+  rows: readonly T[],
+) =>
+  labelProjects(
+    rows,
+    (r) => projectDisplayName(r.projectPath, r.projectId),
+    (r) => r.claudeDir,
+  ).label;
 
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), []);
@@ -44,10 +59,11 @@ export function Insights() {
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data?.projects ?? [];
-  const filtered = q
-    ? all.filter((p) => projectDisplayName(p.projectPath, p.projectId).toLowerCase().includes(q))
-    : all;
-  const sort = useSort(filtered, PROJECT_SORT, "waste");
+  // Labelled over every row, not the filtered slice, so a name's ambiguity
+  // doesn't come and go as the reader types.
+  const projectLabel = rootLabeller(all);
+  const filtered = q ? all.filter((p) => projectLabel(p).toLowerCase().includes(q)) : all;
+  const sort = useSort(filtered, projectAccessors(projectLabel), "waste");
   const rows = sort.sorted;
   if (loading) return <LoadingNotice>Loading insights…</LoadingNotice>;
   if (error)
@@ -120,9 +136,7 @@ export function Insights() {
                 <td className="num">{usd(p.readCost)}</td>
                 <td className="num">{p.sessions}</td>
                 <td>
-                  <a href={link.insightsProject(p.projectId)}>
-                    {projectDisplayName(p.projectPath, p.projectId)}
-                  </a>
+                  <a href={link.insightsProject(p.projectId)}>{projectLabel(p)}</a>
                 </td>
               </tr>
             ))}
@@ -189,6 +203,7 @@ function CostOptimization() {
 /** The tokens every session in a project pays for before the user types. */
 function ContextTaxPanel({ tax }: { tax: ContextTax }) {
   if (tax.summary.sessions === 0) return null;
+  const projectLabel = rootLabeller(tax.byProject);
   return (
     <section>
       <h2 className="section-h">Context tax · what a session costs before you type</h2>
@@ -223,9 +238,7 @@ function ContextTaxPanel({ tax }: { tax: ContextTax }) {
                 <td className="num">{count(Math.round(p.avgTokens))}</td>
                 <td className="num">{p.sessions}</td>
                 <td>
-                  <a href={link.project(p.projectId)}>
-                    {projectDisplayName(p.projectPath, p.projectId)}
-                  </a>
+                  <a href={link.project(p.projectId)}>{projectLabel(p)}</a>
                 </td>
               </tr>
             ))}

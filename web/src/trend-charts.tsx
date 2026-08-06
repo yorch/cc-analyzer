@@ -5,9 +5,17 @@
  * `stats-types.ts`, so both pages chart the same numbers.
  */
 
-import { memo } from "react";
+import { type CSSProperties, memo } from "react";
+import { EmptyNotice } from "./AsyncNotice.tsx";
 import type { DayRow, ModelDayRow, ScatterSession } from "./api.ts";
-import { type BurnMetric, bucketSeries, type Granularity, metricValue, shiftDay } from "./api.ts";
+import {
+  type BurnMetric,
+  bucketSeries,
+  type Granularity,
+  metricValue,
+  shiftDay,
+  weekOf,
+} from "./api.ts";
 import { count, duration, usd } from "./format.ts";
 import { link, useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
@@ -26,16 +34,69 @@ export const CHART_PAD = 6;
 /** Long series would drown in hover dots; past this the path stands alone. */
 export const MAX_LINE_DOTS = 366;
 
-function ChartData({
+/**
+ * The box a chart occupies. Every chart is `width: 100%`, so the element must
+ * carry its viewBox's own ratio: a fixed CSS height against a differently
+ * shaped viewBox scales x and y by different factors, which turns dots into
+ * slivers and makes a chart's `height` argument meaningless. Paired with the
+ * default `preserveAspectRatio` (never `none`), this keeps marks in shape and
+ * makes taller viewBoxes actually render taller.
+ */
+export const chartBox = (w: number, h: number): CSSProperties => ({ aspectRatio: `${w} / ${h}` });
+
+/**
+ * The one y-scale affordance these charts get: a faint gridline at the top and
+ * middle of the value scale, each labelled in the chart's own formatter. Not a
+ * full axis — just enough to read a height off the page instead of hovering.
+ */
+export function YAxis({
+  max,
+  y,
+  format,
+  width = CHART_W,
+  pad = CHART_PAD,
+}: {
+  max: number;
+  y: (v: number) => number;
+  format: (v: number) => string;
+  width?: number;
+  pad?: number;
+}) {
+  if (!(max > 0)) return null;
+  const ticks = [
+    { key: "max", value: max },
+    { key: "mid", value: max / 2 },
+  ];
+  // No aria-hidden: the enclosing svg is role="img" with its own label, so
+  // assistive tech never walks into these marks anyway.
+  return (
+    <g className="y-axis">
+      {ticks.map((t) => (
+        <g key={t.key}>
+          <line className="y-grid" x1={pad} x2={width - pad} y1={y(t.value)} y2={y(t.value)} />
+          <text className="y-tick" x={pad + 2} y={Math.max(y(t.value) - 3, 9)}>
+            {format(t.value)}
+          </text>
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/** The tabular fallback every chart carries: exact values for keyboard, touch,
+ *  and assistive-technology users, and the app's copy/export escape hatch. */
+export function ChartData({
   labels,
   values,
   format = String,
   labelHeading = "Period",
+  valueHeading = "Value",
 }: {
   labels: string[];
   values: number[];
   format?: (value: number) => string;
   labelHeading?: string;
+  valueHeading?: string;
 }) {
   return (
     <details className="chart-data">
@@ -45,7 +106,7 @@ function ChartData({
           <thead>
             <tr>
               <th>{labelHeading}</th>
-              <th className="num">Value</th>
+              <th className="num">{valueHeading}</th>
             </tr>
           </thead>
           <tbody>
@@ -105,16 +166,18 @@ export function LineChart({
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const line = linePath(values, x, y);
+  const tick = format ?? ((v: number) => count(Math.round(v)));
   return (
     <>
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label={`${title} line chart with ${values.length} points`}
+        aria-label={`${title} line chart with ${values.length} points, peak ${tick(max)}`}
       >
         <title>{title}</title>
+        <YAxis max={max} y={y} format={tick} />
         {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
         <path className="burn-line" d={line} />
         {format &&
@@ -152,14 +215,24 @@ export const BurnPanel = memo(function BurnPanel({ daily }: { daily: DayRow[] })
         <h2>Burn</h2>
         <span className="seg-group">
           metric{" "}
-          <Seg options={["cost", "tokens", "sessions"]} value={metric} onChange={setMetric} />
+          <Seg
+            label="Burn metric"
+            options={["cost", "tokens", "sessions"]}
+            value={metric}
+            onChange={setMetric}
+          />
           <span className="seg-gap" />
           by{" "}
-          <Seg options={["day", "week", "month"]} value={granularity} onChange={setGranularity} />
+          <Seg
+            label="Granularity"
+            options={["day", "week", "month"]}
+            value={granularity}
+            onChange={setGranularity}
+          />
         </span>
       </div>
       {series.length === 0 ? (
-        <p className="muted">No dated sessions in the index.</p>
+        <EmptyNotice>No dated sessions in the index.</EmptyNotice>
       ) : (
         <>
           <p className="muted">
@@ -189,15 +262,35 @@ function fillDays(from: string, to: string): string[] {
   return out;
 }
 
+/** Distinct band colors (`mix-0`…`mix-6`). Past this the tail folds into one
+ *  "other" band — reusing a color would make two bands claim one swatch. */
+const MAX_MIX_BANDS = 7;
+/** Past this many days the tabular fallback buckets by ISO week; a two-year
+ *  daily table is data, not a reading. */
+const MIX_TABLE_MAX_DAYS = 92;
+
 export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }) {
   const first = rows[0];
   const last = rows[rows.length - 1];
-  if (!first || !last) return <p className="muted">No dated model spend in the index.</p>;
-  const totals = new Map<string, number>();
-  for (const r of rows) totals.set(r.model, (totals.get(r.model) ?? 0) + r.cost);
-  const models = [...totals.entries()]
+  if (!first || !last) return <EmptyNotice>No dated model spend in the index.</EmptyNotice>;
+  const modelTotals = new Map<string, number>();
+  for (const r of rows) modelTotals.set(r.model, (modelTotals.get(r.model) ?? 0) + r.cost);
+  const ranked = [...modelTotals.entries()]
     .sort((a, b) => b[1] - a[1] || (a[0] === "other" ? 1 : -1))
     .map(([m]) => m);
+  // Keep the top N-1 as themselves and fold the tail into one labelled band, so
+  // every band on screen owns exactly one color.
+  const folded = ranked.length > MAX_MIX_BANDS ? ranked.slice(MAX_MIX_BANDS - 1) : [];
+  const otherLabel = folded.length > 0 ? `other (${folded.length} models)` : null;
+  const foldedSet = new Set(folded);
+  const bandOf = (model: string) => (foldedSet.has(model) ? (otherLabel as string) : model);
+  const models = otherLabel ? [...ranked.slice(0, MAX_MIX_BANDS - 1), otherLabel] : [...ranked];
+  const totals = new Map<string, number>();
+  for (const [model, cost] of modelTotals) {
+    const band = bandOf(model);
+    totals.set(band, (totals.get(band) ?? 0) + cost);
+  }
+  const grandTotal = [...totals.values()].reduce((s, v) => s + v, 0);
   const days = fillDays(first.day, last.day);
   const byDay = new Map<string, Map<string, number>>();
   for (const r of rows) {
@@ -206,7 +299,8 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
       m = new Map();
       byDay.set(r.day, m);
     }
-    m.set(r.model, (m.get(r.model) ?? 0) + r.cost);
+    const band = bandOf(r.model);
+    m.set(band, (m.get(band) ?? 0) + r.cost);
   }
   const W = 900;
   const H = 220;
@@ -230,21 +324,25 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
       .map((v, i) => `L ${x(i).toFixed(1)},${y(v).toFixed(1)}`)
       .reverse()
       .join(" ");
-    return { model, path: `${fwd.join(" ")} ${back} Z`, cls: `mix-${mi % 7}` };
+    return { model, path: `${fwd.join(" ")} ${back} Z`, cls: `mix-${mi}` };
   });
+  const share = (v: number) => (grandTotal > 0 ? `${((v / grandTotal) * 100).toFixed(0)}%` : "—");
   return (
     <>
       <svg
         className="burnchart"
         viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(W, H)}
         role="img"
-        aria-label="Daily model spend as a stacked area chart"
+        aria-label={`Daily model spend as a stacked area chart across ${bands.length} models`}
       >
         <title>Spend per model over time</title>
+        <YAxis max={maxTotal} y={y} format={usd} width={W} pad={pad} />
         {bands.map((b) => (
           <path key={b.model} className={`mix-band ${b.cls}`} d={b.path}>
-            <title>{b.model}</title>
+            <title>{`${b.model} — ${usd(totals.get(b.model) ?? 0)} total · ${share(
+              totals.get(b.model) ?? 0,
+            )} of ${usd(grandTotal)}`}</title>
           </path>
         ))}
       </svg>
@@ -256,19 +354,81 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
         {bands.map((b) => (
           <span key={b.model} className="legend-item">
             <span className={`legend-swatch ${b.cls}`} />
-            {b.model} · {usd(totals.get(b.model) ?? 0)}
+            {b.model} · {usd(totals.get(b.model) ?? 0)} · {share(totals.get(b.model) ?? 0)}
           </span>
         ))}
       </div>
-      <ChartData
-        labelHeading="Model"
-        labels={bands.map((band) => band.model)}
-        values={bands.map((band) => totals.get(band.model) ?? 0)}
-        format={usd}
-      />
+      {otherLabel && (
+        <p className="muted spark-cap">
+          “{otherLabel}” folds {folded.join(", ")}.
+        </p>
+      )}
+      <ModelMixTable bands={models} days={days} byDay={byDay} />
     </>
   );
 });
+
+/** The model mix's tabular fallback: the daily series the bands are built from,
+ *  bucketed by ISO week once a daily table stops being readable. */
+function ModelMixTable({
+  bands,
+  days,
+  byDay,
+}: {
+  bands: string[];
+  days: string[];
+  byDay: Map<string, Map<string, number>>;
+}) {
+  const bucketed = days.length > MIX_TABLE_MAX_DAYS;
+  const periods = new Map<string, Map<string, number>>();
+  for (const day of days) {
+    const key = bucketed ? `wk ${weekOf(day)}` : day;
+    let into = periods.get(key);
+    if (!into) {
+      into = new Map<string, number>();
+      periods.set(key, into);
+    }
+    for (const [band, cost] of byDay.get(day) ?? []) into.set(band, (into.get(band) ?? 0) + cost);
+  }
+  const entries = [...periods.entries()].filter(([, m]) => [...m.values()].some((v) => v > 0));
+  return (
+    <details className="chart-data">
+      <summary>View Chart Data</summary>
+      <p className="muted spark-cap">
+        {bucketed ? "bucketed by ISO week" : "one row per day"} · {entries.length} periods · dollars
+        per model
+      </p>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Period</th>
+              {bands.map((b) => (
+                <th key={b} className="num">
+                  {b}
+                </th>
+              ))}
+              <th className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(([key, m]) => (
+              <tr key={key}>
+                <td>{key}</td>
+                {bands.map((b) => (
+                  <td key={b} className="num">
+                    {usd(m.get(b) ?? 0)}
+                  </td>
+                ))}
+                <td className="num">{usd(bands.reduce((s, b) => s + (m.get(b) ?? 0), 0))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
 
 /* ——— Cost × duration scatter (efficiency frontier) ————————————————— */
 
@@ -290,7 +450,7 @@ export const Scatter = memo(function Scatter({
   xAxis: ScatterX;
 }) {
   const usable = points.filter((p) => p.cost > 0);
-  if (usable.length === 0) return <p className="muted">No timed, costed sessions yet.</p>;
+  if (usable.length === 0) return <EmptyNotice>No timed, costed sessions yet.</EmptyNotice>;
   const W = 900;
   const H = 260;
   const pad = 10;
@@ -300,15 +460,20 @@ export const Scatter = memo(function Scatter({
   // sqrt scales keep the dense cheap-and-short corner readable.
   const x = (p: ScatterSession) => pad + Math.sqrt(xv(p) / maxX) * (W - pad * 2);
   const y = (p: ScatterSession) => H - pad - Math.sqrt(p.cost / maxY) * (H - pad * 2);
+  // The y grid is drawn on the same sqrt scale the dots sit on, so a labelled
+  // line means what it says.
+  const yOf = (v: number) => H - pad - Math.sqrt(v / maxY) * (H - pad * 2);
   return (
     <>
       <svg
         className="scatter"
         viewBox={`0 0 ${W} ${H}`}
+        style={chartBox(W, H)}
         role="img"
         aria-label={`Session cost by ${xAxis === "wall" ? "wall time" : "active time"} scatter plot`}
       >
         <title>Session cost vs duration</title>
+        <YAxis max={maxY} y={yOf} format={usd} width={W} pad={pad} />
         {usable.map((p) =>
           p.sessionId ? (
             <a key={`${p.sessionId}-${p.durationMs}-${p.cost}`} href={link.session(p.sessionId)}>
@@ -371,7 +536,13 @@ export const ScatterPanel = memo(function ScatterPanel({ points }: { points: Sca
       <div className="trend-head">
         <h2>Cost × duration</h2>
         <span className="seg-group">
-          x-axis <Seg options={["wall", "active"]} value={xAxis} onChange={setXAxis} />
+          x-axis{" "}
+          <Seg
+            label="Scatter x-axis"
+            options={["wall", "active"]}
+            value={xAxis}
+            onChange={setXAxis}
+          />
           <span className="muted"> · sqrt scales · click a dot to open the session</span>
         </span>
       </div>

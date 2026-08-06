@@ -24,7 +24,7 @@ import { Histogram } from "../Histogram.tsx";
 import { useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
-import { areaPath, linePath, xScale } from "../trend-charts.tsx";
+import { areaPath, chartBox, linePath, xScale } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
@@ -51,6 +51,24 @@ const NAME_SORT: Accessors<NameUsageRow> = {
 };
 
 const rateClass = (r: number): string => (r >= 0.05 ? "rate-hi" : r >= 0.01 ? "rate-mid" : "muted");
+/** The severity the color encodes, spelled out — color alone is not a signal. */
+const rateTitle = (r: number): string =>
+  r >= 0.05
+    ? "high error rate (5% or more)"
+    : r >= 0.01
+      ? "elevated error rate (1–5%)"
+      : "low error rate";
+
+/** An error rate with its severity carried in text, not only in color: a ⚠
+ *  prefix at the top tier and the tier itself in the title. */
+function ErrRate({ rate }: { rate: number }) {
+  return (
+    <span title={rateTitle(rate)}>
+      {rate >= 0.05 ? "⚠ " : ""}
+      {(rate * 100).toFixed(1)}%
+    </span>
+  );
+}
 
 function SkillSpark({ values }: { values: number[] }) {
   const W = 640;
@@ -65,9 +83,9 @@ function SkillSpark({ values }: { values: number[] }) {
     <svg
       className="skillspark"
       viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
+      style={chartBox(W, H)}
       role="img"
-      aria-label="Weekly skill invocation trend"
+      aria-label={`Weekly skill invocation trend across ${n} weeks, peak ${Math.round(max)}`}
     >
       <title>Invocations per week</title>
       <path className="burn-area" d={areaPath(line, x, n, H)} />
@@ -92,7 +110,13 @@ function SkillDetail({ skill }: { skill: SkillUsageRow }) {
       {series.length > 0 ? (
         <>
           <SkillSpark values={series} />
-          <span className="muted spark-cap">invocations / week</span>
+          {/* The sparkline's own tabular fallback: it carries no hover titles,
+              so the numbers that bound it have to be readable in text. */}
+          <span className="muted spark-cap">
+            invocations / week · {series.length} week{series.length === 1 ? "" : "s"} · min{" "}
+            {count(Math.min(...series))} · max {count(Math.max(...series))} · total{" "}
+            {count(series.reduce((s, v) => s + v, 0))}
+          </span>
         </>
       ) : (
         <span className="muted">no dated sessions</span>
@@ -138,7 +162,7 @@ function SkillsTable({ skills }: { skills: SkillUsageRow[] }) {
                 <td className="num">{count(r.sessions)}</td>
                 <td className="num">{count(r.projects)}</td>
                 <td className={`num ${rateClass(r.errorRate)}`}>
-                  {(r.errorRate * 100).toFixed(1)}%
+                  <ErrRate rate={r.errorRate} />
                 </td>
                 <td className="num">{usd(r.attributedCost)}</td>
                 <td className="num muted">{usd(r.totalCost)}</td>
@@ -174,7 +198,9 @@ function ToolsTable({ tools }: { tools: ToolUsageRow[] }) {
               <td>{t.tool}</td>
               <td className="num">{count(t.uses)}</td>
               <td className="num">{count(t.errors)}</td>
-              <td className={`num ${rateClass(t.errorRate)}`}>{(t.errorRate * 100).toFixed(1)}%</td>
+              <td className={`num ${rateClass(t.errorRate)}`}>
+                <ErrRate rate={t.errorRate} />
+              </td>
               <td className="num">{count(t.sessions)}</td>
             </tr>
           ))}
@@ -238,7 +264,9 @@ function BashTable({ rows }: { rows: BashCommandRow[] }) {
               <td>{b.command}</td>
               <td className="num">{count(b.uses)}</td>
               <td className="num">{count(b.errors)}</td>
-              <td className={`num ${rateClass(b.errorRate)}`}>{(b.errorRate * 100).toFixed(1)}%</td>
+              <td className={`num ${rateClass(b.errorRate)}`}>
+                <ErrRate rate={b.errorRate} />
+              </td>
               <td className="num">{count(b.sessions)}</td>
             </tr>
           ))}
@@ -250,7 +278,7 @@ function BashTable({ rows }: { rows: BashCommandRow[] }) {
 
 /** Distribution of main-chain API calls per turn — how agentic the turns are. */
 function DepthPanel({ depth }: { depth: TurnDepthStats }) {
-  if (depth.turns === 0) return <p className="muted">No turns in the index.</p>;
+  if (depth.turns === 0) return <EmptyNotice>No turns in the index.</EmptyNotice>;
   const trend = depth.byMonth;
   return (
     <>
@@ -299,11 +327,17 @@ function FactsTable({ head, rows }: { head: string[]; rows: (string | number)[][
 /** Which projects chronically hit the context ceiling. Only a session's own
  * main-chain compactions count — subagent compactions and boundaries inherited
  * by continuation files are split out in the summary line. */
-function Compactions({ data }: { data: CompactionUsage }) {
+function Compactions({ data, query }: { data: CompactionUsage; query: string }) {
   const s = data.summary;
   if (s.compactions === 0 && s.sidechain === 0 && s.inherited === 0) {
-    return <p className="muted">No compactions recorded. Reindex if this seems wrong.</p>;
+    return <EmptyNotice>No compactions recorded. Reindex if this seems wrong.</EmptyNotice>;
   }
+  const q = query.trim().toLowerCase();
+  const rows = q
+    ? data.byProject.filter((p) =>
+        `${p.projectPath ?? ""} ${p.projectId}`.toLowerCase().includes(q),
+      )
+    : data.byProject;
   return (
     <>
       <p className="muted">
@@ -313,16 +347,25 @@ function Compactions({ data }: { data: CompactionUsage }) {
         {s.sidechain > 0 && ` · ${count(s.sidechain)} in subagents`}
         {s.inherited > 0 && ` · ${count(s.inherited)} inherited from continued sessions`}
       </p>
-      {data.byProject.length > 0 && (
-        <FactsTable
-          head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
-          rows={data.byProject.map((p) => [
-            shortPath(p.projectPath, p.projectId),
-            count(p.compactions),
-            `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
-            `${(p.share * 100).toFixed(0)}%`,
-          ])}
-        />
+      {rows.length > 0 ? (
+        <>
+          <FactsTable
+            head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
+            rows={rows.map((p) => [
+              shortPath(p.projectPath, p.projectId),
+              count(p.compactions),
+              `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
+              `${(p.share * 100).toFixed(0)}%`,
+            ])}
+          />
+          {rows.length < data.byProject.length && (
+            <p className="muted spark-cap">
+              showing {rows.length} of {data.byProject.length} projects
+            </p>
+          )}
+        </>
+      ) : (
+        data.byProject.length > 0 && <EmptyNotice>No projects match this filter.</EmptyNotice>
       )}
       <p className="muted spark-cap">
         A high share means this project's sessions chronically overflow the context window —
@@ -338,10 +381,15 @@ function Compactions({ data }: { data: CompactionUsage }) {
  * and moves between releases; unparsed lines are excluded from every metric, so
  * a rising share on the newest version means the numbers below it read low.
  */
+/** Row caps on the long tail tables; every one of them says so on screen. */
+const VERSION_ROW_LIMIT = 15;
+const RETRY_TOOL_LIMIT = 10;
+const BRANCH_ROW_LIMIT = 15;
+
 function ParseCoverage({ data, query }: { data: ParseCoverageStats; query: string }) {
   const s = data.summary;
   if (s.lines === 0) {
-    return <p className="muted">No parse coverage recorded. Reindex if this seems wrong.</p>;
+    return <EmptyNotice>No parse coverage recorded. Reindex if this seems wrong.</EmptyNotice>;
   }
   const q = query.trim().toLowerCase();
   const rows = data.byVersion.filter((r) => !q || r.version.toLowerCase().includes(q));
@@ -359,19 +407,26 @@ function ParseCoverage({ data, query }: { data: ParseCoverageStats; query: strin
         {count(s.unknownEvents)} kept as unknown events
       </p>
       {rows.length > 0 && (
-        <FactsTable
-          head={["Version", "Sessions", "Lines", "Unreadable", "Unknown", "Unparsed"]}
-          rows={rows
-            .slice(0, 15)
-            .map((r) => [
-              r.version,
-              count(r.sessions),
-              count(r.lines),
-              count(r.parseErrors),
-              count(r.unknownEvents),
-              share(r.unparsedShare),
-            ])}
-        />
+        <>
+          <FactsTable
+            head={["Version", "Sessions", "Lines", "Unreadable", "Unknown", "Unparsed"]}
+            rows={rows
+              .slice(0, VERSION_ROW_LIMIT)
+              .map((r) => [
+                r.version,
+                count(r.sessions),
+                count(r.lines),
+                count(r.parseErrors),
+                count(r.unknownEvents),
+                share(r.unparsedShare),
+              ])}
+          />
+          {rows.length > VERSION_ROW_LIMIT && (
+            <p className="muted spark-cap">
+              showing the {VERSION_ROW_LIMIT} newest of {rows.length} versions
+            </p>
+          )}
+        </>
       )}
       <p className="muted spark-cap">
         {behind
@@ -501,11 +556,11 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
       </p>
       <PluginsTable rows={audit.plugins} />
       {findings.length === 0 ? (
-        <p className="muted">
+        <EmptyNotice>
           {audit.findings.length === 0
             ? "Everything installed is in use, and nothing crossed a threshold."
             : "No findings match this filter."}
-        </p>
+        </EmptyNotice>
       ) : (
         <DiagnosticList items={findings} keyOf={(f) => `${f.code}:${f.subject}`} />
       )}
@@ -514,11 +569,18 @@ function SetupAuditBody({ audit, query }: { audit: SetupAudit; query: string }) 
   );
 }
 
-function Reliability({ data }: { data: AnalyticsResponse }) {
+function Reliability({ data, query }: { data: AnalyticsResponse; query: string }) {
   const t = data.tests;
   const r = data.retries;
   const th = data.thrash;
   const co = data.corrections;
+  // The page's filter field renders on this tab too, so both of its tables
+  // consume it — a control that does nothing is worse than no control.
+  const q = query.trim().toLowerCase();
+  const retryRows = q ? r.byTool.filter((row) => row.tool.toLowerCase().includes(q)) : r.byTool;
+  const rereadRows = q
+    ? th.topRereadFiles.filter((row) => row.file.toLowerCase().includes(q))
+    : th.topRereadFiles;
   return (
     <>
       <p className="muted">
@@ -541,13 +603,22 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
           "none"
         )}
       </p>
-      {r.byTool.length > 0 && (
-        <FactsTable
-          head={["Tool", "Retries", "Sessions"]}
-          rows={r.byTool
-            .slice(0, 10)
-            .map((row) => [row.tool, count(row.retries), count(row.sessions)])}
-        />
+      {retryRows.length > 0 ? (
+        <>
+          <FactsTable
+            head={["Tool", "Retries", "Sessions"]}
+            rows={retryRows
+              .slice(0, RETRY_TOOL_LIMIT)
+              .map((row) => [row.tool, count(row.retries), count(row.sessions)])}
+          />
+          {retryRows.length > RETRY_TOOL_LIMIT && (
+            <p className="muted spark-cap">
+              showing the {RETRY_TOOL_LIMIT} most-retried of {retryRows.length} tools
+            </p>
+          )}
+        </>
+      ) : (
+        r.byTool.length > 0 && <EmptyNotice>No retried tools match this filter.</EmptyNotice>
       )}
       <h2 className="section-h">Thrash · edit-test loops &amp; redundant re-reads</h2>
       <p className="muted">
@@ -570,11 +641,11 @@ function Reliability({ data }: { data: AnalyticsResponse }) {
           "none"
         )}
       </p>
-      {th.topRereadFiles.length > 0 && (
+      {rereadRows.length > 0 && (
         <>
           <FactsTable
             head={["Most re-read file", "Sessions"]}
-            rows={th.topRereadFiles.map((row) => [shortPath(row.file), count(row.sessions)])}
+            rows={rereadRows.map((row) => [shortPath(row.file), count(row.sessions)])}
           />
           <p className="muted">
             Every re-read pays the whole file into context again — hot reference files belong in a
@@ -636,6 +707,10 @@ export function Tools() {
         .toLowerCase()
         .includes(q),
     );
+  // Filtered before the row cap, so "showing 15 of N" counts what the filter
+  // actually matched rather than the whole table.
+  const versionRows = data.versions.filter((row) => matches(row.version));
+  const branchRows = data.branches.filter((row) => matches(row.branch));
   return (
     <>
       <header className="top">
@@ -668,7 +743,7 @@ export function Tools() {
       {view === "reliability" && (
         <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Test runs &amp; tool-call churn</h2>
-          <Reliability data={data} />
+          <Reliability data={data} query={query} />
           <h2 className="section-h">Turn depth · API calls per turn</h2>
           <DepthPanel depth={data.turnDepth} />
         </ViewPanel>
@@ -677,7 +752,7 @@ export function Tools() {
       {view === "compactions" && (
         <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Context-window pressure</h2>
-          <Compactions data={data.compactions} />
+          <Compactions data={data.compactions} query={query} />
         </ViewPanel>
       )}
 
@@ -714,7 +789,7 @@ export function Tools() {
           )}
           <h2 className="section-h">Web search &amp; fetch</h2>
           {wt.summary.searches + wt.summary.fetches === 0 ? (
-            <p className="muted">No server-side web tool use recorded.</p>
+            <EmptyNotice>No server-side web tool use recorded.</EmptyNotice>
           ) : (
             <>
               <p className="muted">
@@ -765,21 +840,29 @@ export function Tools() {
           <h2 className="section-h">Claude Code versions</h2>
           <FactsTable
             head={["Version", "Sessions", "First seen", "Last seen"]}
-            rows={data.versions
-              .filter((row) => matches(row.version))
-              .slice(0, 15)
+            rows={versionRows
+              .slice(0, VERSION_ROW_LIMIT)
               .map((v) => [v.version, count(v.sessions), v.firstDay ?? "—", v.lastDay ?? "—"])}
           />
+          {versionRows.length > VERSION_ROW_LIMIT && (
+            <p className="muted spark-cap">
+              showing {VERSION_ROW_LIMIT} of {versionRows.length} versions
+            </p>
+          )}
           <h2 className="section-h">Parse coverage · how much of the format we understand</h2>
           <ParseCoverage data={data.parseCoverage} query={query} />
           <h2 className="section-h">Git branches · by sessions</h2>
           <FactsTable
             head={["Branch", "Sessions", "Session $"]}
-            rows={data.branches
-              .filter((row) => matches(row.branch))
-              .slice(0, 15)
+            rows={branchRows
+              .slice(0, BRANCH_ROW_LIMIT)
               .map((b) => [b.branch, count(b.sessions), usd(b.cost)])}
           />
+          {branchRows.length > BRANCH_ROW_LIMIT && (
+            <p className="muted spark-cap">
+              showing {BRANCH_ROW_LIMIT} of {branchRows.length} branches
+            </p>
+          )}
           <p className="muted spark-cap">
             Session $ is session-scoped: a session touching several branches counts its full cost
             toward each — correlational, not causal.

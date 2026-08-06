@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { EmptyNotice } from "./AsyncNotice.tsx";
 import {
   type BurnGap,
   type BurnPoint,
@@ -28,17 +29,29 @@ import {
   areaPath,
   CHART_PAD,
   CHART_W,
+  ChartData,
+  chartBox,
   fmt,
   linePath,
   MAX_LINE_DOTS,
   xScale,
+  YAxis,
 } from "./trend-charts.tsx";
 
 /** Session-scoped charts: context-window fill (with compaction markers),
  * cache efficiency, cumulative burn (with idle-gap markers), per-turn bars,
  * tool activity, model mix, and subagent bursts. Series come from core
- * `chart-series.ts` so these numbers match the TUI charts exactly. */
-export function SessionCharts({ a }: { a: SessionAnalysis }) {
+ * `chart-series.ts` so these numbers match the TUI charts exactly.
+ *
+ * `onGoToTurn` (when given) lets a chart hand a turn number back to the page —
+ * the subagent-burst table uses it to open the Turns tab at that turn. */
+export function SessionCharts({
+  a,
+  onGoToTurn,
+}: {
+  a: SessionAnalysis;
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
   const ctx = useMemo(() => buildContextSeries(a), [a]);
   const cache = useMemo(() => buildCacheSeries(ctx), [ctx]);
   const burn = useMemo(() => buildBurnSeries(a), [a]);
@@ -51,7 +64,7 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
   const bursts = a.sidechainBursts ?? [];
 
   if (a.turns.length === 0) {
-    return <p className="muted">No turns to chart in this session.</p>;
+    return <EmptyNotice>No turns to chart in this session.</EmptyNotice>;
   }
 
   return (
@@ -59,9 +72,7 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
       <section className="trend-panel">
         <div className="trend-head">
           <h2>Context window</h2>
-          <span className="muted">
-            prompt-side tokens per main-chain API call · dashed line = compaction
-          </span>
+          <span className="muted">prompt-side tokens per main-chain API call</span>
         </div>
         <ContextChart ctx={ctx} compactions={a.compactions} />
       </section>
@@ -113,10 +124,33 @@ export function SessionCharts({ a }: { a: SessionAnalysis }) {
               {bursts.length > 1 ? "s" : ""}
             </span>
           </div>
-          <SidechainBursts bursts={bursts} />
+          <SidechainBursts bursts={bursts} onGoToTurn={onGoToTurn} />
         </section>
       )}
     </>
+  );
+}
+
+/** A short stroke sample for legends whose distinction is a line style — a
+ *  dashed compaction marker, the teal subagent line — not a solid fill. */
+function LegendLine({ cls, label }: { cls: string; label: string }) {
+  return (
+    <span className="legend-item">
+      <svg className="legend-mark" viewBox="0 0 18 6" aria-hidden="true">
+        <line className={cls} x1={0} x2={18} y1={3} y2={3} />
+      </svg>
+      {label}
+    </span>
+  );
+}
+
+/** A filled sample for legends keyed to a bar or lane color. */
+function LegendSwatch({ cls, label }: { cls: string; label: string }) {
+  return (
+    <span className="legend-item">
+      <span className={`legend-swatch ${cls}`} />
+      {label}
+    </span>
   );
 }
 
@@ -133,13 +167,16 @@ function triggerLabel(triggers: Record<string, number>, total: number): string {
 const betweenX = (pos: number, n: number, x: (i: number) => number): number =>
   pos <= 0 ? CHART_PAD : pos >= n ? CHART_W - CHART_PAD : (x(pos - 1) + x(pos)) / 2;
 
+/** Shared x labels for the call-indexed charts' tabular fallbacks. */
+const callLabels = (n: number): string[] => Array.from({ length: n }, (_, i) => `call ${i + 1}`);
+
 function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: Compaction[] }) {
   const { points, markers, peakTokens, contextLimit } = ctx;
   // The one canonical split: own vs subagent vs inherited (see chart-series.ts).
   const b = summarizeCompactions(compactions);
   const headroom = projectHeadroom(ctx);
   const n = points.length;
-  if (n === 0) return <p className="muted">No main-chain API calls in this session.</p>;
+  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   const H = 220;
   // When the window size is known, scale to it: the empty headroom above the
   // sawtooth IS the signal (how close this session ran to the ceiling).
@@ -174,11 +211,12 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label="Context-window token usage over API calls"
+        aria-label={`Context-window token usage over ${n} API calls, peak ${count(peakTokens)} tokens`}
       >
         <title>Context-window tokens per call</title>
+        <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
         <path className="burn-area" d={areaPath(line, x, n, H)} />
         <path className="burn-line" d={line} />
         {contextLimit && (
@@ -236,6 +274,18 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
         <span>call 1</span>
         <span>call {n}</span>
       </div>
+      <div className="legend">
+        <LegendLine cls="burn-line" label="context tokens" />
+        {markers.length > 0 && <LegendLine cls="ctx-marker" label="compaction" />}
+        {contextLimit ? <LegendLine cls="ctx-limit" label="context window limit" /> : null}
+      </div>
+      <ChartData
+        labelHeading="Call"
+        valueHeading="Context tokens"
+        labels={callLabels(n)}
+        values={points.map((p) => p.contextTokens)}
+        format={(v) => count(Math.round(v))}
+      />
     </>
   );
 }
@@ -244,7 +294,7 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
 function CacheChart({ cache }: { cache: CacheSeries }) {
   const { points, hitPct, coldCalls } = cache;
   const n = points.length;
-  if (n === 0) return <p className="muted">No main-chain API calls in this session.</p>;
+  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   const H = 160;
   const x = xScale(n);
   const y = (pct: number) => H - CHART_PAD - (pct / 100) * (H - CHART_PAD * 2);
@@ -261,9 +311,9 @@ function CacheChart({ cache }: { cache: CacheSeries }) {
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label="Cache hit rate per API call"
+        aria-label={`Cache hit rate per API call, ${hitPct}% overall`}
       >
         <title>Cache hit rate per call</title>
         <path className="burn-line" d={line} />
@@ -287,13 +337,20 @@ function CacheChart({ cache }: { cache: CacheSeries }) {
         <span>call 1 (y: 0–100%)</span>
         <span>call {n}</span>
       </div>
+      <ChartData
+        labelHeading="Call"
+        valueHeading="Hit rate"
+        labels={callLabels(n)}
+        values={points.map((p) => p.hitPct)}
+        format={(v) => `${v}%`}
+      />
     </>
   );
 }
 
 function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
   const n = points.length;
-  if (n === 0) return <p className="muted">No API calls in this session.</p>;
+  if (n === 0) return <EmptyNotice>No API calls in this session.</EmptyNotice>;
   const H = 160;
   const last = points[n - 1] as BurnPoint;
   const max = Math.max(last.cost, 1e-9);
@@ -319,18 +376,19 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
     <>
       <p className="muted">
         {usd(last.cost)} total
-        {last.sidechainCost > 0 ? ` · ${usd(last.sidechainCost)} on subagents (teal)` : ""}
+        {last.sidechainCost > 0 ? ` · ${usd(last.sidechainCost)} on subagents` : ""}
         {gaps.length > 0 &&
           ` · ${gaps.length} idle gap${gaps.length > 1 ? "s" : ""} (${duration(idleMs)} idle)`}
       </p>
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label="Cumulative session cost over API calls"
+        aria-label={`Cumulative session cost over ${n} API calls, ${usd(last.cost)} total`}
       >
         <title>Cumulative session cost</title>
+        <YAxis max={max} y={y} format={usd} />
         {gaps.map((g) => (
           <line
             key={g.pos}
@@ -365,6 +423,18 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
         <span>start</span>
         <span>{offset(points.reduce((m, p) => Math.max(m, p.ms ?? 0), 0) || undefined)}</span>
       </div>
+      <div className="legend">
+        <LegendLine cls="burn-line" label="total spend" />
+        {side && <LegendLine cls="burn-line side" label="subagent (sidechain) spend" />}
+        {gaps.length > 0 && <LegendLine cls="gap-marker" label="idle gap" />}
+      </div>
+      <ChartData
+        labelHeading="Call"
+        valueHeading="Cumulative cost"
+        labels={callLabels(n)}
+        values={points.map((p) => p.cost)}
+        format={usd}
+      />
     </>
   );
 }
@@ -403,27 +473,33 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
   const peakIdx = values.reduce((best, v, i) => (v > (values[best] ?? -1) ? i : best), 0);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
+  const flagged = turns.filter((t) => turnFlags(t).length > 0).length;
   return (
     <>
       <div className="trend-head">
         <h2>Per turn</h2>
         <span className="seg-group">
-          metric <Seg options={metrics} value={metric} onChange={setMetric} />
+          metric{" "}
+          <Seg label="Turn bar metric" options={metrics} value={metric} onChange={setMetric} />
         </span>
       </div>
       <p className="muted">
         peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(turns[peakIdx]?.index ?? 0) + 1} ·{" "}
         {turns[peakIdx]?.prompt.slice(0, 60) || "no text"})
-        {metric === "cost" && " · stacked: input / output / cache write / cache read"}
       </p>
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label={`Per-turn ${metric} bar chart`}
+        aria-label={`Per-turn ${metric} bar chart across ${n} turns, peak ${fmtTurn(
+          metric,
+          values[peakIdx] ?? 0,
+        )}`}
       >
         <title>Per-turn {metric}</title>
+        <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
         {turns.map((t, i) => {
           const v = values[i] ?? 0;
           const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
@@ -478,6 +554,23 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
         <span>turn 1</span>
         <span>turn {n}</span>
       </div>
+      <div className="legend">
+        {metric === "cost" &&
+          COST_SEGS.map((s) => <LegendSwatch key={s.cls} cls={s.cls} label={s.label} />)}
+        {flagged > 0 && (
+          <LegendSwatch
+            cls="turn-signal"
+            label={`flagged turn (${flagged}) — interruption, correction, retry, test failure, re-read, or tool error`}
+          />
+        )}
+      </div>
+      <ChartData
+        labelHeading="Turn"
+        valueHeading={metric}
+        labels={turns.map((t) => `#${t.index + 1}`)}
+        values={values}
+        format={(v) => fmtTurn(metric, v)}
+      />
     </>
   );
 }
@@ -510,6 +603,7 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
   }, [turns]);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const legend = [
     ...KIND_GROUPS.map((g) => ({ key: g.key, cls: g.cls })),
     { key: "other", cls: "tk-other" },
@@ -523,11 +617,12 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
       <svg
         className="burnchart"
         viewBox={`0 0 ${CHART_W} ${H}`}
-        preserveAspectRatio="none"
+        style={chartBox(CHART_W, H)}
         role="img"
-        aria-label="Per-turn tool activity stacked bar chart"
+        aria-label={`Per-turn tool activity stacked bar chart across ${n} turns, busiest ${max} steps`}
       >
         <title>Per-turn tool activity</title>
+        <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
         {turns.map((t, i) => {
           const groups = perTurn[i] ?? [];
           const total = totals[i] ?? 0;
@@ -573,12 +668,16 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
       </div>
       <div className="legend">
         {legend.map((g) => (
-          <span key={g.key} className="legend-item">
-            <span className={`legend-swatch ${g.cls}`} />
-            {g.key}
-          </span>
+          <LegendSwatch key={g.key} cls={g.cls} label={g.key} />
         ))}
       </div>
+      <ChartData
+        labelHeading="Turn"
+        valueHeading="Steps"
+        labels={turns.map((t) => `#${t.index + 1}`)}
+        values={totals}
+        format={(v) => count(Math.round(v))}
+      />
     </>
   );
 }
@@ -617,7 +716,13 @@ function ModelMixPanel({ rows }: { rows: SessionModelRow[] }) {
   );
 }
 
-function SidechainBursts({ bursts }: { bursts: SidechainBurst[] }) {
+function SidechainBursts({
+  bursts,
+  onGoToTurn,
+}: {
+  bursts: SidechainBurst[];
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
   return (
     <>
       <div className="tablewrap">
@@ -632,16 +737,34 @@ function SidechainBursts({ bursts }: { bursts: SidechainBurst[] }) {
             </tr>
           </thead>
           <tbody>
-            {bursts.map((b, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: bursts are order-stable
-              <tr key={i}>
-                <td className="num">{i + 1}</td>
-                <td>{b.subagentType ?? "(unmatched)"}</td>
-                <td className="num">{b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-"}</td>
-                <td className="num">{count(b.apiCalls)}</td>
-                <td className="num">{usd(b.cost)}</td>
-              </tr>
-            ))}
+            {bursts.map((b, i) => {
+              const turn = b.turnIndex;
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: bursts are order-stable
+                <tr key={i}>
+                  <td className="num">{i + 1}</td>
+                  <td>{b.subagentType ?? "(unmatched)"}</td>
+                  <td className="num">
+                    {turn === undefined ? (
+                      "-"
+                    ) : onGoToTurn ? (
+                      <button
+                        type="button"
+                        className="row-button"
+                        title={`Open turn #${turn + 1} in the Turns tab`}
+                        onClick={() => onGoToTurn(turn)}
+                      >
+                        #{turn + 1}
+                      </button>
+                    ) : (
+                      `#${turn + 1}`
+                    )}
+                  </td>
+                  <td className="num">{count(b.apiCalls)}</td>
+                  <td className="num">{usd(b.cost)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
