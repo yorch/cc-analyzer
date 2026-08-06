@@ -65,8 +65,9 @@ test("indexes every root and keeps same-named projects apart", async () => {
   expect(new Set(indexed.map((r) => r.claude_dir))).toEqual(new Set([work, personal]));
   // The collision this whole scheme exists to prevent: one encoded name, two projects.
   expect(new Set(indexed.map((r) => r.project_id)).size).toBe(2);
-  // The primary root's ids stay bare, so nothing a single-root user had re-keys.
-  expect(indexed.some((r) => r.project_id === "-Users-me-proj")).toBe(true);
+  // Every id is root-qualified, including the first root's — identity is a
+  // fact about a directory, not about which root currently sorts first.
+  expect(indexed.every((r) => /^[0-9a-f]{8}~-Users-me-proj$/.test(r.project_id))).toBe(true);
 });
 
 test("a configured root that cannot be read keeps its rows", async () => {
@@ -97,21 +98,21 @@ test("a deleted session file is still pruned from a readable root", async () => 
   expect(rows()).toHaveLength(1);
 });
 
-test("changing the primary root re-keys ids without re-parsing", async () => {
+test("reordering the configured roots does not change any id", async () => {
   await run(work, personal);
-  const before = rows();
-  const workId = before.find((r) => r.claude_dir === work)?.project_id;
-  expect(workId).toBe("-Users-me-proj");
+  const before = new Map(rows().map((r) => [r.claude_dir, r.project_id]));
 
-  // Flip the order: `personal` becomes primary and takes the bare id.
+  // Under the old positional scheme this re-keyed both projects and needed a
+  // re-stamp pass. An id now depends only on its root's path, so reordering is
+  // a no-op — which is what keeps a stored id, a bookmarked URL, or a scripted
+  // `sessions <id>` meaning the same project it did yesterday.
   const result = await run(personal, work);
-  expect(result.indexed).toBe(0); // re-stamped, not re-parsed
+  expect(result.indexed).toBe(0);
   expect(result.skipped).toBe(2);
 
-  const after = rows();
-  expect(after.find((r) => r.claude_dir === personal)?.project_id).toBe("-Users-me-proj");
-  expect(after.find((r) => r.claude_dir === work)?.project_id).not.toBe("-Users-me-proj");
-  expect(new Set(after.map((r) => r.project_id)).size).toBe(2);
+  const after = new Map(rows().map((r) => [r.claude_dir, r.project_id]));
+  expect(after).toEqual(before);
+  expect(new Set(after.values()).size).toBe(2);
 });
 
 test("index --check does not report an unreadable root's rows as deleted", async () => {

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { Text } from "ink";
 import { useMemo, useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
-import { labelProjects } from "../../core/project-labels.ts";
+import { labelProjects, projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject } from "../../core/queries.ts";
 import { projectPreviewStats } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
@@ -16,7 +16,7 @@ const SORT_FIELDS: SortField<IndexedProject>[] = [
   { key: "cost", label: "cost", value: (p) => p.cost },
   { key: "tokens", label: "tokens", value: (p) => p.ioTokens + p.cacheTokens },
   { key: "sessions", label: "sessions", value: (p) => p.sessions },
-  { key: "name", label: "name", value: (p) => p.projectPath ?? p.projectId },
+  { key: "name", label: "name", value: (p) => projectDisplayName(p.projectPath, p.projectId) },
 ];
 
 interface Props {
@@ -40,7 +40,7 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
     () =>
       labelProjects(
         projects,
-        (p) => p.projectPath ?? p.projectId,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
         (p) => p.claudeDir,
       ),
     [projects],

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { delimiter, join, normalize, resolve } from "node:path";
 import { getClaudeDirs } from "./prefs.ts";
+import { PROJECT_ID_SEPARATOR } from "./project-labels.ts";
 
 /**
  * Which Claude Code data directories cc-analyzer reads, and how a project is
@@ -28,12 +29,6 @@ export interface ClaudeRoot {
   slug: string;
   /** Which resolution tier produced it. */
   source: ClaudeRootSource;
-  /**
-   * The one root whose project ids stay unqualified. Adding a second root must
-   * not re-key the first one's ids, so "primary" is the first resolved root and
-   * nothing else depends on list length.
-   */
-  primary: boolean;
 }
 
 /** Set by the CLI's `--claude-dir=` flag, ahead of every other tier. */
@@ -87,7 +82,7 @@ function normalizeRoots(raw: string[], source: ClaudeRootSource): ClaudeRoot[] {
     if (path.length === 0 || seen.has(path)) continue;
     seen.add(path);
     // Hash once per root here, not once per project in the discovery loops.
-    roots.push({ path, slug: rootSlug(path), source, primary: roots.length === 0 });
+    roots.push({ path, slug: rootSlug(path), source });
   }
   return roots;
 }
@@ -148,15 +143,6 @@ export function projectsDirOf(root: string): string {
 /* ——— Project identity across roots ——————————————————————————————————— */
 
 /**
- * Separator between a root slug and an encoded project directory name.
- *
- * `~` because it is URL-path-safe (project ids travel in `/api/projects/:id`)
- * and cannot appear in an encoded project name: the encoding maps every `/` and
- * `.` of the working directory to `-`, and no other character survives it.
- */
-const PROJECT_ID_SEPARATOR = "~";
-
-/**
  * Short, order-independent, stable identifier for a root path.
  *
  * Called once per root by `normalizeRoots`, which stores the result on
@@ -170,48 +156,17 @@ export function rootSlug(rootPath: string): string {
 /**
  * The globally unique project id for an encoded directory name under `root`.
  *
- * Two roots can each hold a project for the *same* working directory, and the
- * encoded name would be byte-identical — so every `GROUP BY project_id` would
- * silently merge two different projects. Qualifying the id at index time makes
- * the column unique again, which is what lets the whole query layer aggregate
- * across roots without a single scoping clause.
+ * **Every** root qualifies, including the first one. An id that depended on
+ * which root currently sorts first would silently change meaning when the
+ * configured list is reordered — a stored id, a bookmarked `/api/projects/:id`,
+ * or a scripted `sessions <id>` would resolve against a different root rather
+ * than failing. Uniform qualification makes the id a fact about a directory,
+ * which is what lets `GROUP BY project_id` aggregate across roots with no
+ * scoping clause anywhere in the query layer.
  *
- * The primary root stays unqualified so single-root users (and anyone adding a
- * second root later) keep the ids they already have.
+ * Raw ids are storage identity only: see `projectDisplayName` for output and
+ * `resolveProjectRef` for accepting what a human types.
  */
 export function qualifyProjectId(root: ClaudeRoot, dirName: string): string {
-  return root.primary ? dirName : `${root.slug}${PROJECT_ID_SEPARATOR}${dirName}`;
-}
-
-/** A root slug is exactly 8 lowercase hex characters (see `rootSlug`). */
-const SLUG_PATTERN = /^[0-9a-f]{8}$/;
-
-/**
- * Split a project id back into its optional root slug and encoded name.
- *
- * The prefix counts as a slug only if it *looks* like one. A working directory
- * may legitimately contain `~` (`/tmp/my~proj` encodes to `-tmp-my~proj`), and
- * treating that as a qualified id would decode the wrong label and resolve the
- * project to a root slug that matches nothing.
- */
-export function projectIdParts(id: string): { slug: string | null; dirName: string } {
-  const at = id.indexOf(PROJECT_ID_SEPARATOR);
-  if (at === -1) return { slug: null, dirName: id };
-  const slug = id.slice(0, at);
-  if (!SLUG_PATTERN.test(slug)) return { slug: null, dirName: id };
-  return { slug, dirName: id.slice(at + 1) };
-}
-
-/**
- * Best-effort, human-readable label for an encoded project directory name.
- *
- * The encoding replaces both `/` and `.` with `-`, so it is NOT reversible.
- * Prefer the `cwd` field read from a session's events as the authoritative
- * path; use this only as a fallback label when no session has been read yet.
- * A root-qualified id is decoded from its directory-name half.
- */
-export function decodeProjectLabel(dirName: string): string {
-  const { dirName: bare } = projectIdParts(dirName);
-  const withSlashes = bare.replace(/-/g, "/");
-  return withSlashes.startsWith("/") ? withSlashes : `/${withSlashes}`;
+  return `${root.slug}${PROJECT_ID_SEPARATOR}${dirName}`;
 }

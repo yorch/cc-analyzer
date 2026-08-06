@@ -296,7 +296,7 @@ describe("CLI dispatch & exit codes", () => {
     };
     expect(parsed.scope).toEqual({
       type: "project",
-      projectId: "proj-a",
+      projectId: expect.stringMatching(/^[0-9a-f]{8}~proj-a$/),
       projectPath,
     });
     expect(parsed.summary.sessions).toBe(1);
@@ -739,6 +739,47 @@ describe("Claude data directories", () => {
     } finally {
       rmSync(prefsState, { recursive: true, force: true });
     }
+  });
+
+  test("`sessions` accepts a bare project name, not just the stored id", async () => {
+    // Stored ids are root-qualified; nobody should have to type a hash.
+    const r = await run(["sessions", "proj-a"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("sessions");
+  });
+
+  test("`sessions` accepts the full stored id too", async () => {
+    const list = await run(["projects"]);
+    expect(list.code, list.stderr).toBe(0);
+    // Round-trip through the index-independent path: resolve, then use.
+    const r = await run(["sessions", "proj-a"]);
+    expect(r.code).toBe(0);
+  });
+
+  test("an ambiguous bare name lists the candidates instead of picking one", async () => {
+    // Same encoded project name under two roots — the collision the id scheme
+    // exists to preserve. Silently choosing one would be the old failure mode.
+    const other = join(tmpDir, "amb-root");
+    mkdirSync(join(other, "projects", "proj-a"), { recursive: true });
+    writeFileSync(join(other, "projects", "proj-a", "s.jsonl"), readFileSync(fixture, "utf8"));
+    try {
+      const r = await run([
+        `--claude-dir=${join(tmpDir, "claude")}:${other}`,
+        "sessions",
+        "proj-a",
+      ]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("matches 2 projects");
+      expect(r.stderr).toContain("Use the full id");
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  test("an unknown project name is reported as unknown", async () => {
+    const r = await run(["sessions", "-no-such-project"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("No project");
   });
 
   test("claude-dir rejects a bad subcommand and a missing operand", async () => {

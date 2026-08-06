@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { labelProjects, rootTag } from "../../src/core/project-labels.ts";
+import {
+  decodeProjectLabel,
+  labelProjects,
+  projectDisplayName,
+  projectIdParts,
+  resolveProjectRef,
+  rootTag,
+} from "../../src/core/project-labels.ts";
 
 interface Row {
   name: string;
@@ -87,5 +94,73 @@ describe("labelProjects", () => {
 
   test("an empty list is not multi-root", () => {
     expect(label([]).multiRoot).toBe(false);
+  });
+});
+
+describe("resolveProjectRef", () => {
+  const ids = ["aaaaaaaa~-Users-me-proj", "bbbbbbbb~-Users-me-proj", "aaaaaaaa~-Users-me-solo"];
+
+  test("a full id matches exactly", () => {
+    expect(resolveProjectRef("bbbbbbbb~-Users-me-proj", ids)).toEqual({
+      status: "found",
+      id: "bbbbbbbb~-Users-me-proj",
+    });
+  });
+
+  test("a bare name resolves when only one root holds it", () => {
+    // The leniency that makes uniform qualification liveable: nobody types a hash.
+    expect(resolveProjectRef("-Users-me-solo", ids)).toEqual({
+      status: "found",
+      id: "aaaaaaaa~-Users-me-solo",
+    });
+  });
+
+  test("a bare name held by two roots is ambiguous, never silently picked", () => {
+    const out = resolveProjectRef("-Users-me-proj", ids);
+    expect(out.status).toBe("ambiguous");
+    expect(out.status === "ambiguous" && out.candidates).toEqual([
+      "aaaaaaaa~-Users-me-proj",
+      "bbbbbbbb~-Users-me-proj",
+    ]);
+  });
+
+  test("a qualified id naming a root we do not have is unknown, not a bare match", () => {
+    // It must not fall back to matching the name half — the user named a root.
+    expect(resolveProjectRef("cccccccc~-Users-me-solo", ids)).toEqual({ status: "unknown" });
+  });
+
+  test("an unknown name is unknown", () => {
+    expect(resolveProjectRef("-nope", ids)).toEqual({ status: "unknown" });
+  });
+
+  test("an id whose `~` is not a slug is treated as a bare name", () => {
+    const withTilde = ["aaaaaaaa~-tmp-my~proj"];
+    expect(resolveProjectRef("-tmp-my~proj", withTilde)).toEqual({
+      status: "found",
+      id: "aaaaaaaa~-tmp-my~proj",
+    });
+  });
+});
+
+describe("projectDisplayName", () => {
+  test("prefers the authoritative path", () => {
+    expect(projectDisplayName("/Users/me/proj", "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");
+  });
+
+  test("falls back to the decoded id with the slug stripped", () => {
+    // A raw `<slug>~<name>` must never reach a person.
+    expect(projectDisplayName(null, "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");
+    expect(projectDisplayName(undefined, "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");
+  });
+});
+
+describe("id algebra", () => {
+  test("round-trips a qualified id", () => {
+    expect(projectIdParts("deadbeef~-a-b")).toEqual({ slug: "deadbeef", dirName: "-a-b" });
+  });
+
+  test("decodes both qualified and bare ids to the same label", () => {
+    expect(decodeProjectLabel("deadbeef~-Users-me-proj")).toBe("/Users/me/proj");
+    expect(decodeProjectLabel("-Users-me-proj")).toBe("/Users/me/proj");
   });
 });

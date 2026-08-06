@@ -8,6 +8,7 @@ import {
 } from "../../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../../core/portfolio-signals.ts";
 import type { PricingTable } from "../../core/pricing.ts";
+import { projectDisplayName } from "../../core/project-labels.ts";
 import {
   type CacheMetrics,
   type ContextTaxRow,
@@ -28,7 +29,7 @@ const PROJECT_SORT: SortField<ProjectCacheRow>[] = [
   { key: "waste", label: "waste", value: (r) => r.waste },
   { key: "ratio", label: "ratio", value: (r) => r.ratio },
   { key: "write", label: "write$", value: (r) => r.writeCost },
-  { key: "name", label: "name", value: (r) => r.projectPath ?? r.projectId },
+  { key: "name", label: "name", value: (r) => projectDisplayName(r.projectPath, r.projectId) },
 ];
 const SESSION_SORT: SortField<SessionCacheRow>[] = [
   { key: "waste", label: "waste", value: (r) => r.waste },
@@ -147,9 +148,9 @@ export function InsightsView({
         pageSize={listSize}
         isActive={isActive}
         sortFields={PROJECT_SORT}
-        filterText={(p) => p.projectPath ?? p.projectId}
-        label={(p) => p.projectPath ?? p.projectId}
-        previewTitle={(p) => p.projectPath ?? p.projectId}
+        filterText={(p) => projectDisplayName(p.projectPath, p.projectId)}
+        label={(p) => projectDisplayName(p.projectPath, p.projectId)}
+        previewTitle={(p) => projectDisplayName(p.projectPath, p.projectId)}
         previewHint="↵ break down this project's sessions"
         onOpen={setDrilled}
         onBack={onBack}
@@ -212,7 +213,7 @@ function ContextTaxLine({
     <Text color={role.muted}>
       context tax: <Text color={role.body}>{formatCount(Math.round(summary.medianTokens))}</Text>{" "}
       median · {formatCount(Math.round(summary.p90Tokens))} p90 tokens before you type
-      {top ? ` · heaviest ${truncate(top.projectPath ?? top.projectId, 28)}` : ""}
+      {top ? ` · heaviest ${truncate(projectDisplayName(top.projectPath, top.projectId), 28)}` : ""}
     </Text>
   );
 }

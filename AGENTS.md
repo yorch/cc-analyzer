@@ -519,12 +519,31 @@ a one-invocation scope would be silently ignored on a read and would prune the
 un-pointed-at roots on `index`. `CC_ANALYZER_CLAUDE_DIR` stays unguarded as the
 hermetic test hook. Two roots can hold a project for the *same* cwd, whose
 encoded names are byte-identical, so `qualifyProjectId()` makes the id globally
-unique at **index time**: the primary root's ids stay bare (adding a second root
-never re-keys what a user already had) and others carry `rootSlug(path)~`. That
-is deliberate leverage — because the stored `project_id` is unique, every
+unique at **index time**: **every** root qualifies, uniformly, as
+`rootSlug(path)~<encodedName>` — including the first one. Qualification used to
+be conditional (the primary root's ids stayed bare), which made identity
+*positional*: reordering the configured list re-keyed a project, so a stored id,
+a bookmarked `/api/projects/:id`, or a scripted `sessions <id>` silently meant a
+different project. Uniform qualification makes an id a fact about a directory,
+and it deleted the two mechanisms that special case had needed — the indexer's
+re-stamp `UPDATE` pass, and `discover.ts`'s `roots[0]` fallback for bare ids.
+That is deliberate leverage — because the stored `project_id` is unique, every
 `GROUP BY project_id` and the `projectScope()` helper in `stats.ts` aggregate
-across roots **with no scoping clause anywhere in the query layer**. The
-`claude_dir` column (schema v14) exists for prune scoping, not for querying:
+across roots **with no scoping clause anywhere in the query layer**.
+
+The price is that a raw id is neither showable nor typeable, so
+`project-labels.ts` (bun-free) owns both directions and every surface goes
+through it: `projectDisplayName(path, id)` for output — the path when the index
+has one, else the slug-stripped decode, so no `<slug>~<name>` ever reaches a
+person — and `resolveProjectRef(ref, knownIds)` for input, where a full id
+matches exactly, a bare name resolves when exactly one root holds that project,
+and several roots make it **ambiguous rather than silently picked**. Both the
+filesystem side (`findProject()` in `discover.ts`, behind `cc-analyzer
+sessions`) and the index side (`resolveIndexedProject()` in `queries.ts`, behind
+`/api/projects/:id/*` and `/api/insights/:id/sessions`) run that one rule, so a
+bare id typed at the CLI and one left in an old bookmark resolve identically —
+and the API answers `409` with the candidate list rather than guessing. The
+`claude_dir` column (schema v14; v15 re-keyed every id) exists for prune scoping, not for querying:
 `reindex()` drops rows whose root is no longer configured (removing a root
 removes its data) but **retains** rows under a configured root that was
 unreadable this scan, so an unmounted volume never silently wipes a portfolio —

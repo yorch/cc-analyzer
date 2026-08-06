@@ -16,7 +16,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Session** — One Claude Code conversation, stored as a single JSONL file at `<claude-root>/projects/<project>/<session>.jsonl` (`~/.claude` by default). Its basename is usually a UUID and serves as its id.
 
-**Project** — A directory under a Claude root's `projects/` grouping the sessions for one working directory. Its encoded directory name is the stable **project id**, prefixed with a short root slug (`<slug>~<name>`) when it lives outside the primary root, so two roots holding the same working directory never merge in an aggregate. The authoritative human path comes from a session's `cwd` field, not from decoding the id.
+**Project** — A directory under a Claude root's `projects/` grouping the sessions for one working directory. Its stable **project id** is its encoded directory name prefixed with its root's slug (`<slug>~<name>`) — uniformly, for every root, so an id is a fact about a directory rather than about which root currently sorts first, and two roots holding the same working directory never merge in an aggregate. Raw ids are storage identity only: `projectDisplayName()` renders one for a person, and `resolveProjectRef()` accepts a bare name back, reporting ambiguity rather than guessing. The authoritative human path comes from a session's `cwd` field, not from decoding the id.
 
 **Event / SessionEvent** — One parsed line of a session file. Events are typed (`user`, `assistant`, and others) and validated with Zod; an unrecognized or drifted line becomes a tolerant "unknown" event rather than an error.
 
@@ -88,7 +88,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Index** — A disposable SQLite cache at `~/.config/cc-analyzer/index.db` holding one flattened row per session; rebuildable from the JSONL files at any time ([src/core/db.ts:L1-L60](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L1-L60)).
 
-**Schema version** — A `schema_version` stored in the index's `meta` table (currently v14, `SCHEMA_VERSION`). Bumping it invalidates and rebuilds the disposable cache — never a breaking change for users ([src/core/db.ts:L86-L108](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L86-L108)).
+**Schema version** — A `schema_version` stored in the index's `meta` table (currently v15, `SCHEMA_VERSION`). Bumping it invalidates and rebuilds the disposable cache — never a breaking change for users ([src/core/db.ts:L86-L108](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/db.ts#L86-L108)).
 
 **Incremental indexing** — Re-parsing only files changed by size + mtime, pruning rows for deleted files.
 
@@ -108,7 +108,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **State dir** — `cc-analyzer`'s own writable directory (`~/.config/cc-analyzer/`, overridable via `CC_ANALYZER_STATE_DIR`) holding the index, pricing cache, preferences, and update-check cache. Distinct from the read-only Claude data dirs.
 
-**Claude root** — One Claude Code data directory (`~/.claude` by default). Several can be configured and are analyzed together as one portfolio; `claudeRoots()` (in `claude-roots.ts`) resolves them from the `--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR`, the `claudeDirs` preference, `CLAUDE_CONFIG_DIR`, then the default, first non-empty tier winning. The first resolved root is the **primary** one, whose project ids stay unqualified.
+**Claude root** — One Claude Code data directory (`~/.claude` by default). Several can be configured and are analyzed together as one portfolio; `claudeRoots()` (in `claude-roots.ts`) resolves them from the `--claude-dir=` flag, `CC_ANALYZER_CLAUDE_DIR`, the `claudeDirs` preference, `CLAUDE_CONFIG_DIR`, then the default, first non-empty tier winning. The first resolved root is the **primary** one — what `claudeDir()` returns and whose `settings.json` supplies the merged inventory's pinned model. Project ids do *not* depend on it: every root qualifies its ids uniformly, so reordering the list never re-keys a project.
 
 **Embedded version** — The build-time version, imported from `package.json` and bundled by `bun --compile`, so the running binary reports its own version ([src/core/version.ts:L1-L8](https://github.com/yorch/cc-analyzer/blob/51ccd4e/src/core/version.ts#L1-L8)).
 

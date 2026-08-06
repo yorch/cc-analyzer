@@ -13,7 +13,7 @@ import {
 import { openDb } from "../core/db.ts";
 import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
-import { findSessionById, listProjects, listSessions } from "../core/discover.ts";
+import { findProject, findSessionById, listProjects, listSessionsIn } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
@@ -320,7 +320,23 @@ async function cmdSessions(projectId: string | undefined): Promise<number> {
     console.error("error: missing <projectId>. Run `cc-analyzer projects` to list ids.");
     return 2;
   }
-  const sessions = await listSessions(projectId);
+  // Stored ids are root-qualified, but nobody should have to type a hash: a
+  // bare encoded name resolves when only one root holds that project. When
+  // several do, name them instead of silently picking one.
+  const found = await findProject(projectId);
+  if (found.status === "ambiguous") {
+    console.error(
+      `error: '${projectId}' matches ${found.candidates.length} projects across your Claude ` +
+        `directories. Use the full id:\n` +
+        found.candidates.map((p) => `  ${p.id}  (${p.root})`).join("\n"),
+    );
+    return 2;
+  }
+  if (found.status === "unknown") {
+    console.error(`No project '${projectId}'. Run \`cc-analyzer projects\` to list ids.`);
+    return 1;
+  }
+  const sessions = await listSessionsIn(found.project);
   if (sessions.length === 0) {
     console.error(`No sessions found for project '${projectId}'.`);
     return 1;

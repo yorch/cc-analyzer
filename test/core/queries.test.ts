@@ -10,6 +10,7 @@ import {
   listAllSessions,
   listIndexedProjects,
   listIndexedSessions,
+  resolveIndexedProject,
   searchSessions,
 } from "../../src/core/queries.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
@@ -52,7 +53,9 @@ describe("queries", () => {
   });
 
   test("listIndexedSessions returns per-session rows with token split", () => {
-    const sessions = listIndexedSessions(db, "proj-a");
+    const resolved = resolveIndexedProject(db, "proj-a");
+    expect(resolved.status).toBe("found");
+    const sessions = listIndexedSessions(db, resolved.status === "found" ? resolved.id : "proj-a");
     expect(sessions).toHaveLength(2);
     expect(sessions[0]?.turns).toBe(2);
     expect(typeof sessions[0]?.costEstimated).toBe("boolean");

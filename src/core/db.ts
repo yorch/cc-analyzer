@@ -140,7 +140,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // rationale as v8–v13: the incremental indexer skips unchanged files, so rows
 // written by v13 would carry no root forever and the first multi-root prune
 // would treat every one of them as de-configured — the bump forces the rebuild.
-export const SCHEMA_VERSION = "14";
+// v15: project ids are now root-qualified **uniformly** (`<rootSlug>~<name>`),
+// including the primary root's — previously the first root's ids were bare, so
+// a project's identity depended on which root sorted first and silently changed
+// meaning when the configured list was reordered. Every id in a v14 index is
+// therefore the wrong shape; the bump rebuilds them.
+export const SCHEMA_VERSION = "15";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

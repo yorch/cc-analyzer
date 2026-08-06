@@ -21,6 +21,7 @@
 import { type CostBasis, costFramingNote } from "./cost-framing.ts";
 import { formatCompactDuration, formatSignedCount, formatUSD } from "./format-shared.ts";
 import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
+import { projectDisplayName } from "./project-labels.ts";
 import type { CacheSummary, DayRange } from "./stats-types.ts";
 import { CORRECTION_CAVEAT, SKILL_COST_CAVEAT, shiftDay, weekOf } from "./stats-types.ts";
 
@@ -312,7 +313,7 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
           ["Project", "Cost", "Sessions", "Change"],
           ["left", "right", "right", "right"],
           d.projects.map((p) => [
-            cell(p.projectPath ?? p.projectId),
+            cell(projectDisplayName(p.projectPath, p.projectId)),
             formatUSD(p.cost),
             String(p.sessions),
             formatDigestDelta(p.delta, formatUSD),

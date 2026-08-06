@@ -292,26 +292,19 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const files = await listAllSessions(roots);
   const currentPaths = new Set(files.map((f) => f.path));
 
-  const existing = new Map<
-    string,
-    { mtime_ms: number; size_bytes: number; claude_dir: string; project_id: string }
-  >();
+  const existing = new Map<string, { mtime_ms: number; size_bytes: number; claude_dir: string }>();
   {
-    const rows = db
-      .query("SELECT path, mtime_ms, size_bytes, claude_dir, project_id FROM sessions")
-      .all() as {
+    const rows = db.query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions").all() as {
       path: string;
       mtime_ms: number;
       size_bytes: number;
       claude_dir: string;
-      project_id: string;
     }[];
     for (const r of rows) {
       existing.set(r.path, {
         mtime_ms: r.mtime_ms,
         size_bytes: r.size_bytes,
         claude_dir: r.claude_dir,
-        project_id: r.project_id,
       });
     }
   }
@@ -341,18 +334,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     }
   });
 
-  // Files this scan skipped keep whatever identity they were last written with,
-  // but reconfiguring roots re-keys project ids (a new primary root unqualifies
-  // a different set of them). Re-stamping the skipped rows is far cheaper than
-  // re-parsing them, and it keeps a root change from stranding rows under ids
-  // nothing queries any more.
-  const restamped = files.filter((f) => {
-    const prev = existing.get(f.path);
-    return prev && (prev.claude_dir !== f.root || prev.project_id !== f.projectId);
-  });
-
+  // No re-stamp pass: a project id is derived only from its root's path and its
+  // own directory name, so a row's identity cannot change while its file path
+  // stays the same. (It could when qualification depended on which root sorted
+  // first — that is one of the mechanisms uniform qualification removed.)
   const upsert = upsertStatement(db);
-  const restamp = db.query("UPDATE sessions SET claude_dir = ?, project_id = ? WHERE path = ?");
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
 
   let deleted = 0;
@@ -360,7 +346,6 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const row of rows) {
       if (row) upsert.run(...rowValues(row));
     }
-    for (const f of restamped) restamp.run(f.root, f.projectId, f.path);
     for (const [path, prev] of existing) {
       if (currentPaths.has(path)) continue;
       if (retained(prev.claude_dir)) continue;

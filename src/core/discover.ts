@@ -1,13 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import {
-  type ClaudeRoot,
-  claudeRoots,
-  decodeProjectLabel,
-  projectIdParts,
-  projectsDirOf,
-  qualifyProjectId,
-} from "./claude-roots.ts";
+import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from "./claude-roots.ts";
+import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 export interface ProjectInfo {
   /** Globally unique id: the encoded directory name, root-qualified when the
@@ -106,7 +100,7 @@ export async function listProjects(roots: ClaudeRoot[] = claudeRoots()): Promise
 }
 
 /** Session files in an already-located project directory. */
-async function listSessionsIn(project: {
+export async function listSessionsIn(project: {
   id: string;
   dir: string;
   root: string;
@@ -137,24 +131,54 @@ async function listSessionsIn(project: {
   return sessions;
 }
 
+/** A resolved project reference, or why it could not be resolved. */
+export type ProjectLookup =
+  | { status: "found"; project: ProjectInfo }
+  | { status: "ambiguous"; candidates: ProjectInfo[] }
+  | { status: "unknown" };
+
 /**
- * List session files within a project, by id.
+ * Resolve what a user typed to exactly one project.
  *
- * The slug identifies the root, so a qualified id keeps working as roots are
- * added; an unqualified id belongs to whichever root is primary.
+ * Stored ids are always root-qualified, but nobody should have to type a hash:
+ * a bare encoded name resolves when only one root holds that project, and is
+ * reported as ambiguous — never silently picked — when several do. This is the
+ * lenient half that makes uniform qualification liveable, and it is also what
+ * keeps a bookmark or script written against an older unqualified id working.
+ */
+export async function findProject(
+  ref: string,
+  roots: ClaudeRoot[] = claudeRoots(),
+): Promise<ProjectLookup> {
+  const projects = await listProjects(roots);
+  const match: ProjectRefMatch = resolveProjectRef(
+    ref,
+    projects.map((p) => p.id),
+  );
+  if (match.status === "unknown") return { status: "unknown" };
+  if (match.status === "ambiguous") {
+    const byId = new Map(projects.map((p) => [p.id, p]));
+    return {
+      status: "ambiguous",
+      candidates: match.candidates.map((id) => byId.get(id)).filter((p): p is ProjectInfo => !!p),
+    };
+  }
+  const project = projects.find((p) => p.id === match.id);
+  return project ? { status: "found", project } : { status: "unknown" };
+}
+
+/**
+ * List session files within a project, by id or bare name.
+ *
+ * An unresolvable or ambiguous reference yields no sessions; callers that want
+ * to explain *why* (the CLI does) should use `findProject` directly.
  */
 export async function listSessions(
   projectId: string,
   roots: ClaudeRoot[] = claudeRoots(),
 ): Promise<SessionInfo[]> {
-  const { slug, dirName } = projectIdParts(projectId);
-  const root = slug === null ? roots[0] : roots.find((r) => r.slug === slug);
-  if (!root) return [];
-  return await listSessionsIn({
-    id: projectId,
-    dir: join(projectsDirOf(root.path), dirName),
-    root: root.path,
-  });
+  const found = await findProject(projectId, roots);
+  return found.status === "found" ? await listSessionsIn(found.project) : [];
 }
 
 /** All session files across every project of every configured root. */

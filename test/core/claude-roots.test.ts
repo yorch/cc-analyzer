@@ -5,12 +5,11 @@ import { delimiter, join } from "node:path";
 import {
   claudeDir,
   claudeRoots,
-  decodeProjectLabel,
-  projectIdParts,
   qualifyProjectId,
   rootSlug,
   setClaudeRootsOverride,
 } from "../../src/core/claude-roots.ts";
+import { decodeProjectLabel, projectIdParts } from "../../src/core/project-labels.ts";
 import { type TempStateDir, tempStateDir } from "../helpers/claude-dir.ts";
 
 // These suites drive roots explicitly, so both env tiers must start unset.
@@ -46,7 +45,6 @@ describe("claudeRoots precedence", () => {
     expect(roots).toHaveLength(1);
     expect(roots[0]?.path).toBe(join(homedir(), ".claude"));
     expect(roots[0]?.source).toBe("default");
-    expect(roots[0]?.primary).toBe(true);
   });
 
   test("honours CLAUDE_CONFIG_DIR — the variable Claude Code itself reads", () => {
@@ -86,7 +84,6 @@ describe("claudeRoots precedence", () => {
     process.env.CC_ANALYZER_CLAUDE_DIR = ["/srv/a", "/srv/b", "/srv/c"].join(delimiter);
     const roots = claudeRoots();
     expect(roots.map((r) => r.path)).toEqual(["/srv/a", "/srv/b", "/srv/c"]);
-    expect(roots.map((r) => r.primary)).toEqual([true, false, false]);
     expect(claudeDir()).toBe("/srv/a");
   });
 
@@ -134,14 +131,21 @@ describe("project id qualification", () => {
     primary: false,
   };
 
-  test("the primary root's ids are unqualified, so existing ids never re-key", () => {
-    expect(qualifyProjectId(primary, "-Users-me-proj")).toBe("-Users-me-proj");
+  test("every root qualifies, including the first — identity is never positional", () => {
+    // The whole point of the redesign: an id must not change meaning because
+    // the configured list was reordered.
+    expect(qualifyProjectId(primary, "-Users-me-proj")).toBe(
+      `${rootSlug("/srv/a")}~-Users-me-proj`,
+    );
+    expect(qualifyProjectId(secondary, "-Users-me-proj")).toBe(
+      `${rootSlug("/srv/b")}~-Users-me-proj`,
+    );
   });
 
-  test("a non-primary root's ids carry its slug, so identical names stay distinct", () => {
-    const id = qualifyProjectId(secondary, "-Users-me-proj");
-    expect(id).not.toBe("-Users-me-proj");
-    expect(id).toBe(`${rootSlug("/srv/b")}~-Users-me-proj`);
+  test("two roots holding the same working directory get different ids", () => {
+    expect(qualifyProjectId(primary, "-Users-me-proj")).not.toBe(
+      qualifyProjectId(secondary, "-Users-me-proj"),
+    );
   });
 
   test("the slug is stable and path-derived, not positional", () => {

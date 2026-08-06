@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { labelProjects } from "../../../src/core/project-labels.ts";
+import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -49,7 +49,7 @@ const PROJECT_SORT: Accessors<ProjectRow> = {
   cost: (p) => p.cost,
   tokens: (p) => p.ioTokens + p.cacheTokens,
   sessions: (p) => p.sessions,
-  project: (p) => p.projectPath ?? p.projectId,
+  project: (p) => projectDisplayName(p.projectPath, p.projectId),
 };
 const MODEL_SORT: Accessors<ModelRow> = {
   model: (m) => m.model,
@@ -85,7 +85,7 @@ export function Dashboard() {
   // shared labeller names the root only on the rows that actually collide.
   const projectLabel = labelProjects(
     byProject,
-    (p) => p.projectPath ?? p.projectId,
+    (p) => projectDisplayName(p.projectPath, p.projectId),
     (p) => p.claudeDir,
   ).label;
   const byModel = data?.byModel ?? [];

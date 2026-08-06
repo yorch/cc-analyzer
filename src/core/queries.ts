@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import { type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 /** SQL fragments summing the two token buckets shown next to cost. */
 const IO_TOKENS = "input_tokens + output_tokens";
@@ -129,6 +130,23 @@ export function indexedProjectForPath(
         // so `stats --current` picks the same one every run rather than at random.
         a.projectId.localeCompare(b.projectId),
     )[0];
+}
+
+/**
+ * Resolve a project reference against the ids the index actually holds.
+ *
+ * Same lenient rule the filesystem side uses (`findProject` in `discover.ts`),
+ * over the same shared `resolveProjectRef`: a fully qualified id matches
+ * exactly, a bare name resolves when only one root holds that project, and
+ * several roots make it ambiguous rather than silently picking one. This is
+ * what keeps a bookmarked `/api/projects/<bare-id>` URL working.
+ */
+export function resolveIndexedProject(db: Database, ref: string): ProjectRefMatch {
+  const rows = db.query("SELECT DISTINCT project_id AS id FROM sessions").all() as { id: string }[];
+  return resolveProjectRef(
+    ref,
+    rows.map((r) => r.id),
+  );
 }
 
 /** Sessions within a project, most recent first. */
