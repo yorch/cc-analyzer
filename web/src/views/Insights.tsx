@@ -1,12 +1,11 @@
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import {
-  AmbiguousProjectNotice,
   EmptyNotice,
   ErrorNotice,
   LoadingNotice,
+  ProjectFetchErrorNotice,
 } from "../AsyncNotice.tsx";
 import {
-  ambiguousProjectCandidates,
   api,
   type ContextTax,
   cacheVerdict,
@@ -389,17 +388,23 @@ export function InsightsProject({ id }: { id: string }) {
     : all;
   const sort = useSort(filtered, SESSION_SORT, "waste");
   const rows = sort.sorted;
-  if (loading) return <LoadingNotice>Loading sessions…</LoadingNotice>;
+  // `|| projects.loading`: the ambiguous-id branch below reads projects.data
+  // for its candidate labels, so wait for it too — otherwise a fast 409 can
+  // flash raw ids before the shared cache resolves and relabels them.
+  if (loading || projects.loading) return <LoadingNotice>Loading sessions…</LoadingNotice>;
   if (error) {
     // Same ambiguous-id 409 as the Project page — this route resolves `:id`
     // through the same `projectParam` helper (src/web/api.ts).
-    const candidates = ambiguousProjectCandidates(errorCause);
-    if (candidates) {
-      return (
-        <AmbiguousProjectNotice attempted={id} candidates={candidates} projects={projects.data} />
-      );
-    }
-    return <ErrorNotice error={error} retry={retry} label="Couldn’t load insight sessions." />;
+    return (
+      <ProjectFetchErrorNotice
+        attempted={id}
+        error={error}
+        errorCause={errorCause}
+        retry={retry}
+        projects={projects.data}
+        label="Couldn’t load insight sessions."
+      />
+    );
   }
   if (!data) return null;
 

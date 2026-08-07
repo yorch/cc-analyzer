@@ -94,7 +94,7 @@ An Ink master-detail shell launched when the CLI runs with no command: a nav rai
 `cc-analyzer serve` runs a Hono server exposing a JSON API (including analytics endpoints) over the index and serving the embedded SPA. [Details](./5-web-server-and-api.md).
 
 ### Web SPA Frontend
-The React 19 single-page app — dashboard, project drill-down, per-session view with charts, and the Insights/Trends/Tools analytics views. [Details](./6-web-spa-frontend.md).
+The React 19 single-page app — dashboard, a full project list, project drill-down, per-session view with charts, and the Insights/Trends/Tools analytics views. [Details](./6-web-spa-frontend.md).
 
 ### Analytics & Insights
 The cross-cutting analytics capability: 20+ metrics, cache-efficiency insights, time-series trends, tool/skill/subagent analytics, and session/project charts — built once in bun-free core modules and rendered by both the TUI and the web SPA. [Details](./7-analytics-and-insights.md).

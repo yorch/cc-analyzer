@@ -94,6 +94,16 @@ export function Session({ id }: { id: string }) {
           <span className="muted">{a.projectPath}</span>
         )}
       </div>
+      {/* The session itself loaded fine — this is only the shared project-list
+          fetch (used solely for the breadcrumb link above) failing on its
+          own. Non-blocking: surfaced with a retry rather than hidden. */}
+      {projects.error && (
+        <ErrorNotice
+          error={String(projects.error)}
+          retry={projects.retry}
+          label="Couldn’t load the project link."
+        />
+      )}
       <header className="top">
         <h1>{a.title ?? a.sessionId ?? "(untitled)"}</h1>
       </header>

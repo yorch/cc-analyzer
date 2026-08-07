@@ -20,24 +20,33 @@ function notify(): void {
 }
 
 function load(): Promise<IndexedProject[]> {
-  if (!cache.promise) {
-    cache.promise = api.projects().then(
-      (data) => {
-        cache = { promise: cache.promise, data, error: null };
+  if (cache.promise) return cache.promise;
+  // Captured by reference so the callbacks below can tell whether *this*
+  // attempt is still the current one by the time it settles — without it,
+  // an in-flight fetch resolving after a retry() reset the cache would read
+  // the live (by-then-different) `cache.promise` and could overwrite a
+  // fresher result with its own stale one, in either direction.
+  const attempt: Promise<IndexedProject[]> = api.projects().then(
+    (data) => {
+      if (cache.promise === attempt) {
+        cache = { promise: attempt, data, error: null };
         notify();
-        return data;
-      },
-      (error) => {
+      }
+      return data;
+    },
+    (error) => {
+      if (cache.promise === attempt) {
         // Clear the promise (not the rest of the cache) so the next mount —
         // or an explicit retry() — gets a fresh attempt instead of a
         // permanently-rejected one.
         cache = { promise: null, data: null, error };
         notify();
-        throw error;
-      },
-    );
-  }
-  return cache.promise;
+      }
+      throw error;
+    },
+  );
+  cache.promise = attempt;
+  return attempt;
 }
 
 export interface ProjectsState {

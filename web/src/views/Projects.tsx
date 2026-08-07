@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
@@ -51,26 +52,35 @@ export function Projects() {
   const [query, setQuery] = useHashParam<string>("q", "");
 
   const all = projects.data ?? [];
-  const cacheByProject = new Map((insights.data?.projects ?? []).map((p) => [p.projectId, p]));
-  const findingsByProject = new Map<string, PortfolioDiagnostic[]>();
-  for (const d of insights.data?.diagnostics ?? []) {
-    if (!d.projectId) continue;
-    const list = findingsByProject.get(d.projectId) ?? [];
-    list.push(d);
-    findingsByProject.set(d.projectId, list);
-  }
-  // Only worth naming when more than one Claude data dir is configured —
-  // otherwise every project would carry the same redundant path.
-  const { label: projectLabel, multiRoot } = labelProjects(
-    all,
-    (p) => projectDisplayName(p.projectPath, p.projectId),
-    (p) => p.claudeDir,
-  );
-  const rows: ProjectListRow[] = all.map((project) => ({
-    project,
-    cache: cacheByProject.get(project.projectId),
-    findings: findingsByProject.get(project.projectId) ?? [],
-  }));
+  const insightsProjects = insights.data?.projects;
+  const insightsDiagnostics = insights.data?.diagnostics;
+  // The join against /api/insights and the root-collision labelling only
+  // depend on the two fetches, not on the search query — without this, every
+  // keystroke in the filter box below rebuilt both Maps, re-ran labelProjects
+  // over the full list, and re-derived every row from scratch.
+  const { rows, projectLabel, multiRoot } = useMemo(() => {
+    const cacheByProject = new Map((insightsProjects ?? []).map((p) => [p.projectId, p]));
+    const findingsByProject = new Map<string, PortfolioDiagnostic[]>();
+    for (const d of insightsDiagnostics ?? []) {
+      if (!d.projectId) continue;
+      const list = findingsByProject.get(d.projectId) ?? [];
+      list.push(d);
+      findingsByProject.set(d.projectId, list);
+    }
+    // Only worth naming when more than one Claude data dir is configured —
+    // otherwise every project would carry the same redundant path.
+    const { label, multiRoot: multi } = labelProjects(
+      all,
+      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => p.claudeDir,
+    );
+    const built: ProjectListRow[] = all.map((project) => ({
+      project,
+      cache: cacheByProject.get(project.projectId),
+      findings: findingsByProject.get(project.projectId) ?? [],
+    }));
+    return { rows: built, projectLabel: label, multiRoot: multi };
+  }, [all, insightsProjects, insightsDiagnostics]);
   const q = query.toLowerCase();
   const filtered = q ? rows.filter((r) => projectLabel(r.project).toLowerCase().includes(q)) : rows;
   // Recently-active-first, distinct from the Dashboard's cost ranking — this

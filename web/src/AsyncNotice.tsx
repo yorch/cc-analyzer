@@ -1,5 +1,5 @@
 import { projectDisplayName } from "../../src/core/project-labels.ts";
-import type { IndexedProject } from "./api.ts";
+import { ambiguousProjectCandidates, type IndexedProject } from "./api.ts";
 import { link } from "./router.ts";
 
 export function LoadingNotice({ children }: { children: string }) {
@@ -77,4 +77,35 @@ export function AmbiguousProjectNotice({
       </ul>
     </div>
   );
+}
+
+/**
+ * The one place a project-scoped `useAsync` error becomes UI: the ambiguous-id
+ * picker when the error is `projectParam`'s 409 candidate list, otherwise a
+ * generic `ErrorNotice`+retry. Shared by every view that resolves an `:id`
+ * through a route behind `projectParam` (`src/web/api.ts`) — a behavior tweak
+ * here (e.g. a "go to Dashboard" link) now lands once, not once per page.
+ */
+export function ProjectFetchErrorNotice({
+  attempted,
+  error,
+  errorCause,
+  retry,
+  projects,
+  label,
+}: {
+  attempted: string;
+  error: string;
+  errorCause: unknown;
+  retry: () => void;
+  projects: IndexedProject[] | null;
+  label: string;
+}) {
+  const candidates = ambiguousProjectCandidates(errorCause);
+  if (candidates) {
+    return (
+      <AmbiguousProjectNotice attempted={attempted} candidates={candidates} projects={projects} />
+    );
+  }
+  return <ErrorNotice error={error} retry={retry} label={label} />;
 }

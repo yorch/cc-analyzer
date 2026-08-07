@@ -182,8 +182,12 @@ export type SessionResponse = SessionAnalysis & {
  *  error body (when there is one) alongside the status, so a call site that
  *  cares about a *specific* error shape — e.g. the ambiguous-project-id `409`
  *  built by `projectParam` in `src/web/api.ts` — can inspect it instead of
- *  pattern-matching `error.message`. `message` stays `"<status> <url>"` for
- *  every existing call site that just renders it as text. */
+ *  pattern-matching `error.message`. `message` stays `"<status> <url>"` and
+ *  `name` deliberately stays the inherited `"Error"` (not `"ApiError"`) —
+ *  every pre-existing `useAsync` caller renders `String(err)` verbatim via
+ *  `Error.prototype.toString`, which prefixes the *name*; overriding it would
+ *  have silently changed "Error: 404 …" to "ApiError: 404 …" everywhere a
+ *  failed fetch is shown, not just the two call sites that read `.body`. */
 export class ApiError extends Error {
   readonly status: number;
   readonly url: string;
@@ -191,7 +195,6 @@ export class ApiError extends Error {
 
   constructor(status: number, url: string, body: unknown) {
     super(`${status} ${url}`);
-    this.name = "ApiError";
     this.status = status;
     this.url = url;
     this.body = body;

@@ -1,12 +1,11 @@
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import {
-  AmbiguousProjectNotice,
   EmptyNotice,
   ErrorNotice,
   LoadingNotice,
+  ProjectFetchErrorNotice,
 } from "../AsyncNotice.tsx";
 import {
-  ambiguousProjectCandidates,
   api,
   type CostDistribution,
   type HotFileRow,
@@ -64,13 +63,16 @@ export function Project({ id }: { id: string }) {
     // root-qualified project — the server says so via a 409 candidate list
     // (`projectParam` in src/web/api.ts) instead of guessing; show the choice
     // rather than a bare "409" error.
-    const candidates = ambiguousProjectCandidates(errorCause);
-    if (candidates) {
-      return (
-        <AmbiguousProjectNotice attempted={id} candidates={candidates} projects={projects.data} />
-      );
-    }
-    return <ErrorNotice error={error} retry={retry} label="Couldn’t load this project." />;
+    return (
+      <ProjectFetchErrorNotice
+        attempted={id}
+        error={error}
+        errorCause={errorCause}
+        retry={retry}
+        projects={projects.data}
+        label="Couldn’t load this project."
+      />
+    );
   }
   if (!data) return null;
 
@@ -88,6 +90,17 @@ export function Project({ id }: { id: string }) {
       <div className="crumbs">
         <a href={link.dashboard()}>← Dashboard</a>
       </div>
+      {/* The sessions/files/trends fetch above succeeded, so the page still
+          renders — but the shared project-list fetch failed independently,
+          which is why the header below is missing its name/cost/tokens.
+          Non-blocking: surfaced with a retry rather than hidden. */}
+      {projects.error && (
+        <ErrorNotice
+          error={String(projects.error)}
+          retry={projects.retry}
+          label="Couldn’t load full project details (name, cost, tokens)."
+        />
+      )}
       <header className="top">
         <h1>{projectDisplayName(project?.projectPath, id)}</h1>
         <span className="muted">
