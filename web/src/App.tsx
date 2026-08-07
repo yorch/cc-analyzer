@@ -7,6 +7,7 @@ import { useAsync } from "./useAsync.ts";
 import { Dashboard } from "./views/Dashboard.tsx";
 import { Insights, InsightsProject } from "./views/Insights.tsx";
 import { Project } from "./views/Project.tsx";
+import { Projects } from "./views/Projects.tsx";
 import { Session } from "./views/Session.tsx";
 import { Tools } from "./views/Tools.tsx";
 import { Trends } from "./views/Trends.tsx";
@@ -21,6 +22,7 @@ export function App() {
     trackView(route.name);
   }, [route]);
   const onInsights = route.name === "insights" || route.name === "insightsProject";
+  const onProjects = route.name === "projects" || route.name === "project";
   return (
     <div className="wrap">
       <a className="skip-link" href="#main-content">
@@ -38,6 +40,13 @@ export function App() {
             aria-current={route.name === "dashboard" ? "page" : undefined}
           >
             Dashboard
+          </a>
+          <a
+            className={onProjects ? "active" : ""}
+            href={link.projects()}
+            aria-current={onProjects ? "page" : undefined}
+          >
+            Projects
           </a>
           <a
             className={onInsights ? "active" : ""}
@@ -72,6 +81,7 @@ export function App() {
         {route.name === "insightsProject" && <InsightsProject id={route.id} />}
         {route.name === "trends" && <Trends />}
         {route.name === "tools" && <Tools />}
+        {route.name === "projects" && <Projects />}
         {route.name === "project" && <Project id={route.id} />}
         {route.name === "session" && <Session id={route.id} />}
       </main>

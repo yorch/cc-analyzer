@@ -208,7 +208,10 @@ export function Dashboard() {
       </section>
 
       <section>
-        <h2>Top projects</h2>
+        <div className="trend-head">
+          <h2>Top projects</h2>
+          <a href={link.projects()}>View all projects →</a>
+        </div>
         <SearchField
           label="Filter Projects"
           placeholder="Filter projects by path…"
@@ -242,7 +245,8 @@ export function Dashboard() {
         {projectRows.length === 0 && <EmptyNotice>No projects match this filter.</EmptyNotice>}
         {!pq && projectSort.sorted.length > projectRows.length && (
           <p className="muted">
-            Showing the 15 highest-cost projects. Filter by path to find the rest.
+            Showing the 15 highest-cost projects. Filter by path, or{" "}
+            <a href={link.projects()}>view all projects</a>.
           </p>
         )}
       </section>

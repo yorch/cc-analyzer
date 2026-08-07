@@ -8,6 +8,7 @@ describe("viewPath (analytics url sanitization)", () => {
     expect(viewPath("insightsProject")).toBe("/insights/project");
     expect(viewPath("trends")).toBe("/trends");
     expect(viewPath("tools")).toBe("/tools");
+    expect(viewPath("projects")).toBe("/projects");
     expect(viewPath("project")).toBe("/project");
     expect(viewPath("session")).toBe("/session");
   });
