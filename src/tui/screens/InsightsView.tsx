@@ -14,7 +14,9 @@ import {
   type ContextTaxRow,
   type ContextTaxSummary,
   cacheVerdict,
+  cacheWasteByProject,
   cacheWasteBySession,
+  MAX_PROJECT_ROWS,
   type ProjectCacheRow,
   type SessionCacheRow,
   type WhatIfSummary,
@@ -69,14 +71,19 @@ export function InsightsView({
   onOpenSession,
   onBack,
 }: Props) {
-  // One assembly at the screen boundary: the portfolio signals already carry
-  // every number this screen shows (cache summary + hit-list, context tax,
-  // what-if) as well as the inputs the rules fold, so computing them twice
-  // would only be a second chance to disagree. Everything below is a plain
-  // prop — the presentation components never touch the database.
+  // One assembly at the screen boundary: the portfolio signals carry every
+  // number this screen shows (cache summary, context tax, what-if) as well as
+  // the inputs the rules fold, so computing them twice would only be a second
+  // chance to disagree. Everything below is a plain prop — the presentation
+  // components never touch the database.
   const signals = useMemo(() => assemblePortfolioSignals(db, pricing), [db, pricing]);
   const summary = signals.cache.summary;
-  const projects = signals.cache.projects;
+  // The one list not taken off the shared signals: the rules only need the
+  // default top slice (limit 50), but this screen filters and sorts
+  // client-side, so it needs every cache-active project — a top-N slice would
+  // make a low-waste project unreachable by the filter box. Same carve-out
+  // the web /api/insights route makes for the same reason.
+  const projects = useMemo(() => cacheWasteByProject(db, MAX_PROJECT_ROWS), [db]);
   const tax = signals.contextTax;
   const whatIf = signals.whatIf;
   const diagnostics = useMemo(() => buildPortfolioDiagnostics(signals), [signals]);

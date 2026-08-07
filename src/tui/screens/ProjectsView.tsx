@@ -2,9 +2,10 @@ import type { Database } from "bun:sqlite";
 import { Text } from "ink";
 import { useMemo, useState } from "react";
 import { formatUSD, truncate } from "../../cli/format.ts";
+import type { PortfolioDiagnostic } from "../../core/portfolio-diagnostics.ts";
 import { labelProjects, projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject } from "../../core/queries.ts";
-import { projectPreviewStats } from "../../core/stats.ts";
+import { type ProjectCacheRow, projectPreviewStats } from "../../core/stats.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { ProjectPreview } from "../components/previews.tsx";
 import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
@@ -27,6 +28,11 @@ function sortFields(label: (p: IndexedProject) => string): SortField<IndexedProj
 interface Props {
   projects: IndexedProject[];
   db: Database;
+  /** Cache-efficiency rows keyed by project id (absent = no cache activity),
+   * computed once at the App boundary so switching views doesn't re-scan. */
+  wasteByProject: ReadonlyMap<string, ProjectCacheRow>;
+  /** Project-scoped portfolio findings keyed by project id (most are empty). */
+  findingsByProject: ReadonlyMap<string, PortfolioDiagnostic[]>;
   columns: number;
   pageSize?: number;
   isActive: boolean;
@@ -35,7 +41,17 @@ interface Props {
 }
 
 /** Projects list (master) driving a live project preview (detail). */
-export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen, onBack }: Props) {
+export function ProjectsView({
+  projects,
+  db,
+  wasteByProject,
+  findingsByProject,
+  columns,
+  pageSize,
+  isActive,
+  onOpen,
+  onBack,
+}: Props) {
   // Two Claude roots can each hold a project for the same working directory, so
   // the labels would be byte-identical. The shared labeller qualifies only the
   // ones that actually collide.
@@ -85,7 +101,14 @@ export function ProjectsView({ projects, db, columns, pageSize, isActive, onOpen
           )}
         />
       }
-      detail={<ProjectPreview project={highlighted} stats={previewStats} />}
+      detail={
+        <ProjectPreview
+          project={highlighted}
+          stats={previewStats}
+          cache={highlightedId ? wasteByProject.get(highlightedId) : undefined}
+          findings={highlightedId ? findingsByProject.get(highlightedId) : undefined}
+        />
+      }
     />
   );
 }

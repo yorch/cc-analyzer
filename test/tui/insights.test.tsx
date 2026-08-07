@@ -78,6 +78,59 @@ describe("InsightsView", () => {
     unmount();
   });
 
+  test("filter reaches projects beyond the rules' top-50 waste slice", async () => {
+    const wide = openDb(":memory:");
+    // 55 cache-active projects with strictly decreasing waste; "needle" ranks
+    // last, past the default 50-row slice the signals assembler uses for the
+    // rules — the screen's own full-width query must still surface it.
+    for (let i = 0; i < 55; i++) {
+      insert(wide, `s-${i}`, `p-${i}`, `/p/many-${i}`, 1000, 100, 55 - i);
+    }
+    insert(wide, "s-needle", "p-needle", "/p/needle", 1000, 100, 0.05);
+    const { stdin, lastFrame, unmount } = render(
+      <InsightsView
+        db={wide}
+        pricing={samplePricing}
+        columns={120}
+        pageSize={20}
+        isActive
+        onOpenSession={noop}
+        onBack={noop}
+      />,
+    );
+    await waitForFrame(lastFrame, "/p/many-0");
+    expect(lastFrame() ?? "").not.toContain("/p/needle"); // off the first page
+    stdin.write("needle"); // type-to-filter
+    await waitForFrame(lastFrame, "/p/needle");
+    expect(lastFrame() ?? "").toContain("/p/needle");
+    unmount();
+    wide.close();
+  });
+
+  test("header lists fired portfolio findings as glyph + title lines", () => {
+    const wasteful = openDb(":memory:");
+    // One project wasting $18 of $20 cache-write spend — over both the 20%
+    // share and the $10 floor of the cache-waste-heavy rule, so a warning
+    // finding must appear in the compact header block.
+    insert(wasteful, "w-1", "p-waste", "/p/waste", 10_000, 100, 20);
+    const { lastFrame, unmount } = render(
+      <InsightsView
+        db={wasteful}
+        pricing={samplePricing}
+        columns={140}
+        pageSize={20}
+        isActive={false}
+        onOpenSession={noop}
+        onBack={noop}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("! "); // warning glyph
+    expect(frame).toContain("never amortized"); // cache-waste-heavy title
+    unmount();
+    wasteful.close();
+  });
+
   test("summarizes context tax and the cheapest single model", () => {
     const priced = openDb(":memory:");
     // Two sessions, baselines 20k and 40k → median 30k.

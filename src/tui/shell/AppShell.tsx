@@ -8,8 +8,6 @@ export interface NavEntry {
   key: string;
   label: string;
   icon: string;
-  /** Placeholder entries render dimmed and are not yet wired to a view. */
-  soon?: boolean;
 }
 
 interface Props {
@@ -109,7 +107,7 @@ function NavRail({
     >
       {entries.map((e) => {
         const on = e.key === active;
-        const fg = on ? palette.bg : e.soon ? palette.ink3 : palette.ink2;
+        const fg = on ? palette.bg : palette.ink2;
         const marker = on && focused ? "❯" : " ";
         return (
           <Text key={e.key} color={fg} backgroundColor={on ? palette.amber : undefined}>

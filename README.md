@@ -471,7 +471,11 @@ Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink)
 with an **amber-phosphor** retro-terminal look. It's a persistent shell — a
 title bar, a **nav rail** (portfolio · projects · sessions · insights · trends ·
 tools), and a **two-pane master-detail** body: a list on the left drives a
-live **preview** on the right as you move the cursor. The **insights** view is a
+live **preview** on the right as you move the cursor. The project preview
+carries spend/tokens/activity vitals plus per-project chart lines, a
+**cache-efficiency** line (verdict, read:write ratio, un-amortized waste $),
+and a **findings** line counting the portfolio-insight findings scoped to that
+project — the same signals the web Projects page shows as columns. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
 drills into the leakiest sessions; its header opens with a compact list of the

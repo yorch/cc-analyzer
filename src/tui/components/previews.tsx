@@ -6,9 +6,15 @@ import {
   formatUSD,
   truncate,
 } from "../../cli/format.ts";
+import type { PortfolioDiagnostic } from "../../core/portfolio-diagnostics.ts";
 import { projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
-import { type CacheMetrics, cacheVerdict, type ProjectPreviewStats } from "../../core/stats.ts";
+import {
+  type CacheMetrics,
+  cacheVerdict,
+  type ProjectCacheRow,
+  type ProjectPreviewStats,
+} from "../../core/stats.ts";
 import { sparkline } from "../charts.ts";
 import { palette, role, VERDICT_COLOR } from "../theme.ts";
 
@@ -31,14 +37,21 @@ function cacheShare(io: number, cache: number): string {
 const SPARK_WEEKS = 26;
 
 /** Detail-pane summary for a selected project, with per-project chart lines
- * (weekly burn sparkline + distribution ramps). `stats` arrives as plain
- * props from the screen boundary — this component never touches the db. */
+ * (weekly burn sparkline + distribution ramps). `stats`/`cache`/`findings`
+ * arrive as plain props from the screen boundary — this component never
+ * touches the db. `cache` is absent (not zero) for a project with no
+ * cache-write activity; `findings` are the portfolio diagnostics scoped to
+ * this project, usually empty. */
 export function ProjectPreview({
   project,
   stats,
+  cache,
+  findings = [],
 }: {
   project: IndexedProject | undefined;
   stats: ProjectPreviewStats | undefined;
+  cache?: ProjectCacheRow;
+  findings?: PortfolioDiagnostic[];
 }) {
   if (!project) return <Text color={role.muted}>(no selection)</Text>;
   const weekly = stats?.weeklyBurn.slice(-SPARK_WEEKS) ?? [];
@@ -63,6 +76,17 @@ export function ProjectPreview({
           <Text color={palette.green}>{cacheShare(project.ioTokens, project.cacheTokens)}</Text>
           <Text color={role.muted}> of tokens</Text>
         </Field>
+        {cache && (
+          <Field label="cache eff.">
+            {/* Dot + verdict word: the word keeps it legible without color. */}
+            <Text color={VERDICT_COLOR[cacheVerdict(cache.ratio)]}>
+              ● {cacheVerdict(cache.ratio)}
+            </Text>
+            <Text color={role.muted}> · {cache.ratio.toFixed(1)}× read:write · </Text>
+            <Text color={role.cost}>{formatUSD(cache.waste)}</Text>
+            <Text color={role.muted}> un-amortized</Text>
+          </Field>
+        )}
         <Field label="last active">
           <Text color={role.body}>{formatRelativeTime(project.lastActivityMs)}</Text>
         </Field>
@@ -70,6 +94,16 @@ export function ProjectPreview({
           <Field label="compactions">
             <Text color={role.body}>{formatCount(project.compactions)}</Text>
             <Text color={role.muted}> context-window hits</Text>
+          </Field>
+        )}
+        {findings.length > 0 && (
+          <Field label="findings">
+            {/* Same glyphs as the Insights header: ! warning, · info. */}
+            <Text color={findings.some((d) => d.severity === "warning") ? role.accent : role.muted}>
+              {findings.some((d) => d.severity === "warning") ? "!" : "·"}{" "}
+              {formatCount(findings.length)}
+            </Text>
+            <Text color={role.muted}> · {truncate(findings[0]?.title ?? "", 34)}</Text>
           </Field>
         )}
       </Box>

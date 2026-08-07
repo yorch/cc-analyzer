@@ -836,6 +836,15 @@ export const WHATIF_CAVEAT =
  * sites hide the rank rather than show "p50 of 2 sessions". */
 export const MIN_RANK_COHORT = 5;
 
+/**
+ * Row cap for "every project" queries behind client-side-filtered lists (the
+ * web dashboard/insights payloads, the TUI's full-width joins). A top-N slice
+ * would make low-ranked projects vanish from a filter that plainly matches
+ * them; this instead caps only pathological portfolios so no payload is
+ * unbounded. Far above any realistic project count.
+ */
+export const MAX_PROJECT_ROWS = 2000;
+
 /** One comparison cohort for a session's cost rank. */
 export interface CostRankCohort {
   sessions: number;
