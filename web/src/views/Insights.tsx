@@ -1,5 +1,10 @@
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
-import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
+import {
+  EmptyNotice,
+  ErrorNotice,
+  LoadingNotice,
+  ProjectFetchErrorNotice,
+} from "../AsyncNotice.tsx";
 import {
   api,
   type ContextTax,
@@ -18,6 +23,7 @@ import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { useAsync } from "../useAsync.ts";
+import { useProjects } from "../useProjects.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 
 function Verdict({ ratio }: { ratio: number }) {
@@ -367,7 +373,13 @@ const SESSION_SORT: Accessors<SessionCacheRow> = {
 };
 
 export function InsightsProject({ id }: { id: string }) {
-  const { data, error, loading, retry } = useAsync(() => api.insightsSessions(id), [id]);
+  // Only needed for the ambiguous-id notice's candidate labels below — shared
+  // with Project/Session so it's a no-op fetch once either has loaded it.
+  const projects = useProjects();
+  const { data, error, errorCause, loading, retry } = useAsync(
+    () => api.insightsSessions(id),
+    [id],
+  );
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
   const all = data ?? [];
@@ -376,9 +388,24 @@ export function InsightsProject({ id }: { id: string }) {
     : all;
   const sort = useSort(filtered, SESSION_SORT, "waste");
   const rows = sort.sorted;
-  if (loading) return <LoadingNotice>Loading sessions…</LoadingNotice>;
-  if (error)
-    return <ErrorNotice error={error} retry={retry} label="Couldn’t load insight sessions." />;
+  // `|| projects.loading`: the ambiguous-id branch below reads projects.data
+  // for its candidate labels, so wait for it too — otherwise a fast 409 can
+  // flash raw ids before the shared cache resolves and relabels them.
+  if (loading || projects.loading) return <LoadingNotice>Loading sessions…</LoadingNotice>;
+  if (error) {
+    // Same ambiguous-id 409 as the Project page — this route resolves `:id`
+    // through the same `projectParam` helper (src/web/api.ts).
+    return (
+      <ProjectFetchErrorNotice
+        attempted={id}
+        error={error}
+        errorCause={errorCause}
+        retry={retry}
+        projects={projects.data}
+        label="Couldn’t load insight sessions."
+      />
+    );
+  }
   if (!data) return null;
 
   // Never `?? id`: a project with no cache-active sessions (or a NULL

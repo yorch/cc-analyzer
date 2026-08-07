@@ -24,6 +24,7 @@ import { link, useHashParam } from "../router.ts";
 import { SessionCharts } from "../SessionCharts.tsx";
 import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
+import { useProjects } from "../useProjects.ts";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript";
 const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript"] as const;
@@ -56,13 +57,16 @@ export function Session({ id }: { id: string }) {
   useEffect(() => {
     if (tab === "transcript") setTranscriptWanted(true);
   }, [tab]);
-  const analysis = useAsync(() => Promise.all([api.session(id), api.projects()]), [id]);
+  // Shared across every page that needs the project list — see useProjects.ts
+  // — so this doesn't refetch the whole portfolio just to resolve one id.
+  const projects = useProjects();
+  const analysis = useAsync(() => api.session(id), [id]);
   const transcript = useAsync(
     () => (transcriptWanted ? api.transcript(id) : Promise.resolve(null)),
     [id, transcriptWanted],
   );
 
-  if (analysis.loading) return <LoadingNotice>Loading session…</LoadingNotice>;
+  if (analysis.loading || projects.loading) return <LoadingNotice>Loading session…</LoadingNotice>;
   if (analysis.error)
     return (
       <ErrorNotice
@@ -71,12 +75,11 @@ export function Session({ id }: { id: string }) {
         label="Couldn’t load this session."
       />
     );
-  const loaded = analysis.data;
-  if (!loaded) return null;
-  const [a, projects] = loaded;
+  const a = analysis.data;
+  if (!a) return null;
   // By id, not by path: two Claude roots can hold a project for the same
   // working directory, and a path match would link to whichever sorted first.
-  const project = projects.find((row) => row.projectId === a.projectId);
+  const project = projects.data?.find((row) => row.projectId === a.projectId);
   const c = a.totals.cost;
   const rankCard = pickRankCohort(a.insights?.rank ?? null);
 
@@ -91,6 +94,16 @@ export function Session({ id }: { id: string }) {
           <span className="muted">{a.projectPath}</span>
         )}
       </div>
+      {/* The session itself loaded fine — this is only the shared project-list
+          fetch (used solely for the breadcrumb link above) failing on its
+          own. Non-blocking: surfaced with a retry rather than hidden. */}
+      {projects.error && (
+        <ErrorNotice
+          error={String(projects.error)}
+          retry={projects.retry}
+          label="Couldn’t load the project link."
+        />
+      )}
       <header className="top">
         <h1>{a.title ?? a.sessionId ?? "(untitled)"}</h1>
       </header>

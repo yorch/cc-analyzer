@@ -17,6 +17,8 @@ export function viewPath(routeName: string): string {
       return "/trends";
     case "tools":
       return "/tools";
+    case "projects":
+      return "/projects";
     case "project":
       return "/project";
     case "session":

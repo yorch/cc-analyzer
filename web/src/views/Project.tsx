@@ -1,5 +1,10 @@
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
-import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
+import {
+  EmptyNotice,
+  ErrorNotice,
+  LoadingNotice,
+  ProjectFetchErrorNotice,
+} from "../AsyncNotice.tsx";
 import {
   api,
   type CostDistribution,
@@ -15,6 +20,7 @@ import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { BurnPanel, ModelMix, ScatterPanel } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
+import { useProjects } from "../useProjects.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
 
@@ -35,29 +41,46 @@ const PROJECT_VIEWS = ["overview", "sessions", "trends", "files"] as const;
 type ProjectView = (typeof PROJECT_VIEWS)[number];
 
 export function Project({ id }: { id: string }) {
-  const { data, error, loading, retry } = useAsync(
-    () =>
-      Promise.all([api.projects(), api.sessions(id), api.projectFiles(id), api.projectTrends(id)]),
+  // Shared across every page that needs the project list — see useProjects.ts
+  // — so navigating here from the Dashboard or a Session page doesn't refetch it.
+  const projects = useProjects();
+  const { data, error, errorCause, loading, retry } = useAsync(
+    () => Promise.all([api.sessions(id), api.projectFiles(id), api.projectTrends(id)]),
     [id],
   );
   const [query, setQuery] = useHashParam<string>("q", "");
   const [view, setView] = useHashParam<ProjectView>("view", "overview", PROJECT_VIEWS);
-  const [projects, allSessions, hotFiles, trends] = data ?? [[], [], [], null];
+  const [allSessions, hotFiles, trends] = data ?? [[], [], null];
   const q = query.toLowerCase();
   const filtered = q
     ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
     : allSessions;
   const sort = useSort(filtered, SESSION_SORT, "modified");
   const sessions = sort.sorted;
-  if (loading) return <LoadingNotice>Loading project…</LoadingNotice>;
-  if (error) return <ErrorNotice error={error} retry={retry} label="Couldn’t load this project." />;
+  if (loading || projects.loading) return <LoadingNotice>Loading project…</LoadingNotice>;
+  if (error) {
+    // A bare id (old bookmark, hand-typed ref) can match more than one
+    // root-qualified project — the server says so via a 409 candidate list
+    // (`projectParam` in src/web/api.ts) instead of guessing; show the choice
+    // rather than a bare "409" error.
+    return (
+      <ProjectFetchErrorNotice
+        attempted={id}
+        error={error}
+        errorCause={errorCause}
+        retry={retry}
+        projects={projects.data}
+        label="Couldn’t load this project."
+      />
+    );
+  }
   if (!data) return null;
 
-  const project = projects.find((p) => p.projectId === id);
+  const project = projects.data?.find((p) => p.projectId === id);
   // Only worth naming when more than one Claude data dir is configured —
   // otherwise every project would carry the same redundant path.
   const { multiRoot } = labelProjects(
-    projects,
+    projects.data ?? [],
     (p) => projectDisplayName(p.projectPath, p.projectId),
     (p) => p.claudeDir,
   );
@@ -67,6 +90,17 @@ export function Project({ id }: { id: string }) {
       <div className="crumbs">
         <a href={link.dashboard()}>← Dashboard</a>
       </div>
+      {/* The sessions/files/trends fetch above succeeded, so the page still
+          renders — but the shared project-list fetch failed independently,
+          which is why the header below is missing its name/cost/tokens.
+          Non-blocking: surfaced with a retry rather than hidden. */}
+      {projects.error && (
+        <ErrorNotice
+          error={String(projects.error)}
+          retry={projects.retry}
+          label="Couldn’t load full project details (name, cost, tokens)."
+        />
+      )}
       <header className="top">
         <h1>{projectDisplayName(project?.projectPath, id)}</h1>
         <span className="muted">

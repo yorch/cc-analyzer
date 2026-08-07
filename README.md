@@ -528,7 +528,10 @@ your default browser. Browser opening is best-effort and limited to loopback
 hosts. The server listens on loopback only (`127.0.0.1`) and rejects non-local `Host`
 headers, since sessions contain full conversation transcripts; pass
 `--host=0.0.0.0` only if you deliberately want to expose it to your network.
-The UI ships a portfolio dashboard, project drill-down, a per-session view, an
+The UI ships a portfolio dashboard, a **Projects** page listing every indexed
+project — unpaginated, sortable/filterable, with cache-waste and
+portfolio-finding counts folded in from the same signals as Insights, linked
+from the Dashboard's top-15 table — project drill-down, a per-session view, an
 **Insights** page — opening with the ranked **portfolio insight** findings
 (warnings first, each with evidence, a next action, and a project link when the
 signal is project-scoped), followed by the same cache-efficiency hit-list as

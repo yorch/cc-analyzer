@@ -37,6 +37,7 @@ The SPA has no build-time coupling to a backend URL: it fetches from same-origin
 flowchart LR
     App[App] --> Router[useHashRoute]
     Router --> Dashboard
+    Router --> Projects
     Router --> Insights
     Router --> Trends
     Router --> Tools
@@ -44,6 +45,7 @@ flowchart LR
     Router --> Session
 
     Dashboard --> api[api client]
+    Projects --> api
     Insights --> api
     Trends --> api
     Tools --> api
@@ -54,6 +56,7 @@ flowchart LR
     api -.type-only.-> Core[(src/core types)]
 
     Dashboard -.uses.-> Prim[Card / Histogram / SortTh]
+    Projects -.uses.-> Prim
     Trends -.uses.-> Charts[trend-charts]
     Project -.uses.-> Charts
     Session -.uses.-> SessCharts[SessionCharts]
@@ -75,9 +78,11 @@ flowchart LR
 | `Card` / `Seg` / `Histogram` | [web/src/Card.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/Card.tsx) | Stat card, segmented control, bar histogram |
 | `trend-charts` | [web/src/trend-charts.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/trend-charts.tsx) | Shared SVG geometry, burn/model-mix/scatter panels |
 | `SessionCharts` | [web/src/SessionCharts.tsx](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/SessionCharts.tsx) | Per-session context, cost, and per-turn charts |
-| views | [web/src/views/](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx) | Dashboard, Project, Session, Insights, Trends, Tools |
+| views | [web/src/views/](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx) | Dashboard, Projects, Project, Session, Insights, Trends, Tools |
 
-When more than one Claude data directory is configured, the Dashboard's project table, the Project header, and the Insights page's cache-efficiency and context-tax tables name the directory through the bun-free `labelProjects()` in `src/core/project-labels.ts` — the same helper the CLI and TUI import, so the surfaces cannot disagree about whether a label is ambiguous. It qualifies only labels that actually collide across roots, so a single-root portfolio renders exactly as before. Wherever a table is labelled that way, its project **filter and its sort accessor read the same qualified label the cell renders** — sorting by a string the reader cannot see is how a column silently stops meaning what it shows — and the labelling is computed over the whole row set rather than the filtered slice, so a name's ambiguity doesn't come and go as the reader types.
+When more than one Claude data directory is configured, the Dashboard's project table, the Projects page, the Project header, and the Insights page's cache-efficiency and context-tax tables name the directory through the bun-free `labelProjects()` in `src/core/project-labels.ts` — the same helper the CLI and TUI import, so the surfaces cannot disagree about whether a label is ambiguous. It qualifies only labels that actually collide across roots, so a single-root portfolio renders exactly as before. Wherever a table is labelled that way, its project **filter and its sort accessor read the same qualified label the cell renders** — sorting by a string the reader cannot see is how a column silently stops meaning what it shows — and the labelling is computed over the whole row set rather than the filtered slice, so a name's ambiguity doesn't come and go as the reader types.
+
+`useProjects()` ([web/src/useProjects.ts](https://github.com/yorch/cc-analyzer/blob/main/web/src/useProjects.ts)) is a small module-level cache over `GET /api/projects`, shared by every caller — the Projects page, `Project`'s header lookup, `Session`'s breadcrumb, and `InsightsProject`'s ambiguous-id notice all read the same fetch instead of each re-requesting the whole portfolio. It mirrors the module-level singleton pattern `telemetry.ts` uses for its injected config. A `409` from a project-scoped route (a bare id/name matching more than one root-qualified project — see `projectParam` on the Web Server and API page) is no longer a bare error banner: `api.ts` throws a typed `ApiError` carrying the parsed response body, `useAsync` exposes it as `errorCause` alongside the stringified `error`, and `ambiguousProjectCandidates()` narrows it so `Project` and `InsightsProject` can render `AmbiguousProjectNotice` — a pick-one list of the candidate projects, labelled through the same `useProjects()` cache — instead of the id.
 
 Empty results are one component, not one phrasing per panel: chart panels and tables render `EmptyNotice` ("No dated sessions in the index", "No costed sessions yet") instead of a bare muted paragraph, so an empty chart reads the same everywhere.
 
@@ -91,9 +96,9 @@ cache or when the last successful scan is old or unknown, and the footer always
 shows the last refresh time. The warning points users to `cc-analyzer index`;
 the browser remains read-only and never starts an index operation itself.
 
-Routing is client-side and hash-based. `parse()` turns `window.location.hash` into a discriminated `Route` union covering `dashboard`, `insights`, `insightsProject`, `trends`, `tools`, `project`, and `session`, extracting the id segment with `decodeURIComponent` for the parameterized routes ([web/src/router.ts#L3-L25](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L3-L25)). `useHashRoute` seeds state from the initial hash and subscribes to the `hashchange` event, re-parsing on every navigation ([web/src/router.ts#L27-L35](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L27-L35)). The `link` object centralizes URL construction so views never hand-build hashes, encoding ids symmetrically with `encodeURIComponent` ([web/src/router.ts#L37-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L37-L45)).
+Routing is client-side and hash-based. `parse()` turns `window.location.hash` into a discriminated `Route` union covering `dashboard`, `insights`, `insightsProject`, `trends`, `tools`, `projects`, `project`, and `session`, extracting the id segment with `decodeURIComponent` for the parameterized routes ([web/src/router.ts#L3-L25](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L3-L25)). `useHashRoute` seeds state from the initial hash and subscribes to the `hashchange` event, re-parsing on every navigation ([web/src/router.ts#L27-L35](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L27-L35)). The `link` object centralizes URL construction so views never hand-build hashes, encoding ids symmetrically with `encodeURIComponent` ([web/src/router.ts#L37-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L37-L45)).
 
-`App` renders a fixed masthead with a brand link and a four-item nav — Dashboard, Insights, Trends, Tools — marking the active tab by comparing `route.name`, and treats both `insights` and `insightsProject` as the Insights tab ([web/src/App.tsx#L11-L36](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L11-L36)). Below the header it conditionally mounts the one matching view, passing `route.id` to `Project`, `Session`, and `InsightsProject` ([web/src/App.tsx#L37-L44](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L37-L44)).
+`App` renders a fixed masthead with a brand link and a five-item nav — Dashboard, Projects, Insights, Trends, Tools — marking the active tab by comparing `route.name`, and treats both `projects` and `project` as the Projects tab (same pattern as `insights`/`insightsProject`) ([web/src/App.tsx#L11-L36](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L11-L36)). Below the header it conditionally mounts the one matching view, passing `route.id` to `Project`, `Session`, and `InsightsProject` ([web/src/App.tsx#L37-L44](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L37-L44)).
 
 Sources: [web/src/router.ts#L1-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/router.ts#L1-L45) [web/src/App.tsx#L9-L45](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L9-L45)
 
@@ -116,6 +121,12 @@ Sources: [web/src/api.ts#L1-L133](https://github.com/yorch/cc-analyzer/blob/51cc
 Between the search box and the stat cards sits the **Weekly digest** card (`WeeklyDigestCard`), a compact read of `/api/report?insights=0` (the card renders no finding, so it skips the snapshot that costs the response most of its time): the period label with the period it is compared against, then four cards — cost with its signed delta, sessions with theirs, the week's top project, and the correction share. A zero-session period renders "No sessions in this period" instead of the cards; it is a legitimate answer, not an error. The correction share is closed by the shared `CORRECTION_CAVEAT` like every other corrections render site, and the card refetches when the hero's cost-basis toggle flips, so the digest — and the markdown it copies — never carries the previous framing sentence. A **Copy as markdown** button fetches the full report on demand (once per cost basis, then reused) and writes it to the clipboard using `buildDigestMarkdown` imported straight from the bun-free `src/core/digest.ts` (through the injectable `copyText` helper in `web/src/clipboard.ts`, which feature-detects `navigator.clipboard` — undefined outside a secure context, exactly what `serve --host 0.0.0.0` over plain http gives a phone on the LAN — and reports the same "couldn't copy" status for a missing API and a denied permission instead of throwing) — the same function `cc-analyzer report --md` calls — so the pasted text is byte-identical to the CLI's and no extra endpoint or `?format=` branch exists on the server. The card's delta figures go through the shared bun-free formatters in `src/core/format-shared.ts` (the same `formatUSD` the markdown uses) rather than the SPA's `Intl` helpers, so a number on the card and the same number in the copied report read alike. The card's own subtitle carries the scoping note (sessions are attributed to their start day). A failed fetch renders the shared `ErrorNotice` with a retry, like every other surface — the card used to return `null` and vanish silently — and the copy button shows a disabled "Copying…" while the full report is in flight (which also guards against a double click paying for it twice), then settles its status message back to idle after a few seconds. The full digest, including models, cache, reliability, skills, and the insight snapshot, lives in `cc-analyzer report`.
 
 Sources: [web/src/views/Dashboard.tsx#L45-L326](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/views/Dashboard.tsx#L45-L326)
+
+### Projects
+
+`Projects`, at `#/projects`, is the complete, unpaginated project list — what the Dashboard's "top 15 by cost" table (above) links out to via a "View all projects" affordance for "show me everything". It reads the shared `useProjects()` cache for identity/cost/tokens/sessions/last-activity/compactions and separately fetches `/api/insights` to fold in each project's cache-waste dollars, read:write `Verdict`, and a count of the portfolio-diagnostic findings scoped to it (hover for their titles) — both are already single portfolio-wide calls, so enriching every row costs two requests total, not one per row. A project with no cache-write activity (most, on a `/api/insights` payload that only returns cache-active rows) simply renders `—` in those columns rather than blocking the rest of the table. The table is filterable by name and sortable via the shared `useSort`/`SortTh`, defaulting to most-recently-active first — deliberately different from the Dashboard's cost ranking, since this page's job is "find the project I was just in".
+
+Sources: [web/src/views/Projects.tsx](https://github.com/yorch/cc-analyzer/blob/main/web/src/views/Projects.tsx) [web/src/useProjects.ts](https://github.com/yorch/cc-analyzer/blob/main/web/src/useProjects.ts)
 
 ### Project
 
