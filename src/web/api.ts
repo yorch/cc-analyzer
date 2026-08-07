@@ -32,6 +32,7 @@ import {
   errorRateByWeek,
   hotFiles,
   localDayOfMs,
+  MAX_PROJECT_ROWS,
   modelMixByDay,
   parseCoverage,
   projectTrends,
@@ -48,9 +49,7 @@ import { buildTranscript } from "../core/transcript.ts";
 
 // The dashboard/insights lists are filtered client-side, so the server must
 // return more than a top-N slice (else low-spend projects vanish from the
-// filter) — but still cap the payload so a pathological portfolio can't ship
-// unbounded JSON. Far above any realistic project count.
-const MAX_PROJECT_ROWS = 2000;
+// filter). Shared with the TUI's full-width joins via stats-types.
 
 // How many weeks of digest stay memoized at once. Generous for the one thing a
 // human does (page back through recent weeks) while bounding the one memo

@@ -4,9 +4,14 @@ import { useMemo, useState } from "react";
 import { truncate } from "../cli/format.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
+import {
+  buildPortfolioDiagnostics,
+  type PortfolioDiagnostic,
+} from "../core/portfolio-diagnostics.ts";
+import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import { getCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
-import { projectDisplayName } from "../core/project-labels.ts";
+import { labelProjects, projectDisplayName } from "../core/project-labels.ts";
 import {
   type IndexedProject,
   type IndexedSession,
@@ -16,9 +21,11 @@ import {
   listIndexedSessions,
 } from "../core/queries.ts";
 import {
+  cacheWasteByProject,
   costDistribution,
   durationSummary,
   localDayOfMs,
+  MAX_PROJECT_ROWS,
   portfolioSummary,
   spendByMonth,
   streaks,
@@ -64,6 +71,41 @@ export function App({ db, pricing, indexStatus }: Props) {
   // Display-only preference, read once at the screen boundary — TUI
   // presentation components never touch the state dir themselves.
   const costBasis = useMemo(() => getCostBasis(), []);
+  // Per-project cache efficiency for the project preview, at full width (the
+  // default limit is a top-50 slice, which would make a filtered-for project
+  // show no waste it actually has). Computed here, not in ProjectsView, so
+  // switching rail views doesn't re-scan.
+  const wasteByProject = useMemo(
+    () => new Map(cacheWasteByProject(db, MAX_PROJECT_ROWS).map((r) => [r.projectId, r] as const)),
+    [db],
+  );
+  // Project-scoped portfolio findings for the preview. `audit: false` skips
+  // the filesystem inventory scan at startup — no project-scoped rule *fires*
+  // on the audit (context-tax-heavy only names unused MCP servers in its
+  // action text), so the per-project set is the same either way. The Insights
+  // screen still assembles its own full signals when opened.
+  const findingsByProject = useMemo(() => {
+    const diagnostics = buildPortfolioDiagnostics(
+      assemblePortfolioSignals(db, pricing, { audit: false }),
+    );
+    const byProject = new Map<string, PortfolioDiagnostic[]>();
+    for (const d of diagnostics) {
+      if (!d.projectId) continue;
+      byProject.set(d.projectId, [...(byProject.get(d.projectId) ?? []), d]);
+    }
+    return byProject;
+  }, [db, pricing]);
+  // Root-qualified labels for the drill breadcrumb — bare projectDisplayName
+  // would render two same-path projects from different roots identically.
+  const { label: projectLabel } = useMemo(
+    () =>
+      labelProjects(
+        projects,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      ),
+    [projects],
+  );
   const { columns, rows } = useTermSize();
 
   const [view, setView] = useState<View>("portfolio");
@@ -165,9 +207,7 @@ export function App({ db, pricing, indexStatus }: Props) {
   // indicator. Keeps content within the pinned viewport so it never overflows.
   const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0) - (indexNotice ? 1 : 0));
 
-  const breadcrumb = drill
-    ? `projects ▸ ${truncate(projectDisplayName(drill.projectPath, drill.projectId), 40)}`
-    : view;
+  const breadcrumb = drill ? `projects ▸ ${truncate(projectLabel(drill), 40)}` : view;
 
   const keyHints =
     focus === "rail"
@@ -175,9 +215,9 @@ export function App({ db, pricing, indexStatus }: Props) {
       : drill
         ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
         : view === "trends"
-          ? "tab/1·2·3 panel · m metric · g granularity · esc menu"
+          ? "tab/1·2·3·4 panel · m metric · g granularity · esc menu"
           : view === "tools"
-            ? "tab/1·2·3 panel · s sort · ↑↓ scroll · esc menu"
+            ? "tab/1·2·3·4 panel · s sort · ↑↓ scroll · esc menu"
             : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
 
   let body: React.ReactNode;
@@ -197,6 +237,8 @@ export function App({ db, pricing, indexStatus }: Props) {
       <ProjectsView
         projects={projects}
         db={db}
+        wasteByProject={wasteByProject}
+        findingsByProject={findingsByProject}
         columns={columns}
         pageSize={listPageSize}
         isActive={bodyActive}

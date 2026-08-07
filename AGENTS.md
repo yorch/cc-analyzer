@@ -382,7 +382,18 @@ boundary) all feed the rules identical inputs. The signals object is the
 **whole** surface: `serve` memoizes one per `fingerprint():today` and serves
 `/api/audit` out of its `audit` field while `/api/insights` reads its cache
 summary/TTL/idle buckets, and the TUI Insights screen assembles one and reads
-its cache, context tax, and what-if off it rather than recomputing them. None of the rules use the
+its cache summary, context tax, and what-if off it rather than recomputing
+them — with **one carve-out both frontends share**: the ranked project
+hit-list is re-queried at full width (`cacheWasteByProject(db,
+MAX_PROJECT_ROWS)` — the constant lives in `stats-types.ts`), because the
+signals' list is the rules' default top-50 slice while the screen filters
+client-side, and a top-N slice would make a low-waste project unreachable by
+the filter box. The TUI `App` additionally assembles a second, `audit:
+false` signal set at startup to scope diagnostics per project for the
+projects-list preview (no project-scoped rule *fires* on the audit — it only
+enriches one action string), and joins the same full-width waste query by
+project id so the preview can show cache verdict/waste for any project, not
+just the top slice. None of the rules use the
 correlational cost rollups (skill / permission-mode / branch cost); the idle-cache rule carries its
 "correlational, not causal" caveat in the finding text.
 
@@ -451,7 +462,9 @@ project's rows while the SQL aggregates stay in SQLite. The web project page
 renders it via the shared chart components in `web/src/trend-charts.tsx` (also
 used by the Trends page); the TUI project preview renders
 `projectPreviewStats()` (weekly burn sparkline + distribution ramps), computed
-at the screen boundary in `ProjectsView` and passed in as plain props — TUI
+at the screen boundary in `ProjectsView` and passed in as plain props — plus a
+cache-efficiency line (verdict/ratio/waste) and a project-scoped findings
+line, joined from App-level maps (see the portfolio-insights note) — TUI
 presentation components never touch the database.
 
 **Cost is derived, not stored.** Sessions record token counts but no cost.
@@ -598,7 +611,9 @@ unknownEvents) / lines`. Version attribution is best effort — a session is
 attributed to the newest version it ran under, and version-less sessions count
 only toward the summary. Surfaces: `cc-analyzer index --check` (one SQL scan —
 `--check` still parses nothing), the CLI `analyze` footer, `/api/analytics` →
-the web Tools → Environment section, and the `parse-coverage-drop` portfolio
+the web Tools → Environment section, the TUI tools view's reliability panel
+(summary + newest-version lines, flagging "parser behind" on the same shared
+thresholds as the rule), and the `parse-coverage-drop` portfolio
 rule (warning when the newest version's `unparsedShare ≥ 1%` over ≥ 10k lines —
 judged per version, not per rolling window, because a format change ships with
 a release).

@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
-import { formatCount, formatUSD } from "../../cli/format.ts";
-import { activityHeatmap, spendByDay } from "../../core/stats.ts";
+import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
+import { activityHeatmap, type ModelDayRow, modelMixByDay, spendByDay } from "../../core/stats.ts";
+import { weeklySeries } from "../../core/stats-types.ts";
 import {
   type BurnMetric,
   brailleChart,
@@ -12,11 +13,12 @@ import {
   heatGrid,
   metricValue,
   RAMP,
+  sparkline,
   WEEKDAY_LABELS,
 } from "../charts.ts";
 import { palette, role, selection } from "../theme.ts";
 
-type Panel = "burn" | "heatmap" | "calendar";
+type Panel = "burn" | "heatmap" | "calendar" | "models";
 type HeatMetric = "sessions" | "cost";
 const BURN_METRICS: BurnMetric[] = ["cost", "tokens", "sessions"];
 const GRANULARITIES: Granularity[] = ["day", "week", "month"];
@@ -65,6 +67,7 @@ const fmt = (metric: BurnMetric | HeatMetric, v: number): string =>
 export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
   const daily = useMemo(() => spendByDay(db), [db]);
   const heat = useMemo(() => activityHeatmap(db), [db]);
+  const modelMix = useMemo(() => modelMixByDay(db), [db]);
 
   const [panel, setPanel] = useState<Panel>("burn");
   const [burnMetric, setBurnMetric] = useState<BurnMetric>("cost");
@@ -72,7 +75,7 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("sessions");
   const [calMetric, setCalMetric] = useState<HeatMetric>("cost");
 
-  const PANELS: Panel[] = ["burn", "heatmap", "calendar"];
+  const PANELS: Panel[] = ["burn", "heatmap", "calendar", "models"];
   useInput(
     (input, key) => {
       if (key.escape) return onBack();
@@ -80,12 +83,13 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
       if (input === "1") return setPanel("burn");
       if (input === "2") return setPanel("heatmap");
       if (input === "3") return setPanel("calendar");
+      if (input === "4") return setPanel("models");
       if (input === "m") {
         if (panel === "burn") {
           setBurnMetric((m) => BURN_METRICS[(BURN_METRICS.indexOf(m) + 1) % 3] as BurnMetric);
         } else if (panel === "heatmap") {
           setHeatMetric((m) => (m === "sessions" ? "cost" : "sessions"));
-        } else {
+        } else if (panel === "calendar") {
           setCalMetric((m) => (m === "sessions" ? "cost" : "sessions"));
         }
         return;
@@ -106,7 +110,7 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
             {p}{" "}
           </Text>
         ))}
-        <Text color={role.muted}> tab · 1/2/3 · esc menu</Text>
+        <Text color={role.muted}> tab · 1/2/3/4 · esc menu</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {panel === "burn" ? (
@@ -119,9 +123,64 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
           />
         ) : panel === "heatmap" ? (
           <HeatPanel cells={heat} metric={heatMetric} />
-        ) : (
+        ) : panel === "calendar" ? (
           <CalendarPanel daily={daily} metric={calMetric} columns={columns} />
+        ) : (
+          <ModelsPanel mix={modelMix} columns={columns} />
         )}
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * Spend per model over time: one line per model (ranked by total spend, the
+ * rest already folded into "other" by `modelMixByDay`) with a weekly-bucketed
+ * sparkline — the terminal-friendly reading of the web Trends model-mix bands,
+ * fed by the same fold so the totals cannot disagree.
+ */
+function ModelsPanel({ mix, columns }: { mix: ModelDayRow[]; columns: number }) {
+  const ranked = useMemo(() => {
+    const byModel = new Map<string, { total: number; daily: { day: string; count: number }[] }>();
+    for (const r of mix) {
+      const m = byModel.get(r.model) ?? { total: 0, daily: [] };
+      m.total += r.cost;
+      m.daily.push({ day: r.day, count: r.cost });
+      byModel.set(r.model, m);
+    }
+    return [...byModel.entries()]
+      .map(([model, m]) => ({ model, total: m.total, weekly: weeklySeries(m.daily) }))
+      .sort((a, b) => b.total - a.total);
+  }, [mix]);
+  if (ranked.length === 0) {
+    return <Text color={role.muted}>No dated sessions in the index.</Text>;
+  }
+  const grand = ranked.reduce((s, m) => s + m.total, 0);
+  const nameW = Math.max(
+    8,
+    Math.min(
+      ranked.reduce((w, m) => Math.max(w, m.model.length), 0),
+      Math.max(8, Math.floor(columns / 3)),
+    ),
+  );
+  const sparkW = Math.max(10, Math.min(columns - nameW - 22, 40));
+  return (
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        models · <Text color={role.accent}>weekly spend</Text> per model, ranked by total
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        {ranked.map((m) => (
+          <Text key={m.model}>
+            <Text color={role.body}>{truncate(m.model, nameW).padEnd(nameW)} </Text>
+            <Text color={palette.amber}>{sparkline(m.weekly, sparkW).padEnd(sparkW)}</Text>
+            <Text color={role.cost}>{formatUSD(m.total).padStart(10)}</Text>
+            <Text color={role.muted}>
+              {" "}
+              {grand > 0 ? `${Math.round((m.total / grand) * 100)}%`.padStart(4) : ""}
+            </Text>
+          </Text>
+        ))}
       </Box>
     </Box>
   );

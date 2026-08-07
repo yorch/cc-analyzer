@@ -8,7 +8,7 @@ import { layoutMode } from "../../src/tui/useTermSize.ts";
 const ENTRIES: NavEntry[] = [
   { key: "portfolio", label: "portfolio", icon: "▤" },
   { key: "projects", label: "projects", icon: "▸" },
-  { key: "trends", label: "trends", icon: "∿", soon: true },
+  { key: "trends", label: "trends", icon: "∿" },
 ];
 
 describe("layoutMode", () => {

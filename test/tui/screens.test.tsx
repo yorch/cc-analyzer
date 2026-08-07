@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
+import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import type { IndexedProject, IndexedSession } from "../../src/core/queries.ts";
+import type { ProjectCacheRow } from "../../src/core/stats.ts";
 import { ProjectsView } from "../../src/tui/screens/ProjectsView.tsx";
 import { SessionListView } from "../../src/tui/screens/SessionListView.tsx";
 import { TrendsView } from "../../src/tui/screens/TrendsView.tsx";
 import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
+
+const noWaste = new Map<string, ProjectCacheRow>();
+const noFindings = new Map<string, PortfolioDiagnostic[]>();
 
 const projects: IndexedProject[] = [
   {
@@ -62,6 +67,8 @@ describe("TUI list views (smoke render)", () => {
       <ProjectsView
         projects={projects}
         db={db}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
         columns={120}
         isActive={false}
         onOpen={noop}
@@ -80,6 +87,8 @@ describe("TUI list views (smoke render)", () => {
       <ProjectsView
         projects={projects}
         db={db}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
         columns={120}
         isActive
         onOpen={noop}
@@ -105,12 +114,14 @@ describe("TUI list views (smoke render)", () => {
       cost_total: 5,
       turn_depths_json: JSON.stringify([1, 4]),
       compactions: 2,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
     });
     insertSession(charted, {
       path: "/a/2.jsonl",
       project_id: "proj-a",
       day: "2026-07-09",
       cost_total: 1,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
     });
     // The compaction count rides on the project row itself (schema v7 sum).
     const withCompactions = projects.map((p) =>
@@ -120,6 +131,8 @@ describe("TUI list views (smoke render)", () => {
       <ProjectsView
         projects={withCompactions}
         db={charted}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
         columns={120}
         isActive={false}
         onOpen={noop}
@@ -131,6 +144,8 @@ describe("TUI list views (smoke render)", () => {
     expect(frame).toContain("sess cost"); // cost-distribution ramp
     expect(frame).toContain("turn depth"); // depth ramp
     expect(frame).toContain("compactions"); // v7 count line
+    expect(frame).toContain("hot files"); // top-3 teaser header
+    expect(frame).toContain("2× src/main.ts"); // sessions × project-relative path
     unmount();
     charted.close();
   });
@@ -149,6 +164,111 @@ describe("TUI list views (smoke render)", () => {
     expect(frame).toContain("Fix the parser");
     expect(frame).toContain("$3.20");
     expect(frame).toContain("turns"); // preview pane field
+    unmount();
+  });
+});
+
+describe("ProjectsView multi-root labels and enriched preview", () => {
+  test("two roots holding the same path get [root] suffixes", () => {
+    const collide: IndexedProject[] = [
+      { ...(projects[0] as IndexedProject), projectId: "aaaa1111~x", claudeDir: "/roots/home" },
+      {
+        ...(projects[0] as IndexedProject),
+        projectId: "bbbb2222~x",
+        claudeDir: "/roots/work",
+      },
+    ];
+    const { lastFrame, unmount } = render(
+      <ProjectsView
+        projects={collide}
+        db={db}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
+        columns={120}
+        isActive={false}
+        onOpen={noop}
+        onBack={noop}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    // Identical paths from two roots must stay distinguishable in the list.
+    expect(frame).toContain("[home]");
+    expect(frame).toContain("[work]");
+    unmount();
+  });
+
+  test("a short pane drops the hot-files block instead of overflowing the shell", () => {
+    const short = openDb(":memory:");
+    insertSession(short, {
+      path: "/a/1.jsonl",
+      project_id: "proj-a",
+      day: "2026-07-01",
+      cost_total: 5,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
+    });
+    const { lastFrame, unmount } = render(
+      <ProjectsView
+        projects={projects}
+        db={short}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
+        columns={120}
+        pageSize={6} // a ~24-row terminal's list budget
+        isActive={false}
+        onOpen={noop}
+        onBack={noop}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("last active"); // vitals always render
+    expect(frame).not.toContain("hot files"); // lowest-priority block dropped
+    unmount();
+    short.close();
+  });
+
+  test("preview shows cache efficiency and project-scoped findings when present", () => {
+    const cacheRow: ProjectCacheRow = {
+      projectId: "proj-a",
+      projectPath: "/Users/dev/alpha",
+      claudeDir: "/tmp/claude",
+      sessions: 3,
+      writeTokens: 1000,
+      readTokens: 100,
+      writeCost: 20,
+      readCost: 0.1,
+      inputCost: 1,
+      outputCost: 1,
+      totalCost: 22.1,
+      ratio: 0.1,
+      waste: 18,
+    };
+    const finding: PortfolioDiagnostic = {
+      code: "compaction-pressure",
+      severity: "warning",
+      title: "One project compacts in most of its sessions",
+      evidence: "…",
+      action: "…",
+      projectId: "proj-a",
+    };
+    const { lastFrame, unmount } = render(
+      <ProjectsView
+        projects={projects}
+        db={db}
+        wasteByProject={new Map([["proj-a", cacheRow]])}
+        findingsByProject={new Map([["proj-a", [finding]]])}
+        columns={120}
+        isActive={false}
+        onOpen={noop}
+        onBack={noop}
+      />,
+    );
+    // proj-a is the most recent, so it is highlighted and previewed by default.
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("cache eff.");
+    expect(frame).toContain("leaky"); // verdict word, not just the color dot
+    expect(frame).toContain("$18.00"); // un-amortized waste
+    expect(frame).toContain("findings");
+    expect(frame).toContain("compacts in most"); // top finding's title
     unmount();
   });
 });

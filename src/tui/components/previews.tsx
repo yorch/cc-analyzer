@@ -6,9 +6,15 @@ import {
   formatUSD,
   truncate,
 } from "../../cli/format.ts";
+import type { PortfolioDiagnostic } from "../../core/portfolio-diagnostics.ts";
 import { projectDisplayName } from "../../core/project-labels.ts";
 import type { IndexedProject, IndexedSession, SessionWithProject } from "../../core/queries.ts";
-import { type CacheMetrics, cacheVerdict, type ProjectPreviewStats } from "../../core/stats.ts";
+import {
+  type CacheMetrics,
+  cacheVerdict,
+  type ProjectCacheRow,
+  type ProjectPreviewStats,
+} from "../../core/stats.ts";
 import { sparkline } from "../charts.ts";
 import { palette, role, VERDICT_COLOR } from "../theme.ts";
 
@@ -31,19 +37,49 @@ function cacheShare(io: number, cache: number): string {
 const SPARK_WEEKS = 26;
 
 /** Detail-pane summary for a selected project, with per-project chart lines
- * (weekly burn sparkline + distribution ramps). `stats` arrives as plain
- * props from the screen boundary — this component never touches the db. */
+ * (weekly burn sparkline + distribution ramps). `stats`/`cache`/`findings`
+ * arrive as plain props from the screen boundary — this component never
+ * touches the db. `cache` is absent (not zero) for a project with no
+ * cache-write activity; `findings` are the portfolio diagnostics scoped to
+ * this project, usually empty. `maxRows` is the pane's line budget: the shell
+ * pins itself to the terminal height and clips nothing gracefully, so on a
+ * short terminal the preview drops its lowest-priority blocks (hot files
+ * first, then the chart lines) instead of overflowing the frame. */
 export function ProjectPreview({
   project,
   stats,
+  cache,
+  findings = [],
+  maxRows = Number.POSITIVE_INFINITY,
 }: {
   project: IndexedProject | undefined;
   stats: ProjectPreviewStats | undefined;
+  cache?: ProjectCacheRow;
+  findings?: PortfolioDiagnostic[];
+  maxRows?: number;
 }) {
   if (!project) return <Text color={role.muted}>(no selection)</Text>;
   const weekly = stats?.weeklyBurn.slice(-SPARK_WEEKS) ?? [];
   const dist = stats?.distribution;
   const depth = stats?.turnDepth;
+  const allHot = stats?.hotFiles ?? [];
+
+  // Line budget: title + blank, the vitals block, and the trailing hint are
+  // always kept; the chart block and the hot-files block are included only
+  // when they still fit, charts first (they summarize, hot files itemize).
+  const vitalsLines =
+    5 + // spend, sessions, tokens, cache, last active
+    (cache ? 1 : 0) +
+    (project.compactions > 0 ? 1 : 0) +
+    (findings.length > 0 ? 1 : 0);
+  const chartLines =
+    (weekly.length > 1 ? 1 : 0) +
+    (dist && dist.sessions > 0 ? 1 : 0) +
+    (depth && depth.turns > 0 ? 1 : 0);
+  const base = 2 + vitalsLines + 2; // title + blank … + blank + hint
+  const showCharts = chartLines > 0 && base + 1 + chartLines <= maxRows;
+  const afterCharts = base + (showCharts ? 1 + chartLines : 0);
+  const hot = allHot.length > 0 && afterCharts + 2 + allHot.length <= maxRows ? allHot : [];
   return (
     <Box flexDirection="column">
       <Text bold color={role.heading}>
@@ -63,6 +99,17 @@ export function ProjectPreview({
           <Text color={palette.green}>{cacheShare(project.ioTokens, project.cacheTokens)}</Text>
           <Text color={role.muted}> of tokens</Text>
         </Field>
+        {cache && (
+          <Field label="cache eff.">
+            {/* Dot + verdict word: the word keeps it legible without color. */}
+            <Text color={VERDICT_COLOR[cacheVerdict(cache.ratio)]}>
+              ● {cacheVerdict(cache.ratio)}
+            </Text>
+            <Text color={role.muted}> · {cache.ratio.toFixed(1)}× read:write · </Text>
+            <Text color={role.cost}>{formatUSD(cache.waste)}</Text>
+            <Text color={role.muted}> un-amortized</Text>
+          </Field>
+        )}
         <Field label="last active">
           <Text color={role.body}>{formatRelativeTime(project.lastActivityMs)}</Text>
         </Field>
@@ -72,41 +119,70 @@ export function ProjectPreview({
             <Text color={role.muted}> context-window hits</Text>
           </Field>
         )}
-      </Box>
-      <Box marginTop={1} flexDirection="column">
-        {weekly.length > 1 && (
-          <Field label="burn / week">
-            <Text color={palette.amber}>{sparkline(weekly, 28)}</Text>
-          </Field>
-        )}
-        {dist && dist.sessions > 0 && (
-          <Field label="sess cost">
-            <Text color={palette.amber}>
-              {sparkline(
-                dist.buckets.map((b) => b.count),
-                dist.buckets.length,
-              )}
+        {findings.length > 0 && (
+          <Field label="findings">
+            {/* Same glyphs as the Insights header: ! warning, · info. */}
+            <Text color={findings.some((d) => d.severity === "warning") ? role.accent : role.muted}>
+              {findings.some((d) => d.severity === "warning") ? "!" : "·"}{" "}
+              {formatCount(findings.length)}
             </Text>
-            <Text color={role.muted}> &lt;1¢→$100+ · median {formatUSD(dist.p50)}</Text>
-          </Field>
-        )}
-        {depth && depth.turns > 0 && (
-          <Field label="turn depth">
-            <Text color={palette.amber}>
-              {sparkline(
-                depth.buckets.map((b) => b.turns),
-                depth.buckets.length,
-              )}
-            </Text>
-            <Text color={role.muted}> 1→16+ · avg {depth.avgDepth.toFixed(1)} calls</Text>
+            <Text color={role.muted}> · {truncate(findings[0]?.title ?? "", 34)}</Text>
           </Field>
         )}
       </Box>
+      {showCharts && (
+        <Box marginTop={1} flexDirection="column">
+          {weekly.length > 1 && (
+            <Field label="burn / week">
+              <Text color={palette.amber}>{sparkline(weekly, 28)}</Text>
+            </Field>
+          )}
+          {dist && dist.sessions > 0 && (
+            <Field label="sess cost">
+              <Text color={palette.amber}>
+                {sparkline(
+                  dist.buckets.map((b) => b.count),
+                  dist.buckets.length,
+                )}
+              </Text>
+              <Text color={role.muted}> &lt;1¢→$100+ · median {formatUSD(dist.p50)}</Text>
+            </Field>
+          )}
+          {depth && depth.turns > 0 && (
+            <Field label="turn depth">
+              <Text color={palette.amber}>
+                {sparkline(
+                  depth.buckets.map((b) => b.turns),
+                  depth.buckets.length,
+                )}
+              </Text>
+              <Text color={role.muted}> 1→16+ · avg {depth.avgDepth.toFixed(1)} calls</Text>
+            </Field>
+          )}
+        </Box>
+      )}
+      {hot.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color={role.muted}>hot files · written or edited across sessions</Text>
+          {hot.map((f) => (
+            <Text key={f.file}>
+              <Text color={role.body}>{String(f.sessions).padStart(3)}× </Text>
+              <Text color={role.muted}>{truncate(relFile(f.file, project.projectPath), 44)}</Text>
+            </Text>
+          ))}
+        </Box>
+      )}
       <Box marginTop={1}>
         <Text color={role.muted}>↵ browse this project's sessions</Text>
       </Box>
     </Box>
   );
+}
+
+/** A file path relative to the project root, when it lives under it. */
+function relFile(file: string, projectPath: string | null): string {
+  const prefix = projectPath ? `${projectPath}/` : "";
+  return prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file;
 }
 
 /** Detail-pane summary for a selected session. */
