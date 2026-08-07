@@ -14,8 +14,12 @@ import {
   addCost,
   addTokens,
   type CostBreakdown,
+  cacheTokens,
   computeCost,
+  effectivePricing,
+  ioTokens,
   type PricingTable,
+  promptTokens,
   resolveModel,
   type TokenCounts,
   zeroCost,
@@ -340,6 +344,17 @@ export interface AnalyzeOptions {
    * than derived because the analyzer never sees the lines that failed to parse.
    */
   coverage?: ParseCoverage;
+  /**
+   * Cross-file usage de-dup seam (the indexer). Called once per de-duplicated
+   * API call with the call's stable identity (`message.id`, falling back to the
+   * composite usage key); return false when another already-indexed file
+   * counted this call — a continuation/copied session file repeats prior
+   * entries verbatim — and the call's usage, cost, and API-call count are
+   * skipped exactly like a streamed continuation line (steps and tool activity
+   * still count). Absent (every interactive surface): every call counts, so a
+   * single session's own view always shows its full transcript's cost.
+   */
+  claimUsage?: (key: string) => boolean;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -540,6 +555,11 @@ class SessionAnalyzer {
   private webFetches = 0;
   private toolCallCount = 0;
   private apiCallCount = 0;
+  // API calls *seen* in this file, including cross-file duplicates the claim
+  // callback refused. Structural checks (is a compact boundary inherited?)
+  // read this, never `apiCallCount`: whether another file claimed a call must
+  // not change what this file's transcript says happened.
+  private seenApiCalls = 0;
   private turnCount = 0;
   private testRuns = 0;
   private testFailures = 0;
@@ -616,7 +636,10 @@ class SessionAnalyzer {
 
   // Streamed responses log one `assistant` line per content block, each
   // repeating the same message id and full usage. `seenUsage` de-dups so usage
-  // is counted once; `callsByKey` (detail only) merges continuation steps into
+  // is counted once — it holds both the composite `mid:requestId` key and the
+  // bare message id, so a replay of the same response under a new requestId
+  // (sidechain logs do this to parent messages) still reads as a repeat;
+  // `callsByKey` (detail only) merges continuation steps into
   // the originating ApiCall; `stoppedKeys` records which calls already had a
   // stop_reason counted (it can arrive on any line of the call).
   private readonly seenUsage = new Set<string>();
@@ -630,6 +653,7 @@ class SessionAnalyzer {
   constructor(
     private readonly pricing: PricingTable,
     private readonly detail: boolean,
+    private readonly claimUsage?: (key: string) => boolean,
   ) {}
 
   /** Record the parse coverage of the events this analyzer is being fed. */
@@ -664,7 +688,9 @@ class SessionAnalyzer {
     return mid ?? e.requestId;
   }
 
-  /** Count a call's stop_reason once — on whichever line first carries one. */
+  /** Count a call's stop_reason once — on whichever line first carries one.
+   * Callers key by message id when they have one, so a replayed line under a
+   * new requestId can't count the same response's stop reason twice. */
   private countStopReason(reason: string, key: string | undefined): void {
     if (key !== undefined) {
       if (this.stoppedKeys.has(key)) return;
@@ -776,7 +802,7 @@ class SessionAnalyzer {
           trigger: sys.compactMetadata?.trigger,
           preTokens: sys.compactMetadata?.preTokens,
           ...(side ? { isSidechain: true } : {}),
-          ...(this.apiCallCount === 0 ? { inherited: true } : {}),
+          ...(this.seenApiCalls === 0 ? { inherited: true } : {}),
         });
         this.pendingBoundarySidechain = side;
       }
@@ -793,7 +819,7 @@ class SessionAnalyzer {
             timestamp: event.timestamp,
             uuid: event.uuid,
             ...(side ? { isSidechain: true } : {}),
-            ...(this.apiCallCount === 0 ? { inherited: true } : {}),
+            ...(this.seenApiCalls === 0 ? { inherited: true } : {}),
           });
       }
       // Resolve any tool_result blocks first (a user event may carry them
@@ -889,7 +915,14 @@ class SessionAnalyzer {
     }
     this.touchTime(event.timestamp);
     const key = this.usageKey(event);
-    const isContinuation = key !== undefined && this.seenUsage.has(key);
+    const mid = event.message.id;
+    // A repeat of the composite key is a streamed continuation line; a repeat
+    // of the message id alone is the same API call re-logged under a different
+    // requestId (sidechain logs replay parent messages that way) — message ids
+    // are unique per API response, so either repeat means "already counted".
+    const isContinuation =
+      (key !== undefined && this.seenUsage.has(key)) ||
+      (mid !== undefined && this.seenUsage.has(mid));
 
     // Every content block appears on exactly one line, so tool counting +
     // pending registration run for every assistant line (including
@@ -1056,10 +1089,27 @@ class SessionAnalyzer {
         }
       }
       const reason = event.message.stop_reason;
-      if (reason) this.countStopReason(reason, key);
+      if (reason) this.countStopReason(reason, mid ?? key);
       return;
     }
     if (key !== undefined) this.seenUsage.add(key);
+    if (mid !== undefined) this.seenUsage.add(mid);
+
+    this.seenApiCalls += 1;
+
+    // Cross-file de-dup: when the indexer's claim callback refuses this call's
+    // identity (another indexed file already counted it — continuation files
+    // copy their parent's entries verbatim), skip its usage and cost exactly
+    // like a continuation line. The keys were added above, so the call's later
+    // streamed lines take the continuation path without re-asking.
+    if (this.claimUsage) {
+      const claimKey = mid ?? key;
+      if (claimKey !== undefined && !this.claimUsage(claimKey)) {
+        const reason = event.message.stop_reason;
+        if (reason) this.countStopReason(reason, mid ?? key);
+        return;
+      }
+    }
 
     // First (or only) line of this API call: count and price its usage once.
     const usage = event.message.usage;
@@ -1069,12 +1119,21 @@ class SessionAnalyzer {
     const tokens = usageToTokens(usage);
     const model = event.message.model;
     const resolved = model ? resolveModel(this.pricing, model) : undefined;
-    const cost = computeCost(tokens, resolved?.pricing);
+    // Tier per call, on the de-duplicated line: the long-context switch keys
+    // off one request's prompt size, never an aggregate.
+    const cost = computeCost(
+      tokens,
+      resolved ? effectivePricing(resolved.pricing, tokens) : undefined,
+    );
     // A family-heuristic match (non-exact) is still an estimate.
     if (resolved && !resolved.exact) cost.estimated = true;
+    // A zero-token call costs $0 under any table, so an unpriceable model on
+    // it (Claude Code's "<synthetic>" error stubs) must not flag the session's
+    // real spend as heuristic.
+    if (ioTokens(tokens) + cacheTokens(tokens) === 0) cost.estimated = false;
 
     const stopReason = event.message.stop_reason ?? undefined;
-    if (stopReason) this.countStopReason(stopReason, key);
+    if (stopReason) this.countStopReason(stopReason, mid ?? key);
 
     this.apiCallCount += 1;
     const isSidechain = event.isSidechain === true;
@@ -1082,11 +1141,7 @@ class SessionAnalyzer {
     // on the de-duplicated call (continuation lines returned above), so a
     // streamed response can't overwrite it with a repeat of the same usage.
     if (!isSidechain && this.firstPromptTokens === undefined) {
-      this.firstPromptTokens =
-        tokens.inputTokens +
-        tokens.cacheReadTokens +
-        tokens.cacheWrite5mTokens +
-        tokens.cacheWrite1hTokens;
+      this.firstPromptTokens = promptTokens(tokens);
     }
     if (isSidechain) {
       this.sidechainApiCalls += 1;
@@ -1306,7 +1361,7 @@ export function analyzeSession(
   pricing: PricingTable,
   opts: AnalyzeOptions = {},
 ): SessionAnalysis {
-  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
+  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true, opts.claimUsage);
   analyzer.setParseCoverage(opts.coverage);
   for (const event of events) analyzer.push(event);
   return analyzer.finish();
@@ -1336,7 +1391,7 @@ export async function analyzeSessionStream(
   pricing: PricingTable,
   opts: AnalyzeOptions = {},
 ): Promise<SessionAnalysis> {
-  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true);
+  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true, opts.claimUsage);
   analyzer.setParseCoverage(opts.coverage);
   const it = events[Symbol.asyncIterator]();
   try {

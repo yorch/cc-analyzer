@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   computeCost,
+  effectivePricing,
+  LONG_CONTEXT_THRESHOLD,
   type ModelPricing,
   type PricingTable,
+  promptTokens,
   resolveModel,
   type TokenCounts,
 } from "../../src/core/pricing.ts";
@@ -116,5 +119,69 @@ describe("resolveModel · family fallback choice", () => {
     };
     const r = resolveModel(table, "claude-opus-9-9");
     expect(r?.pricing).toBe(gen41);
+  });
+});
+
+describe("effectivePricing · long-context tier", () => {
+  const above200k = {
+    inputCostPerToken: 0.000006,
+    outputCostPerToken: 0.0000225,
+    cacheWrite5mCostPerToken: 0.0000075,
+    cacheWrite1hCostPerToken: 0.000012,
+    cacheReadCostPerToken: 0.0000006,
+  };
+  const tiered: ModelPricing = {
+    inputCostPerToken: 0.000003,
+    outputCostPerToken: 0.000015,
+    cacheWrite5mCostPerToken: 0.00000375,
+    cacheWrite1hCostPerToken: 0.000006,
+    cacheReadCostPerToken: 0.0000003,
+    maxInputTokens: 200_000,
+    above200k,
+  };
+  const tokensWithPrompt = (prompt: number): TokenCounts => ({
+    inputTokens: prompt,
+    outputTokens: 50_000,
+    cacheWrite5mTokens: 0,
+    cacheWrite1hTokens: 0,
+    cacheReadTokens: 0,
+  });
+
+  test("switches the whole request to tier rates above the threshold", () => {
+    const p = effectivePricing(tiered, tokensWithPrompt(LONG_CONTEXT_THRESHOLD + 1));
+    expect(p.inputCostPerToken).toBe(above200k.inputCostPerToken);
+    expect(p.outputCostPerToken).toBe(above200k.outputCostPerToken);
+    // Window metadata survives the switch.
+    expect(p.maxInputTokens).toBe(200_000);
+  });
+
+  test("stays on base rates at or below the threshold, and without a tier", () => {
+    expect(effectivePricing(tiered, tokensWithPrompt(LONG_CONTEXT_THRESHOLD))).toBe(tiered);
+    const { above200k: _tier, ...untiered } = tiered;
+    expect(effectivePricing(untiered, tokensWithPrompt(500_000))).toBe(untiered);
+  });
+
+  test("the threshold reads the prompt side only — output does not trip it", () => {
+    const t: TokenCounts = {
+      inputTokens: 1_000,
+      outputTokens: 300_000,
+      cacheWrite5mTokens: 0,
+      cacheWrite1hTokens: 0,
+      cacheReadTokens: 0,
+    };
+    expect(promptTokens(t)).toBe(1_000);
+    expect(effectivePricing(tiered, t)).toBe(tiered);
+  });
+
+  test("cache categories count toward the prompt side", () => {
+    const t: TokenCounts = {
+      inputTokens: 1_000,
+      outputTokens: 0,
+      cacheWrite5mTokens: 100_000,
+      cacheWrite1hTokens: 50_000,
+      cacheReadTokens: 60_000,
+    };
+    expect(promptTokens(t)).toBe(211_000);
+    expect(effectivePricing(tiered, t).inputCostPerToken).toBe(above200k.inputCostPerToken);
   });
 });

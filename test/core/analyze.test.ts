@@ -670,3 +670,203 @@ describe("compaction capture", () => {
     expect(agg.compactions[0]?.preTokens).toBe(150_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cost-accuracy behaviors: the estimated-flag guard, message-id replay de-dup,
+// the cross-file claim seam, and long-context tier pricing.
+
+describe("analyzeSession · zero-token calls and the estimated flag", () => {
+  const promptLine = { type: "user", uuid: "u1", message: { role: "user", content: "hi" } };
+
+  test("a zero-token <synthetic> stub does not flag the session estimated", () => {
+    const a = analyzeLines([
+      promptLine,
+      {
+        type: "assistant",
+        uuid: "a1",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "real work" }],
+          usage,
+        },
+      },
+      // Claude Code writes error stubs with model "<synthetic>" and no usage.
+      {
+        type: "assistant",
+        uuid: "a2",
+        message: {
+          id: "msg_synth",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "API error" }],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      },
+    ]);
+    expect(a.totals.cost.total).toBeGreaterThan(0);
+    expect(a.totals.cost.estimated).toBe(false);
+  });
+
+  test("an unpriceable model WITH tokens still flags estimated", () => {
+    const a = analyzeLines([
+      promptLine,
+      {
+        type: "assistant",
+        uuid: "a1",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "totally-unknown-model",
+          content: [{ type: "text", text: "hm" }],
+          usage,
+        },
+      },
+    ]);
+    expect(a.totals.cost.estimated).toBe(true);
+  });
+});
+
+describe("analyzeSession · message-id replay de-dup", () => {
+  test("the same message id under a new requestId counts once (sidechain replay)", () => {
+    const a = analyzeLines([
+      { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        requestId: "req_1",
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "hello" }],
+          usage,
+        },
+      },
+      // The same API response re-logged by a sidechain under a fresh requestId.
+      {
+        type: "assistant",
+        uuid: "a2",
+        requestId: "req_2",
+        isSidechain: true,
+        message: {
+          id: "msg_1",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "hello" }],
+          usage,
+        },
+      },
+    ]);
+    expect(a.totals.apiCalls).toBe(1);
+    expect(a.totals.tokens.inputTokens).toBe(10);
+    expect(a.totals.sidechainApiCalls).toBe(0);
+  });
+});
+
+describe("analyzeSession · cross-file claim seam", () => {
+  const lines = [
+    { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+    {
+      type: "assistant",
+      uuid: "a1",
+      requestId: "req_1",
+      message: {
+        id: "msg_1",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "hello" }],
+        usage,
+      },
+    },
+    {
+      type: "assistant",
+      uuid: "a2",
+      requestId: "req_2",
+      message: {
+        id: "msg_2",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "more" }],
+        usage,
+      },
+    },
+  ];
+
+  function analyzeWithClaims(claimUsage: (key: string) => boolean) {
+    const { events } = parseSessionText(lines.map((l) => JSON.stringify(l)).join("\n"));
+    return analyzeSession(events, pricing, { claimUsage });
+  }
+
+  test("claims are asked once per de-duplicated call, keyed by message id", () => {
+    const asked: string[] = [];
+    analyzeWithClaims((key) => {
+      asked.push(key);
+      return true;
+    });
+    expect(asked).toEqual(["msg_1", "msg_2"]);
+  });
+
+  test("a refused claim skips the call's usage, cost, and API-call count", () => {
+    const a = analyzeWithClaims((key) => key !== "msg_1");
+    expect(a.totals.apiCalls).toBe(1);
+    expect(a.totals.tokens.inputTokens).toBe(10);
+    expect(a.totals.tokens.outputTokens).toBe(20);
+    expect(a.models["claude-opus-4-7"]?.apiCalls).toBe(1);
+  });
+
+  test("refusing every claim leaves a zero-cost, non-estimated analysis", () => {
+    const a = analyzeWithClaims(() => false);
+    expect(a.totals.apiCalls).toBe(0);
+    expect(a.totals.cost.total).toBe(0);
+    expect(a.totals.cost.estimated).toBe(false);
+  });
+});
+
+describe("analyzeSession · long-context tier", () => {
+  const tiered = {
+    "claude-sonnet-4-5": {
+      ...flat,
+      above200k: {
+        inputCostPerToken: flat.inputCostPerToken * 2,
+        outputCostPerToken: flat.outputCostPerToken * 1.5,
+        cacheWrite5mCostPerToken: flat.cacheWrite5mCostPerToken * 2,
+        cacheWrite1hCostPerToken: flat.cacheWrite1hCostPerToken * 2,
+        cacheReadCostPerToken: flat.cacheReadCostPerToken * 2,
+      },
+    },
+  };
+
+  function callWith(cacheRead: number) {
+    const { events } = parseSessionText(
+      [
+        { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+        {
+          type: "assistant",
+          uuid: "a1",
+          requestId: "req_1",
+          message: {
+            id: "msg_1",
+            model: "claude-sonnet-4-5",
+            content: [{ type: "text", text: "ok" }],
+            usage: { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: cacheRead },
+          },
+        },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n"),
+    );
+    return analyzeSession(events, tiered);
+  }
+
+  test("a call whose prompt exceeds 200K prices at the tier rates", () => {
+    const below = callWith(100_000);
+    const above = callWith(300_000);
+    // Same token mix apart from cache-read; the tiered call pays 2x on every
+    // category (1.5x output), not just on the excess — whole-request switch.
+    expect(above.totals.cost.input).toBeCloseTo(below.totals.cost.input * 2, 10);
+    expect(above.totals.cost.output).toBeCloseTo(below.totals.cost.output * 1.5, 10);
+    expect(above.totals.cost.estimated).toBe(false);
+  });
+
+  test("exactly at the threshold stays on base rates", () => {
+    const at = callWith(199_000); // 1000 input + 199k cache read = 200k exactly
+    expect(at.totals.cost.input).toBeCloseTo(1000 * flat.inputCostPerToken, 10);
+  });
+});

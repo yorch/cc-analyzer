@@ -32,9 +32,13 @@ beforeAll(async () => {
   const content = await Bun.file(fixture).text();
   mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
   mkdirSync(join(claude.dir, "projects", "proj-b"), { recursive: true });
-  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), content);
-  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-2.jsonl"), content);
-  writeFileSync(join(claude.dir, "projects", "proj-b", "sess-3.jsonl"), content);
+  // Distinct message/request ids per file: byte-identical copies would be
+  // cross-file de-duplicated by the indexer and count $0 in rollups.
+  const distinct = (n: number) =>
+    content.replaceAll('"msg_', `"s${n}-msg_`).replaceAll('"req-', `"s${n}-req-`);
+  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-1.jsonl"), distinct(1));
+  writeFileSync(join(claude.dir, "projects", "proj-a", "sess-2.jsonl"), distinct(2));
+  writeFileSync(join(claude.dir, "projects", "proj-b", "sess-3.jsonl"), distinct(3));
 });
 
 afterAll(() => {
@@ -496,6 +500,107 @@ describe("reindex · corrections (schema v13)", () => {
       interruptionShare: 0,
       weekly: [],
     });
+    db.close();
+  });
+});
+
+describe("reindex · cross-file usage de-dup (schema v16)", () => {
+  const call = (mid: string, req: string, uuid: string) =>
+    JSON.stringify({
+      type: "assistant",
+      uuid,
+      sessionId: "sess-parent",
+      requestId: req,
+      timestamp: "2026-07-01T10:00:05.000Z",
+      cwd: "/Users/dev/dedup",
+      message: {
+        id: mid,
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      },
+    });
+  const prompt = (uuid: string, text: string) =>
+    JSON.stringify({
+      type: "user",
+      uuid,
+      sessionId: "sess-parent",
+      timestamp: "2026-07-01T10:00:00.000Z",
+      cwd: "/Users/dev/dedup",
+      message: { role: "user", content: text },
+    });
+  const parentLines = [
+    prompt("du1", "hi"),
+    call("dmsg_1", "dreq_1", "da1"),
+    call("dmsg_2", "dreq_2", "da2"),
+  ];
+  // The continuation copies the parent's entries verbatim, then adds one novel call.
+  const contLines = [...parentLines, prompt("du2", "continue"), call("dmsg_3", "dreq_3", "da3")];
+
+  const dir = () => join(claude.dir, "projects", "proj-dedup");
+  const parentPath = () => join(dir(), "parent.jsonl");
+  const contPath = () => join(dir(), "continuation.jsonl");
+
+  function tokensByPath(db: Database): Map<string, { input: number; output: number }> {
+    const rows = db
+      .query(
+        "SELECT path, input_tokens AS input, output_tokens AS output FROM sessions WHERE path LIKE ?",
+      )
+      .all(`${dir()}%`) as { path: string; input: number; output: number }[];
+    return new Map(rows.map((r) => [r.path, { input: r.input, output: r.output }]));
+  }
+
+  test("a continuation file's copied calls count once portfolio-wide", async () => {
+    const db = openDb(":memory:");
+    mkdirSync(dir(), { recursive: true });
+    writeFileSync(parentPath(), parentLines.join("\n"));
+    await reindex(db, { pricing });
+
+    writeFileSync(contPath(), contLines.join("\n"));
+    await reindex(db, { pricing });
+
+    const rows = tokensByPath(db);
+    // Parent keeps its 2 calls; the continuation counts only its novel one.
+    expect(rows.get(parentPath())).toEqual({ input: 20, output: 40 });
+    expect(rows.get(contPath())).toEqual({ input: 10, output: 20 });
+
+    // Claims live in usage_keys, scoped by path.
+    const keys = db
+      .query("SELECT key, path FROM usage_keys WHERE path LIKE ? ORDER BY key")
+      .all(`${dir()}%`) as { key: string; path: string }[];
+    expect(keys.map((k) => k.key)).toEqual(["dmsg_1", "dmsg_2", "dmsg_3"]);
+    expect(keys[0]?.path).toBe(parentPath());
+    expect(keys[2]?.path).toBe(contPath());
+    db.close();
+  });
+
+  test("totals stay single-counted through a full rebuild", async () => {
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    await reindex(db, { pricing, rebuild: true });
+    const rows = tokensByPath(db);
+    const total = [...rows.values()].reduce((s, r) => s + r.input, 0);
+    // 3 distinct calls x 10 input tokens, however attribution fell.
+    expect(total).toBe(30);
+    db.close();
+  });
+
+  test("pruning a deleted parent frees its claims; a rebuild reclaims them", async () => {
+    const db = openDb(":memory:");
+    await reindex(db, { pricing });
+    rmSync(parentPath());
+    await reindex(db, { pricing });
+    expect(tokensByPath(db).has(parentPath())).toBe(false);
+    const owners = db
+      .query("SELECT DISTINCT path FROM usage_keys WHERE path = ?")
+      .all(parentPath());
+    expect(owners).toHaveLength(0);
+
+    // The surviving continuation row still carries deduped numbers until a
+    // rebuild re-analyzes it with the claims freed.
+    await reindex(db, { pricing, rebuild: true });
+    expect(tokensByPath(db).get(contPath())).toEqual({ input: 30, output: 60 });
     db.close();
   });
 });

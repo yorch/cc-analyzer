@@ -123,12 +123,46 @@ describe("loadPricing · cache format version", () => {
       // maxInputTokens) is the answer.
       const loaded = await loadPricing({ fetchImpl: () => Promise.reject(new Error("offline")) });
       expect(loaded.source).toBe("bundled");
-      expect(loaded.table["claude-opus-4-7"]?.maxInputTokens).toBe(200_000);
+      // The exact window tracks LiteLLM's data; what matters is that the
+      // bundled snapshot carries one at all (the stale cache had none).
+      expect(loaded.table["claude-opus-4-7"]?.maxInputTokens).toBeGreaterThan(0);
     } finally {
       const { rmSync } = await import("node:fs");
       rmSync(dir, { recursive: true, force: true });
       if (prev === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
       else process.env.CC_ANALYZER_STATE_DIR = prev;
     }
+  });
+});
+
+describe("mapLiteLLMEntry · long-context tier", () => {
+  const base = { input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 };
+
+  test("maps the *_above_200k_tokens fields into above200k", () => {
+    const mapped = mapLiteLLMEntry({
+      ...base,
+      input_cost_per_token_above_200k_tokens: 0.000006,
+      output_cost_per_token_above_200k_tokens: 0.0000225,
+      cache_creation_input_token_cost_above_200k_tokens: 0.0000075,
+      cache_read_input_token_cost_above_200k_tokens: 0.0000006,
+    });
+    expect(mapped?.above200k).toEqual({
+      inputCostPerToken: 0.000006,
+      outputCostPerToken: 0.0000225,
+      cacheWrite5mCostPerToken: 0.0000075,
+      cacheWrite1hCostPerToken: 0.000012, // no LiteLLM field: tier input x2
+      cacheReadCostPerToken: 0.0000006,
+    });
+  });
+
+  test("derives missing tier companions from Anthropic's multipliers", () => {
+    const mapped = mapLiteLLMEntry({ ...base, input_cost_per_token_above_200k_tokens: 0.000006 });
+    expect(mapped?.above200k?.outputCostPerToken).toBeCloseTo(0.000015 * 1.5, 12);
+    expect(mapped?.above200k?.cacheWrite5mCostPerToken).toBeCloseTo(0.000006 * 1.25, 12);
+    expect(mapped?.above200k?.cacheReadCostPerToken).toBeCloseTo(0.000006 * 0.1, 12);
+  });
+
+  test("omits above200k entirely when LiteLLM has no tier input rate", () => {
+    expect(mapLiteLLMEntry(base)?.above200k).toBeUndefined();
   });
 });

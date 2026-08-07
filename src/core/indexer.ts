@@ -316,6 +316,33 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
         const prev = existing.get(f.path);
         return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
       });
+  // Oldest first: when a continuation file and its parent land in the same
+  // scan, the parent (older mtime) claims the shared calls, so the copied
+  // spend attributes to the session that actually ran it. Attribution — not
+  // correctness — depends on this order; totals count each call once either way.
+  toIngest.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+  // Cross-file usage de-dup: a continuation/copied session file repeats its
+  // parent's assistant entries (same message ids), which used to double-count
+  // their cost in every portfolio rollup. Each de-duplicated call's identity is
+  // claimed by the first file to count it — prior runs' claims live in
+  // `usage_keys`, this run's in `runClaims` (checked synchronously, so files
+  // analyzed concurrently can't both count one call). A file re-analyzed after
+  // changing may re-claim its own keys. `runClaims` holds only this run's keys:
+  // small on incremental scans, the whole portfolio once on a full rebuild.
+  const runClaims = new Map<string, string>();
+  const priorClaim = db.query("SELECT path FROM usage_keys WHERE key = ?");
+  if (opts.rebuild) db.query("DELETE FROM usage_keys").run();
+  const claimFor =
+    (path: string) =>
+    (key: string): boolean => {
+      const mine = runClaims.get(key);
+      if (mine !== undefined) return mine === path;
+      const prior = priorClaim.get(key) as { path: string } | undefined;
+      if (prior && prior.path !== path) return false;
+      runClaims.set(key, path);
+      return true;
+    };
 
   let done = 0;
   const rows = await mapPool(toIngest, concurrency, async (info) => {
@@ -324,6 +351,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
       // aggregates, so a huge session never materializes as a full array.
       const analysis = await analyzeSessionStream(streamSessionEvents(info.path), pricing, {
         detail: false,
+        claimUsage: claimFor(info.path),
       });
       return toSessionRow(analysis, info, now);
     } catch {
@@ -340,16 +368,31 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   // first — that is one of the mechanisms uniform qualification removed.)
   const upsert = upsertStatement(db);
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
+  const deleteKeysStmt = db.query("DELETE FROM usage_keys WHERE path = ?");
+  const insertKeyStmt = db.query("INSERT OR REPLACE INTO usage_keys (key, path) VALUES (?, ?)");
 
   let deleted = 0;
   const writeAll = db.transaction(() => {
+    // A re-analyzed file's stored claims are replaced wholesale by this run's;
+    // a file whose analysis failed keeps its old row AND its old claims.
+    const okPaths = new Set<string>();
     for (const row of rows) {
-      if (row) upsert.run(...rowValues(row));
+      if (!row) continue;
+      upsert.run(...rowValues(row));
+      okPaths.add(row.path);
+      deleteKeysStmt.run(row.path);
+    }
+    for (const [key, path] of runClaims) {
+      if (okPaths.has(path)) insertKeyStmt.run(key, path);
     }
     for (const [path, prev] of existing) {
       if (currentPaths.has(path)) continue;
       if (retained(prev.claude_dir)) continue;
+      // Note: calls the deleted file had claimed stay uncounted in surviving
+      // rows until those are re-analyzed (a rebuild reclaims everything) —
+      // under-counting briefly beats double-counting silently.
       deleteStmt.run(path);
+      deleteKeysStmt.run(path);
       deleted++;
     }
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(

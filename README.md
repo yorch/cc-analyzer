@@ -34,6 +34,14 @@ the CLI, TUI, and web app (`cc-analyzer cost-basis` shows the current setting;
 `api` is the default) — or, in the web app, flip the toggle beside the
 Dashboard's cost figure.
 
+**What the numbers aren't.** cc-analyzer never reads the deprecated
+pre-computed `costUSD` field some older Claude Code JSONL files carry — it
+always recomputes from token counts, the same choice as ccusage's
+`--mode calculate`, so totals can differ from tools that trust `costUSD` by
+default on old logs. And local JSONL files aren't the billing ground truth:
+usage from other machines, claude.ai web, or non-Claude-Code API use never
+shows up in them.
+
 ## Install
 
 ### One-line install (recommended)

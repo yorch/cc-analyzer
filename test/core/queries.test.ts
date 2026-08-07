@@ -25,7 +25,12 @@ beforeAll(async () => {
   const content = await Bun.file(fixture).text();
   mkdirSync(join(claude.dir, "projects", "proj-a"), { recursive: true });
   writeFileSync(join(claude.dir, "projects", "proj-a", "s1.jsonl"), content);
-  writeFileSync(join(claude.dir, "projects", "proj-a", "s2.jsonl"), content);
+  // A distinct second session (unique message/request ids): a byte-identical
+  // copy would be cross-file de-duplicated by the indexer and count $0.
+  writeFileSync(
+    join(claude.dir, "projects", "proj-a", "s2.jsonl"),
+    content.replaceAll('"msg_', '"s2-msg_').replaceAll('"req-', '"s2-req-'),
+  );
   db = openDb(":memory:");
   await reindex(db, { pricing });
 });

@@ -7,7 +7,8 @@
  * cache-read. Getting cache accounting right is where most of the money hides.
  */
 
-export interface ModelPricing {
+/** The five per-token rates, without the tier/window metadata. */
+export interface TokenRates {
   inputCostPerToken: number;
   outputCostPerToken: number;
   /** Cache-write with 5-minute TTL (Anthropic: ~1.25x input). */
@@ -15,10 +16,20 @@ export interface ModelPricing {
   /** Cache-write with 1-hour TTL (Anthropic: ~2x input). */
   cacheWrite1hCostPerToken: number;
   cacheReadCostPerToken: number;
+}
+
+export interface ModelPricing extends TokenRates {
   /** Context-window size (LiteLLM `max_input_tokens`), when known — the
    * ceiling the context-fill charts draw as the limit line. */
   maxInputTokens?: number;
+  /** Long-context rates (LiteLLM `*_above_200k_tokens`): what Anthropic
+   * charges when a request's prompt exceeds 200K tokens (the 1M-context
+   * beta). Absent for models without a long-context tier. */
+  above200k?: TokenRates;
 }
+
+/** Prompt-side tokens above which `above200k` rates apply (when present). */
+export const LONG_CONTEXT_THRESHOLD = 200_000;
 
 export type PricingTable = Record<string, ModelPricing>;
 
@@ -54,6 +65,22 @@ export const ioTokens = (t: TokenCounts): number => t.inputTokens + t.outputToke
 /** Cache tokens (write 5m + 1h + read). */
 export const cacheTokens = (t: TokenCounts): number =>
   t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens;
+
+/** Prompt-side tokens of a call: everything except the output. This is what
+ * the long-context tier keys off, and what `firstPromptTokens` records. */
+export const promptTokens = (t: TokenCounts): number =>
+  t.inputTokens + t.cacheReadTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens;
+
+/**
+ * The rates one API call is billed at. Anthropic's long-context tier switches
+ * the WHOLE request to the higher rates once the prompt exceeds 200K tokens —
+ * it is not a marginal rate on the excess — so callers pass one call's tokens,
+ * never an aggregate (an aggregated mix would trip the threshold spuriously).
+ */
+export function effectivePricing(pricing: ModelPricing, tokens: TokenCounts): ModelPricing {
+  if (!pricing.above200k || promptTokens(tokens) <= LONG_CONTEXT_THRESHOLD) return pricing;
+  return { ...pricing.above200k, maxInputTokens: pricing.maxInputTokens };
+}
 
 export const addTokens = (a: TokenCounts, b: TokenCounts): TokenCounts => ({
   inputTokens: a.inputTokens + b.inputTokens,
