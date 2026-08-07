@@ -1,4 +1,5 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
+import { buildTurnSeries, turnFlags } from "../core/chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import {
   digestSummaryRows,
@@ -13,7 +14,7 @@ import {
   type PortfolioDiagnostic,
 } from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
-import { projectDisplayName } from "../core/project-labels.ts";
+import { labelProjects, projectDisplayName, rootTag } from "../core/project-labels.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
@@ -34,7 +35,6 @@ import {
   type SkillUsageRow,
   THRASH_REREAD_MIN,
   THRASH_STREAK_MIN,
-  topEntries,
   WHATIF_CAVEAT,
 } from "../core/stats-types.ts";
 import {
@@ -45,6 +45,7 @@ import {
   formatSignedUSD,
   formatTokens,
   formatUSD,
+  pct,
   table,
   truncate,
 } from "./format.ts";
@@ -119,6 +120,21 @@ function totalTokens(t: TokenCounts): number {
     t.inputTokens + t.outputTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens + t.cacheReadTokens
   );
 }
+
+/** `topEntries`-shaped (sorted, limited), but human-readable prose rather than
+ *  the raw "Bash:412, Read:298" the machine-facing core helper returns — the
+ *  Session facts block is the one place these maps read as a sentence. */
+function humanEntries(rec: Record<string, number>, limit = Number.POSITIVE_INFINITY): string {
+  return Object.entries(rec)
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, limit)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ");
+}
+
+/** Turns tables render at most this many rows; a session with more prints a
+ *  truncation note and points at `--json` for the rest. */
+const TURNS_ROW_CAP = 40;
 
 /** Render a full single-session analysis as a text report. */
 export function renderSessionSummary(
@@ -205,6 +221,18 @@ export function renderSessionSummary(
   );
   if (a.correctionTurns > 0 || a.interruptionTurns > 0) {
     lines.push(muted(CORRECTION_CAVEAT, options));
+  }
+
+  // Diagnostics sit right after Totals — the actionable read of the session,
+  // never scrolled away by the reference tables below.
+  const diagnostics = buildSessionDiagnostics(a);
+  lines.push(`\n${section("Actionable diagnostics", options)}`);
+  if (diagnostics.length === 0) {
+    lines.push(
+      healthy("No notable context or cost patterns crossed the current thresholds.", options),
+    );
+  } else {
+    pushFindings(lines, diagnostics, options);
   }
 
   lines.push(`\n${section("Cost by token category", options)}`);
@@ -310,44 +338,57 @@ export function renderSessionSummary(
     );
     lines.push(muted("Types are matched best-effort from spawn prompts.", options));
   }
-  if (a.subagents.length) lines.push(`Subagents: ${a.subagents.join(", ")}`);
-  if (a.filesTouched.length) lines.push(`Files touched: ${a.filesTouched.length}`);
+  // The five session facts float unheaded between the tabled sections above and
+  // below unless something is actually worth saying — a session with only
+  // default permission mode and no bash/subagent activity prints no header at all.
+  const factLines: string[] = [];
+  if (a.subagents.length) factLines.push(`Subagents: ${a.subagents.join(", ")}`);
+  if (a.filesTouched.length) factLines.push(`Files touched: ${a.filesTouched.length}`);
   if (Object.keys(a.stopReasons).length) {
-    lines.push(`Stop reasons: ${topEntries(a.stopReasons)}`);
+    factLines.push(`Stop reasons: ${humanEntries(a.stopReasons)}`);
   }
   const modeCount = Object.keys(a.permissionModes).length;
   // Worth a line only when something other than plain "default" shows up.
   if (modeCount > 1 || (modeCount === 1 && !a.permissionModes.default)) {
-    lines.push(`Permission modes: ${topEntries(a.permissionModes)}`);
+    factLines.push(`Permission modes: ${humanEntries(a.permissionModes)}`);
   }
   if (Object.keys(a.bashCommands).length) {
-    lines.push(`Shell commands: ${topEntries(a.bashCommands, 8)}`);
+    factLines.push(`Shell commands: ${humanEntries(a.bashCommands, 8)}`);
   }
-
-  const diagnostics = buildSessionDiagnostics(a);
-  lines.push(`\n${section("Actionable diagnostics", options)}`);
-  if (diagnostics.length === 0) {
-    lines.push(
-      healthy("No notable context or cost patterns crossed the current thresholds.", options),
-    );
-  } else {
-    pushFindings(lines, diagnostics, options);
+  if (factLines.length) {
+    lines.push(`\n${section("Session facts", options)}`);
+    lines.push(...factLines);
   }
 
   lines.push(`\n${section("Turns", options)}`);
+  // `turnFlags()` is the one "is this turn worth flagging" predicate both
+  // frontends render (interrupted / correction / retries / test failures /
+  // redundant reads / tool errors); join by turn index rather than array
+  // position since detail mode is the only mode this renderer ever sees.
+  const flagsByTurn = new Map(buildTurnSeries(a).map((t) => [t.index, turnFlags(t).join(" · ")]));
+  const shownTurns = a.turns.slice(0, TURNS_ROW_CAP);
   lines.push(
     table(
-      ["#", "cost", "calls", "tools", "prompt"],
-      a.turns.map((t) => [
+      ["#", "cost", "calls", "tools", "flags", "prompt"],
+      shownTurns.map((t) => [
         String(t.index + 1),
         formatUSD(t.cost.total),
         String(t.apiCalls.length),
         String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0)),
+        flagsByTurn.get(t.index) ?? "",
         truncate(t.prompt || "(no text)", 60),
       ]),
-      { align: ["right", "right", "right", "right", "left"] },
+      { align: ["right", "right", "right", "right", "left", "left"] },
     ),
   );
+  if (a.turns.length > TURNS_ROW_CAP) {
+    lines.push(
+      muted(
+        `… ${a.turns.length - TURNS_ROW_CAP} more turns — use --json for the full list.`,
+        options,
+      ),
+    );
+  }
 
   return lines.join("\n");
 }
@@ -518,17 +559,36 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
     );
 
     if (d.projects.length) {
+      // Two roots can hold a project for the same cwd, so a ranked list needs
+      // a root column the moment more than one root is in play — the same
+      // decision `cmdProjects` makes, applied here because the digest table
+      // has room for the full column instead of a suffixed label.
+      const { multiRoot } = labelProjects(
+        d.projects,
+        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => p.claudeDir,
+      );
+      const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
       lines.push(`\n${section("Top projects", options)}`);
       lines.push(
         table(
-          ["cost", "sessions", "change", "project"],
-          d.projects.map((p) => [
-            formatUSD(p.cost),
-            String(p.sessions),
-            change(p.delta, formatUSD),
-            truncate(projectDisplayName(p.projectPath, p.projectId), 44),
-          ]),
-          { align: ["right", "right", "right", "left"] },
+          multiRoot
+            ? ["cost", "sessions", "change", "project", "claude dir"]
+            : ["cost", "sessions", "change", "project"],
+          d.projects.map((p) => {
+            const base = [
+              formatUSD(p.cost),
+              String(p.sessions),
+              change(p.delta, formatUSD),
+              truncate(projectDisplayName(p.projectPath, p.projectId), 44),
+            ];
+            return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+          }),
+          {
+            align: multiRoot
+              ? ["right", "right", "right", "left", "left"]
+              : ["right", "right", "right", "left"],
+          },
         ),
       );
     }
@@ -579,13 +639,15 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
           [
             "corrections",
             `${formatSignedCount(r.correctionTurns)} of ${formatSignedCount(r.turns)} turns ` +
-              `(${(r.correctionShare * 100).toFixed(0)}%) · ` +
+              `(${pct(r.correctionShare)}) · ` +
               `${formatSignedCount(r.interruptionTurns)} interrupted`,
           ],
         ],
       ),
     );
-    lines.push(muted(CORRECTION_CAVEAT, options));
+    if (r.correctionTurns > 0 || r.interruptionTurns > 0) {
+      lines.push(muted(CORRECTION_CAVEAT, options));
+    }
 
     if (d.skills.length) {
       lines.push(`\n${section("Skills · cost of the turns that invoked them", options)}`);
@@ -661,7 +723,8 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   const lines: string[] = [];
   const s = v.summary;
   const range = s.firstDay && s.lastDay ? `${s.firstDay} → ${s.lastDay}` : "-";
-  const estPct = s.estimatedShare > 0 ? ` (${(s.estimatedShare * 100).toFixed(0)}% estimated)` : "";
+  const estimatedSharePct = pct(s.estimatedShare);
+  const estPct = s.estimatedShare > 0 ? ` (${estimatedSharePct} estimated)` : "";
 
   const d = v.duration;
   const dist = v.distribution;
@@ -682,13 +745,16 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     ? `· ${sessionCount} · ${range}`
     : `· ${sessionCount} · ${projectCount} · ${range}`;
   lines.push(
-    `${paint(options.color === true, ANSI.bold, `${formatUSD(s.cost)} total, est. cost (API rates)`)}  ` +
-      muted(scopeSummary, options),
+    `${paint(
+      options.color === true,
+      ANSI.bold,
+      `${formatUSD(s.cost)} total, est. ${costNoun(costBasis)} (API rates)`,
+    )}  ${muted(scopeSummary, options)}`,
   );
   lines.push(
     muted(
       `${formatTokens(ioTokens, cacheTokens)} · ${formatDuration(d.totalActiveMs)} active ` +
-        `(${(d.activeShare * 100).toFixed(0)}% of session time)`,
+        `(${pct(d.activeShare)} of session time)`,
       options,
     ),
   );
@@ -713,7 +779,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     table(
       ["metric", "value"],
       [
-        ["pricing", estPct ? `${(s.estimatedShare * 100).toFixed(0)}% estimated` : "exact"],
+        ["pricing", estPct ? `${estimatedSharePct} estimated` : "exact"],
         ["tokens (in/out)", `${formatCount(s.inputTokens)} / ${formatCount(s.outputTokens)}`],
         [
           "cache tokens (w/r)",
@@ -721,7 +787,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         ],
         [
           "time with claude",
-          `${formatDuration(d.totalMs)} (${formatDuration(d.totalActiveMs)} active, ${(d.activeShare * 100).toFixed(0)}%)`,
+          `${formatDuration(d.totalMs)} (${formatDuration(d.totalActiveMs)} active, ${pct(d.activeShare)})`,
         ],
         [
           "session duration",
@@ -734,7 +800,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         [
           "spend concentration",
           dist.topDecileShare !== null
-            ? `top 10% of sessions carry ${(dist.topDecileShare * 100).toFixed(0)}% of spend`
+            ? `top 10% of sessions carry ${pct(dist.topDecileShare)} of spend`
             : "n/a (fewer than 10 sessions)",
         ],
         [
@@ -758,7 +824,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         [
           "subagent spend",
           sc.cost > 0
-            ? `${formatUSD(sc.cost)} (${(sc.share * 100).toFixed(0)}% of total, ${formatCount(sc.calls)} calls)`
+            ? `${formatUSD(sc.cost)} (${pct(sc.share)} of total, ${formatCount(sc.calls)} calls)`
             : "none",
         ],
         [
@@ -768,7 +834,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         [
           "test runs",
           v.tests.runs > 0
-            ? `${v.tests.runs} (${(v.tests.failureRate * 100).toFixed(0)}% failed, ${v.tests.sessions} sessions)`
+            ? `${v.tests.runs} (${pct(v.tests.failureRate)} failed, ${v.tests.sessions} sessions)`
             : "none detected",
         ],
         [
@@ -783,13 +849,13 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
           "corrections",
           v.corrections.correctionTurns > 0 || v.corrections.interruptionTurns > 0
             ? `${formatCount(v.corrections.correctionTurns)} correction turns ` +
-              `(${(v.corrections.correctionShare * 100).toFixed(0)}% of ${formatCount(v.corrections.turns)} turns) · ` +
+              `(${pct(v.corrections.correctionShare)} of ${formatCount(v.corrections.turns)} turns) · ` +
               `${formatCount(v.corrections.interruptionTurns)} interrupted`
             : "none detected",
         ],
         [
           "parallel sessions",
-          `peak ${v.concurrency.peak} · ${(v.concurrency.parallelDayShare * 100).toFixed(0)}% of days overlapped`,
+          `peak ${v.concurrency.peak} · ${pct(v.concurrency.parallelDayShare)} of days overlapped`,
         ],
       ],
     ),
@@ -831,17 +897,36 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   }
 
   if (v.byProject.length) {
+    // Two roots can hold a project for the same cwd, so a ranked list needs a
+    // root column the moment more than one root is in play — the CLI table
+    // has room for the full column instead of the suffixed label the
+    // space-constrained surfaces use (see `labelProjects`'s docstring).
+    const { multiRoot } = labelProjects(
+      v.byProject,
+      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => p.claudeDir,
+    );
+    const projectRoots = [...new Set(v.byProject.map((p) => p.claudeDir))];
     lines.push(`\n${section("Top projects by cost", options)}`);
     lines.push(
       table(
-        ["cost", "tokens", "sessions", "project"],
-        v.byProject.map((p) => [
-          formatUSD(p.cost),
-          formatTokens(p.ioTokens, p.cacheTokens),
-          String(p.sessions),
-          truncate(projectDisplayName(p.projectPath, p.projectId), 52),
-        ]),
-        { align: ["right", "right", "right", "left"] },
+        multiRoot
+          ? ["cost", "tokens", "sessions", "project", "claude dir"]
+          : ["cost", "tokens", "sessions", "project"],
+        v.byProject.map((p) => {
+          const base = [
+            formatUSD(p.cost),
+            formatTokens(p.ioTokens, p.cacheTokens),
+            String(p.sessions),
+            truncate(projectDisplayName(p.projectPath, p.projectId), 52),
+          ];
+          return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+        }),
+        {
+          align: multiRoot
+            ? ["right", "right", "right", "left", "left"]
+            : ["right", "right", "right", "left"],
+        },
       ),
     );
   }
@@ -873,7 +958,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             r.model,
             a.model,
             formatUSD(a.cost),
-            `${a.delta < 0 ? "-" : "+"}${formatUSD(Math.abs(a.delta))}`,
+            formatSignedUSD(a.delta),
           ]),
         ),
         { align: ["left", "left", "right", "right"] },
@@ -896,31 +981,40 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         ),
       );
     }
-    lines.push(
-      muted(
-        "Your actual token mix at other rates. A different model would produce different " +
-          "tokens, and quality is not priced in.",
-        options,
-      ),
-    );
+    lines.push(muted(WHATIF_CAVEAT, options));
   }
 
   if (v.contextTax.summary.sessions > 0) {
     const ct = v.contextTax;
+    const top10 = ct.byProject.slice(0, 10);
+    // Same root-disambiguation decision as the other ranked project tables.
+    const { multiRoot } = labelProjects(
+      top10,
+      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => p.claudeDir,
+    );
+    const projectRoots = [...new Set(top10.map((p) => p.claudeDir))];
     lines.push(`\n${section("Context tax · tokens before you type", options)}`);
     lines.push(
       table(
-        ["median", "p90", "avg", "sessions", "project"],
-        ct.byProject
-          .slice(0, 10)
-          .map((p) => [
+        multiRoot
+          ? ["median", "p90", "avg", "sessions", "project", "claude dir"]
+          : ["median", "p90", "avg", "sessions", "project"],
+        top10.map((p) => {
+          const base = [
             formatCount(Math.round(p.medianTokens)),
             formatCount(Math.round(p.p90Tokens)),
             formatCount(Math.round(p.avgTokens)),
             String(p.sessions),
             truncate(projectDisplayName(p.projectPath, p.projectId), 44),
-          ]),
-        { align: ["right", "right", "right", "right", "left"] },
+          ];
+          return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+        }),
+        {
+          align: multiRoot
+            ? ["right", "right", "right", "right", "left", "left"]
+            : ["right", "right", "right", "right", "left"],
+        },
       ),
     );
     lines.push(

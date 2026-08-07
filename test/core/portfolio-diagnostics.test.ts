@@ -41,6 +41,7 @@ function cacheProject(over: Partial<ProjectCacheRow> = {}): ProjectCacheRow {
   return {
     projectId: "proj-a",
     projectPath: "/dev/proj-a",
+    claudeDir: "/home/u/.claude",
     sessions: 20,
     writeTokens: 1_000_000,
     readTokens: 5_000_000,
@@ -71,6 +72,7 @@ function taxProject(over: Partial<ContextTaxRow> = {}): ContextTaxRow {
   return {
     projectId: "proj-a",
     projectPath: "/dev/proj-a",
+    claudeDir: "/home/u/.claude",
     sessions: 20,
     avgTokens: 12_000,
     medianTokens: 12_000,

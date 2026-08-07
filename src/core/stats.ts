@@ -306,6 +306,9 @@ export function cacheWasteByProject(db: Database, limit = 50): ProjectCacheRow[]
     .query(
       `SELECT project_id AS projectId,
         MAX(project_path) AS projectPath,
+        -- MAX() is a "pick any": project_id is globally unique (root-qualified
+        -- at index time), so every row in a group shares one claude_dir.
+        MAX(claude_dir) AS claudeDir,
         COUNT(*) AS sessions,
         SUM(${CACHE_WRITE}) AS writeTokens,
         SUM(cache_read) AS readTokens,
@@ -1204,22 +1207,30 @@ export function parseCoverage(db: Database): ParseCoverageStats {
  * is "unknown", not zero.
  */
 export function contextTax(db: Database, projectId?: string, limit = 30): ContextTax {
-  const rows = scopedAll<{ projectId: string; projectPath: string | null; tokens: number }>(
+  const rows = scopedAll<{
+    projectId: string;
+    projectPath: string | null;
+    claudeDir: string;
+    tokens: number;
+  }>(
     db,
     `SELECT project_id AS projectId, project_path AS projectPath,
+        claude_dir AS claudeDir,
         first_prompt_tokens AS tokens
       FROM sessions
       WHERE first_prompt_tokens IS NOT NULL ${projectScope(projectId)}`,
     projectId,
   );
 
-  const byProject = new Map<string, { path: string | null; values: number[] }>();
+  const byProject = new Map<string, { path: string | null; claudeDir: string; values: number[] }>();
   const all: number[] = [];
   for (const r of rows) {
     all.push(r.tokens);
     let p = byProject.get(r.projectId);
     if (!p) {
-      p = { path: r.projectPath, values: [] };
+      // project_id is root-qualified, so every row in a group shares one
+      // claude_dir — the first row's value is the group's.
+      p = { path: r.projectPath, claudeDir: r.claudeDir, values: [] };
       byProject.set(r.projectId, p);
     }
     // A project's rows can disagree on project_path (the encoded id is the
@@ -1235,6 +1246,7 @@ export function contextTax(db: Database, projectId?: string, limit = 30): Contex
     return {
       projectId: id,
       projectPath: p.path,
+      claudeDir: p.claudeDir,
       sessions: values.length,
       avgTokens: values.length ? total / values.length : 0,
       medianTokens: percentile(values, 0.5),

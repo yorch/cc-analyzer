@@ -143,7 +143,12 @@ export function Project({ id }: { id: string }) {
                   <tr key={s.path}>
                     <td className="num">
                       {usd(s.cost)}
-                      {s.costEstimated && <span className="est"> ~</span>}
+                      {s.costEstimated && (
+                        <span className="est" title="estimated (heuristic pricing)">
+                          {" ~"}
+                          <span className="sr-only"> estimated (heuristic pricing)</span>
+                        </span>
+                      )}
                     </td>
                     <td className="num">{tokens(s.ioTokens, s.cacheTokens)}</td>
                     <td className="num">{s.turns}</td>
@@ -199,7 +204,7 @@ export function Project({ id }: { id: string }) {
 }
 
 function CostDist({ d }: { d: CostDistribution }) {
-  if (d.sessions === 0) return <p className="muted">No costed sessions yet.</p>;
+  if (d.sessions === 0) return <EmptyNotice>No costed sessions yet.</EmptyNotice>;
   return (
     <>
       <p className="muted">
@@ -213,7 +218,7 @@ function CostDist({ d }: { d: CostDistribution }) {
 }
 
 function DepthDist({ depth }: { depth: TurnDepthStats }) {
-  if (depth.turns === 0) return <p className="muted">No turns recorded yet.</p>;
+  if (depth.turns === 0) return <EmptyNotice>No turns recorded yet.</EmptyNotice>;
   return (
     <>
       <p className="muted">
@@ -228,12 +233,17 @@ function DepthDist({ depth }: { depth: TurnDepthStats }) {
 const TOOL_MIX_LIMIT = 12;
 
 function ToolMix({ tools }: { tools: ToolUsageRow[] }) {
-  if (tools.length === 0) return <p className="muted">No tool calls recorded yet.</p>;
+  if (tools.length === 0) return <EmptyNotice>No tool calls recorded yet.</EmptyNotice>;
   const top = tools.slice(0, TOOL_MIX_LIMIT);
   const errorful = top.filter((t) => t.errors > 0);
   return (
     <>
       <Histogram rows={top.map((t) => ({ label: t.tool, count: t.uses }))} />
+      {tools.length > top.length && (
+        <p className="muted spark-cap">
+          showing the {top.length} most-used of {tools.length} tools
+        </p>
+      )}
       {errorful.length > 0 && (
         <p className="muted spark-cap">
           errors: {errorful.map((t) => `${t.tool} ${(t.errorRate * 100).toFixed(1)}%`).join(" · ")}

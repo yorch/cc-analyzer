@@ -15,11 +15,24 @@
   --border-strong: rgba(240, 226, 200, 0.2);
   --ink: #efe7d6;
   --muted: #a89d88;
-  --faint: #6c6252;
+  /* Text tokens carry their WCAG AA contrast against every surface below
+     (--bg / --bg-2 / --panel / --panel-2): --faint styles 10–11px labels, so
+     it may never dip under 4.5:1 — it is 4.6:1 on the lightest of them. Data
+     marks have their own tokens (below) precisely so tuning these for reading
+     can never shift a chart color. */
+  --faint: #908573;
   --signal: #f2a63a;
   --signal-2: #ffcf8c;
   --teal: #5cb6a3;
   --red: #e5695c;
+  /* Chart-only palette: gridlines and empty cells, plus the three non-brand
+     series colors. Never used for text, so they answer to separation, not to
+     contrast ratios. */
+  --grid: rgba(240, 226, 200, 0.18);
+  --data-neutral: #8a7f6a;
+  --data-violet: #8f7ff0;
+  --data-blue: #5c8fb6;
+  --data-clay: #b6785c;
   --glow: rgba(242, 166, 58, 0.07);
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 40px -24px rgba(0, 0, 0, 0.7);
 }
@@ -33,12 +46,22 @@
     --border: rgba(48, 36, 18, 0.14);
     --border-strong: rgba(48, 36, 18, 0.28);
     --ink: #241d12;
-    --muted: #6d6350;
-    --faint: #978c76;
+    /* Both text tones are pulled darker than the dark theme's mirror image:
+       on a warm paper background the same hues land near 2.6:1. These read
+       6.0:1 (muted) and 4.6:1 (faint) against the lightest surface. */
+    --muted: #5b5241;
+    --faint: #6e6452;
     --signal: #b26a10;
     --signal-2: #935610;
     --teal: #2c7d6d;
     --red: #b23b31;
+    /* The three series colors were tuned against near-black and lose their
+       separation on paper, so each gets a darker, more saturated twin. */
+    --grid: rgba(48, 36, 18, 0.16);
+    --data-neutral: #7e7461;
+    --data-violet: #6a4fd0;
+    --data-blue: #2f6288;
+    --data-clay: #8a4a30;
     --glow: rgba(178, 106, 16, 0.08);
     --shadow: 0 1px 0 rgba(255, 255, 255, 0.5), 0 18px 40px -26px rgba(60, 44, 20, 0.35);
   }
@@ -691,11 +714,27 @@ th.num {
 .seg button:hover:not(.active) {
   color: var(--ink);
 }
+/* Charts scale uniformly: the element's ratio comes from its own viewBox (an
+   inline `aspect-ratio`, see `chartBox`), never from a fixed height that would
+   stretch one axis and squash the other. `max-height` only letterboxes — the
+   default preserveAspectRatio centres the drawing instead of distorting it. */
 .burnchart {
   width: 100%;
-  height: 200px;
+  height: auto;
+  max-height: 320px;
   display: block;
   margin-top: 6px;
+}
+/* y-scale affordance: a faint line at the top and middle of the value scale. */
+.y-grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.y-tick {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 .burn-area {
   fill: var(--signal);
@@ -730,10 +769,10 @@ th.num {
 .turnbar:hover {
   opacity: 1;
 }
-/* idle-gap marker on the cumulative-cost chart (muted, unlike the red
+/* idle-gap marker on the cumulative-cost chart (neutral, unlike the red
    compaction marker) */
 .gap-marker {
-  stroke: var(--faint);
+  stroke: var(--data-neutral);
   stroke-width: 1.5;
   stroke-dasharray: 2 3;
   vector-effect: non-scaling-stroke;
@@ -746,10 +785,22 @@ th.num {
   fill: var(--teal);
 }
 .turnbar.tb-write {
-  fill: #8f7ff0;
+  fill: var(--data-violet);
 }
 .turnbar.tb-read {
-  fill: #5c8fb6;
+  fill: var(--data-blue);
+}
+.legend-swatch.tb-input {
+  background: var(--signal);
+}
+.legend-swatch.tb-output {
+  background: var(--teal);
+}
+.legend-swatch.tb-write {
+  background: var(--data-violet);
+}
+.legend-swatch.tb-read {
+  background: var(--data-blue);
 }
 /* per-turn tool activity (stacked step-kind segments) */
 .turnbar.tk-run {
@@ -759,13 +810,13 @@ th.num {
   fill: var(--teal);
 }
 .turnbar.tk-edit {
-  fill: #8f7ff0;
+  fill: var(--data-violet);
 }
 .turnbar.tk-search {
-  fill: #5c8fb6;
+  fill: var(--data-blue);
 }
 .turnbar.tk-other {
-  fill: var(--faint);
+  fill: var(--data-neutral);
 }
 .legend-swatch.tk-run {
   background: var(--signal);
@@ -774,17 +825,48 @@ th.num {
   background: var(--teal);
 }
 .legend-swatch.tk-edit {
-  background: #8f7ff0;
+  background: var(--data-violet);
 }
 .legend-swatch.tk-search {
-  background: #5c8fb6;
+  background: var(--data-blue);
 }
 .legend-swatch.tk-other {
-  background: var(--faint);
+  background: var(--data-neutral);
 }
 /* per-turn signal mark: interruption/correction/thrash/tool-error glyph row */
 .turn-signal {
   fill: var(--red);
+}
+.legend-swatch.turn-signal {
+  background: var(--red);
+}
+/* session-timeline legend: lanes and call dots, matching the SVG marks */
+.legend-swatch.tl-turn {
+  background: var(--border-strong);
+}
+.legend-swatch.tl-turn-flagged {
+  background: color-mix(in srgb, var(--red) 35%, transparent);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+.legend-swatch.tl-call {
+  background: var(--signal);
+  border-radius: 50%;
+}
+.legend-swatch.tl-call-side {
+  background: var(--teal);
+  border-radius: 50%;
+}
+.legend-swatch.tl-call-err {
+  background: var(--signal);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--red);
+}
+/* a stroke sample for legends keyed to a line style, not a fill */
+.legend-mark {
+  flex: none;
+  width: 18px;
+  height: 6px;
+  overflow: visible;
 }
 .axis {
   display: flex;
@@ -812,6 +894,10 @@ th.num {
   min-width: 6px;
   background: var(--signal);
   border-radius: 1px;
+}
+/* An hour with no activity still reads as a cell in the grid, not a hole. */
+.heat-cell.empty {
+  background: var(--grid);
 }
 .heat-axis .heat-hour {
   flex: 1 1 0;
@@ -863,7 +949,8 @@ p.muted {
 }
 .skillspark {
   width: 100%;
-  height: 60px;
+  height: auto;
+  max-height: 96px;
   display: block;
   margin-top: 8px;
 }
@@ -1209,6 +1296,14 @@ p.muted {
   color: var(--muted);
   font-size: 11px;
 }
+.digest-actions button[disabled] {
+  color: var(--faint);
+  cursor: progress;
+}
+.digest-actions button[disabled]:hover {
+  border-color: var(--border-strong);
+  color: var(--faint);
+}
 
 .loading {
   color: var(--muted);
@@ -1501,10 +1596,33 @@ p.muted {
   margin-top: 8px;
 }
 .cal-cell {
-  fill: var(--border);
+  fill: var(--grid);
 }
 .cal-cell.on {
   fill: var(--signal);
+}
+.cal-month {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.cal-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--signal);
+}
+.cal-swatch.empty {
+  background: var(--grid);
 }
 
 .mix-band {
@@ -1517,19 +1635,19 @@ p.muted {
   fill: var(--teal);
 }
 .mix-2 {
-  fill: #8f7ff0;
+  fill: var(--data-violet);
 }
 .mix-3 {
   fill: var(--red);
 }
 .mix-4 {
-  fill: #5c8fb6;
+  fill: var(--data-blue);
 }
 .mix-5 {
-  fill: #b6785c;
+  fill: var(--data-clay);
 }
 .mix-6 {
-  fill: var(--faint);
+  fill: var(--data-neutral);
 }
 .legend-swatch.mix-0 {
   background: var(--signal);
@@ -1538,19 +1656,19 @@ p.muted {
   background: var(--teal);
 }
 .legend-swatch.mix-2 {
-  background: #8f7ff0;
+  background: var(--data-violet);
 }
 .legend-swatch.mix-3 {
   background: var(--red);
 }
 .legend-swatch.mix-4 {
-  background: #5c8fb6;
+  background: var(--data-blue);
 }
 .legend-swatch.mix-5 {
-  background: #b6785c;
+  background: var(--data-clay);
 }
 .legend-swatch.mix-6 {
-  background: var(--faint);
+  background: var(--data-neutral);
 }
 
 .legend {
@@ -1593,14 +1711,19 @@ p.muted {
 
 .timelinewrap {
   max-height: 480px;
-  overflow-y: auto;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px;
   background: var(--panel);
 }
+/* Uniform scaling like the other charts (its ratio rides on the element), with
+   a floor so a narrow viewport scrolls sideways instead of shrinking call dots
+   into invisible specks. */
 .timeline {
   width: 100%;
+  min-width: 560px;
+  height: auto;
   display: block;
 }
 .tl-turn {

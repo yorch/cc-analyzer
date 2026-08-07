@@ -175,7 +175,7 @@ export function App({ db, pricing, indexStatus }: Props) {
       : drill
         ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
         : view === "trends"
-          ? "tab/1·2 panel · m metric · g granularity · esc menu"
+          ? "tab/1·2·3 panel · m metric · g granularity · esc menu"
           : view === "tools"
             ? "tab/1·2·3 panel · s sort · ↑↓ scroll · esc menu"
             : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";

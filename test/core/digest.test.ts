@@ -103,6 +103,7 @@ function sampleDigest(overrides: Partial<WeeklyDigest> = {}): WeeklyDigest {
       {
         projectId: "p1",
         projectPath: "/p/one",
+        claudeDir: "/home/u/.claude",
         cost: 9,
         sessions: 5,
         delta: digestDelta(9, 6),
@@ -174,10 +175,70 @@ describe("buildDigestMarkdown", () => {
     expect(md).toContain("Insights above are current state");
   });
 
+  test("omits the correction caveat when neither signal fired", () => {
+    const quiet = buildDigestMarkdown(
+      sampleDigest({
+        reliability: {
+          toolCalls: 10,
+          toolErrors: 0,
+          toolErrorRate: 0,
+          testRuns: 0,
+          testFailures: 0,
+          retries: 0,
+          worstTestFailStreak: 0,
+          redundantReads: 0,
+          correctionTurns: 0,
+          interruptionTurns: 0,
+          turns: 5,
+          correctionShare: 0,
+        },
+      }),
+    );
+    expect(quiet).toContain("Corrections: 0 of 5 turns");
+    expect(quiet).not.toContain(CORRECTION_CAVEAT);
+  });
+
   test("prints the cost-framing sentence only for a subscription basis", () => {
     expect(md).not.toContain("API-equivalent value");
     const sub = buildDigestMarkdown(sampleDigest({ costBasis: "subscription" }));
     expect(sub).toContain("API-equivalent value");
+  });
+
+  test("the Summary table's cost label matches the terminal renderer's cost noun", () => {
+    // api basis: costNoun() is "spend", Title Cased as this row's label.
+    expect(md).toContain("| Spend | $12.40 | $10.50 | +$1.90 (+18%) |");
+    const sub = buildDigestMarkdown(sampleDigest({ costBasis: "subscription" }));
+    expect(sub).toContain("| API-equivalent value | $12.40 | $10.50 | +$1.90 (+18%) |");
+  });
+
+  test("Top projects gains a Claude dir column only when rows span more than one root", () => {
+    expect(md).not.toContain("Claude dir");
+
+    const multiRoot = buildDigestMarkdown(
+      sampleDigest({
+        projects: [
+          {
+            projectId: "p1",
+            projectPath: "/p/one",
+            claudeDir: "/home/u/.claude",
+            cost: 9,
+            sessions: 5,
+            delta: digestDelta(9, 6),
+          },
+          {
+            projectId: "p2",
+            projectPath: "/p/two",
+            claudeDir: "/mnt/work/.claude",
+            cost: 4,
+            sessions: 2,
+            delta: digestDelta(4, 4),
+          },
+        ],
+      }),
+    );
+    expect(multiRoot).toContain("| Project | Cost | Sessions | Change | Claude dir |");
+    expect(multiRoot).toContain("/p/one");
+    expect(multiRoot).toContain("/p/two");
   });
 
   test("contains no ANSI escapes — it is meant to be pasted, not printed", () => {

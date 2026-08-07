@@ -21,6 +21,34 @@ type HeatMetric = "sessions" | "cost";
 const BURN_METRICS: BurnMetric[] = ["cost", "tokens", "sessions"];
 const GRANULARITIES: Granularity[] = ["day", "week", "month"];
 
+// The heatmap grid row is a 4-char weekday label ("Mon ") followed by 24
+// one-char hour cells (heatGrid), 28 columns total. Ticks are placed at
+// column `4 + hour` so they land over their cell; "23h" would run 3 columns
+// past the 28-char row at that position, so it right-aligns to the last
+// column instead (still readable as "the row's final hour").
+const HEATMAP_AXIS_PREFIX = 4;
+const HEATMAP_AXIS_HOURS = 24;
+const HEATMAP_TICKS: { hour: number; label: string }[] = [
+  { hour: 0, label: "0h" },
+  { hour: 6, label: "6h" },
+  { hour: 12, label: "12h" },
+  { hour: 18, label: "18h" },
+  { hour: 23, label: "23h" },
+];
+
+function buildHeatmapAxis(): string {
+  const total = HEATMAP_AXIS_PREFIX + HEATMAP_AXIS_HOURS;
+  const chars = new Array<string>(total).fill(" ");
+  for (const { hour, label } of HEATMAP_TICKS) {
+    const start = Math.min(HEATMAP_AXIS_PREFIX + hour, total - label.length);
+    for (let i = 0; i < label.length; i++) chars[start + i] = label[i] as string;
+  }
+  return chars.join("");
+}
+
+/** Built once at module load — the axis has no runtime inputs. */
+const HEATMAP_HOUR_AXIS = buildHeatmapAxis();
+
 interface Props {
   db: Database;
   columns: number;
@@ -32,7 +60,8 @@ interface Props {
 const fmt = (metric: BurnMetric | HeatMetric, v: number): string =>
   metric === "cost" ? formatUSD(v) : formatCount(Math.round(v));
 
-/** Trends: a two-panel dashboard of time-series charts (burn + activity heatmap). */
+/** Trends: a three-panel dashboard of time-series charts (burn, activity
+ * heatmap, and contribution calendar). */
 export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
   const daily = useMemo(() => spendByDay(db), [db]);
   const heat = useMemo(() => activityHeatmap(db), [db]);
@@ -221,7 +250,7 @@ function HeatPanel({
       <Text color={role.muted}>
         heatmap · <Text color={role.accent}>{metric}</Text> · local time{"   "}m metric
       </Text>
-      <Text color={role.muted}>{"    0h      6h      12h     18h   23h"}</Text>
+      <Text color={role.muted}>{HEATMAP_HOUR_AXIS}</Text>
       {grid.map((line, i) => (
         <Text key={WEEKDAY_LABELS[i]}>
           <Text color={role.muted}>{WEEKDAY_LABELS[i]} </Text>

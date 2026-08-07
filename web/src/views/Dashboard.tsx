@@ -8,6 +8,7 @@ import {
   type CostBasis,
   type CostDistribution,
   costFramingNote,
+  costNoun,
   formatDigestDelta,
   formatUSD,
   isEmptyPeriod,
@@ -45,12 +46,14 @@ const MONTH_SORT: Accessors<MonthRow> = {
   tokens: (m) => m.ioTokens + m.cacheTokens,
   sessions: (m) => m.sessions,
 };
-const PROJECT_SORT: Accessors<ProjectRow> = {
+/** Sorting the project column must order by the same string the cell renders —
+ *  the root-qualified label, not the bare path two roots can collide on. */
+const projectAccessors = (label: (row: ProjectRow) => string): Accessors<ProjectRow> => ({
   cost: (p) => p.cost,
   tokens: (p) => p.ioTokens + p.cacheTokens,
   sessions: (p) => p.sessions,
-  project: (p) => projectDisplayName(p.projectPath, p.projectId),
-};
+  project: label,
+});
 const MODEL_SORT: Accessors<ModelRow> = {
   model: (m) => m.model,
   calls: (m) => m.calls,
@@ -95,7 +98,7 @@ export function Dashboard() {
     ? byProject.filter((p) => projectLabel(p).toLowerCase().includes(pq))
     : byProject;
   const monthSort = useSort(byMonth, MONTH_SORT, "month", "asc");
-  const projectSort = useSort(projectFiltered, PROJECT_SORT, "cost");
+  const projectSort = useSort(projectFiltered, projectAccessors(projectLabel), "cost");
   const modelSort = useSort(byModel, MODEL_SORT, "cost");
   const topSort = useSort(top, TOP_SORT, "cost");
   if (loading) return <LoadingNotice>Loading portfolio…</LoadingNotice>;
@@ -117,7 +120,8 @@ export function Dashboard() {
     <>
       <section className="hero">
         <div className="hero-main">
-          <div className="hero-label">Est. cost (API rates)</div>
+          {/* The basis never changes the number — only the noun for it. */}
+          <div className="hero-label">Est. {costNoun(data.costBasis)} (API rates)</div>
           <div className="hero-figure">{usd(summary.cost)}</div>
           <div className="hero-sub">
             <span className="est">{pct}% estimated</span> · {tokens(totalIo, totalCache)} tokens
@@ -352,16 +356,25 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
   // `insights: false` keeps first paint cheap — the card below renders no
   // finding; only the copied markdown has an insights section, and that pays
   // for the full report at click time.
-  const { data, error, loading } = useAsync(
+  const { data, error, loading, retry } = useAsync(
     () => api.report(undefined, { insights: false }),
     [costBasis],
   );
-  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+  const [copied, setCopied] = useState<"idle" | "copying" | "ok" | "failed">("idle");
   // The full digest, fetched once per cost basis and reused across clicks.
   const full = useRef<{ basis: CostBasis; digest: WeeklyDigest } | null>(null);
+  // Settle back to idle so a stale "Copied" doesn't sit next to the button for
+  // the rest of the session.
+  useEffect(() => {
+    if (copied !== "ok" && copied !== "failed") return;
+    const timer = window.setTimeout(() => setCopied("idle"), 4000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
 
   if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
-  if (error || !data) return null;
+  if (error)
+    return <ErrorNotice error={error} retry={retry} label="Couldn’t load the weekly digest." />;
+  if (!data) return null;
 
   const h = data.headline;
   const topProject = data.projects[0];
@@ -370,6 +383,10 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
   // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
   // on the LAN) and reports failure rather than throwing.
   const copy = () => {
+    // The first click per cost basis pays for the full report; re-entering
+    // while that request is in flight would fetch it twice.
+    if (copied === "copying") return;
+    setCopied("copying");
     void (async () => {
       try {
         if (full.current?.basis !== costBasis) {
@@ -417,10 +434,11 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
       )}
       {!isEmptyPeriod(data) && <p className="muted spark-cap">{CORRECTION_CAVEAT}</p>}
       <div className="digest-actions">
-        <button type="button" onClick={copy}>
-          Copy as markdown
+        <button type="button" onClick={copy} disabled={copied === "copying"}>
+          {copied === "copying" ? "Copying…" : "Copy as markdown"}
         </button>
         <span className="status" role="status" aria-live="polite">
+          {copied === "copying" && "Building the full report…"}
           {copied === "ok" && "Copied to the clipboard."}
           {copied === "failed" && "Couldn’t copy — the browser blocked clipboard access."}
         </span>

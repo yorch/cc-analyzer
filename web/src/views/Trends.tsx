@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   type ConcurrencySummary,
@@ -8,6 +8,7 @@ import {
   type ErrorWeekRow,
   type HeatCell,
   type SidechainDayRow,
+  shiftDay,
   weekOf,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
@@ -61,8 +62,10 @@ const Heatmap = memo(function Heatmap({
               <span
                 // biome-ignore lint/suspicious/noArrayIndexKey: fixed 24-hour columns
                 key={h}
-                className="heat-cell"
-                style={{ opacity: v > 0 ? 0.12 + 0.88 * (v / max) : 0 }}
+                // An empty hour keeps a faint presence: a fully transparent
+                // cell reads as a gap in the grid, not as "nothing happened".
+                className={v > 0 ? "heat-cell" : "heat-cell empty"}
+                style={v > 0 ? { opacity: 0.12 + 0.88 * (v / max) } : undefined}
                 title={`${WEEKDAY_LABELS[ri]} ${h}:00 — ${fmt(metric, v)}`}
               />
             ))}
@@ -104,6 +107,22 @@ const Heatmap = memo(function Heatmap({
 /* ——— Contribution calendar ——————————————————————————————————————————— */
 
 const CAL_WEEKS = 53;
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+/** The four filled steps of the calendar's intensity ramp, least to most. */
+const CAL_LEGEND_STEPS = [0.4, 0.6, 0.8, 1];
 
 const Calendar = memo(function Calendar({
   daily,
@@ -116,11 +135,30 @@ const Calendar = memo(function Calendar({
     daily.map((d) => ({ day: d.day, v: metric === "cost" ? d.cost : d.sessions })),
     CAL_WEEKS,
   );
-  if (grid.weeks.length === 0) return <p className="muted">No dated sessions in the index.</p>;
+  if (grid.weeks.length === 0) return <EmptyNotice>No dated sessions in the index.</EmptyNotice>;
   const cell = 11;
   const gap = 2;
+  // Room above the grid for the month row.
+  const top = 14;
   const W = grid.weeks.length * (cell + gap);
-  const H = 7 * (cell + gap);
+  const H = 7 * (cell + gap) + top;
+  // One label per column that opens a new month. The month is read off the day
+  // string, never through a Date: parsing "YYYY-MM-DD" is UTC, and formatting
+  // it locally would shift the 1st into the previous month west of Greenwich.
+  const monthOf = (day: string) => day.slice(0, 7);
+  const months = grid.weeks.flatMap((col, wi) => {
+    const day = col[0]?.day;
+    if (!day) return [];
+    const previous = grid.weeks[wi - 1]?.[0]?.day;
+    if (previous && monthOf(previous) === monthOf(day)) return [];
+    return [
+      {
+        key: monthOf(day),
+        x: wi * (cell + gap),
+        label: MONTH_LABELS[Number(day.slice(5, 7)) - 1] ?? "",
+      },
+    ];
+  });
   return (
     <>
       <svg
@@ -130,12 +168,17 @@ const Calendar = memo(function Calendar({
         aria-label={`Calendar heatmap of ${metric} over the last ${CAL_WEEKS} weeks`}
       >
         <title>Daily activity calendar</title>
+        {months.map((m) => (
+          <text key={m.key} className="cal-month" x={m.x} y={10}>
+            {m.label}
+          </text>
+        ))}
         {grid.weeks.map((col, wi) =>
           col.map((c, ri) => (
             <rect
               key={c.day}
               x={wi * (cell + gap)}
-              y={ri * (cell + gap)}
+              y={ri * (cell + gap) + top}
               width={cell}
               height={cell}
               rx={2}
@@ -152,6 +195,15 @@ const Calendar = memo(function Calendar({
       <div className="axis">
         <span>{grid.firstDay}</span>
         <span>{grid.lastDay}</span>
+      </div>
+      <div className="cal-legend">
+        <span>less</span>
+        <span className="cal-swatch empty" title={`no ${metric}`} />
+        {CAL_LEGEND_STEPS.map((step) => (
+          <span key={step} className="cal-swatch" style={{ opacity: step }} />
+        ))}
+        <span>more</span>
+        <span className="muted">· up to {fmt(metric, grid.max)} in a day</span>
       </div>
       <details className="chart-data">
         <summary>View Calendar Data</summary>
@@ -184,7 +236,7 @@ const Calendar = memo(function Calendar({
 /* ——— Weekly trends (error rate, sidechain share, concurrency) ————————— */
 
 const ErrorTrend = memo(function ErrorTrend({ rows }: { rows: ErrorWeekRow[] }) {
-  if (rows.length === 0) return <p className="muted">No tool calls in the index.</p>;
+  if (rows.length === 0) return <EmptyNotice>No tool calls in the index.</EmptyNotice>;
   return (
     <LineChart
       values={rows.map((r) => r.errorRate * 100)}
@@ -197,7 +249,7 @@ const ErrorTrend = memo(function ErrorTrend({ rows }: { rows: ErrorWeekRow[] }) 
 const SidechainTrend = memo(function SidechainTrend({ rows }: { rows: SidechainDayRow[] }) {
   const active = rows.filter((r) => r.totalCost > 0);
   if (active.length === 0 || !active.some((r) => r.sidechainCost > 0))
-    return <p className="muted">No subagent (sidechain) spend recorded yet.</p>;
+    return <EmptyNotice>No subagent (sidechain) spend recorded yet.</EmptyNotice>;
   // Weekly buckets keep the share line readable on long histories.
   const byWeek = new Map<string, { side: number; total: number }>();
   for (const r of active) {
@@ -218,7 +270,7 @@ const SidechainTrend = memo(function SidechainTrend({ rows }: { rows: SidechainD
 });
 
 const Concurrency = memo(function Concurrency({ summary }: { summary: ConcurrencySummary }) {
-  if (summary.days.length === 0) return <p className="muted">No timed sessions in the index.</p>;
+  if (summary.days.length === 0) return <EmptyNotice>No timed sessions in the index.</EmptyNotice>;
   return (
     <>
       <p className="muted">
@@ -235,6 +287,40 @@ const Concurrency = memo(function Concurrency({ summary }: { summary: Concurrenc
   );
 });
 
+/**
+ * Two equal-length calendar windows ending on the newest indexed day: the last
+ * `days` days and the `days` before those. Days without sessions count as $0,
+ * which is the point — a quiet fortnight should read as a decline.
+ */
+function calendarWindows(
+  daily: DayRow[],
+  days: number,
+): { recent: number; previous: number } | null {
+  const last = daily[daily.length - 1]?.day;
+  if (!last) return null;
+  const start = shiftDay(last, -(days - 1));
+  const priorEnd = shiftDay(start, -1);
+  const priorStart = shiftDay(start, -days);
+  const sum = (from: string, to: string) =>
+    daily.reduce((total, d) => (d.day >= from && d.day <= to ? total + d.cost : total), 0);
+  return { recent: sum(start, last), previous: sum(priorStart, priorEnd) };
+}
+
+/** Signed, coloured percent change — up is red because this is spend. */
+function CostDelta({ recent, previous }: { recent: number; previous: number }) {
+  if (previous <= 0) return <>no spend in the previous 30 days</>;
+  const change = ((recent - previous) / previous) * 100;
+  return (
+    <>
+      <span className={change >= 0 ? "delta-up" : "delta-down"}>
+        {change >= 0 ? "+" : "−"}
+        {Math.abs(change).toFixed(0)}%
+      </span>{" "}
+      vs previous 30 days ({usd(previous)})
+    </>
+  );
+}
+
 export function Trends() {
   const { data, error, loading, retry } = useAsync(() => api.trends(), []);
   const metrics = ["sessions", "cost"] as const;
@@ -243,10 +329,10 @@ export function Trends() {
   if (loading) return <LoadingNotice>Loading trends…</LoadingNotice>;
   if (error) return <ErrorNotice error={error} retry={retry} label="Couldn’t load trends." />;
   if (!data) return null;
-  const recentCost = data.daily.slice(-30).reduce((sum, day) => sum + day.cost, 0);
-  const previousCost = data.daily.slice(-60, -30).reduce((sum, day) => sum + day.cost, 0);
-  const costDelta =
-    previousCost > 0 ? `${(((recentCost - previousCost) / previousCost) * 100).toFixed(0)}%` : "—";
+  // Calendar windows, not "the last 30 rows": `daily` only carries days that
+  // had sessions, so slicing rows compares 30 *active* days against however
+  // long the 30 before them took — two windows of different lengths.
+  const last30 = calendarWindows(data.daily, 30);
   const peakDay = data.daily.reduce<DayRow | null>(
     (peak, day) => (!peak || day.cost > peak.cost ? day : peak),
     null,
@@ -264,8 +350,14 @@ export function Trends() {
         <div className="cards trend-kpis">
           <Card
             label="Latest 30 Days"
-            value={usd(recentCost)}
-            sub={`${costDelta} vs previous 30 days`}
+            value={usd(last30?.recent ?? 0)}
+            sub={
+              last30 ? (
+                <CostDelta recent={last30.recent} previous={last30.previous} />
+              ) : (
+                "No dated sessions"
+              )
+            }
           />
           <Card
             label="Peak Spend Day"
@@ -325,7 +417,7 @@ export function Trends() {
           </span>
         </div>
         {data.heatmap.length === 0 ? (
-          <p className="muted">No dated sessions in the index.</p>
+          <EmptyNotice>No dated sessions in the index.</EmptyNotice>
         ) : (
           <Heatmap cells={data.heatmap} metric={heatMetric} />
         )}

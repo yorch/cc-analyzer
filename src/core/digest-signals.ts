@@ -137,6 +137,7 @@ export function buildWeeklyDigest(
     .map((r) => ({
       projectId: r.projectId,
       projectPath: r.projectPath,
+      claudeDir: r.claudeDir,
       cost: r.cost,
       sessions: r.sessions,
       delta: digestDelta(r.cost, priorProjects.get(r.projectId) ?? 0),

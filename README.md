@@ -478,11 +478,12 @@ drills into the leakiest sessions; its header opens with a compact list of the
 top **portfolio insight** findings (severity glyph + title — the full evidence
 lives in `cc-analyzer insights`) and also carries the portfolio
 **context tax** (median/p90 tokens spent before you type) and the cheapest
-single model your token mix could have run on. The **trends** view is a two-panel
-time-series dashboard (`tab` / `1`·`2`): a braille **burn** chart of spend over
-time — `m` cycles the metric (cost/tokens/sessions), `g` the granularity
-(day/week/month) — and an activity **heatmap** of sessions by local weekday ×
-hour (`m` toggles to cost). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
+single model your token mix could have run on. The **trends** view is a
+three-panel time-series dashboard (`tab` / `1`·`2`·`3`): a braille **burn**
+chart of spend over time — `m` cycles the metric (cost/tokens/sessions), `g`
+the granularity (day/week/month) — an activity **heatmap** of sessions by local
+weekday × hour (`m` toggles to cost), and a contribution-style **calendar** of
+daily activity (`m` toggles cost/sessions). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
 **tools** by invocations with an error count and error rate (`s` sorts); goes
 deeper on **skills** — invocations, sessions, distinct projects, error rate,
 turn-scoped cost and session-scoped cost (`s` sorts), with an adoption detail

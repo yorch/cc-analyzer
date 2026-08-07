@@ -262,6 +262,9 @@ export interface CacheMetrics {
 export interface ProjectCacheRow extends CacheMetrics {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir the project lives under — what tells two same-named
+   *  projects from different roots apart in a ranked list. */
+  claudeDir: string;
   sessions: number;
 }
 
@@ -758,6 +761,9 @@ export interface ParseCoverageStats {
 export interface ContextTaxRow {
   projectId: string;
   projectPath: string | null;
+  /** The Claude data dir the project lives under — what tells two same-named
+   *  projects from different roots apart in a ranked list. */
+  claudeDir: string;
   /** Sessions carrying a baseline (a main-chain API call). */
   sessions: number;
   avgTokens: number;

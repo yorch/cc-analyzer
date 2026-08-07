@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
+import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
@@ -22,13 +22,32 @@ import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
 import { SessionCharts } from "../SessionCharts.tsx";
+import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript";
 const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript"] as const;
 
+/** A turn the page was asked to reveal. The nonce makes a repeat request for
+ *  the same turn a new event, so clicking the same anchor twice still scrolls. */
+interface TurnFocus {
+  turn: number;
+  nonce: number;
+}
+
+/** The anchor id every turn header carries, so charts and tables elsewhere in
+ *  the page can point at one turn. */
+export const turnAnchorId = (turnIndex: number): string => `turn-${turnIndex + 1}`;
+
 export function Session({ id }: { id: string }) {
   const [tab, setTab] = useHashParam<Tab>("tab", "summary", SESSION_TABS);
+  const [focus, setFocus] = useState<TurnFocus | null>(null);
+  // Cross-tab navigation: switch to Turns, then let `Turns` widen its window to
+  // cover the turn and scroll to it once it has actually rendered.
+  const goToTurn = (turnIndex: number) => {
+    setFocus((prev) => ({ turn: turnIndex, nonce: (prev?.nonce ?? 0) + 1 }));
+    setTab("turns");
+  };
   // Sticky once the transcript tab has been opened, so switching tabs doesn't
   // refetch — but the (potentially huge) transcript is never fetched eagerly.
   // Derived from `tab` in an effect so any way of reaching the tab (deep link,
@@ -128,9 +147,9 @@ export function Session({ id }: { id: string }) {
 
       <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
         {tab === "summary" && <Summary a={a} />}
-        {tab === "charts" && <SessionCharts a={a} />}
+        {tab === "charts" && <SessionCharts a={a} onGoToTurn={goToTurn} />}
         {tab === "timeline" && <Timeline a={a} />}
-        {tab === "turns" && <Turns a={a} />}
+        {tab === "turns" && <Turns a={a} focus={focus} />}
         {tab === "transcript" && (
           <Transcript
             loading={transcript.loading}
@@ -327,7 +346,7 @@ function Timeline({ a }: { a: SessionAnalysis }) {
     [a],
   );
   const { limit, more } = useWindowed(timed.length, TIMELINE_WINDOW);
-  if (timed.length === 0) return <p className="muted">No timed turns in this session.</p>;
+  if (timed.length === 0) return <EmptyNotice>No timed turns in this session.</EmptyNotice>;
   const t0 = Math.min(...timed.map((t) => t.startMs));
   const t1 = Math.max(...timed.map((t) => t.endMs));
   const span = Math.max(t1 - t0, 1);
@@ -340,19 +359,39 @@ function Timeline({ a }: { a: SessionAnalysis }) {
   return (
     <section>
       <p className="muted">
-        {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn; dots are
-        API calls (teal = subagent sidechain, red ring = tool error in that call, red-tinted lane =
-        interrupted or correction turn)
+        {duration(span)} wall · {duration(a.totals.activeMs)} active · one lane per turn, dots are
+        API calls
         {timed.length > limit ? ` · showing ${limit}/${timed.length} turns` : ""}
       </p>
+      <div className="legend">
+        <span className="legend-item">
+          <span className="legend-swatch tl-turn" />
+          turn lane
+        </span>
+        <span className="legend-item">
+          <span className="legend-swatch tl-turn-flagged" />
+          interrupted or correction turn
+        </span>
+        <span className="legend-item">
+          <span className="legend-swatch tl-call" />
+          API call
+        </span>
+        <span className="legend-item">
+          <span className="legend-swatch tl-call-side" />
+          subagent (sidechain) call
+        </span>
+        <span className="legend-item">
+          <span className="legend-swatch tl-call-err" />
+          tool error in that call
+        </span>
+      </div>
       <div className="timelinewrap">
         <svg
           className="timeline"
           viewBox={`0 0 ${W} ${H}`}
-          style={{ height: H }}
-          preserveAspectRatio="none"
+          style={chartBox(W, H)}
           role="img"
-          aria-label="Session timeline showing turns and API calls"
+          aria-label={`Session timeline showing ${shown.length} turns and their API calls`}
         >
           <title>Session timeline</title>
           {shown.map((t, i) => {
@@ -402,6 +441,13 @@ function Timeline({ a }: { a: SessionAnalysis }) {
         <span>start</span>
         <span>{duration(span)}</span>
       </div>
+      <ChartData
+        labelHeading="Turn"
+        valueHeading="Cost"
+        labels={shown.map((t) => `#${t.turn.index + 1} · +${offset(t.startMs)}`)}
+        values={shown.map((t) => t.turn.cost.total)}
+        format={usd}
+      />
       {more}
     </section>
   );
@@ -410,10 +456,12 @@ function Timeline({ a }: { a: SessionAnalysis }) {
 const TURNS_WINDOW = 100;
 
 /** Reveal a long list in `step`-sized chunks; returns the current slice length
- *  and a "Show more / Show all" control (or null when everything fits). */
-function useWindowed(total: number, step: number): { limit: number; more: ReactNode } {
+ *  and a "Show more / Show all" control (or null when everything fits).
+ *  `atLeast` lets a caller demand a minimum window — how a deep link to turn
+ *  #480 reveals it without the reader clicking "Show more" five times. */
+function useWindowed(total: number, step: number, atLeast = 0): { limit: number; more: ReactNode } {
   const [visible, setVisible] = useState(step);
-  const limit = Math.min(visible, total);
+  const limit = Math.min(Math.max(visible, atLeast), total);
   const more =
     total > limit ? (
       <div className="loadmore">
@@ -426,9 +474,15 @@ function useWindowed(total: number, step: number): { limit: number; more: ReactN
   return { limit, more };
 }
 
-function Turns({ a }: { a: SessionAnalysis }) {
+function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
-  const { limit, more } = useWindowed(a.turns.length, TURNS_WINDOW);
+  // A requested turn widens the window before the scroll runs, so the anchor
+  // exists by the time the effect below looks for it.
+  const { limit, more } = useWindowed(a.turns.length, TURNS_WINDOW, focus ? focus.turn + 1 : 0);
+  useEffect(() => {
+    if (!focus) return;
+    document.getElementById(turnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
+  }, [focus]);
   const toggle = (i: number) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -442,7 +496,7 @@ function Turns({ a }: { a: SessionAnalysis }) {
       {a.turns.slice(0, limit).map((t) => {
         const expanded = open.has(t.index);
         return (
-          <div className="item" key={t.index}>
+          <div className="item" id={turnAnchorId(t.index)} key={t.index}>
             <button
               type="button"
               className="turnhead"
