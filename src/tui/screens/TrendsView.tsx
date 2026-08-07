@@ -3,7 +3,7 @@ import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import { activityHeatmap, type ModelDayRow, modelMixByDay, spendByDay } from "../../core/stats.ts";
-import { weeklySeries } from "../../core/stats-types.ts";
+import { INDEXED_COST_CAVEAT, weeklySeries } from "../../core/stats-types.ts";
 import {
   type BurnMetric,
   brailleChart,
@@ -181,6 +181,9 @@ function ModelsPanel({ mix, columns }: { mix: ModelDayRow[]; columns: number }) 
             </Text>
           </Text>
         ))}
+      </Box>
+      <Box marginTop={1}>
+        <Text color={role.muted}>{INDEXED_COST_CAVEAT}</Text>
       </Box>
     </Box>
   );

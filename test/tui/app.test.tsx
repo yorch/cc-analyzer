@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
+import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { App } from "../../src/tui/App.tsx";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
@@ -37,6 +38,8 @@ describe("App (smoke render)", () => {
     expect(frame).toContain("total"); // portfolio lede
     expect(frame).toContain("portfolio"); // nav rail (breadcrumb + rail entry)
     expect(frame).toContain("sessions"); // nav rail entry
+    // Indexed-cost cross-file de-dup caveat prints beside the framing note.
+    expect(frame).toContain(INDEXED_COST_CAVEAT.slice(0, 50));
     unmount();
   });
 
