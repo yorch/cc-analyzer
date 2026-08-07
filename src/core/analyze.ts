@@ -688,7 +688,9 @@ class SessionAnalyzer {
     return mid ?? e.requestId;
   }
 
-  /** Count a call's stop_reason once — on whichever line first carries one. */
+  /** Count a call's stop_reason once — on whichever line first carries one.
+   * Callers key by message id when they have one, so a replayed line under a
+   * new requestId can't count the same response's stop reason twice. */
   private countStopReason(reason: string, key: string | undefined): void {
     if (key !== undefined) {
       if (this.stoppedKeys.has(key)) return;
@@ -1087,7 +1089,7 @@ class SessionAnalyzer {
         }
       }
       const reason = event.message.stop_reason;
-      if (reason) this.countStopReason(reason, key);
+      if (reason) this.countStopReason(reason, mid ?? key);
       return;
     }
     if (key !== undefined) this.seenUsage.add(key);
@@ -1104,7 +1106,7 @@ class SessionAnalyzer {
       const claimKey = mid ?? key;
       if (claimKey !== undefined && !this.claimUsage(claimKey)) {
         const reason = event.message.stop_reason;
-        if (reason) this.countStopReason(reason, key);
+        if (reason) this.countStopReason(reason, mid ?? key);
         return;
       }
     }
@@ -1131,7 +1133,7 @@ class SessionAnalyzer {
     if (ioTokens(tokens) + cacheTokens(tokens) === 0) cost.estimated = false;
 
     const stopReason = event.message.stop_reason ?? undefined;
-    if (stopReason) this.countStopReason(stopReason, key);
+    if (stopReason) this.countStopReason(stopReason, mid ?? key);
 
     this.apiCallCount += 1;
     const isSidechain = event.isSidechain === true;
