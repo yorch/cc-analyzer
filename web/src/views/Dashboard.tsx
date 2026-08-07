@@ -11,6 +11,7 @@ import {
   costNoun,
   formatDigestDelta,
   formatUSD,
+  INDEXED_COST_CAVEAT,
   isEmptyPeriod,
   type ModelRow,
   type MonthRow,
@@ -130,6 +131,7 @@ export function Dashboard() {
             {range} · {count(summary.sessions)} sessions
           </div>
           {framingNote && <div className="hero-sub">{framingNote}</div>}
+          <div className="hero-sub">{INDEXED_COST_CAVEAT}</div>
           <div className="hero-sub cost-basis-control">
             <Seg
               label="Cost basis"
