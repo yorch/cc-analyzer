@@ -17,6 +17,10 @@ interface LiteLLMEntry {
   cache_creation_input_token_cost?: number;
   cache_creation_input_token_cost_above_1hr?: number;
   cache_read_input_token_cost?: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
   max_input_tokens?: number;
 }
 
@@ -26,6 +30,23 @@ export function mapLiteLLMEntry(entry: LiteLLMEntry): ModelPricing | null {
   const output = entry.output_cost_per_token;
   if (typeof input !== "number" || typeof output !== "number") return null;
   const maxInput = entry.max_input_tokens;
+  // Long-context tier: present only when LiteLLM prices the >200K prompt band.
+  // Missing companion fields fall back to Anthropic's published long-context
+  // multipliers (output 1.5x base; cache write 1.25x/2x and read 0.1x of the
+  // tier's input rate — the same shape as the base-rate fallbacks below).
+  const inputAbove = entry.input_cost_per_token_above_200k_tokens;
+  const above200k: ModelPricing["above200k"] =
+    typeof inputAbove === "number"
+      ? {
+          inputCostPerToken: inputAbove,
+          outputCostPerToken: entry.output_cost_per_token_above_200k_tokens ?? output * 1.5,
+          cacheWrite5mCostPerToken:
+            entry.cache_creation_input_token_cost_above_200k_tokens ?? inputAbove * 1.25,
+          cacheWrite1hCostPerToken: inputAbove * 2,
+          cacheReadCostPerToken:
+            entry.cache_read_input_token_cost_above_200k_tokens ?? inputAbove * 0.1,
+        }
+      : undefined;
   return {
     inputCostPerToken: input,
     outputCostPerToken: output,
@@ -33,6 +54,7 @@ export function mapLiteLLMEntry(entry: LiteLLMEntry): ModelPricing | null {
     cacheWrite1hCostPerToken: entry.cache_creation_input_token_cost_above_1hr ?? input * 2,
     cacheReadCostPerToken: entry.cache_read_input_token_cost ?? input * 0.1,
     ...(Number.isFinite(maxInput) && (maxInput as number) > 0 ? { maxInputTokens: maxInput } : {}),
+    ...(above200k ? { above200k } : {}),
   };
 }
 
@@ -65,8 +87,9 @@ export interface LoadedPricing {
 /** Bump when the cached table's shape gains load-bearing fields: a cache
  * written by an older binary is then refreshed (or bundled pricing used)
  * instead of silently serving entries that lack the new data. v2 added
- * `maxInputTokens` (the context-window limit the charts draw). */
-export const CACHE_FORMAT_VERSION = 2;
+ * `maxInputTokens` (the context-window limit the charts draw); v3 added
+ * `above200k` (the long-context tier rates). */
+export const CACHE_FORMAT_VERSION = 3;
 
 interface CacheFile {
   fetchedAt: number;
@@ -110,10 +133,8 @@ export async function loadPricing(opts: LoadPricingOptions = {}): Promise<Loaded
   }
 }
 
-/** A pricing entry is usable only if every rate is a finite number. */
-function isValidEntry(e: unknown): e is ModelPricing {
-  if (typeof e !== "object" || e === null) return false;
-  const p = e as Record<string, unknown>;
+/** Are these five base rates all finite numbers? */
+function hasFiniteRates(p: Record<string, unknown>): boolean {
   return (
     Number.isFinite(p.inputCostPerToken) &&
     Number.isFinite(p.outputCostPerToken) &&
@@ -121,6 +142,24 @@ function isValidEntry(e: unknown): e is ModelPricing {
     Number.isFinite(p.cacheWrite1hCostPerToken) &&
     Number.isFinite(p.cacheReadCostPerToken)
   );
+}
+
+/** A pricing entry is usable only if every rate is a finite number. A
+ * malformed optional tier is dropped rather than invalidating the entry. */
+function isValidEntry(e: unknown): e is ModelPricing {
+  if (typeof e !== "object" || e === null) return false;
+  const p = e as Record<string, unknown>;
+  if (!hasFiniteRates(p)) return false;
+  if (p.above200k !== undefined) {
+    const tier = p.above200k;
+    if (
+      typeof tier !== "object" ||
+      tier === null ||
+      !hasFiniteRates(tier as Record<string, unknown>)
+    )
+      delete p.above200k;
+  }
+  return true;
 }
 
 async function readCache(path: string): Promise<CacheFile | null> {

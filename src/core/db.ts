@@ -80,6 +80,13 @@ CREATE INDEX IF NOT EXISTS idx_sessions_claude_dir ON sessions(claude_dir);
 CREATE INDEX IF NOT EXISTS idx_sessions_month ON sessions(month);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+
+CREATE TABLE IF NOT EXISTS usage_keys (
+  key TEXT PRIMARY KEY,
+  path TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 `;
 
 // v6: replaces the classified bash/test columns (bash_json, bash_errors_json,
@@ -145,7 +152,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 // a project's identity depended on which root sorted first and silently changed
 // meaning when the configured list was reordered. Every id in a v14 index is
 // therefore the wrong shape; the bump rebuilds them.
-export const SCHEMA_VERSION = "15";
+// v16: cost accounting changed three ways at once, all baked into indexed
+// rows: (1) the `usage_keys` table — each counted API call's stable identity
+// (message id), claimed by the file that first counted it, so a
+// continuation/copied session file no longer double-counts the parent's spend
+// in portfolio rollups; (2) long-context (>200K prompt) calls price at the
+// tiered rates; (3) a zero-token call (e.g. a "<synthetic>" error stub) no
+// longer flips `cost_estimated` for the whole session. Rows written by v15
+// carry the old numbers and no claims — the bump forces the rebuild.
+export const SCHEMA_VERSION = "16";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
@@ -166,6 +181,7 @@ export function openDb(path: string = indexDbPath()): Database {
     // The index is a disposable cache: on a schema change, drop and recreate the
     // sessions table (with the current columns) so a rebuild fills it accurately.
     db.exec("DROP TABLE IF EXISTS sessions;");
+    db.exec("DROP TABLE IF EXISTS usage_keys;");
     db.query("DELETE FROM meta WHERE key = 'last_scan_at'").run();
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
       SCHEMA_VERSION,

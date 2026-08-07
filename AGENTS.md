@@ -77,11 +77,24 @@ other than `tool_result` blocks) and is shared by both
 `analyze.ts` and `transcript.ts`, so turn boundaries can't drift between them —
 change the rule in one place.
 
-**Streamed responses are de-duplicated.** A single API response is logged as one
-`assistant` line per content block, each repeating the same `message.id` /
-`requestId` and full `usage`. `analyzeSession` keys an `ApiCall` by that id and
-merges continuation lines into it, counting `usage` exactly once — so token and
-cost totals aren't inflated by the streaming block count.
+**Streamed responses are de-duplicated — in the file and across files.** A
+single API response is logged as one `assistant` line per content block, each
+repeating the same `message.id` / `requestId` and full `usage`.
+`analyzeSession` keys an `ApiCall` by that id and merges continuation lines
+into it, counting `usage` exactly once — so token and cost totals aren't
+inflated by the streaming block count. `seenUsage` holds the bare `message.id`
+too: message ids are unique per API response, so the same response re-logged
+under a *different* requestId (sidechain logs replay parent messages that way)
+is also a repeat, never a second call. **Across files** the same problem
+reappears as continuation/copied session files repeating the parent's entries
+verbatim; `AnalyzeOptions.claimUsage` is the seam the indexer plugs to solve
+it (see the index section below) — a refused claim skips the call's usage,
+cost, and API-call count exactly like a continuation line (steps and tool
+activity still count, and structural checks like inherited-compaction
+detection read `seenApiCalls`, which counts refused calls too). Only the
+indexer passes it: single-session surfaces always show the full transcript's
+cost, so a continuation session's indexed (portfolio) cost can legitimately
+read lower than its standalone `analyze` view.
 
 **Derived activity metrics are heuristics — keep them honest.** `analyze.ts` also
 computes: *active time* (timestamps sorted, then gaps ≤ `ACTIVE_GAP_MS` (5 min)
@@ -470,9 +483,28 @@ presentation components never touch the database.
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token
 categories separately: input, output, cache-write (5m and 1h TTL), and cache-read.
-Cache accounting is where most real spend hides. `resolveModel()` matches a model id
+Cache accounting is where most real spend hides. The deprecated pre-computed
+`costUSD` field some old JSONL files carry is **deliberately never read**
+(equivalent to ccusage's `--mode calculate`), so every dollar is derived one
+way; and local JSONL is not a bill — other machines, claude.ai, and non-CLI
+API use never appear in it. `resolveModel()` matches a model id
 by exact → `anthropic/`-prefixed → family heuristic (opus/sonnet/haiku); a
-heuristic (non-exact) match flags the cost as `estimated`. Pricing comes from LiteLLM
+heuristic (non-exact) match flags the cost as `estimated`, but a **zero-token
+call never does** — Claude Code writes `<synthetic>`-model error stubs with
+empty usage, and one $0 stub must not reclassify a session's real spend as
+heuristic (the guard sits in the analyzer, next to the tier switch). Models
+with a long-context tier carry `above200k` rates (LiteLLM's
+`*_above_200k_tokens` fields; missing companions fall back to Anthropic's
+published multipliers — output 1.5×, cache write 1.25×/2× and read 0.1× of the
+tier input rate): `effectivePricing()` switches the **whole request** to those
+rates when one call's prompt side (`promptTokens()` — input + cache read +
+both cache writes, the same sum `firstPromptTokens` records) exceeds
+`LONG_CONTEXT_THRESHOLD` (200K), matching Anthropic's 1M-context billing. The
+tier is decided per de-duplicated call, never on aggregates — which is why
+what-if repricing (aggregate token mixes) stays on base rates, one more reason
+it is a rate comparison only. The pricing cache is format-versioned
+(`CACHE_FORMAT_VERSION`, v3 added `above200k`), so pre-upgrade caches refresh
+instead of serving entries without the tier. Pricing comes from LiteLLM
 (remote, in `pricing-source.ts`), cached in the state dir, with `bundled-pricing.json`
 as offline fallback. A dollar figure is always computed the same way regardless of
 how the user pays — `computeCost()` has no notion of billing plan. `cost-framing.ts`
@@ -500,6 +532,23 @@ TUI and `serve` build an empty index automatically; `serve --refresh` requests a
 incremental refresh. Every successful scan persists `last_scan_at`, while
 `index --check` and the CLI/TUI/web freshness surfaces compare source (path, size,
 mtime) metadata with indexed rows without parsing session content.
+**Indexed cost counts each real API call once, across files** (schema v16): a
+continuation/copied session file repeats its parent's assistant entries, so
+`reindex()` threads `claimUsage` into the analyzer — each de-duplicated call's
+identity (bare `message.id`, falling back to the composite key) is claimed in
+the `usage_keys` table (`key PRIMARY KEY, path`) by the file that first counted
+it, and a call another file owns is skipped in this row. Prior runs' claims are
+read from the table; the current run's live in an in-memory map checked
+synchronously, so concurrently-streamed files can't both count one call.
+Files are analyzed oldest-mtime-first so the parent, not the copy, usually
+wins — *attribution* (which row carries a shared call) is best-effort under
+concurrency, but *totals* are single-counted regardless. A re-analyzed file's
+claims are replaced wholesale; a failed analysis keeps its old row and claims;
+pruning a file frees its claims, and surviving rows keep their de-duped
+numbers until a rebuild reclaims everything. De-dup covers the billing numbers
+(tokens, cost, API-call count) — activity metrics (tools, turns, steps) still
+reflect each file's full transcript, and `--rebuild` clears the table first so
+claims re-derive from scratch.
 
 **Project ids are lossy encodings.** A project's stable id is its encoded directory
 name under `<claudeRoot>/projects/`. `decodeProjectLabel()` is best-effort display only;
