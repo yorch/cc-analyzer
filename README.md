@@ -155,6 +155,8 @@ cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
+cc-analyzer telemetry [on|off|status]
+                                     # view or change anonymous usage telemetry
 cc-analyzer cost-basis [api|subscription]
                                      # view or change how dollar figures are framed
 cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
