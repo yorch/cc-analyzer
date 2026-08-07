@@ -87,4 +87,43 @@ describe("ToolsView", () => {
     expect(frame).toContain("general-purpose");
     unmount();
   });
+
+  test("4 opens the reliability panel: churn, thrash, corrections, parse coverage", async () => {
+    const rel = openDb(":memory:");
+    insertSession(rel, {
+      path: "r1",
+      turns: 100,
+      retries: 6,
+      retries_json: JSON.stringify({ Bash: 6 }),
+      correction_turns: 8,
+      interruption_turns: 3,
+      test_fail_streak: 4, // ≥ THRASH_STREAK_MIN → an edit-test-thrash session
+      redundant_reads: 7, // ≥ THRASH_REREAD_MIN → a reread-heavy session
+      reread_files_json: JSON.stringify(["/p/one/src/hot.ts"]),
+      parse_lines: 1000,
+      parse_errors: 2,
+      unknown_events: 5,
+      versions_json: JSON.stringify(["2.0.1"]),
+    });
+    const { stdin, lastFrame, unmount } = render(
+      <ToolsView db={rel} columns={140} rows={40} isActive onBack={noop} />,
+    );
+    stdin.write("4");
+    await waitForFrame(lastFrame, "corrections");
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("6 repeated identical calls");
+    expect(frame).toContain("worst Bash (6)");
+    expect(frame).toContain("edit→test→fail loops");
+    expect(frame).toContain("worst streak 4");
+    expect(frame).toContain("7 redundant reads");
+    expect(frame).toContain("src/hot.ts");
+    expect(frame).toContain("8.0%"); // correction share of 100 turns
+    expect(frame).toContain("interrupted mid-flight");
+    // Mandatory caveat, verbatim (assert a fragment that fits one wrapped line).
+    expect(frame).toContain("English-only keyword heuristic");
+    expect(frame).toContain("99.3% parsed"); // 1 − (2+5)/1000
+    expect(frame).toContain("newest 2.0.1");
+    unmount();
+    rel.close();
+  });
 });

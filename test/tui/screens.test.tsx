@@ -114,12 +114,14 @@ describe("TUI list views (smoke render)", () => {
       cost_total: 5,
       turn_depths_json: JSON.stringify([1, 4]),
       compactions: 2,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
     });
     insertSession(charted, {
       path: "/a/2.jsonl",
       project_id: "proj-a",
       day: "2026-07-09",
       cost_total: 1,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
     });
     // The compaction count rides on the project row itself (schema v7 sum).
     const withCompactions = projects.map((p) =>
@@ -142,6 +144,8 @@ describe("TUI list views (smoke render)", () => {
     expect(frame).toContain("sess cost"); // cost-distribution ramp
     expect(frame).toContain("turn depth"); // depth ramp
     expect(frame).toContain("compactions"); // v7 count line
+    expect(frame).toContain("hot files"); // top-3 teaser header
+    expect(frame).toContain("2× src/main.ts"); // sessions × project-relative path
     unmount();
     charted.close();
   });
@@ -191,6 +195,35 @@ describe("ProjectsView multi-root labels and enriched preview", () => {
     expect(frame).toContain("[home]");
     expect(frame).toContain("[work]");
     unmount();
+  });
+
+  test("a short pane drops the hot-files block instead of overflowing the shell", () => {
+    const short = openDb(":memory:");
+    insertSession(short, {
+      path: "/a/1.jsonl",
+      project_id: "proj-a",
+      day: "2026-07-01",
+      cost_total: 5,
+      files_json: JSON.stringify(["/Users/dev/alpha/src/main.ts"]),
+    });
+    const { lastFrame, unmount } = render(
+      <ProjectsView
+        projects={projects}
+        db={short}
+        wasteByProject={noWaste}
+        findingsByProject={noFindings}
+        columns={120}
+        pageSize={6} // a ~24-row terminal's list budget
+        isActive={false}
+        onOpen={noop}
+        onBack={noop}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("last active"); // vitals always render
+    expect(frame).not.toContain("hot files"); // lowest-priority block dropped
+    unmount();
+    short.close();
   });
 
   test("preview shows cache efficiency and project-scoped findings when present", () => {

@@ -474,8 +474,10 @@ tools), and a **two-pane master-detail** body: a list on the left drives a
 live **preview** on the right as you move the cursor. The project preview
 carries spend/tokens/activity vitals plus per-project chart lines, a
 **cache-efficiency** line (verdict, read:write ratio, un-amortized waste $),
-and a **findings** line counting the portfolio-insight findings scoped to that
-project — the same signals the web Projects page shows as columns. The **insights** view is a
+a **findings** line counting the portfolio-insight findings scoped to that
+project — the same signals the web Projects page shows as columns — and a
+top-3 **hot files** teaser; on short terminals the preview drops its
+lowest-priority blocks instead of overflowing. The **insights** view is a
 cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
 (cache you paid to write but didn't read back), with a read:write verdict, that
 drills into the leakiest sessions; its header opens with a compact list of the
@@ -483,16 +485,22 @@ top **portfolio insight** findings (severity glyph + title — the full evidence
 lives in `cc-analyzer insights`) and also carries the portfolio
 **context tax** (median/p90 tokens spent before you type) and the cheapest
 single model your token mix could have run on. The **trends** view is a
-three-panel time-series dashboard (`tab` / `1`·`2`·`3`): a braille **burn**
+four-panel time-series dashboard (`tab` / `1`·`2`·`3`·`4`): a braille **burn**
 chart of spend over time — `m` cycles the metric (cost/tokens/sessions), `g`
 the granularity (day/week/month) — an activity **heatmap** of sessions by local
-weekday × hour (`m` toggles to cost), and a contribution-style **calendar** of
-daily activity (`m` toggles cost/sessions). The **tools** view (`tab` / `1`·`2`·`3`) ranks your
+weekday × hour (`m` toggles to cost), a contribution-style **calendar** of
+daily activity (`m` toggles cost/sessions), and a **models** panel ranking
+each model's spend with a weekly sparkline, total, and share. The **tools**
+view (`tab` / `1`·`2`·`3`·`4`) ranks your
 **tools** by invocations with an error count and error rate (`s` sorts); goes
 deeper on **skills** — invocations, sessions, distinct projects, error rate,
 turn-scoped cost and session-scoped cost (`s` sorts), with an adoption detail
 strip (first/last used + a weekly invocation sparkline) for the selected skill;
-and lists **subagents** by how many sessions used each. (Skill cost is reported
+lists **subagents** by how many sessions used each; and closes with a
+**reliability** panel — test runs and failures, tool-call churn, edit-test
+thrash and redundant re-reads (with the most re-read files), correction and
+interruption turns, and parse coverage with an update prompt when the parser
+is behind the newest Claude Code format. (Skill cost is reported
 at two scopes: *turn-scoped* — the cost of the turns that invoked the skill,
 including any subagent burst inside them — is the primary number, and
 *session-scoped* is the whole-session upper bound. Both are correlational, not

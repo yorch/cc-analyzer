@@ -107,6 +107,9 @@ export function ProjectsView({
           stats={previewStats}
           cache={highlightedId ? wasteByProject.get(highlightedId) : undefined}
           findings={highlightedId ? findingsByProject.get(highlightedId) : undefined}
+          // The detail pane sits beside the list: its line budget is the list's
+          // page size plus the list's own header and scroll-indicator rows.
+          maxRows={pageSize !== undefined ? pageSize + 2 : undefined}
         />
       }
     />

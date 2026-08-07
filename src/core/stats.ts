@@ -896,6 +896,11 @@ export function projectTrends(db: Database, projectId: string): ProjectTrends {
   };
 }
 
+/** How many hot files the TUI project preview lists — the pane is ~half a
+ * terminal wide, so a top-3 teaser (the full list lives in the web project
+ * Files tab) beats a scrolling table. */
+export const PREVIEW_HOT_FILES = 3;
+
 /** The per-project chart lines the TUI project preview renders — computed at
  * the screen boundary (ProjectsView) and passed in as plain props, so the
  * preview component stays free of database access. */
@@ -904,6 +909,8 @@ export interface ProjectPreviewStats {
   weeklyBurn: number[];
   distribution: CostDistribution;
   turnDepth: TurnDepthStats;
+  /** The project's most-touched files (top PREVIEW_HOT_FILES). */
+  hotFiles: HotFileRow[];
 }
 
 export function projectPreviewStats(db: Database, projectId: string): ProjectPreviewStats {
@@ -911,6 +918,7 @@ export function projectPreviewStats(db: Database, projectId: string): ProjectPre
     weeklyBurn: bucketSeries(spendByDay(db, projectId), "week").map((p) => p.cost),
     distribution: costDistribution(db, projectId),
     turnDepth: turnDepthStats(db, projectId),
+    hotFiles: hotFiles(db, projectId, PREVIEW_HOT_FILES),
   };
 }
 

@@ -3,8 +3,16 @@ import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import {
+  PARSE_COVERAGE_MAX_UNPARSED_SHARE,
+  PARSE_COVERAGE_MIN_LINES,
+} from "../../core/portfolio-diagnostics.ts";
+import {
+  type AnalyticsRollup,
   analyticsRollup,
+  CORRECTION_CAVEAT,
   type NameUsageRow,
+  type ParseCoverageStats,
+  parseCoverage,
   SKILL_COST_CAVEAT,
   type SkillUsageRow,
   type ToolUsageRow,
@@ -15,8 +23,8 @@ import { keyIndex } from "../keys.ts";
 import { clampWindow, scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 
-type Panel = "tools" | "skills" | "subagents";
-const PANELS: Panel[] = ["tools", "skills", "subagents"];
+type Panel = "tools" | "skills" | "subagents" | "reliability";
+const PANELS: Panel[] = ["tools", "skills", "subagents", "reliability"];
 
 const TOOL_SORTS = [
   { key: "uses", cmp: (a: ToolUsageRow, b: ToolUsageRow) => b.uses - a.uses },
@@ -58,8 +66,11 @@ const rateColor = (r: number): string =>
  * skills panel goes deeper: invocation/reach/reliability/cost columns plus an
  * adoption detail strip for the selected skill. */
 export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
-  // One table scan feeds all three panels.
-  const { tools, skills, subagents } = useMemo(() => analyticsRollup(db), [db]);
+  // One table scan feeds the ranked panels; reliability reads the same
+  // rollup's tests/retries/thrash/corrections plus a parse-coverage scan.
+  const rollup = useMemo(() => analyticsRollup(db), [db]);
+  const { tools, skills, subagents } = rollup;
+  const coverage = useMemo(() => parseCoverage(db), [db]);
 
   const [panel, setPanel] = useState<Panel>("tools");
   const [offsetState, setOffset] = useState(0);
@@ -77,6 +88,7 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
   );
   const list: (ToolUsageRow | SkillUsageRow | NameUsageRow)[] =
     panel === "tools" ? sortedTools : panel === "skills" ? sortedSkills : subagents;
+  const isReliability = panel === "reliability";
 
   // The skills panel reserves rows for the adoption detail strip below the
   // table: a fixed part (top margin + divider + head + sparkline) plus
@@ -101,7 +113,7 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
     (input, key) => {
       if (key.escape) return onBack();
       if (key.tab) return go(PANELS[(PANELS.indexOf(panel) + 1) % PANELS.length] as Panel);
-      const n = keyIndex("123", input);
+      const n = keyIndex("1234", input);
       if (n >= 0) return go(PANELS[n] as Panel);
       if (input === "s") {
         if (panel === "tools") setToolSortIdx((i) => (i + 1) % TOOL_SORTS.length);
@@ -153,12 +165,14 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
           {" "}
           {/* Comparators are hardcoded descending — no reverse toggle here (unlike
            * the list views' tab/shift-tab sort), so the arrow is constant. */}
-          tab · 1/2/3{sortKey ? ` · s sort: ${sortKey} ↓` : ""} · esc menu
+          tab · 1/2/3/4{sortKey ? ` · s sort: ${sortKey} ↓` : ""} · esc menu
         </Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
-        {list.length === 0 ? (
+        {isReliability ? (
+          <ReliabilityPanel rollup={rollup} coverage={coverage} columns={columns} />
+        ) : list.length === 0 ? (
           <Text color={role.muted}>Nothing recorded in the index.</Text>
         ) : panel === "tools" ? (
           <>
@@ -220,7 +234,7 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
             ))}
           </>
         )}
-        <ScrollRange offset={offset} size={pageSize} total={list.length} />
+        {!isReliability && <ScrollRange offset={offset} size={pageSize} total={list.length} />}
       </Box>
 
       {selSkill && (
@@ -248,6 +262,158 @@ export function ToolsView({ db, columns, rows, isActive, onBack }: Props) {
           <Text color={role.muted}>{SKILL_COST_CAVEAT}</Text>
         </Box>
       )}
+    </Box>
+  );
+}
+
+/** A padded `label   value` line, matching the preview panes' field style. */
+function Line({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Text>
+      <Text color={role.muted}>{label.padEnd(13)}</Text>
+      {children}
+    </Text>
+  );
+}
+
+const pct = (share: number): string => `${(share * 100).toFixed(1)}%`;
+
+/**
+ * Reliability at a glance: tests, tool-call churn, the two thrash signals,
+ * corrections (with its mandatory caveat), and parse coverage — the same
+ * numbers the web Tools view's Reliability/Environment sections and
+ * `cc-analyzer stats` report, in compact field lines.
+ */
+function ReliabilityPanel({
+  rollup,
+  coverage,
+  columns,
+}: {
+  rollup: AnalyticsRollup;
+  coverage: ParseCoverageStats;
+  columns: number;
+}) {
+  const { tests, retries, thrash, corrections } = rollup;
+  const cov = coverage.summary;
+  const newest = coverage.byVersion[0];
+  // Same thresholds as the parse-coverage-drop portfolio rule, so this panel
+  // and the diagnostic can never disagree about when the parser is behind.
+  const parserBehind =
+    newest !== undefined &&
+    newest.lines >= PARSE_COVERAGE_MIN_LINES &&
+    newest.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE;
+  if (cov.sessions === 0) {
+    return <Text color={role.muted}>Nothing recorded in the index.</Text>;
+  }
+  return (
+    <Box flexDirection="column">
+      <Line label="tests">
+        {tests.runs > 0 ? (
+          <>
+            <Text color={role.body}>{formatCount(tests.runs)} runs</Text>
+            <Text color={role.muted}>
+              {" "}
+              · {formatCount(tests.failures)} failed ({pct(tests.failureRate)}) ·{" "}
+              {formatCount(tests.sessions)} sessions
+            </Text>
+          </>
+        ) : (
+          <Text color={role.muted}>none detected</Text>
+        )}
+      </Line>
+      <Line label="churn">
+        {retries.total > 0 ? (
+          <>
+            <Text color={role.body}>{formatCount(retries.total)} repeated identical calls</Text>
+            <Text color={role.muted}>
+              {" "}
+              in {formatCount(retries.sessions)} sessions
+              {retries.byTool[0]
+                ? ` · worst ${retries.byTool[0].tool} (${formatCount(retries.byTool[0].retries)})`
+                : ""}
+            </Text>
+          </>
+        ) : (
+          <Text color={role.muted}>none</Text>
+        )}
+      </Line>
+      <Line label="test thrash">
+        {thrash.testThrashSessions > 0 ? (
+          <>
+            <Text color={role.body}>
+              {formatCount(thrash.testThrashSessions)} sessions in edit→test→fail loops
+            </Text>
+            <Text color={role.muted}> · worst streak {thrash.worstTestFailStreak}</Text>
+          </>
+        ) : (
+          <Text color={role.muted}>none</Text>
+        )}
+      </Line>
+      <Line label="re-reads">
+        {thrash.redundantReads > 0 ? (
+          <>
+            <Text color={role.body}>{formatCount(thrash.redundantReads)} redundant reads</Text>
+            <Text color={role.muted}>
+              {" "}
+              · {formatCount(thrash.rereadSessions)} reread-heavy sessions
+            </Text>
+          </>
+        ) : (
+          <Text color={role.muted}>none</Text>
+        )}
+      </Line>
+      {thrash.topRereadFiles.slice(0, 3).map((f) => (
+        <Text key={f.file}>
+          <Text color={role.muted}>{"".padEnd(13)}</Text>
+          <Text color={role.body}>{String(f.sessions).padStart(3)}× </Text>
+          <Text color={role.muted}>{truncate(f.file, Math.max(16, columns - 22))}</Text>
+        </Text>
+      ))}
+      {thrash.redundantReads > 0 && (
+        <Text color={role.muted}>
+          {"".padEnd(13)}every re-read pays the whole file into context again
+        </Text>
+      )}
+      <Box marginTop={1} flexDirection="column">
+        <Line label="corrections">
+          {corrections.turns > 0 ? (
+            <>
+              <Text color={role.body}>{pct(corrections.correctionShare)}</Text>
+              <Text color={role.muted}>
+                {" "}
+                of {formatCount(corrections.turns)} turns (
+                {formatCount(corrections.correctionTurns)}) · {formatCount(corrections.sessions)}{" "}
+                sessions · {formatCount(corrections.interruptionTurns)} interrupted mid-flight
+              </Text>
+            </>
+          ) : (
+            <Text color={role.muted}>no turns recorded</Text>
+          )}
+        </Line>
+        {/* Mandatory caveat prints VERBATIM — Ink wraps long lines. */}
+        <Text color={role.muted}>{CORRECTION_CAVEAT}</Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Line label="parse cover">
+          <Text color={role.body}>{pct(1 - cov.unparsedShare)} parsed</Text>
+          <Text color={role.muted}>
+            {" "}
+            of {formatCount(cov.lines)} lines · {formatCount(cov.parseErrors)} unreadable ·{" "}
+            {formatCount(cov.unknownEvents)} unknown events
+          </Text>
+        </Line>
+        {newest && (
+          <Line label="">
+            <Text color={role.muted}>
+              newest {newest.version}: {pct(1 - newest.unparsedShare)} parsed of{" "}
+              {formatCount(newest.lines)} lines
+            </Text>
+            {parserBehind && (
+              <Text color={role.accent}> · parser behind — run cc-analyzer update</Text>
+            )}
+          </Line>
+        )}
+      </Box>
     </Box>
   );
 }

@@ -611,7 +611,9 @@ unknownEvents) / lines`. Version attribution is best effort — a session is
 attributed to the newest version it ran under, and version-less sessions count
 only toward the summary. Surfaces: `cc-analyzer index --check` (one SQL scan —
 `--check` still parses nothing), the CLI `analyze` footer, `/api/analytics` →
-the web Tools → Environment section, and the `parse-coverage-drop` portfolio
+the web Tools → Environment section, the TUI tools view's reliability panel
+(summary + newest-version lines, flagging "parser behind" on the same shared
+thresholds as the rule), and the `parse-coverage-drop` portfolio
 rule (warning when the newest version's `unparsedShare ≥ 1%` over ≥ 10k lines —
 judged per version, not per rolling window, because a format change ships with
 a release).
