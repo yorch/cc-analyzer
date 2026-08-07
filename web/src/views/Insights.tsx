@@ -11,6 +11,7 @@ import {
   cacheVerdict,
   costFramingNote,
   type IdleCacheBucket,
+  INDEXED_COST_CAVEAT,
   PORTFOLIO_DIAGNOSTIC_CODES,
   type PortfolioDiagnostic,
   type ProjectCacheRow,
@@ -88,6 +89,7 @@ export function Insights() {
         </span>
       </header>
       {framingNote && <p className="muted">{framingNote}</p>}
+      <p className="muted">{INDEXED_COST_CAVEAT}</p>
 
       <PortfolioInsights diagnostics={data.diagnostics} />
 

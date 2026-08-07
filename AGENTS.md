@@ -548,7 +548,11 @@ pruning a file frees its claims, and surviving rows keep their de-duped
 numbers until a rebuild reclaims everything. De-dup covers the billing numbers
 (tokens, cost, API-call count) — activity metrics (tools, turns, steps) still
 reflect each file's full transcript, and `--rebuild` clears the table first so
-claims re-derive from scratch.
+claims re-derive from scratch. The shared `INDEXED_COST_CAVEAT`
+(stats-types) states these semantics for readers of the numbers; it prints
+verbatim once per portfolio surface, beside the cost-framing note — CLI
+`stats`, the TUI portfolio lede and Trends models panel, the web Dashboard
+and Insights views.
 
 **Project ids are lossy encodings.** A project's stable id is its encoded directory
 name under `<claudeRoot>/projects/`. `decodeProjectLabel()` is best-effort display only;

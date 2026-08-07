@@ -356,6 +356,17 @@ export const SKILL_COST_CAVEAT =
   "skills counts its full cost toward each); session-scoped is the whole-session upper bound. " +
   "Correlational, not causal.";
 
+/**
+ * The note every indexed-cost portfolio surface prints, verbatim — once per
+ * surface, beside the cost-framing note. Cross-file de-dup (schema v16) means
+ * an indexed continuation session's cost can legitimately read lower than its
+ * standalone `analyze` view, and portfolio totals can drop after the rebuild;
+ * the wording cannot drift between the CLI, the TUI and the web app.
+ */
+export const INDEXED_COST_CAVEAT =
+  "Indexed costs count each real API call once across files: a continuation session's share " +
+  "can read lower than its standalone analysis, which always prices the full transcript.";
+
 export interface DurationSummary {
   /** Sessions carrying a positive duration. */
   sessions: number;
