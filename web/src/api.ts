@@ -178,9 +178,37 @@ export type SessionResponse = SessionAnalysis & {
   insights?: SessionInsightsPayload;
 };
 
+/** Thrown by `get`/`putJson` on a non-2xx response. Carries the parsed JSON
+ *  error body (when there is one) alongside the status, so a call site that
+ *  cares about a *specific* error shape — e.g. the ambiguous-project-id `409`
+ *  built by `projectParam` in `src/web/api.ts` — can inspect it instead of
+ *  pattern-matching `error.message`. `message` stays `"<status> <url>"` for
+ *  every existing call site that just renders it as text. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly url: string;
+  readonly body: unknown;
+
+  constructor(status: number, url: string, body: unknown) {
+    super(`${status} ${url}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.url = url;
+    this.body = body;
+  }
+}
+
+async function errorBody(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return undefined;
+  }
+}
+
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  if (!res.ok) throw new ApiError(res.status, url, await errorBody(res));
   return (await res.json()) as T;
 }
 
@@ -190,8 +218,24 @@ async function putJson<T>(url: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  if (!res.ok) throw new ApiError(res.status, url, await errorBody(res));
   return (await res.json()) as T;
+}
+
+/** The shape `projectParam` (`src/web/api.ts`) sends on a `409`: a bare
+ *  project id/name matched more than one root-qualified project. */
+export interface AmbiguousProjectError {
+  error: string;
+  candidates: string[];
+}
+
+/** Narrow an error caught from a project-scoped call (`sessions`,
+ *  `projectFiles`, `projectTrends`, `insightsSessions`) to its candidate id
+ *  list, or `null` when it isn't that specific ambiguity. */
+export function ambiguousProjectCandidates(err: unknown): string[] | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const body = err.body as Partial<AmbiguousProjectError> | undefined;
+  return Array.isArray(body?.candidates) ? body.candidates : null;
 }
 
 export const api = {

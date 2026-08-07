@@ -1349,6 +1349,19 @@ p.muted {
   color: var(--muted);
   border-left: 3px solid var(--signal);
 }
+.disambig-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 3px solid var(--signal);
+}
+.disambig-list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+.disambig-list li {
+  margin: 4px 0;
+}
 .insight-callout,
 .trend-summary {
   padding: 14px 16px;
