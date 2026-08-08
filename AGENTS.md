@@ -64,11 +64,13 @@ There is also a **streaming path** for consumers that don't need the full array 
 memory: `parser.ts` exposes `streamSessionEvents(path)` (an `AsyncGenerator`), and
 `analyzeSession` is a thin wrapper over a shared `SessionAnalyzer` accumulator that
 `analyzeSessionStream(iterable, pricing, { detail })` also drives. The **indexer**
-uses `analyzeSessionStream(streamSessionEvents(path), …, { detail: false })` so a
-multi-hundred-MB session indexes without ever materializing the event array or the
+uses `analyzeSessionStream(streamSessionTree(sessionTree(info)), …, { detail: false })`
+so a multi-hundred-MB session indexes without ever materializing the event array or the
 per-turn timeline (it stores only aggregates). The interactive consumers
-(CLI `analyze`, web, TUI) keep the array path — they render the full output and
-reuse the events for `buildTranscript`.
+(CLI `analyze`/`doctor`, web, TUI) keep the array path via `parseSessionTree` — they
+render the full output and reuse the events for `buildTranscript`. Every one of
+them reads the **whole session tree** (parent + subagents), never a lone file —
+see the session-tree note below.
 
 ## Concepts that span multiple files (read before editing)
 
@@ -219,17 +221,29 @@ both render exactly its output; the web timeline's red lanes are deliberately
 the narrower user-intervention subset (interrupted/correction only). The
 analyzer also groups sidechain calls into
 **`SessionAnalysis.sidechainBursts`** — one entry per chain, so "which subagent
-burst cost $3" is answerable — with a **best-effort** `subagentType`: a burst's
-root sidechain user event repeats the Task prompt verbatim, so bursts join to
-main-chain `Task`/`Agent` spawns by normalized prompt (each spawn consumed
-once, in order), falling back to an order-zip only when nothing matched and the
-counts align exactly; anything else stays unnamed rather than guessed —
-which is why render sites keep the accurate `subagents` type list alongside
-the burst table instead of replacing it. `groupSidechainBursts()` is the one
-per-type rollup (label, fold, ordering) over them. Bursts are **detail-mode
-only** (always empty in aggregate mode — the indexer's streaming path never
-reads them and must not pay for the per-chain accumulators) and are not
-flattened into the index.
+burst cost $3" is answerable. How a burst is *named* depends on which of the
+two subagent layouts the session used (see the session-tree note below). Under
+the newer per-session `subagents/` layout every event carries an `agentId`, so
+the chain is exact and `subagentType`/`spawnDepth` are read from that agent's
+`.meta.json` (threaded in as `AnalyzeOptions.agentMeta`); a nested agent gets
+its **own** burst, because the layout writes it as its own file. Under the
+older inline layout the chain resolves by `parentUuid` (nested spawns fold into
+their spawner) and `subagentType` is **best-effort**: a burst's root sidechain
+user event repeats the Task prompt verbatim, so bursts join to main-chain
+`Task`/`Agent` spawns by normalized prompt (each spawn consumed once, in
+order), falling back to an order-zip only when nothing matched and the counts
+align exactly; anything else stays unnamed rather than guessed — which is why
+render sites keep the accurate `subagents` type list alongside the burst table
+instead of replacing it. Exactly-attributed bursts are excluded from the
+prompt-matching pass *and its counts*, so a session holding both layouts cannot
+trip the order-zip and overwrite exact types with guesses.
+`groupSidechainBursts()` is the one per-type rollup (label, fold, ordering) over
+them, and `burstAttributionNote()` is the one predicate deciding which caveat a
+render site prints — the answer is a property of the data, so claiming
+"best-effort" over metadata-named rows would misdescribe them. Bursts are
+**detail-mode only** (always empty in aggregate mode — the indexer's streaming
+path never reads them and must not pay for the per-chain accumulators) and are
+not flattened into the index.
 Pricing's `maxInputTokens` (LiteLLM `max_input_tokens`, also in the bundled
 snapshot; the pricing cache is format-versioned so pre-upgrade caches refresh)
 flows through `resolveModel` into `ModelUsage.contextLimit` →
@@ -553,6 +567,12 @@ TUI and `serve` build an empty index automatically; `serve --refresh` requests a
 incremental refresh. Every successful scan persists `last_scan_at`, while
 `index --check` and the CLI/TUI/web freshness surfaces compare source (path, size,
 mtime) metadata with indexed rows without parsing session content.
+A row covers the session's **whole tree**: `reindex()` analyzes the parent
+transcript merged with its subagent transcripts, and subagent files never become
+rows of their own. **Schema v17** forces the rebuild that backfills that spend
+across all history — the incremental path skips unchanged files, so v16 rows
+would otherwise keep reporting zero subagent cost forever (the same reasoning
+behind v9 and v10).
 **Indexed cost counts each real API call once, across files** (schema v16): a
 continuation/copied session file repeats its parent's assistant entries, so
 `reindex()` threads `claimUsage` into the analyzer — each de-duplicated call's
@@ -653,6 +673,37 @@ decision in `project-labels.ts` (`labelProjects`), imported by the CLI, the TUI,
 and the SPA: it qualifies only labels that actually collide, and each surface
 renders that decision to fit its medium (the CLI table gets a full-path column,
 the space-constrained lists get a `[root]` suffix).
+
+**A session is a tree of files, not one file.** Claude Code moved subagent
+work out of the parent transcript: it now lives in
+`<projectDir>/<sessionId>/subagents/agent-<agentId>.jsonl`, each with a sibling
+`.meta.json` (`{agentType, spawnDepth}`). Those events still carry the
+**parent's** `sessionId` and `isSidechain: true`, which is why merging them into
+the parent's stream makes every existing sidechain metric work with no change to
+the accounting. The two layouts are **mutually exclusive** — a session with a
+`subagents/` directory has no inline sidechain usage — so merging cannot
+double-count older sessions.
+
+`discover.ts` owns the filesystem side: `SessionInfo` carries `subagentPaths`
+and `agentMeta`, `sessionTree()` is the one place deciding reader order (parent
+first, because merge ties resolve by position), and `sessionSourceAt(path)`
+builds the same thing for a session known only by its path (the CLI and web API
+resolve one that way). `sizeBytes`/`mtimeMs` are folded **across** the tree, or
+the indexer's `(size, mtime)` skip would miss a session whose only growth
+happened inside `subagents/` and leave the row stale forever.
+`parser.ts` owns the reading: `streamSessionTree`/`parseSessionTree` k-way
+**merge by timestamp** — not concatenation, since a subagent call must land in
+the turn that was open when it happened, or per-turn cost, `turnDepths`, and
+`skillTurnCosts` all shift onto the final turn. Memory stays O(files), so the
+indexer's constant-memory path survives, and events keep their within-file order
+even when a file's own timestamps are not monotonic. `ParseCoverage` sums across
+the tree, and `ParseError.path` names the file (a line number alone is ambiguous
+once a session spans several).
+
+Note what this class of bug costs: `ParseCoverage` cannot detect it. It counts
+bad lines in files the parser reads; **unread files produce no parse errors**.
+Format drift at the *filesystem* layer has no counter, and the symptom was
+silent — every `isSidechain`-derived number simply read zero.
 
 **The parser never throws — and its tolerance is measured, not silent.**
 `parser.ts` is tolerant: invalid JSON → recorded `ParseError` and skipped; a

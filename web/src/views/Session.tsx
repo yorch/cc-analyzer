@@ -3,13 +3,16 @@ import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
+  burstAttributionNote,
   type CostRankCohort,
   formatSignedUSD,
+  groupSidechainBursts,
   MIN_RANK_COHORT,
   OUTCOME_CAVEAT,
   outcomeRows,
   type SessionAnalysis,
   type SessionResponse,
+  type SidechainBurst,
   sessionOutcomes,
   type TranscriptItem,
   type Turn,
@@ -376,6 +379,7 @@ function Summary({ a }: { a: SessionResponse }) {
         )}
       </div>
       {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
+      <Subagents bursts={a.sidechainBursts} />
       {whatIf?.summary.bestModel && (
         <section className="summary-group" style={{ marginTop: 12 }}>
           <h2>What-if repricing</h2>
@@ -402,6 +406,79 @@ function Summary({ a }: { a: SessionResponse }) {
         </p>
       )}
       {a.subagents.length > 0 && <p className="muted">Subagents: {a.subagents.join(", ")}</p>}
+    </section>
+  );
+}
+
+/**
+ * Per-burst subagent spend: which agent ran, in which turn, and what it cost.
+ *
+ * The per-type rollup answers "what do my reviewers cost"; this answers "which
+ * burst cost $3", which is the question a session view is actually asked. Both
+ * render, rollup first, because a session with many same-type agents is
+ * unreadable as bursts alone.
+ */
+function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
+  const rows = useMemo(() => groupSidechainBursts(bursts), [bursts]);
+  const note = burstAttributionNote(bursts);
+  if (bursts.length === 0) return null;
+  return (
+    <section className="summary-group" style={{ marginTop: 12 }}>
+      <h2>Subagents</h2>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th className="num">Bursts</th>
+              <th className="num">Calls</th>
+              <th className="num">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.type}>
+                <td>{r.type}</td>
+                <td className="num">{r.bursts}</td>
+                <td className="num">{r.apiCalls}</td>
+                <td className="num">{usd(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="tablewrap" style={{ marginTop: 8 }}>
+        <table>
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th>Type</th>
+              <th>Agent</th>
+              <th className="num">Turn</th>
+              <th className="num">Calls</th>
+              <th className="num">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bursts.map((b, i) => (
+              <tr key={b.agentId ?? `${b.startTime ?? "?"}-${i}`}>
+                <td className="num">{i + 1}</td>
+                <td>
+                  {b.subagentType ?? "(unmatched)"}
+                  {b.spawnDepth !== undefined && b.spawnDepth > 1 && (
+                    <span className="muted"> · nested ×{b.spawnDepth}</span>
+                  )}
+                </td>
+                <td className="muted">{b.agentId ?? "-"}</td>
+                <td className="num">{b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-"}</td>
+                <td className="num">{b.apiCalls}</td>
+                <td className="num">{usd(b.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {note && <p className="muted">{note}</p>}
     </section>
   );
 }

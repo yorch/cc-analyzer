@@ -1,4 +1,5 @@
 import {
+  type AgentMeta,
   type AssistantEvent,
   type ContentBlock,
   isCorrectionPrompt,
@@ -138,8 +139,15 @@ export interface Compaction {
  * Otherwise the type stays undefined rather than guessed.
  */
 export interface SidechainBurst {
-  /** Best-effort subagent type (Task `subagent_type`), when attributable. */
+  /** Best-effort subagent type (Task `subagent_type`), when attributable —
+   * except where `agentId` is set, which makes it exact. */
   subagentType?: string;
+  /** The subagent's own id, when the session used the per-session
+   * `subagents/` layout. Its presence is what makes `subagentType` exact. */
+  agentId?: string;
+  /** Nesting level from the declaring `.meta.json`: 1 for an agent the main
+   * chain spawned, deeper for an agent spawned by another agent. */
+  spawnDepth?: number;
   /** Index of the turn open when the burst's first call landed; undefined
    * before the first real prompt. */
   turnIndex?: number;
@@ -355,6 +363,15 @@ export interface AnalyzeOptions {
    * single session's own view always shows its full transcript's cost.
    */
   claimUsage?: (key: string) => boolean;
+  /**
+   * `agentId` → what that subagent's `.meta.json` declared, from
+   * `SessionInfo.agentMeta`. Passed in rather than read here so the analyzer
+   * stays filesystem-free and streaming; discovery owns the I/O.
+   *
+   * When a burst's agent is in this map its `subagentType` is exact and the
+   * prompt-matching fallback is skipped entirely.
+   */
+  agentMeta?: Map<string, AgentMeta>;
 }
 
 const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -654,6 +671,7 @@ class SessionAnalyzer {
     private readonly pricing: PricingTable,
     private readonly detail: boolean,
     private readonly claimUsage?: (key: string) => boolean,
+    private readonly agentMeta?: Map<string, AgentMeta>,
   ) {}
 
   /** Record the parse coverage of the events this analyzer is being fed. */
@@ -673,13 +691,37 @@ class SessionAnalyzer {
     if (!Number.isNaN(ms)) this.eventMs.push(ms);
   }
 
-  /** Resolve (and register) an event's chain id ("" = main chain). */
-  private chainOf(e: { uuid?: string; parentUuid?: string | null; isSidechain?: boolean }): string {
+  /**
+   * Resolve (and register) an event's chain id ("" = main chain).
+   *
+   * `agentId` wins when present: the per-session `subagents/` layout stamps it
+   * on every event of a subagent transcript, which is exact identity and needs
+   * no `parentUuid` walk. It also gives a nested spawn its *own* burst rather
+   * than folding it into its spawner's — the layout writes it as its own file,
+   * and `spawnDepth` records where it sits. The `parentUuid` walk below remains
+   * for the older inline layout, where folding is the only correct answer.
+   */
+  private chainOf(e: {
+    uuid?: string;
+    parentUuid?: string | null;
+    isSidechain?: boolean;
+    agentId?: string;
+  }): string {
     if (e.isSidechain !== true) return "";
+    if (e.agentId) {
+      const chain = `agent:${e.agentId}`;
+      if (e.uuid) this.chainOfUuid.set(e.uuid, chain);
+      return chain;
+    }
     const parentChain = e.parentUuid ? this.chainOfUuid.get(e.parentUuid) : undefined;
     const chain = parentChain || e.uuid || "sidechain";
     if (e.uuid) this.chainOfUuid.set(e.uuid, chain);
     return chain;
+  }
+
+  /** The `agentId` a chain id encodes, for chains keyed by one. */
+  private static agentIdOfChain(chain: string): string | undefined {
+    return chain.startsWith("agent:") ? chain.slice("agent:".length) : undefined;
   }
 
   private usageKey(e: AssistantEvent): string | undefined {
@@ -1244,8 +1286,29 @@ class SessionAnalyzer {
       if (queue) queue.push(s.type);
       else spawnQueues.set(s.prompt, [s.type]);
     }
+    // Exact attribution first: a chain keyed by `agentId` came from the
+    // per-session `subagents/` layout, whose `.meta.json` names the agent
+    // outright. Those bursts never enter the prompt-matching below — and they
+    // are excluded from its counts, so a session mixing attributed and
+    // unattributed bursts can't trip the count-zip fallback.
+    const unattributed: typeof entries = [];
+    for (const entry of entries) {
+      const [chain, burst] = entry;
+      const agentId = SessionAnalyzer.agentIdOfChain(chain);
+      if (agentId === undefined) {
+        unattributed.push(entry);
+        continue;
+      }
+      burst.agentId = agentId;
+      const meta = this.agentMeta?.get(agentId);
+      if (meta?.agentType !== undefined) burst.subagentType = meta.agentType;
+      if (meta?.spawnDepth !== undefined) burst.spawnDepth = meta.spawnDepth;
+      // An agent with no readable meta keeps its exact identity but no type,
+      // which reads as "unnamed" rather than as a guess.
+    }
+
     let matched = 0;
-    for (const [chain, burst] of entries) {
+    for (const [chain, burst] of unattributed) {
       const root = this.chainRootPrompt.get(chain);
       if (!root) continue;
       const type = spawnQueues.get(root)?.shift();
@@ -1254,8 +1317,12 @@ class SessionAnalyzer {
         matched += 1;
       }
     }
-    if (matched === 0 && entries.length > 0 && this.taskSpawns.length === entries.length) {
-      entries.forEach(([, burst], i) => {
+    if (
+      matched === 0 &&
+      unattributed.length > 0 &&
+      this.taskSpawns.length === unattributed.length
+    ) {
+      unattributed.forEach(([, burst], i) => {
         const spawn = this.taskSpawns[i];
         if (spawn) burst.subagentType = spawn.type;
       });
@@ -1361,7 +1428,12 @@ export function analyzeSession(
   pricing: PricingTable,
   opts: AnalyzeOptions = {},
 ): SessionAnalysis {
-  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true, opts.claimUsage);
+  const analyzer = new SessionAnalyzer(
+    pricing,
+    opts.detail ?? true,
+    opts.claimUsage,
+    opts.agentMeta,
+  );
   analyzer.setParseCoverage(opts.coverage);
   for (const event of events) analyzer.push(event);
   return analyzer.finish();
@@ -1391,7 +1463,12 @@ export async function analyzeSessionStream(
   pricing: PricingTable,
   opts: AnalyzeOptions = {},
 ): Promise<SessionAnalysis> {
-  const analyzer = new SessionAnalyzer(pricing, opts.detail ?? true, opts.claimUsage);
+  const analyzer = new SessionAnalyzer(
+    pricing,
+    opts.detail ?? true,
+    opts.claimUsage,
+    opts.agentMeta,
+  );
   analyzer.setParseCoverage(opts.coverage);
   const it = events[Symbol.asyncIterator]();
   try {

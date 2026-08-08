@@ -376,6 +376,36 @@ export function groupSidechainBursts(bursts: SidechainBurst[]): SubagentTypeRow[
   return [...byType.values()].sort((a, b) => b.cost - a.cost || b.apiCalls - a.apiCalls);
 }
 
+/**
+ * How a burst list's `subagentType`s were arrived at — the note every render
+ * site prints verbatim under a burst table.
+ *
+ * Which one applies is a property of the data, not of the surface: the
+ * per-session `subagents/` layout names an agent outright, while the older
+ * inline layout can only match spawn prompts. A session can hold both, and
+ * claiming "best-effort" over exactly-named rows (or the reverse) would
+ * misdescribe the numbers, so the note is derived rather than hardcoded.
+ * Returns undefined when nothing is named and there is nothing to caveat.
+ */
+export function burstAttributionNote(bursts: SidechainBurst[]): string | undefined {
+  if (bursts.length === 0) return undefined;
+  const named = bursts.filter((b) => b.subagentType !== undefined);
+  // Nothing named is the case that most needs explaining, not the one to stay
+  // silent about: about a quarter of subagent transcripts ship no `.meta.json`
+  // (Claude Code's own compaction agents among them), and a table of
+  // "(unmatched)" rows with no note reads as a defect rather than as absent
+  // metadata.
+  if (named.length === 0) {
+    return bursts.every((b) => b.agentId !== undefined)
+      ? "These subagents ship no type metadata, so they are shown unnamed rather than guessed."
+      : "Types are matched best-effort from spawn prompts; none of these could be matched.";
+  }
+  const exact = named.filter((b) => b.agentId !== undefined).length;
+  if (exact === named.length) return "Types are read from each subagent's own metadata.";
+  if (exact === 0) return "Types are matched best-effort from spawn prompts.";
+  return "Types are read from subagent metadata where available, else matched best-effort from spawn prompts.";
+}
+
 export interface TurnPoint {
   index: number;
   cost: number;

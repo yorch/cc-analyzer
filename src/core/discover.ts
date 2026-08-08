@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from "./claude-roots.ts";
+import type { AgentMeta } from "./events.ts";
 import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 export interface ProjectInfo {
@@ -18,6 +19,8 @@ export interface ProjectInfo {
   sessionCount: number;
 }
 
+export type { AgentMeta } from "./events.ts";
+
 export interface SessionInfo {
   /** Session file basename without extension (usually a uuid). */
   id: string;
@@ -25,8 +28,90 @@ export interface SessionInfo {
   path: string;
   /** The Claude data directory this session was discovered under. */
   root: string;
+  /** Size and mtime folded across the parent file *and* its subagent
+   * transcripts, so the indexer's (size, mtime) skip notices growth that
+   * happened only inside `subagents/`. */
   sizeBytes: number;
   mtimeMs: number;
+  /** This session's `<id>/subagents/*.jsonl`, sorted; empty under the older
+   * inline-sidechain layout. `sessionTree` turns it into a reader argument. */
+  subagentPaths: string[];
+  /** `agentId` → what its `.meta.json` declared. Absent entries just mean the
+   * burst falls back to prompt-matching for its type. */
+  agentMeta: Map<string, AgentMeta>;
+}
+
+/**
+ * A session's files in reader order: the parent transcript, then its subagent
+ * transcripts. The single place that decides that order, so every consumer
+ * feeds `streamSessionTree`/`parseSessionTree` the same thing.
+ */
+export function sessionTree(info: Pick<SessionInfo, "path" | "subagentPaths">): string[] {
+  return [info.path, ...info.subagentPaths];
+}
+
+/** Everything the readers and the analyzer need to process one session. */
+export type SessionSource = Pick<SessionInfo, "path" | "subagentPaths" | "agentMeta">;
+
+/**
+ * Build a `SessionSource` for a session known only by its file path — the CLI
+ * accepts a bare `.jsonl` path, and the web API resolves an id to one. The
+ * subagent directory sits beside the file, named for the session id, so it is
+ * derivable without re-walking the project.
+ */
+export async function sessionSourceAt(path: string): Promise<SessionSource> {
+  const sub = await readSubagents(join(dirname(path), basename(path, ".jsonl")));
+  return { path, subagentPaths: sub.paths, agentMeta: sub.meta };
+}
+
+/** The `agentId` a subagent transcript's filename encodes. */
+function agentIdOf(file: string): string {
+  return basename(file, ".jsonl").replace(/^agent-/, "");
+}
+
+/**
+ * A session's subagent transcripts and their declared metadata.
+ *
+ * Claude Code keeps these in `<projectDir>/<sessionId>/subagents/`. Everything
+ * here is best-effort and never throws: this is user-adjacent data whose shape
+ * moves between Claude Code releases, so a missing directory, an unreadable
+ * file, or malformed JSON shrinks the result rather than failing the scan — the
+ * same posture `inventory.ts` takes toward config.
+ */
+async function readSubagents(
+  sessionDir: string,
+): Promise<{ paths: string[]; meta: Map<string, AgentMeta>; sizeBytes: number; mtimeMs: number }> {
+  const empty = { paths: [], meta: new Map<string, AgentMeta>(), sizeBytes: 0, mtimeMs: 0 };
+  const dir = join(sessionDir, "subagents");
+  const files = await readdir(dir).catch(() => null);
+  if (!files) return empty;
+
+  const paths: string[] = [];
+  const meta = new Map<string, AgentMeta>();
+  let sizeBytes = 0;
+  let mtimeMs = 0;
+
+  for (const file of files.slice().sort()) {
+    if (!file.endsWith(".jsonl")) continue;
+    const path = join(dir, file);
+    const s = await stat(path).catch(() => null);
+    if (!s) continue;
+    paths.push(path);
+    sizeBytes += s.size;
+    mtimeMs = Math.max(mtimeMs, s.mtimeMs);
+
+    const raw = await Bun.file(join(dir, `${basename(file, ".jsonl")}.meta.json`))
+      .json()
+      .catch(() => null);
+    if (raw && typeof raw === "object") {
+      const { agentType, spawnDepth } = raw as Record<string, unknown>;
+      meta.set(agentIdOf(file), {
+        agentType: typeof agentType === "string" ? agentType : undefined,
+        spawnDepth: typeof spawnDepth === "number" ? spawnDepth : undefined,
+      });
+    }
+  }
+  return { paths, meta, sizeBytes, mtimeMs };
 }
 
 async function isDir(path: string): Promise<boolean> {
@@ -140,13 +225,17 @@ export async function listSessionsIn(project: {
     const path = join(project.dir, file);
     const s = await stat(path).catch(() => null);
     if (!s) continue;
+    const id = basename(file, ".jsonl");
+    const sub = await readSubagents(join(project.dir, id));
     sessions.push({
-      id: basename(file, ".jsonl"),
+      id,
       projectId: project.id,
       path,
       root: project.root,
-      sizeBytes: s.size,
-      mtimeMs: s.mtimeMs,
+      sizeBytes: s.size + sub.sizeBytes,
+      mtimeMs: Math.max(s.mtimeMs, sub.mtimeMs),
+      subagentPaths: sub.paths,
+      agentMeta: sub.meta,
     });
   }
   sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -221,13 +310,16 @@ export async function findSessionById(
     const path = join(project.dir, `${id}.jsonl`);
     const s = await stat(path).catch(() => null);
     if (s) {
+      const sub = await readSubagents(join(project.dir, id));
       return {
         id,
         projectId: project.id,
         path,
         root: project.root,
-        sizeBytes: s.size,
-        mtimeMs: s.mtimeMs,
+        sizeBytes: s.size + sub.sizeBytes,
+        mtimeMs: Math.max(s.mtimeMs, sub.mtimeMs),
+        subagentPaths: sub.paths,
+        agentMeta: sub.meta,
       };
     }
   }

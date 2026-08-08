@@ -70,6 +70,10 @@ const baseMeta = {
   version: z.string().optional(),
   isSidechain: z.boolean().optional(),
   userType: z.string().optional(),
+  /** Subagent identity, written by Claude Code on every event in a
+   * `<sessionId>/subagents/agent-<agentId>.jsonl` transcript. Exact, unlike the
+   * prompt-matching that names bursts under the older inline layout. */
+  agentId: z.string().optional(),
 };
 
 export const assistantEventSchema = z.looseObject({
@@ -195,6 +199,21 @@ export interface ParseCoverage {
   lines: number;
   parseErrors: number;
   unknownEvents: number;
+}
+
+/**
+ * What a subagent transcript's sibling `.meta.json` declares about it.
+ *
+ * Lives here for the same reason as `ParseCoverage`: `analyze.ts` names it in
+ * `AnalyzeOptions`, and the web SPA type-imports from `analyze.ts`, so the shape
+ * must not come from `discover.ts` and drag `node:fs` into the browser
+ * typecheck graph. `discover.ts` reads it and re-exports it.
+ */
+export interface AgentMeta {
+  /** The Task `subagent_type` — authoritative, unlike burst prompt-matching. */
+  agentType?: string;
+  /** 1 for an agent the main chain spawned, deeper for nested spawns. */
+  spawnDepth?: number;
 }
 
 /**

@@ -160,7 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // tiered rates; (3) a zero-token call (e.g. a "<synthetic>" error stub) no
 // longer flips `cost_estimated` for the whole session. Rows written by v15
 // carry the old numbers and no claims — the bump forces the rebuild.
-export const SCHEMA_VERSION = "16";
+export const SCHEMA_VERSION = "17";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

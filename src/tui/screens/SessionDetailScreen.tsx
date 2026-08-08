@@ -17,6 +17,7 @@ import {
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
+  burstAttributionNote,
   groupSidechainBursts,
   modelMixRows,
   pctOfLimit,
@@ -30,7 +31,8 @@ import {
   resolveClaudeBinary,
   runClaudeAnalysis,
 } from "../../core/claude-handoff.ts";
-import { parseSessionFile } from "../../core/parser.ts";
+import { sessionSourceAt, sessionTree } from "../../core/discover.ts";
+import { parseSessionTree } from "../../core/parser.ts";
 import { getAnalysisModel, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
@@ -68,6 +70,11 @@ interface Loaded {
   transcript: TranscriptItem[];
 }
 
+/** Burst rows the summary pane shows before collapsing to "+N more". The pane
+ *  is fixed-height and does not scroll, so this is a clipping guard, not a
+ *  style choice — the caveats below the table must stay visible. */
+const BURST_ROWS_SHOWN = 5;
+
 export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [mode, setMode] = useState<Mode>("turns");
@@ -75,8 +82,10 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { events, coverage } = await parseSessionFile(session.path);
-      const analysis = analyzeSession(events, pricing, { coverage });
+      // The whole tree, so a session's subagent spend is part of its detail.
+      const source = await sessionSourceAt(session.path);
+      const { events, coverage } = await parseSessionTree(sessionTree(source));
+      const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
       const transcript = buildTranscript(events);
       if (!cancelled) setData({ analysis, transcript });
     })();
@@ -834,6 +843,7 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
   // The shared row set (labels, order, absent-not-$0 rule) — same list the
   // CLI report and the web summary render.
   const outcomes = useMemo(() => outcomeRows(sessionOutcomes(a)), [a]);
+  const burstNote = burstAttributionNote(a.sidechainBursts);
   const line = (k: string, v: string) => (
     <Text>
       {/* padEnd only helps up to 16 chars — the outcome rows carry a
@@ -877,6 +887,38 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
             .join(" "),
         )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
+      {/* Per-burst rows answer "which subagent burst cost $3", which the
+       * type list above cannot. Rendered here rather than in the charts
+       * pane because it is a table, not a series.
+       *
+       * Hard-capped: this pane is fixed-height with `overflow="hidden"` and no
+       * scroll, and everything below it — the diagnostics block and the
+       * mandatory OUTCOME/WHATIF caveats — would be clipped off-screen by a
+       * subagent-heavy session, which is exactly the session this table exists
+       * for. The charts pane caps its own subagent rows the same way. */}
+      {a.sidechainBursts.length > 0 && (
+        <Box flexDirection="column">
+          {a.sidechainBursts.slice(0, BURST_ROWS_SHOWN).map((b, i) => (
+            <Text key={b.agentId ?? `${b.startTime ?? "?"}-${i}`}>
+              <Text color={role.muted}>{`  ${String(i + 1)}.`.padEnd(16)}</Text>
+              <Text color={role.body}>
+                {truncate(b.subagentType ?? "(unmatched)", 22).padEnd(23)}
+                {(b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-").padEnd(5)}
+                {`${b.apiCalls} call${b.apiCalls === 1 ? "" : "s"}`.padEnd(10)}
+              </Text>
+              <Text color={role.cost}>{formatUSD(b.cost)}</Text>
+            </Text>
+          ))}
+          {a.sidechainBursts.length > BURST_ROWS_SHOWN && (
+            <Text color={role.muted}>
+              {`  +${a.sidechainBursts.length - BURST_ROWS_SHOWN} more burst${
+                a.sidechainBursts.length - BURST_ROWS_SHOWN === 1 ? "" : "s"
+              } · see \`cc-analyzer analyze\` for the full table`}
+            </Text>
+          )}
+          {burstNote && <Text color={role.muted}>{`  ${burstNote}`}</Text>}
+        </Box>
+      )}
       {a.compactions.length > 0 &&
         line(
           "compactions",

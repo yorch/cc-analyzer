@@ -13,8 +13,9 @@ import {
 import type { CostBasis } from "../core/cost-framing.ts";
 import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
+import { sessionSourceAt, sessionTree } from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
-import { parseSessionFile } from "../core/parser.ts";
+import { parseSessionTree } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import { getAnalysisModel, getCostBasis, setAnalysisModel, setCostBasis } from "../core/prefs.ts";
@@ -376,7 +377,10 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // deleted session file must 404 with a hint, not crash into a 500.
   const readSession = async (path: string) => {
     try {
-      return await parseSessionFile(path);
+      // The whole tree: subagent transcripts live beside the parent file and
+      // carry spend that belongs to this session.
+      const source = await sessionSourceAt(path);
+      return { ...(await parseSessionTree(sessionTree(source))), agentMeta: source.agentMeta };
     } catch {
       return undefined;
     }
@@ -399,7 +403,10 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     if (!row) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(row.path);
     if (!parsed) return c.json(staleIndex, 404);
-    const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    const analysis = analyzeSession(parsed.events, pricing, {
+      coverage: parsed.coverage,
+      agentMeta: parsed.agentMeta,
+    });
     // The rank depends only on the index, so it memoizes on the fingerprint —
     // flipping between two sessions doesn't rescan the table. The what-if is
     // a pure fold over the handful of models just analyzed; not worth a slot.
@@ -446,7 +453,10 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     if (!claudeBin) return c.json({ error: CLAUDE_NOT_FOUND_MESSAGE }, 503);
     const parsed = await readSession(row.path);
     if (!parsed) return c.json(staleIndex, 404);
-    const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    const analysis = analyzeSession(parsed.events, pricing, {
+      coverage: parsed.coverage,
+      agentMeta: parsed.agentMeta,
+    });
     const whatIf = sessionWhatIf(analysis.models, pricing);
     c.header("Content-Type", "application/x-ndjson; charset=utf-8");
     c.header("Cache-Control", "no-store");

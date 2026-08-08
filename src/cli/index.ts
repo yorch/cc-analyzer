@@ -20,11 +20,19 @@ import {
 import { openDb } from "../core/db.ts";
 import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
-import { findProject, findSessionById, listProjects, listSessionsIn } from "../core/discover.ts";
+import {
+  findProject,
+  findSessionById,
+  listProjects,
+  listSessionsIn,
+  type SessionSource,
+  sessionSourceAt,
+  sessionTree,
+} from "../core/discover.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
-import { parseSessionFile } from "../core/parser.ts";
+import { parseSessionTree } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import {
@@ -389,11 +397,19 @@ async function cmdSessions(projectId: string | undefined): Promise<number> {
   return 0;
 }
 
-async function resolveSessionPath(ref: string): Promise<string | undefined> {
+/**
+ * Resolve a session reference to its whole tree — the parent transcript plus
+ * the subagent transcripts Claude Code keeps beside it — so `analyze` and
+ * `doctor` see a session's full spend, not just its main chain.
+ */
+async function resolveSessionSource(ref: string): Promise<SessionSource | undefined> {
   if (ref.endsWith(".jsonl") || ref.includes("/")) {
-    return (await Bun.file(ref).exists()) ? ref : undefined;
+    return (await Bun.file(ref).exists()) ? await sessionSourceAt(ref) : undefined;
   }
-  return (await findSessionById(ref))?.path;
+  const found = await findSessionById(ref);
+  return (
+    found && { path: found.path, subagentPaths: found.subagentPaths, agentMeta: found.agentMeta }
+  );
 }
 
 /** Extract a `--name value` or `--name=value` flag, returning its value (if any)
@@ -475,14 +491,15 @@ async function cmdAnalyze(
     console.error("error: missing <id|path>.");
     return 2;
   }
-  const path = await resolveSessionPath(ref);
-  if (!path) {
+  const source = await resolveSessionSource(ref);
+  if (!source) {
     console.error(`error: session '${ref}' not found.`);
     return 1;
   }
-  const { events, errors, coverage } = await parseSessionFile(path);
+  const path = source.path;
+  const { events, errors, coverage } = await parseSessionTree(sessionTree(source));
   const { table: pricing } = await loadPricing();
-  const analysis = analyzeSession(events, pricing, { coverage });
+  const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
 
   if (opts.withClaude) {
     return cmdAnalyzeWithClaude(analysis, path, pricing, opts.model);
@@ -537,12 +554,13 @@ async function cmdDoctor(ref: string | undefined, json: boolean): Promise<number
     console.error("error: missing <id|path>.");
     return 2;
   }
-  const path = await resolveSessionPath(ref);
-  if (!path) {
+  const source = await resolveSessionSource(ref);
+  if (!source) {
     console.error(`error: session '${ref}' not found.`);
     return 1;
   }
-  const { events, errors, coverage } = await parseSessionFile(path);
+  const path = source.path;
+  const { events, errors, coverage } = await parseSessionTree(sessionTree(source));
   const report = inspectSessionHealth(events, errors, coverage);
   if (json) console.log(JSON.stringify({ path, ...report }, null, 2));
   else console.log(renderHealthReport(path, report));

@@ -202,8 +202,11 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   denominator is zero; the ratios measure activity, not value).
 - **What-if repricing** of this session's token mix at the other models' rates —
   a rate comparison only, with the caveat printed alongside.
-- **Subagent bursts**: per-burst sidechain spend (calls, cost, spawning turn),
-  typed best-effort by matching burst root prompts to `Task` spawns.
+- **Subagent bursts**: per-burst sidechain spend (calls, cost, spawning turn).
+  Claude Code writes each subagent's transcript beside the session, so bursts are
+  normally typed from the subagent's own metadata; older sessions that recorded
+  subagent work inline are typed best-effort by matching burst root prompts to
+  `Task` spawns, and each view says which it did.
 - **Per-turn** breakdown, where a *turn* is one genuine user prompt plus every
   assistant API call and tool loop until the next prompt.
 - **Actionable diagnostics** with observed evidence and a suggested next step for
