@@ -772,7 +772,13 @@ consume the one module so behavior can't drift: the CLI (`analyze --with-claude
 [--model]`, streamed to stdout, `--json` mutually exclusive), the web
 (`POST /api/sessions/:id/analyze` streams NDJSON to the SPA's **Claude** tab;
 loopback-only like the other write route, with injectable `resolveClaudeBinary`/
-`spawn` seams on `createApi` for tests), and the TUI (a `claude` mode on
+`spawn` seams on `createApi` for tests. The run streams *thinking* tokens the
+handoff doesn't forward, so the response can sit byte-silent for a minute-plus
+before its first visible text; the route emits a **newline heartbeat** during
+those gaps and `serve` raises `Bun.serve`'s `idleTimeout` to its 255s max, so
+the connection isn't idled out mid-run — the SPA's NDJSON reader skips the blank
+heartbeat lines. Without both, a large session's analysis 200s with an empty
+body), and the TUI (a `claude` mode on
 `SessionDetailScreen`, `a` to open, `r` to run, `m` to cycle model). Each run is
 a real, billable Claude Code session (the user's own, under their normal data
 dir), so every surface makes it explicitly opt-in and shows the run's own cost
