@@ -2,9 +2,15 @@ import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
-import { listAllSessions, retainsMissingRows, type SessionInfo, scanRoots } from "./discover.ts";
+import {
+  listAllSessions,
+  retainsMissingRows,
+  type SessionInfo,
+  scanRoots,
+  sessionTree,
+} from "./discover.ts";
 import { LAST_SCAN_KEY } from "./index-status.ts";
-import { streamSessionEvents } from "./parser.ts";
+import { streamSessionTree } from "./parser.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
 
@@ -349,7 +355,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     try {
       // Stream events and skip the per-turn timeline: the index stores only
       // aggregates, so a huge session never materializes as a full array.
-      const analysis = await analyzeSessionStream(streamSessionEvents(info.path), pricing, {
+      // The whole session tree, not just the parent file: Claude Code writes
+      // subagent work to <sessionId>/subagents/, and those calls belong to this
+      // row. Aggregate mode never builds bursts, so `agentMeta` is not needed
+      // here — only the events are.
+      const analysis = await analyzeSessionStream(streamSessionTree(sessionTree(info)), pricing, {
         detail: false,
         claimUsage: claimFor(info.path),
       });
