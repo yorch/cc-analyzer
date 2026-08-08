@@ -30,7 +30,8 @@ import {
   resolveClaudeBinary,
   runClaudeAnalysis,
 } from "../../core/claude-handoff.ts";
-import { parseSessionFile } from "../../core/parser.ts";
+import { sessionSourceAt, sessionTree } from "../../core/discover.ts";
+import { parseSessionTree } from "../../core/parser.ts";
 import { getAnalysisModel, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
@@ -75,8 +76,10 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { events, coverage } = await parseSessionFile(session.path);
-      const analysis = analyzeSession(events, pricing, { coverage });
+      // The whole tree, so a session's subagent spend is part of its detail.
+      const source = await sessionSourceAt(session.path);
+      const { events, coverage } = await parseSessionTree(sessionTree(source));
+      const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
       const transcript = buildTranscript(events);
       if (!cancelled) setData({ analysis, transcript });
     })();

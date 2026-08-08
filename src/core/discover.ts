@@ -1,5 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from "./claude-roots.ts";
 import type { AgentMeta } from "./events.ts";
 import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
@@ -48,6 +48,20 @@ export interface SessionInfo {
  */
 export function sessionTree(info: Pick<SessionInfo, "path" | "subagentPaths">): string[] {
   return [info.path, ...info.subagentPaths];
+}
+
+/** Everything the readers and the analyzer need to process one session. */
+export type SessionSource = Pick<SessionInfo, "path" | "subagentPaths" | "agentMeta">;
+
+/**
+ * Build a `SessionSource` for a session known only by its file path — the CLI
+ * accepts a bare `.jsonl` path, and the web API resolves an id to one. The
+ * subagent directory sits beside the file, named for the session id, so it is
+ * derivable without re-walking the project.
+ */
+export async function sessionSourceAt(path: string): Promise<SessionSource> {
+  const sub = await readSubagents(join(dirname(path), basename(path, ".jsonl")));
+  return { path, subagentPaths: sub.paths, agentMeta: sub.meta };
 }
 
 /** The `agentId` a subagent transcript's filename encodes. */

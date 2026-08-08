@@ -1,5 +1,5 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
-import { buildTurnSeries, turnFlags } from "../core/chart-series.ts";
+import { buildTurnSeries, burstAttributionNote, turnFlags } from "../core/chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import {
   digestSummaryRows,
@@ -337,7 +337,8 @@ export function renderSessionSummary(
         { align: ["right", "left", "right", "right", "right"] },
       ),
     );
-    lines.push(muted("Types are matched best-effort from spawn prompts.", options));
+    const note = burstAttributionNote(a.sidechainBursts);
+    if (note) lines.push(muted(note, options));
   }
   // The five session facts float unheaded between the tabled sections above and
   // below unless something is actually worth saying — a session with only
