@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setClaudeRootsOverride } from "../../src/core/claude-roots.ts";
@@ -138,6 +138,33 @@ test("a session with no subagents indexes exactly as before", async () => {
   expect(row.api_calls).toBe(1);
   expect(row.sidechain_calls).toBe(0);
   expect(row.cost_total).toBeGreaterThan(0);
+});
+
+test("an inline-sidechain session is unaffected by the tree reader", async () => {
+  // No subagents/ directory: the older layout records subagent work inline, so
+  // the merge must be a no-op and nothing may be counted twice.
+  const inline = {
+    type: "assistant",
+    uuid: "inline-1",
+    timestamp: "2026-08-06T10:05:00Z",
+    isSidechain: true,
+    parentUuid: "a1",
+    requestId: "req-inline",
+    message: {
+      id: "msg-inline",
+      role: "assistant",
+      model: "claude-opus-4-7",
+      content: [{ type: "text", text: "inline sub" }],
+      usage: { input_tokens: 5, output_tokens: 7 },
+    },
+  };
+  appendFileSync(join(projectDir, `${SESSION}.jsonl`), `${JSON.stringify(inline)}\n`);
+
+  await run();
+
+  const row = sessionRow();
+  expect(row.api_calls).toBe(2);
+  expect(row.sidechain_calls).toBe(1);
 });
 
 test("each subagent call is counted once across the tree", async () => {
