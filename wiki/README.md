@@ -17,7 +17,7 @@ The tool never writes to `~/.claude`. Its own state — a pricing cache, a SQLit
 
 ## What is cc-analyzer?
 
-`cc-analyzer` is version `0.6.0`, a TypeScript project targeting the Bun runtime (≥ 1.3) and distributed as a compiled binary ([package.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L1-L20)). It exposes several ways to consume one analysis core: scriptable CLI commands, an interactive Ink terminal UI, a local Hono web API, and an embedded React single-page application — plus a VitePress documentation site. Dependencies reflect those surfaces: `ink` (TUI), `hono` (API), `react`/`react-dom` (SPA), `zod` (tolerant event parsing), and Bun's built-in SQLite driver for the index.
+`cc-analyzer` is version `0.12.1`, a TypeScript project targeting the Bun runtime (≥ 1.3) and distributed as a compiled binary ([package.json:L1-L20](https://github.com/yorch/cc-analyzer/blob/51ccd4e/package.json#L1-L20)). It exposes several ways to consume one analysis core: scriptable CLI commands, an interactive Ink terminal UI, a local Hono web API, and an embedded React single-page application — plus a VitePress documentation site. Dependencies reflect those surfaces: `ink` (TUI), `hono` (API), `react`/`react-dom` (SPA), `zod` (tolerant event parsing), and Bun's built-in SQLite driver for the index.
 
 ## High-Level Architecture
 
@@ -85,7 +85,7 @@ The project uses a plain `src/` layout, not a monorepo. Two subtleties: `src/web
 Parses transcripts, segments them into turns and per-turn steps, derives cost from tokens, and builds the portfolio SQLite index. [Details](./2-core-analysis-engine.md) — with pages on [parsing & events](./2.1-session-parsing-and-events.md), [cost & pricing](./2.2-cost-and-pricing.md), [index & aggregation](./2.3-index-and-analytics.md), and the [per-turn step timeline](./2.4-per-turn-steps.md).
 
 ### Command-Line Interface
-The binary entrypoint and argv router: `projects`, `sessions`, `analyze`, `index`, `stats`, `serve`, `pricing`, `update`, and `version`, with `--json` modes for scripting. [Details](./3-cli.md).
+The binary entrypoint and argv router: `projects`, `sessions`, `analyze`, `doctor`, `index`, `stats`, `audit`, `insights`, `report`, `serve`, `pricing`, `update`, `version`, `telemetry`, `cost-basis`, and `claude-dir`, with `--json` modes for scripting. [Details](./3-cli.md).
 
 ### Interactive Terminal UI
 An Ink master-detail shell launched when the CLI runs with no command: a nav rail across portfolio, projects, sessions, insights, trends, and tools views, with in-terminal charts. [Details](./4-tui.md).
@@ -107,7 +107,7 @@ The VitePress site that renders this wiki and the landing page, syncs `/wiki` as
 
 ## Build & Tooling
 
-Bun is both the runtime and the package manager. `bun test` runs the suite, Biome handles lint/format, and TypeScript type-checks in two passes (Bun-targeted core/CLI/TUI/server, and the browser-targeted SPA). `bun run build` bundles the SPA with Vite, embeds it into `src/web/spa.ts`, then compiles a single binary. See [Repository Structure](./1-repository-structure.md) for the full pipeline and the CI/release/deploy workflows.
+Bun is both the runtime and the package manager. `bun test` runs the suite, Biome handles lint/format, and TypeScript type-checks in two passes (Bun-targeted core/CLI/TUI/server, and the browser-targeted SPA). `bun run build` bundles the SPA with Vite, embeds it into a disposable source copy under `tmp/` (the tracked `src/web/spa.ts` placeholder is never modified), then compiles a single binary. See [Repository Structure](./1-repository-structure.md) for the full pipeline and the CI/release/deploy workflows.
 
 ## Child Pages
 

@@ -155,6 +155,8 @@ cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
 cc-analyzer pricing update           # refresh the pricing cache
 cc-analyzer update [--check]         # self-update to the latest release (or just check)
 cc-analyzer version                  # print the version
+cc-analyzer telemetry [on|off|status]
+                                     # view or change anonymous usage telemetry
 cc-analyzer cost-basis [api|subscription]
                                      # view or change how dollar figures are framed
 cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
@@ -376,93 +378,106 @@ architecture, examples, and help text accurate in the same change.
 ### Portfolio analytics
 
 `cc-analyzer index` scans every session under each configured Claude data
-directory's `projects/` (`~/.claude/projects` by default), computes its
-metrics, and stores them in a local SQLite cache at
-`~/.config/cc-analyzer/index.db`. It is **incremental** — only new or changed
-files (by size + mtime) are re-parsed — and the cache is disposable (delete and
-rebuild anytime). `cc-analyzer stats` then reports total spend, spend by
-month/project/model, the most expensive sessions, and your **skills ranked by
-the cost of the turns that invoked them**. Two cost-optimization
-sections round it out: **what-if model repricing** replays each model's actual
-token mix — all four categories, both cache-write TTLs — at the rates of the
-other models you ran, and **context tax** reports the median/p90 tokens each
-project's sessions pay before you type anything (system prompt + CLAUDE.md +
-MCP tool schemas, taken from the first main-chain API call). Both are
-heuristics: repricing is a rate comparison only — a different model would
-produce different tokens, and quality is not priced in — and the context-tax
-baseline is inflated by continuation sessions and large opening pastes, so read
-the median rather than any single session. Human-readable reports
-use a compact headline, grouped activity/reliability sections, and aligned
-numeric tables; terminals receive restrained color while pipes, redirects,
-`NO_COLOR`, and `--json` stay automation-safe. JSON reports include a
-discriminated `scope` object identifying either the portfolio or the selected
+directory's `projects/` (`~/.claude/projects` by default), computes its metrics,
+and stores them in a local SQLite cache at `~/.config/cc-analyzer/index.db`. It
+is **incremental** — only new or changed files (by size + mtime) are re-parsed —
+and the cache is disposable (delete and rebuild anytime).
+
+`cc-analyzer stats` reports:
+
+- Total spend, and spend by month, project, and model.
+- The most expensive sessions.
+- Your **skills ranked by the cost of the turns that invoked them**.
+- **What-if model repricing** — replays each model's actual token mix (all four
+  categories, both cache-write TTLs) at the rates of the other models you ran. A
+  rate comparison only: a different model would produce different tokens, and
+  quality is not priced in.
+- **Context tax** — the median/p90 tokens each project's sessions pay before you
+  type anything (system prompt + CLAUDE.md + MCP tool schemas, from the first
+  main-chain API call). Continuation sessions and large opening pastes inflate
+  it, so read the median rather than any single session.
+
+Human-readable reports use a compact headline, grouped activity/reliability
+sections, and aligned numeric tables; terminals get restrained color while
+pipes, redirects, `NO_COLOR`, and `--json` stay automation-safe. JSON reports
+carry a discriminated `scope` object identifying the portfolio or the selected
 project.
 
-Run `cc-analyzer stats --current` from a project—or any directory beneath
-it—to scope every metric to that project's indexed sessions. Project matching
-uses the authoritative session `cwd`; if it is missing from the cache, refresh
-it with `cc-analyzer index`.
+Run `cc-analyzer stats --current` from a project — or any directory beneath it —
+to scope every metric to that project's indexed sessions. Matching uses the
+authoritative session `cwd`; if it is missing from the cache, refresh it with
+`cc-analyzer index`.
 
 ### Setup audit
 
 `cc-analyzer audit` reads your *setup* — skills, subagents, plugins, MCP
 servers, hooks, and permission rules under each configured Claude data directory
-(plus its `.claude.json` MCP config, read from either the sibling `~/.claude.json`
-of a default install or from inside a relocated dir) — and cross-references it
-with what the indexed sessions actually
-used. It reports an inventory summary and findings such as an **unused MCP
-server** (a warning: its tool schemas are re-sent to the model every turn, so an
-unused one is pure context tax), an **unused skill or subagent**, an
-**error-prone skill** (≥25% errors over ≥5 invocations), a **stale skill**
-(unused for 30+ days), an **unused plugin** (nothing it ships — skills,
-subagents, or MCP servers — was ever used; reported once for the plugin rather
-than once per dead component), and skills or subagents that sessions used but
-that are no longer installed. When you have plugins installed it also prints a
-**Plugins** table: per plugin, how many of its skills and subagents you actually
-use, its invocation count, the turn-scoped dollars attributed to its skills, and
-when it last ran — so you can see what each plugin is doing for you. The scan is read-only and tolerant: a missing or malformed
-config file is skipped, never fatal. Findings are machine-local and historical —
-the index can cover sessions that predate the current setup, and project-scoped
-skills, subagents, and MCP servers live outside the Claude config dir — so treat
-them as prompts to look, not verdicts. The same audit is served at `/api/audit`
-and rendered on the web app's Tools view.
+(plus its `.claude.json` MCP config, read from either the sibling
+`~/.claude.json` of a default install or from inside a relocated dir) — and
+cross-references it with what the indexed sessions actually used. It reports an
+inventory summary plus findings:
+
+- **Unused MCP server** (a warning: its tool schemas are re-sent to the model
+  every turn, so an unused one is pure context tax).
+- **Unused skill or subagent**.
+- **Error-prone skill** (≥25% errors over ≥5 invocations).
+- **Stale skill** (unused for 30+ days).
+- **Unused plugin** — nothing it ships (skills, subagents, or MCP servers) was
+  ever used; reported once for the plugin, not once per dead component.
+- Skills or subagents that sessions used but that are **no longer installed**.
+
+With plugins installed it also prints a **Plugins** table: per plugin, how many
+of its skills and subagents you use, its invocation count, the turn-scoped
+dollars attributed to its skills, and when it last ran.
+
+The scan is read-only and tolerant — a missing or malformed config file is
+skipped, never fatal. Findings are machine-local and historical (the index can
+cover sessions predating the current setup, and project-scoped items live
+outside the Claude config dir), so treat them as prompts to look, not verdicts.
+The same audit is served at `/api/audit` and rendered on the web app's Tools
+view.
 
 ### Portfolio insights
 
 `cc-analyzer insights` is the portfolio-wide counterpart of the per-session
-"actionable diagnostics": a bun-free rules engine folds every portfolio signal —
+"actionable diagnostics". A bun-free rules engine folds every portfolio signal —
 cache efficiency, compaction pressure, context tax, what-if repricing, retry
 churn, edit-test thrash, redundant file re-reads, correction-heavy prompting,
-weekly error trend, spend
-concentration, pricing confidence, the setup audit, subagent balance, and parse
-coverage — into a ranked list of explainable findings.
-Warnings rank before infos, and dollar-backed findings rank first within a
-severity. These are deliberately named heuristics with conservative,
-documented thresholds — **not a score**: every finding shows the observed
-numbers as evidence and suggests a concrete next action (e.g. "batch related
-work so the 5-minute cache TTL amortizes", "trim that project's CLAUDE.md").
-The same findings appear at the top of the web app's Insights page (via
-`/api/insights`) and as a compact list in the TUI insights view. The full rule
-table with thresholds lives in the wiki's Analytics & Insights page.
+weekly error trend, spend concentration, pricing confidence, the setup audit,
+subagent balance, and parse coverage — into a ranked list of explainable
+findings, warnings before infos and dollar-backed findings first within a
+severity.
+
+These are deliberately named heuristics with conservative, documented thresholds
+— **not a score**: every finding shows the observed numbers as evidence and
+suggests a concrete next action (e.g. "batch related work so the 5-minute cache
+TTL amortizes", "trim that project's CLAUDE.md"). The same findings open the web
+app's Insights page (via `/api/insights`) and appear as a compact list in the
+TUI insights view; the full rule table with thresholds lives in the wiki's
+Analytics & Insights page.
 
 ### Weekly digest
 
 `cc-analyzer report` turns all of the above from something you go looking for
-into something you can read on a schedule: one week of usage, what changed
-against the week before, and what to fix. It prints a headline (cost, sessions,
-active time, tokens) with signed deltas, the week's top projects, model mix,
-cache economics, reliability (tool errors, test runs, retries, thrash,
-corrections), the skills that cost the most turn-scoped dollars, and a snapshot
-of the portfolio insights. `--md` writes paste-ready markdown to stdout for
-notes or chat (`cc-analyzer report --md > week.md`); `--json` emits the plain
-object. They are two renderings of the same digest, so asking for both is an
-error rather than a silent choice.
+into something you read on a schedule: one week of usage, what changed against
+the week before, and what to fix. It prints:
+
+- A headline (cost, sessions, active time, tokens) with signed deltas.
+- The week's top projects, model mix, and cache economics.
+- Reliability — tool errors, test runs, retries, thrash, corrections.
+- The skills that cost the most turn-scoped dollars.
+- A snapshot of the portfolio insights.
+
+`--md` writes paste-ready markdown to stdout for notes or chat
+(`cc-analyzer report --md > week.md`); `--json` emits the plain object. Both are
+renderings of the same digest, so asking for both is an error, not a silent
+choice.
 
 The default period is the **last complete ISO week** (Monday–Sunday) — a
-half-finished current week would always read as a decline. `--week YYYY-MM-DD`
+half-finished current week would always read as a decline; `--week YYYY-MM-DD`
 reports the week containing any given day. Sessions are attributed to their
-**start day**, so a session that runs past midnight counts entirely in the
-period it began; the digest says so wherever it renders. The insight snapshot is
+**start day**, so one running past midnight counts entirely in the period it
+began (the digest says so wherever it renders). The insight snapshot is
 deliberately **not** period-scoped — it is current state across the whole
 portfolio, because one week rarely carries enough evidence to fire those
 thresholds honestly. The same digest is served at `/api/report` and summarized
@@ -476,120 +491,129 @@ tools analytics), the next run rebuilds the cache from scratch — just re-run
 ### Interactive TUI
 
 Running `cc-analyzer` with no arguments launches a terminal UI (built with Ink)
-with an **amber-phosphor** retro-terminal look. It's a persistent shell — a
-title bar, a **nav rail** (portfolio · projects · sessions · insights · trends ·
-tools), and a **two-pane master-detail** body: a list on the left drives a
-live **preview** on the right as you move the cursor. The project preview
-carries spend/tokens/activity vitals plus per-project chart lines, a
-**cache-efficiency** line (verdict, read:write ratio, un-amortized waste $),
-a **findings** line counting the portfolio-insight findings scoped to that
-project — the same signals the web Projects page shows as columns — and a
-top-3 **hot files** teaser; on short terminals the preview drops its
-lowest-priority blocks instead of overflowing. The **insights** view is a
-cache-efficiency hit-list — projects ranked by un-amortized cache-write spend
-(cache you paid to write but didn't read back), with a read:write verdict, that
-drills into the leakiest sessions; its header opens with a compact list of the
-top **portfolio insight** findings (severity glyph + title — the full evidence
-lives in `cc-analyzer insights`) and also carries the portfolio
-**context tax** (median/p90 tokens spent before you type) and the cheapest
-single model your token mix could have run on. The **trends** view is a
-four-panel time-series dashboard (`tab` / `1`·`2`·`3`·`4`): a braille **burn**
-chart of spend over time — `m` cycles the metric (cost/tokens/sessions), `g`
-the granularity (day/week/month) — an activity **heatmap** of sessions by local
-weekday × hour (`m` toggles to cost), a contribution-style **calendar** of
-daily activity (`m` toggles cost/sessions), and a **models** panel ranking
-each model's spend with a weekly sparkline, total, and share. The **tools**
-view (`tab` / `1`·`2`·`3`·`4`) ranks your
-**tools** by invocations with an error count and error rate (`s` sorts); goes
-deeper on **skills** — invocations, sessions, distinct projects, error rate,
-turn-scoped cost and session-scoped cost (`s` sorts), with an adoption detail
-strip (first/last used + a weekly invocation sparkline) for the selected skill;
-lists **subagents** by how many sessions used each; and closes with a
-**reliability** panel — test runs and failures, tool-call churn, edit-test
-thrash and redundant re-reads (with the most re-read files), correction and
-interruption turns, and parse coverage with an update prompt when the parser
-is behind the newest Claude Code format. (Skill cost is reported
-at two scopes: *turn-scoped* — the cost of the turns that invoked the skill,
-including any subagent burst inside them — is the primary number, and
-*session-scoped* is the whole-session upper bound. Both are correlational, not
-causal: a turn or session touching several skills counts its full cost toward
-each.) Opening a session
-zooms to
-a full-screen view with a vitals band and its own two-pane **turns → steps**
-(each step expands an amber card with its input/result), plus **charts**,
-**transcript**, and **summary** modes (`c` / `t` / `s`). The charts mode draws
-the braille context-window sawtooth (with `▼` compaction markers, "% of
-window", and a headroom projection when the context is growing), a per-call
-**cache-hit sparkline** with cold-call count, cost-per-call and cost-per-turn
-sparklines annotated with idle gaps and `▲` markers on
-interrupted/correction/thrash turns, plus in-session model-mix and per-burst
-subagent spend lines. The summary includes the same evidence-backed
-context and cost diagnostics as the CLI and web app, along with
-**cost-per-outcome** ratios and a session-scoped **what-if repricing** line
-(each with its caveat). It reads from the index;
-on first use it builds an empty cache automatically. Later source changes are
-reported in the shell so you know when to run `cc-analyzer index`.
+with an **amber-phosphor** retro-terminal look. It's a persistent shell: a title
+bar, a **nav rail** (portfolio · projects · sessions · insights · trends ·
+tools), and a **two-pane master-detail** body where a list on the left drives a
+live **preview** on the right as you move the cursor. It reads from the index and
+builds an empty cache on first use; later source changes are flagged in the shell
+so you know when to run `cc-analyzer index`.
 
-Navigation uses a two-zone focus model: in a list, just start typing to
-**filter**, `tab`/`shift-tab` cycles the **sort**, `↑/↓` moves (updating the
-preview), and `enter` drills in. Press `esc` on an empty filter to focus the nav
-rail, then `↑/↓` (or `1`-`5`) to switch views and `enter`/`→` to return to the
-list. `?` shows the full keybinding cheatsheet; `ctrl-c` quits. The layout is
-responsive — the rail collapses to icons, then to a single pane, on narrow
-terminals. It requires an interactive terminal (TTY); piped/non-interactive use
-falls back to a hint about the scriptable commands.
+The views:
+
+- **Projects preview** — spend/tokens/activity vitals, per-project chart lines, a
+  **cache-efficiency** line (verdict, read:write ratio, un-amortized waste $), a
+  **findings** line counting the portfolio-insight findings scoped to that
+  project (the same signals the web Projects page shows as columns), and a top-3
+  **hot files** teaser. On short terminals it drops its lowest-priority blocks
+  rather than overflowing.
+- **Insights** — a cache-efficiency hit-list: projects ranked by un-amortized
+  cache-write spend (cache you paid to write but didn't read back), with a
+  read:write verdict, drilling into the leakiest sessions. Its header opens with
+  the top **portfolio insight** findings (severity glyph + title; full evidence
+  in `cc-analyzer insights`), plus the portfolio **context tax** (median/p90
+  tokens spent before you type) and the cheapest single model your token mix
+  could have run on.
+- **Trends** — a four-panel time-series dashboard (`tab` / `1`·`2`·`3`·`4`): a
+  braille **burn** chart (`m` cycles cost/tokens/sessions, `g` the
+  day/week/month granularity), an activity **heatmap** by local weekday × hour
+  (`m` toggles to cost), a contribution-style **calendar** (`m` toggles
+  cost/sessions), and a **models** panel ranking each model's spend with a weekly
+  sparkline, total, and share.
+- **Tools** — a four-panel view (`tab` / `1`·`2`·`3`·`4`): **tools** ranked by
+  invocations with error count and rate (`s` sorts); **skills** in more depth
+  (invocations, sessions, distinct projects, error rate, turn- and
+  session-scoped cost, plus an adoption strip of first/last-used + a weekly
+  sparkline for the selected skill); **subagents** by how many sessions used
+  each; and a **reliability** panel (test runs and failures, tool-call churn,
+  edit-test thrash and redundant re-reads with the most re-read files, correction
+  and interruption turns, and parse coverage with an update prompt when the
+  parser lags the newest Claude Code format).
+
+Skill cost is reported at two scopes: *turn-scoped* (the cost of the turns that
+invoked the skill, subagent bursts inside them included) is the primary number,
+and *session-scoped* is the whole-session upper bound. Both are correlational,
+not causal — a turn or session touching several skills counts its full cost
+toward each.
+
+Opening a session zooms to a full-screen view with a vitals band and its own
+two-pane **turns → steps** (each step expands an amber card with its
+input/result), plus **charts**, **transcript**, and **summary** modes
+(`c` / `t` / `s`):
+
+- **Charts** — the braille context-window sawtooth (`▼` compaction markers,
+  "% of window", and a headroom projection when the context is growing), a
+  per-call **cache-hit sparkline** with cold-call count, cost-per-call and
+  cost-per-turn sparklines annotated with idle gaps and `▲` markers on
+  interrupted/correction/thrash turns, plus in-session model-mix and per-burst
+  subagent spend lines.
+- **Summary** — the same evidence-backed context and cost diagnostics as the CLI
+  and web app, plus **cost-per-outcome** ratios and a session-scoped **what-if
+  repricing** line (each with its caveat).
+
+Navigation is a two-zone focus model. In a list, start typing to **filter**,
+`tab`/`shift-tab` cycles the **sort**, `↑/↓` moves (updating the preview), and
+`enter` drills in. Press `esc` on an empty filter to focus the nav rail, then
+`↑/↓` (or `1`-`6`) to switch views and `enter`/`→` to return to the list. `?`
+shows the full keybinding cheatsheet; `ctrl-c` quits. The layout is responsive —
+the rail collapses to icons, then to a single pane, on narrow terminals — and
+requires an interactive terminal (TTY); piped/non-interactive use falls back to a
+hint about the scriptable commands.
 
 ### Web app
 
 `cc-analyzer serve` builds the index when it is empty, then starts a local web
 server (Hono API + an embedded React SPA). Pass `--refresh` to incrementally
-refresh an existing index before serving, and `--open` to launch the URL in
-your default browser. Browser opening is best-effort and limited to loopback
-hosts. The server listens on loopback only (`127.0.0.1`) and rejects non-local `Host`
-headers, since sessions contain full conversation transcripts; pass
-`--host=0.0.0.0` only if you deliberately want to expose it to your network.
-The UI ships a portfolio dashboard, a **Projects** page listing every indexed
-project — unpaginated, sortable/filterable, with cache-waste and
-portfolio-finding counts folded in from the same signals as Insights, linked
-from the Dashboard's top-15 table — project drill-down, a per-session view, an
-**Insights** page — opening with the ranked **portfolio insight** findings
-(warnings first, each with evidence, a next action, and a project link when the
-signal is project-scoped), followed by the same cache-efficiency hit-list as
-the TUI (projects ranked by un-amortized cache-write spend, with a read:write
-verdict, drilling into the leakiest sessions), plus the **context tax** per
-project and the **what-if model repricing** table, each carrying its caveat
-inline — a
-**Trends** page with 30-day, peak-spend, and
-error-rate headlines plus burn, calendar, model-mix, activity, scatter,
-reliability, subagent, and concurrency charts — and a **Tools** page organized
-into Tools, Reliability, Compactions, Skills, Agents, and Environment views.
-Projects are organized into Overview, Sessions, Trends, and Files views. These
-section and chart controls are URL-backed, keyboard navigable, and shareable;
-each major chart includes a collapsible data table so its values remain usable
-without hover or a pointer. Projects and sessions can be **filtered** by name;
-the **Turns** tab expands each turn
-into a **step timeline** — assistant narration, thinking markers, and tool
-operations with a one-line summary and a result status/hint (`✓ 71 lines`,
-`✗ error…`), each step click-to-expand for its full input and result; and the
-color-coded **transcript** reader is windowed ("show more") so very large
-sessions stay responsive. The session **Charts** tab renders the
-context-window fill per API call (with compaction markers annotated with the
-tokens each compaction reclaimed, a dashed window-limit line, and a headroom
-projection when the context is growing), a **cache-efficiency** chart (per-call
-hit rate, cold calls), cumulative cost with **idle-gap** markers, per-turn bars
-toggling cost/tokens/calls/depth/time — the cost metric stacks the four token
-categories, and turns flagged as interrupted/correction/thrash carry warning
-markers — plus **tool-activity** bars, an in-session **model mix**, and a
-**subagent bursts** table attributing sidechain spend to the specific agents
-that ran (typed best-effort from their spawn prompts). Session summaries group
-spend/tokens, execution, and
-environment details, followed by explainable context and cost diagnostics with
-suggested next actions, **cost-per-outcome** ratios, a session-scoped
-**what-if repricing** summary, and a **cost rank** card placing the session's
-spend among its project's (and the portfolio's) sessions. The SPA is built
-by Vite into a single self-contained HTML file (`bun run build:web`) and baked
-into the binary, so the release build serves the whole UI with no external
-assets.
+refresh an existing index before serving, and `--open` to launch the URL in your
+default browser (best-effort, loopback hosts only). The server listens on
+loopback only (`127.0.0.1`) and rejects non-local `Host` headers, since sessions
+contain full conversation transcripts; pass `--host=0.0.0.0` only if you
+deliberately want to expose it to your network.
+
+The UI's pages:
+
+- **Dashboard** — the portfolio overview, with a top-15 project table.
+- **Projects** — every indexed project, unpaginated and sortable/filterable, with
+  cache-waste and portfolio-finding counts folded in from the same signals as
+  Insights. Each drills into Overview, Sessions, Trends, and Files views.
+- **Insights** — opens with the ranked **portfolio insight** findings (warnings
+  first, each with evidence, a next action, and a project link when the signal is
+  project-scoped), then the same cache-efficiency hit-list as the TUI, plus
+  **context tax** per project and the **what-if model repricing** table, each
+  carrying its caveat inline.
+- **Trends** — 30-day, peak-spend, and error-rate headlines plus burn, calendar,
+  model-mix, activity, scatter, reliability, subagent, and concurrency charts.
+- **Tools** — organized into Tools, Reliability, Compactions, Skills, Agents, and
+  Environment views.
+
+Section and chart controls are URL-backed, keyboard navigable, and shareable;
+each major chart includes a collapsible data table so its values stay usable
+without a pointer. Projects and sessions can be **filtered** by name.
+
+The per-session view offers:
+
+- **Turns** — expands each turn into a **step timeline** (assistant narration,
+  thinking markers, and tool operations with a one-line summary and a result
+  status/hint like `✓ 71 lines` or `✗ error…`), each step click-to-expand for its
+  full input and result. The color-coded **transcript** reader is windowed
+  ("show more") so very large sessions stay responsive.
+- **Charts** — context-window fill per API call (compaction markers annotated
+  with the tokens each reclaimed, a dashed window-limit line, and a headroom
+  projection when the context is growing), a **cache-efficiency** chart (per-call
+  hit rate, cold calls), cumulative cost with **idle-gap** markers, per-turn bars
+  toggling cost/tokens/calls/depth/time (the cost metric stacks the four token
+  categories; interrupted/correction/thrash turns carry warning markers), plus
+  **tool-activity** bars, an in-session **model mix**, and a **subagent bursts**
+  table attributing sidechain spend to the specific agents that ran (typed
+  best-effort from their spawn prompts).
+- **Summary** — groups spend/tokens, execution, and environment details, then
+  explainable context and cost diagnostics with suggested next actions,
+  **cost-per-outcome** ratios, a session-scoped **what-if repricing** summary, and
+  a **cost rank** card placing the session's spend among its project's (and the
+  portfolio's) sessions.
+
+The SPA is built by Vite into a single self-contained HTML file
+(`bun run build:web`) and baked into the binary, so the release build serves the
+whole UI with no external assets.
 
 ## Building the release binary
 

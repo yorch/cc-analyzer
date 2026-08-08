@@ -126,7 +126,7 @@ Domain terms used throughout `cc-analyzer` and this wiki, grounded in the code t
 
 **Build provenance** — A signed attestation generated in the release workflow (`actions/attest-build-provenance`) linking each published binary to the workflow run that built it, for supply-chain traceability.
 
-**SPA embedding** — Serializing the Vite-built single-file front end into a string in `src/web/spa.ts`, so `bun build --compile` bakes the whole UI into the binary.
+**SPA embedding** — Serializing the Vite-built single-file front end into a string in a disposable source copy under `tmp/` (leaving the tracked `src/web/spa.ts` placeholder untouched), so `bun build --compile` bakes the whole UI into the binary.
 
 **Wiki sync** — The build step that copies the canonical `/wiki` into the VitePress `site/docs/`, normalizing filenames and links; `/wiki` is the single source of truth for the docs site.
 
