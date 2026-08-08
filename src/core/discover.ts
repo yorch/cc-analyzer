@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from "./claude-roots.ts";
+import type { AgentMeta } from "./events.ts";
 import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 export interface ProjectInfo {
@@ -18,13 +19,7 @@ export interface ProjectInfo {
   sessionCount: number;
 }
 
-/** What a subagent transcript's sibling `.meta.json` declares about it. */
-export interface AgentMeta {
-  /** The Task `subagent_type` — authoritative, unlike burst prompt-matching. */
-  agentType?: string;
-  /** 1 for an agent the main chain spawned, deeper for nested spawns. */
-  spawnDepth?: number;
-}
+export type { AgentMeta } from "./events.ts";
 
 export interface SessionInfo {
   /** Session file basename without extension (usually a uuid). */
