@@ -589,6 +589,12 @@ Section and chart controls are URL-backed, keyboard navigable, and shareable;
 each major chart includes a collapsible data table so its values stay usable
 without a pointer. Projects and sessions can be **filtered** by name.
 
+A **color-theme toggle** (System / Light / Dark) sits in the masthead. The
+choice is stored per-browser in `localStorage` (a theme follows the display, not
+the data — unlike the server-side cost-basis setting), and "System" tracks your
+OS preference live. An inline script applies the resolved theme before first
+paint, so there is no flash of the wrong theme on load.
+
 The per-session view offers:
 
 - **Turns** — expands each turn into a **step timeline** (assistant narration,

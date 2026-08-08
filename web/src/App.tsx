@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { api } from "./api.ts";
 import { IndexFreshness, IndexNotice } from "./IndexNotice.tsx";
 import { link, useHashRoute } from "./router.ts";
+import { ThemeToggle } from "./ThemeToggle.tsx";
 import { trackView } from "./telemetry.ts";
 import { useAsync } from "./useAsync.ts";
 import { Dashboard } from "./views/Dashboard.tsx";
@@ -72,6 +73,7 @@ export function App() {
         </nav>
         <span className="masthead-tag">Claude Code · Session Ledger</span>
         <span className="masthead-rule" aria-hidden="true" />
+        <ThemeToggle />
         <span className="masthead-blink" aria-hidden="true" />
       </header>
       <IndexNotice status={indexStatus.data} />
