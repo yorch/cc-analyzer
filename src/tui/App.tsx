@@ -204,8 +204,15 @@ export function App({ db, pricing, indexStatus }: Props) {
     : undefined;
   // Rows the master list may render: terminal height minus the fixed shell
   // chrome (title/lede/margins/key bar) and the list's own header + scroll
-  // indicator. Keeps content within the pinned viewport so it never overflows.
-  const listPageSize = Math.max(3, rows - 9 - (showLede ? 2 : 0) - (indexNotice ? 1 : 0));
+  // indicator. Keeps content within the pinned viewport so it never overflows —
+  // an underestimate here doesn't just clip content, it overflows Ink's fixed-
+  // height shell Box and corrupts the frame (rows bleed into each other).
+  // The lede now always renders 4 lines (adding the unconditional
+  // `INDEXED_COST_CAVEAT` line) instead of 3; the reservation below was
+  // bumped from 2 to 5 to match — empirically verified against the smoke
+  // test, not derived from the shell's other constants, since Ink's own
+  // layout overhead here isn't 1:1 with visible lede lines.
+  const listPageSize = Math.max(3, rows - 9 - (showLede ? 5 : 0) - (indexNotice ? 1 : 0));
 
   const breadcrumb = drill ? `projects ▸ ${truncate(projectLabel(drill), 40)}` : view;
 

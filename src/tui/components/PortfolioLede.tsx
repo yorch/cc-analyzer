@@ -9,6 +9,7 @@ import type {
   PortfolioSummary,
   StreakSummary,
 } from "../../core/stats.ts";
+import { INDEXED_COST_CAVEAT } from "../../core/stats-types.ts";
 import { palette, role, sparkline } from "../theme.ts";
 
 /** The full-width portfolio band under the title bar: big total + a months
@@ -65,6 +66,7 @@ export function PortfolioLede({
         · streak {streaks.currentStreak}d (best {streaks.longestStreak}d)
       </Text>
       {framingNote ? <Text color={role.muted}>{framingNote}</Text> : null}
+      <Text color={role.muted}>{INDEXED_COST_CAVEAT}</Text>
     </Box>
   );
 }

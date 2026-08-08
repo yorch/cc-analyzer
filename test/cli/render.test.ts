@@ -9,6 +9,7 @@ import {
   contextTax,
   whatIfRepricing,
 } from "../../src/core/stats.ts";
+import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { clock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -147,5 +148,35 @@ describe("renderStats · skills", () => {
     expect(row).toContain("$0.25");
     expect(row).toContain("$9.00");
     expect(out).toContain("session-scoped is the whole-session upper bound");
+  });
+
+  test("prints the indexed-cost caveat unconditionally in the footer", () => {
+    const db = openDb(":memory:");
+    insertSession(db, {
+      path: "s1",
+      day: "2026-07-03",
+      month: "2026-07",
+      start_time: "2026-07-03T12:00:00.000Z",
+      cost_total: 9,
+    });
+    const analytics = analyticsRollup(db);
+    const view = {
+      ...buildPortfolioStats(db, "2026-07-03"),
+      index: { lastRefreshedAt: null, ageMs: null, stale: false, added: 0, changed: 0, deleted: 0 },
+      ttl: cacheTtlSplit(db),
+      bash: analytics.bash,
+      skills: analytics.skills,
+      tests: analytics.tests,
+      retries: analytics.retries,
+      corrections: analytics.corrections,
+      concurrency: { peak: 1, parallelDayShare: 0 },
+      contextTax: contextTax(db),
+      whatIf: whatIfRepricing(db, pricing),
+      costBasis: "api" as const,
+    };
+    const out = renderStats(view);
+    db.close();
+
+    expect(out).toContain(INDEXED_COST_CAVEAT);
   });
 });

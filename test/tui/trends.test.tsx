@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { openDb } from "../../src/core/db.ts";
+import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { TrendsView } from "../../src/tui/screens/TrendsView.tsx";
 import { insertSession } from "../helpers/sessions.ts";
 import { waitForFrame } from "../helpers/tui.ts";
@@ -85,6 +86,8 @@ describe("TrendsView", () => {
     expect(frame).toContain("claude-haiku-4-5");
     expect(frame).toContain("$12.00");
     expect(frame).toContain("75%"); // 12 of 16
+    // Indexed-cost cross-file de-dup caveat prints as the panel's footer note.
+    expect(frame).toContain(INDEXED_COST_CAVEAT.slice(0, 50));
     unmount();
     mixed.close();
   });

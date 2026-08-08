@@ -31,6 +31,7 @@ import type {
 import {
   CORRECTION_CAVEAT,
   type CorrectionStats,
+  INDEXED_COST_CAVEAT,
   SKILL_COST_CAVEAT,
   type SkillUsageRow,
   THRASH_REREAD_MIN,
@@ -773,6 +774,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
   );
   const framingNote = costFramingNote(costBasis);
   if (framingNote) lines.push(muted(framingNote, options));
+  lines.push(muted(INDEXED_COST_CAVEAT, options));
 
   lines.push(`\n${section("Activity", options)}`);
   lines.push(
