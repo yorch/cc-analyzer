@@ -4,6 +4,24 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>cc-analyzer</title>
+    <!-- Stamp the resolved color theme before first paint so there is no flash
+         of the wrong theme. Mirrors web/src/theme.ts: the "cc-theme" key holds
+         "system" | "light" | "dark"; "system" (or anything unrecognized)
+         resolves to the OS preference. Keep the key literal in sync with
+         THEME_STORAGE_KEY. -->
+    <script>
+      (() => {
+        try {
+          let p = localStorage.getItem("cc-theme");
+          if (p !== "light" && p !== "dark") {
+            p = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          }
+          document.documentElement.dataset.theme = p;
+        } catch {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

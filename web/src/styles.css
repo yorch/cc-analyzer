@@ -37,34 +37,38 @@
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 40px -24px rgba(0, 0, 0, 0.7);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ece3d1;
-    --bg-2: #f2ebdb;
-    --panel: #f6f0e3;
-    --panel-2: #efe6d4;
-    --border: rgba(48, 36, 18, 0.14);
-    --border-strong: rgba(48, 36, 18, 0.28);
-    --ink: #241d12;
-    /* Both text tones are pulled darker than the dark theme's mirror image:
-       on a warm paper background the same hues land near 2.6:1. These read
-       6.0:1 (muted) and 4.6:1 (faint) against the lightest surface. */
-    --muted: #5b5241;
-    --faint: #6e6452;
-    --signal: #b26a10;
-    --signal-2: #935610;
-    --teal: #2c7d6d;
-    --red: #b23b31;
-    /* The three series colors were tuned against near-black and lose their
-       separation on paper, so each gets a darker, more saturated twin. */
-    --grid: rgba(48, 36, 18, 0.16);
-    --data-neutral: #7e7461;
-    --data-violet: #6a4fd0;
-    --data-blue: #2f6288;
-    --data-clay: #8a4a30;
-    --glow: rgba(178, 106, 16, 0.08);
-    --shadow: 0 1px 0 rgba(255, 255, 255, 0.5), 0 18px 40px -26px rgba(60, 44, 20, 0.35);
-  }
+/* The light palette is selected by an explicit `data-theme="light"` on the
+   root, stamped by the theme toggle (web/src/theme.ts) and by the pre-paint
+   inline script in web/index.html. "System" resolves to a concrete light/dark
+   value in that script, so the CSS never needs a `prefers-color-scheme` query —
+   dark is the bare-`:root` default and light overrides it here. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ece3d1;
+  --bg-2: #f2ebdb;
+  --panel: #f6f0e3;
+  --panel-2: #efe6d4;
+  --border: rgba(48, 36, 18, 0.14);
+  --border-strong: rgba(48, 36, 18, 0.28);
+  --ink: #241d12;
+  /* Both text tones are pulled darker than the dark theme's mirror image:
+     on a warm paper background the same hues land near 2.6:1. These read
+     6.0:1 (muted) and 4.6:1 (faint) against the lightest surface. */
+  --muted: #5b5241;
+  --faint: #6e6452;
+  --signal: #b26a10;
+  --signal-2: #935610;
+  --teal: #2c7d6d;
+  --red: #b23b31;
+  /* The three series colors were tuned against near-black and lose their
+     separation on paper, so each gets a darker, more saturated twin. */
+  --grid: rgba(48, 36, 18, 0.16);
+  --data-neutral: #7e7461;
+  --data-violet: #6a4fd0;
+  --data-blue: #2f6288;
+  --data-clay: #8a4a30;
+  --glow: rgba(178, 106, 16, 0.08);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.5), 0 18px 40px -26px rgba(60, 44, 20, 0.35);
 }
 
 * {
@@ -74,11 +78,6 @@
 html {
   scrollbar-color: var(--border-strong) transparent;
   color-scheme: dark;
-}
-@media (prefers-color-scheme: light) {
-  html {
-    color-scheme: light;
-  }
 }
 
 body {
@@ -106,7 +105,7 @@ body::before {
 
 ::selection {
   background: var(--signal);
-  color: #14110d;
+  color: var(--bg);
 }
 
 ::-webkit-scrollbar {
@@ -713,6 +712,16 @@ th.num {
 }
 .seg button:hover:not(.active) {
   color: var(--ink);
+}
+/* masthead color-theme control: glyph buttons, aligned right of the nav */
+.theme-toggle {
+  margin: 0;
+  align-self: center;
+}
+.theme-toggle button {
+  padding: 3px 7px;
+  font-size: 12px;
+  line-height: 1;
 }
 /* Charts scale uniformly: the element's ratio comes from its own viewBox (an
    inline `aspect-ratio`, see `chartBox`), never from a fixed height that would

@@ -526,6 +526,24 @@ a `costBasis` field merged into `/api/stats` at the route level, read fresh per 
 rather than memoized with the rest of the payload) so flipping it — from either surface —
 never requires a reindex.
 
+**The web color theme is token-driven and its selection is browser-local.** The
+SPA's palette is a single set of CSS custom properties in `web/src/styles.css`:
+dark tokens on bare `:root`, a light override under `:root[data-theme="light"]`.
+Every surface (charts included) reads the tokens, so a new color is added once
+and both themes get it. Selection is the opposite of `costBasis`: theme follows
+the *display*, not the data (dark on a laptop, light on a projector viewing the
+same `serve`), so it lives in `localStorage`, never `prefs.json`, and there is
+no API route. `web/src/theme.ts` owns the preference (`system`/`light`/`dark`,
+pure `normalizeThemePref`/`resolveTheme` split from the DOM like `clipboard.ts`,
+browser globals reached structurally so the module compiles under the DOM-free
+root typecheck); the masthead `ThemeToggle` reads/writes it and a `matchMedia`
+watcher keeps a `system` choice live. An inline `<head>` script in
+`web/index.html` stamps the resolved concrete theme onto `<html data-theme>`
+*before first paint* (no flash), which is why "system" is resolved to a concrete
+light/dark value in JS and the CSS needs no `prefers-color-scheme` query. The
+`"cc-theme"` storage key is duplicated as a literal in that inline script (it
+cannot import `THEME_STORAGE_KEY`) — keep the two in sync.
+
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at
 `~/.config/cc-analyzer/index.db`. It's **incremental** — files unchanged by (size,
