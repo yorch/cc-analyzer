@@ -17,14 +17,14 @@
  * — it is presentation only, so the TUI/web number parity is unaffected.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { CHART_PAD, CHART_W } from "./trend-charts.tsx";
 
-/** A resolved hover over an index-based chart: which point, and its x in the
- *  chart's own viewBox units (so the crosshair and the tooltip agree). */
+/** A resolved hover over an index-based chart: which point. The anchor x is
+ *  intentionally *not* stored — a shared cursor drives two charts whose scales
+ *  differ, so each render site recomputes x on its own scale via `activeAt`. */
 export interface IndexHover {
   i: number;
-  x: number;
 }
 
 /** Controlled-state seam: pass a lifted `useState` tuple to share one hover
@@ -37,8 +37,12 @@ export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo
 /** Convert a pointer event's clientX into the chart's viewBox x-coordinate.
  *  The SVG is `width:100%` with a viewBox whose aspect ratio matches the
  *  element (see `chartBox`), so there is no horizontal letterboxing and the
- *  fraction across the element maps straight onto the viewBox width. */
-function viewBoxX(e: { clientX: number; currentTarget: Element }, width: number): number | null {
+ *  fraction across the element maps straight onto the viewBox width. Shared so
+ *  the line charts and the brush handler map coordinates the one same way. */
+export function viewBoxX(
+  e: { clientX: number; currentTarget: Element },
+  width: number,
+): number | null {
   const r = e.currentTarget.getBoundingClientRect();
   if (r.width === 0) return null;
   return ((e.clientX - r.left) / r.width) * width;
@@ -61,20 +65,22 @@ export const barLocate =
 /**
  * Pointer tracking for an index-based chart (line, area, or bars).
  *
- * `xOf(i)` gives the snapped point's x in viewBox units (crosshair + tooltip
- * anchor); `locate(px)` maps a viewBox x onto a data index. Pass `controller`
- * to drive a lifted state instead of the hook's own — that is how two charts
- * sharing an axis show one synchronized cursor.
+ * `locate(px)` maps a viewBox x onto a data index; render sites turn that index
+ * back into an anchor x on their own scale via `activeAt`. Pass `controller` to
+ * drive a lifted state instead of the hook's own — that is how two charts
+ * sharing an axis show one synchronized cursor. `unpin()` releases a pin (and
+ * clears the hover), for callers that must drop it on a state change such as a
+ * brush-zoom or a series switch.
  */
 export function usePointerIndex(
   n: number,
-  xOf: (i: number) => number,
   locate: (px: number) => number,
   width = CHART_W,
   controller?: HoverController,
 ): {
   hover: IndexHover | null;
   pinned: boolean;
+  unpin: () => void;
   bind: {
     onPointerMove: (e: React.PointerEvent<SVGSVGElement>) => void;
     onPointerLeave: () => void;
@@ -99,11 +105,16 @@ export function usePointerIndex(
     // Skip the state write when the snapped index hasn't changed, so a slow
     // drag across one point's span doesn't rerender on every pixel.
     if (hover && hover.i === i) return;
-    setHover({ i, x: xOf(i) });
+    setHover({ i });
+  };
+  const unpin = () => {
+    if (pinnable && pinned) setPinned(false);
+    setHover(null);
   };
   return {
     hover,
     pinned: pinnable && pinned,
+    unpin,
     bind: {
       onPointerMove: update,
       // A tap/drag on touch reads the value too — pointerdown seeds it.
@@ -145,32 +156,59 @@ export function usePointerNearest<T>(
   };
 } {
   const [hover, setHover] = useState<number | null>(null);
-  const update = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (points.length === 0) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    if (r.width === 0 || r.height === 0) return;
-    const px = ((e.clientX - r.left) / r.width) * width;
-    const py = ((e.clientY - r.top) / r.height) * height;
+  // The nearest-point search is O(points); coalesce moves to one scan per
+  // animation frame so a fast drag over a large scatter can't run the loop
+  // dozens of times between paints.
+  const frame = useRef(0);
+  const pending = useRef<{ px: number; py: number } | null>(null);
+  useEffect(
+    () => () => {
+      if (frame.current) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
+  const scan = () => {
+    frame.current = 0;
+    const at = pending.current;
+    if (!at || points.length === 0) return;
     let best = -1;
     let bestD = Number.POSITIVE_INFINITY;
     for (let i = 0; i < points.length; i++) {
       const p = points[i] as T;
-      const dx = xOf(p) - px;
-      const dy = yOf(p) - py;
+      const dx = xOf(p) - at.px;
+      const dy = yOf(p) - at.py;
       const d = dx * dx + dy * dy;
       if (d < bestD) {
         bestD = d;
         best = i;
       }
     }
-    if (best !== hover) setHover(best);
+    setHover((prev) => (prev === best ? prev : best));
+  };
+  const update = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (points.length === 0) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    pending.current = {
+      px: ((e.clientX - r.left) / r.width) * width,
+      py: ((e.clientY - r.top) / r.height) * height,
+    };
+    if (!frame.current) frame.current = requestAnimationFrame(scan);
+  };
+  const leave = () => {
+    if (frame.current) {
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+    }
+    pending.current = null;
+    setHover(null);
   };
   return {
     hover,
     bind: {
       onPointerMove: update,
       onPointerDown: update,
-      onPointerLeave: () => setHover(null),
+      onPointerLeave: leave,
     },
   };
 }

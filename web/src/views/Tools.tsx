@@ -89,7 +89,7 @@ function SkillSpark({ values }: { values: number[] }) {
   const x = xScale(n, W, pad);
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
   const line = linePath(values, x, y);
-  const { hover, pinned, bind } = usePointerIndex(n, x, lineLocate(n, W, pad), W);
+  const { hover, pinned, bind } = usePointerIndex(n, lineLocate(n, W, pad), W);
   const active = activeAt(hover, values, n, x);
   return (
     <div className="chart-wrap">

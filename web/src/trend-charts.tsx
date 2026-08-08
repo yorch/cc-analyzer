@@ -27,6 +27,7 @@ import {
   TipRow,
   usePointerIndex,
   usePointerNearest,
+  viewBoxX,
 } from "./chart-hover.tsx";
 import { count, duration, usd } from "./format.ts";
 import { link, useHashParam } from "./router.ts";
@@ -188,36 +189,49 @@ export function LineChart({
   const vLabels = zoomed ? labels.slice(lo, hi + 1) : labels;
   const n = vValues.length;
   const max = Math.max(...vValues, 1e-9);
+  // aria-label describes the whole series, not the mouse-only zoom window — an
+  // AT user can't brush, so the summary must not silently narrow.
+  const fullMax = Math.max(...values, 1e-9);
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const line = linePath(vValues, x, y);
-  const { hover, pinned, bind } = usePointerIndex(n, x, lineLocate(n));
+  const { hover, pinned, unpin, bind } = usePointerIndex(n, lineLocate(n));
   // Guarded so a pin left over from before a brush-zoom can't index outside the
   // now-smaller window.
   const active = activeAt(hover, vValues, n, x);
+  // When the underlying series changes (granularity/metric/project switch keeps
+  // this component mounted), a window and pin from the old series would map onto
+  // unrelated data — reset both. Adjusting state during render is the supported
+  // "store previous value" pattern; the guard makes it run once per change.
+  const sig = `${full}|${labels[0] ?? ""}|${labels[full - 1] ?? ""}`;
+  const [prevSig, setPrevSig] = useState(sig);
+  if (sig !== prevSig) {
+    setPrevSig(sig);
+    if (zoom) setZoom(null);
+    unpin();
+  }
 
   // Drag detection, composed with the hover hook on one svg: a drag past the
   // threshold is a brush (and suppresses hover); a plain click falls through to
-  // the hook's pin toggle.
+  // the hook's pin toggle. The drag lives in a ref so the pointerup decision is
+  // synchronous — never gated on the async `brush` state a fast flick can outrun.
   const BRUSH_MIN_PX = 10;
   const drag = useRef<{ start: number; moved: boolean } | null>(null);
   const [brush, setBrush] = useState<{ a: number; b: number } | null>(null);
-  const localPx = (e: React.PointerEvent<SVGSVGElement>): number => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return r.width === 0 ? 0 : ((e.clientX - r.left) / r.width) * CHART_W;
-  };
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    const px = viewBoxX(e, CHART_W);
+    if (px === null) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    drag.current = { start: localPx(e), moved: false };
+    drag.current = { start: px, moved: false };
     setBrush(null);
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     if (d) {
-      const px = localPx(e);
-      if (Math.abs(px - d.start) > BRUSH_MIN_PX) d.moved = true;
+      const px = viewBoxX(e, CHART_W);
+      if (px !== null && Math.abs(px - d.start) > BRUSH_MIN_PX) d.moved = true;
       if (d.moved) {
-        setBrush({ a: d.start, b: px });
+        if (px !== null) setBrush({ a: d.start, b: px });
         return; // brushing: don't also drive the hover cursor
       }
     }
@@ -227,21 +241,33 @@ export function LineChart({
     const d = drag.current;
     drag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
-    if (d?.moved && brush) {
+    if (d?.moved) {
+      // End at the release position, not the last move sample.
+      const end = viewBoxX(e, CHART_W) ?? d.start;
       const locate = lineLocate(n);
-      const a = locate(Math.min(brush.a, brush.b));
-      const b = locate(Math.max(brush.a, brush.b));
+      const a = locate(Math.min(d.start, end));
+      const b = locate(Math.max(d.start, end));
       setBrush(null);
-      if (b - a >= 1) setZoom([lo + a, lo + b]); // need ≥2 points to zoom
+      if (b - a >= 1) {
+        setZoom([lo + a, lo + b]); // need ≥2 points to zoom
+        unpin(); // a stale pin would freeze hover on the now-out-of-range point
+      }
       return;
     }
     setBrush(null);
     bind.onClick(e); // a click, not a drag → pin toggle
   };
+  // Don't abort an in-progress drag on leave (pointer capture normally keeps it
+  // on the svg; without capture the drag survives until pointerup). Only clear
+  // the hover cursor when we're not dragging.
   const onPointerLeave = () => {
     if (!drag.current) bind.onPointerLeave();
+  };
+  // A truly cancelled gesture (OS/scroll takeover) drops the brush cleanly.
+  const onPointerCancel = () => {
     drag.current = null;
     setBrush(null);
+    bind.onPointerLeave();
   };
   const brushRect = brush
     ? { x: Math.min(brush.a, brush.b), w: Math.abs(brush.a - brush.b) }
@@ -254,11 +280,14 @@ export function LineChart({
           viewBox={`0 0 ${CHART_W} ${H}`}
           style={chartBox(CHART_W, H)}
           role="img"
-          aria-label={`${title} line chart with ${n} points, peak ${tick(max)}`}
+          aria-label={`${title} line chart with ${full} points, peak ${tick(fullMax)}${
+            zoomed ? `, zoomed to ${n}` : ""
+          }`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerLeave}
+          onPointerCancel={onPointerCancel}
         >
           <title>{title}</title>
           <YAxis max={max} y={y} format={tick} />
@@ -455,12 +484,7 @@ function ModelMixChart({ rows }: { rows: ModelDayRow[] }) {
   const share = (v: number) => (grandTotal > 0 ? `${((v / grandTotal) * 100).toFixed(0)}%` : "—");
   // Crosshair finds the day; the tooltip lists every band at that day. A legend
   // hover emphasizes one band across the stack (the second, standalone cursor).
-  const { hover, pinned, bind } = usePointerIndex(
-    days.length,
-    x,
-    lineLocate(days.length, W, pad),
-    W,
-  );
+  const { hover, pinned, bind } = usePointerIndex(days.length, lineLocate(days.length, W, pad), W);
   const hd = activeAt(hover, days, days.length, x);
   const [focusBand, setFocusBand] = useState<string | null>(null);
   const dayTotal = (day: string) => models.reduce((s, m) => s + (byDay.get(day)?.get(m) ?? 0), 0);

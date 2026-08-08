@@ -219,7 +219,7 @@ function ContextChart({
   // Clamp the shared cursor to this chart's range: context and cache can differ
   // by a point at the edges, and a stale index from the sibling must not read
   // out of bounds.
-  const { hover, bind } = usePointerIndex(n, x, lineLocate(n), CHART_W, cursor);
+  const { hover, bind } = usePointerIndex(n, lineLocate(n), CHART_W, cursor);
   const active = activeAt(hover, points, n, x);
   if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   return (
@@ -348,7 +348,7 @@ function CacheChart({ cache, cursor }: { cache: CacheSeries; cursor?: HoverContr
     x,
     y,
   );
-  const { hover, bind } = usePointerIndex(n, x, lineLocate(n), CHART_W, cursor);
+  const { hover, bind } = usePointerIndex(n, lineLocate(n), CHART_W, cursor);
   const active = activeAt(hover, points, n, x);
   if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   return (
@@ -432,7 +432,7 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
   const t0 = points.find((p) => p.ms !== undefined)?.ms;
   const offset = (ms?: number) => (ms !== undefined && t0 !== undefined ? duration(ms - t0) : "?");
   const idleMs = gaps.reduce((s, g) => s + g.durationMs, 0);
-  const { hover, pinned, bind } = usePointerIndex(n, x, lineLocate(n));
+  const { hover, pinned, bind } = usePointerIndex(n, lineLocate(n));
   const active = activeAt(hover, points, n, x);
   if (n === 0 || !last) return <EmptyNotice>No API calls in this session.</EmptyNotice>;
   return (
@@ -560,7 +560,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
   // The mark is the hit target on a bar chart: snap to the slot under the
   // pointer and anchor the tooltip at that bar's center (no crosshair).
   const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
-  const { hover, pinned, bind } = usePointerIndex(n, xCenter, barLocate(n, slot));
+  const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
   const active = activeAt(hover, turns, n, xCenter);
   return (
     <>
@@ -723,7 +723,7 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const legend = [...KIND_GROUPS, KIND_OTHER];
   const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
-  const { hover, pinned, bind } = usePointerIndex(n, xCenter, barLocate(n, slot));
+  const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
   const active = activeAt(hover, turns, n, xCenter);
   const hgroups = active ? (perTurn[active.i] ?? []) : [];
   const htotal = active ? (totals[active.i] ?? 0) : 0;
