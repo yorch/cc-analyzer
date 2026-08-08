@@ -17,6 +17,7 @@ import {
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
+  burstAttributionNote,
   groupSidechainBursts,
   modelMixRows,
   pctOfLimit,
@@ -837,6 +838,7 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
   // The shared row set (labels, order, absent-not-$0 rule) — same list the
   // CLI report and the web summary render.
   const outcomes = useMemo(() => outcomeRows(sessionOutcomes(a)), [a]);
+  const burstNote = burstAttributionNote(a.sidechainBursts);
   const line = (k: string, v: string) => (
     <Text>
       {/* padEnd only helps up to 16 chars — the outcome rows carry a
@@ -880,6 +882,25 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
             .join(" "),
         )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
+      {/* Per-burst rows answer "which subagent burst cost $3", which the
+       * type list above cannot. Rendered here rather than in the charts
+       * pane because it is a table, not a series. */}
+      {a.sidechainBursts.length > 0 && (
+        <Box flexDirection="column">
+          {a.sidechainBursts.map((b, i) => (
+            <Text key={b.agentId ?? `${b.startTime ?? "?"}-${i}`}>
+              <Text color={role.muted}>{`  ${String(i + 1)}.`.padEnd(16)}</Text>
+              <Text color={role.body}>
+                {truncate(b.subagentType ?? "(unmatched)", 22).padEnd(23)}
+                {(b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-").padEnd(5)}
+                {`${b.apiCalls} call${b.apiCalls === 1 ? "" : "s"}`.padEnd(10)}
+              </Text>
+              <Text color={role.cost}>{formatUSD(b.cost)}</Text>
+            </Text>
+          ))}
+          {burstNote && <Text color={role.muted}>{`  ${burstNote}`}</Text>}
+        </Box>
+      )}
       {a.compactions.length > 0 &&
         line(
           "compactions",
