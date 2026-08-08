@@ -27,6 +27,13 @@ tag.** Tagging a commit whose `package.json` still says the old version ships
 binaries that report the wrong version. This is why we bump via a PR and tag the
 *merge commit* — never tag first.
 
+`release.yml` enforces this: a `Verify tag matches package.json version` step runs
+straight after checkout (before install, build, or publish) and exits 1 when
+`v$(jq -r .version package.json)` differs from the tag. So a mis-ordered tag
+**fails the workflow rather than publishing wrong binaries** — recover by deleting
+the tag, landing the bump, and re-tagging. Getting the order right is still the
+goal; the gate is the backstop, not the plan.
+
 ## Steps
 
 ### 1. Assess & pick the version

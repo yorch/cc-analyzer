@@ -741,7 +741,10 @@ for the guided, gated procedure. The steps below are the reference. The compiled
 binary embeds `package.json`'s version (via `version.ts`, bundled by
 `bun --compile`), so the version bump must land on `main` *before* the tag — tag a
 commit whose `package.json` still says the old version and the release binaries
-report the wrong version.
+report the wrong version. `release.yml` guards this before it builds anything: a
+`Verify tag matches package.json version` step exits 1 when `v<package.json
+version>` differs from the tag, so a mis-ordered tag fails the workflow instead
+of publishing mislabelled binaries.
 
 1. Make sure `main` is green.
 2. Bump `package.json` `version` to `X.Y.Z` in a `chore(release): prepare vX.Y.Z` PR and
