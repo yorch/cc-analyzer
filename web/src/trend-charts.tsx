@@ -5,7 +5,7 @@
  * `stats-types.ts`, so both pages chart the same numbers.
  */
 
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useRef, useState } from "react";
 import { EmptyNotice } from "./AsyncNotice.tsx";
 import type { DayRow, ModelDayRow, ScatterSession } from "./api.ts";
 import {
@@ -16,6 +16,18 @@ import {
   shiftDay,
   weekOf,
 } from "./api.ts";
+import {
+  ActiveDot,
+  activeAt,
+  ChartTip,
+  Crosshair,
+  clamp,
+  lineLocate,
+  TipHead,
+  TipRow,
+  usePointerIndex,
+  usePointerNearest,
+} from "./chart-hover.tsx";
 import { count, duration, usd } from "./format.ts";
 import { link, useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
@@ -152,6 +164,7 @@ export function LineChart({
   height = 140,
   area = false,
   title = "Series",
+  color = "var(--signal)",
 }: {
   values: number[];
   labels: string[];
@@ -159,38 +172,135 @@ export function LineChart({
   height?: number;
   area?: boolean;
   title?: string;
+  color?: string;
 }) {
   const H = height;
-  const max = Math.max(...values, 1e-9);
-  const n = values.length;
+  const tick = format ?? ((v: number) => count(Math.round(v)));
+  const full = values.length;
+  // Brush-to-zoom keeps a window [lo, hi] into the full series; drag across the
+  // chart to set it, and everything below (hover, dots, axis) reads the window
+  // while the tabular fallback still shows every point.
+  const [zoom, setZoom] = useState<[number, number] | null>(null);
+  const lo = zoom ? clamp(zoom[0], 0, Math.max(full - 1, 0)) : 0;
+  const hi = zoom ? clamp(zoom[1], lo, Math.max(full - 1, 0)) : Math.max(full - 1, 0);
+  const zoomed = zoom !== null && hi - lo >= 1 && (lo > 0 || hi < full - 1);
+  const vValues = zoomed ? values.slice(lo, hi + 1) : values;
+  const vLabels = zoomed ? labels.slice(lo, hi + 1) : labels;
+  const n = vValues.length;
+  const max = Math.max(...vValues, 1e-9);
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
-  const line = linePath(values, x, y);
-  const tick = format ?? ((v: number) => count(Math.round(v)));
+  const line = linePath(vValues, x, y);
+  const { hover, pinned, bind } = usePointerIndex(n, x, lineLocate(n));
+  // Guarded so a pin left over from before a brush-zoom can't index outside the
+  // now-smaller window.
+  const active = activeAt(hover, vValues, n, x);
+
+  // Drag detection, composed with the hover hook on one svg: a drag past the
+  // threshold is a brush (and suppresses hover); a plain click falls through to
+  // the hook's pin toggle.
+  const BRUSH_MIN_PX = 10;
+  const drag = useRef<{ start: number; moved: boolean } | null>(null);
+  const [brush, setBrush] = useState<{ a: number; b: number } | null>(null);
+  const localPx = (e: React.PointerEvent<SVGSVGElement>): number => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return r.width === 0 ? 0 : ((e.clientX - r.left) / r.width) * CHART_W;
+  };
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    drag.current = { start: localPx(e), moved: false };
+    setBrush(null);
+  };
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const d = drag.current;
+    if (d) {
+      const px = localPx(e);
+      if (Math.abs(px - d.start) > BRUSH_MIN_PX) d.moved = true;
+      if (d.moved) {
+        setBrush({ a: d.start, b: px });
+        return; // brushing: don't also drive the hover cursor
+      }
+    }
+    bind.onPointerMove(e);
+  };
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (d?.moved && brush) {
+      const locate = lineLocate(n);
+      const a = locate(Math.min(brush.a, brush.b));
+      const b = locate(Math.max(brush.a, brush.b));
+      setBrush(null);
+      if (b - a >= 1) setZoom([lo + a, lo + b]); // need ≥2 points to zoom
+      return;
+    }
+    setBrush(null);
+    bind.onClick(e); // a click, not a drag → pin toggle
+  };
+  const onPointerLeave = () => {
+    if (!drag.current) bind.onPointerLeave();
+    drag.current = null;
+    setBrush(null);
+  };
+  const brushRect = brush
+    ? { x: Math.min(brush.a, brush.b), w: Math.abs(brush.a - brush.b) }
+    : null;
   return (
     <>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`${title} line chart with ${values.length} points, peak ${tick(max)}`}
-      >
-        <title>{title}</title>
-        <YAxis max={max} y={y} format={tick} />
-        {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
-        <path className="burn-line" d={line} />
-        {format &&
-          n <= MAX_LINE_DOTS &&
-          values.map((v, i) => (
-            <circle key={labels[i]} cx={x(i)} cy={y(v)} r={5} className="dot">
-              <title>{`${labels[i]} — ${format(v)}`}</title>
-            </circle>
-          ))}
-      </svg>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart hoverable"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`${title} line chart with ${n} points, peak ${tick(max)}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerLeave}
+        >
+          <title>{title}</title>
+          <YAxis max={max} y={y} format={tick} />
+          {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
+          <path className="burn-line" d={line} />
+          {n <= MAX_LINE_DOTS &&
+            vValues.map((v, i) => (
+              <circle key={vLabels[i]} cx={x(i)} cy={y(v)} r={3.5} className="dot" />
+            ))}
+          {brushRect && (
+            <rect
+              className="brush-sel"
+              x={brushRect.x}
+              y={CHART_PAD}
+              width={brushRect.w}
+              height={H - CHART_PAD * 2}
+            />
+          )}
+          {active && (
+            <>
+              <Crosshair x={active.x} bottom={H - CHART_PAD} pinned={pinned} />
+              <ActiveDot cx={active.x} cy={y(active.p)} />
+            </>
+          )}
+        </svg>
+        {active && (
+          <ChartTip x={active.x} pinned={pinned}>
+            <TipHead>{vLabels[active.i]}</TipHead>
+            <TipRow label={title} value={tick(active.p)} color={color} />
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
-        <span>{labels[0]}</span>
-        <span>{labels[n - 1]}</span>
+        <span>{vLabels[0]}</span>
+        {zoomed ? (
+          <button type="button" className="chart-reset" onClick={() => setZoom(null)}>
+            reset zoom ({n} of {full})
+          </button>
+        ) : (
+          <span className="muted">drag to zoom · click to pin</span>
+        )}
+        <span>{vLabels[n - 1]}</span>
       </div>
       <ChartData labels={labels} values={values} format={format} />
     </>
@@ -265,14 +375,30 @@ function fillDays(from: string, to: string): string[] {
 /** Distinct band colors (`mix-0`…`mix-6`). Past this the tail folds into one
  *  "other" band — reusing a color would make two bands claim one swatch. */
 const MAX_MIX_BANDS = 7;
+/** The band fill colors, in `mix-0`…`mix-6` order — mirrors styles.css so the
+ *  tooltip keys match the stacked bands. */
+const MIX_COLORS = [
+  "var(--signal)",
+  "var(--teal)",
+  "var(--data-violet)",
+  "var(--red)",
+  "var(--data-blue)",
+  "var(--data-clay)",
+  "var(--data-neutral)",
+];
 /** Past this many days the tabular fallback buckets by ISO week; a two-year
  *  daily table is data, not a reading. */
 const MIX_TABLE_MAX_DAYS = 92;
 
 export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }) {
-  const first = rows[0];
-  const last = rows[rows.length - 1];
-  if (!first || !last) return <EmptyNotice>No dated model spend in the index.</EmptyNotice>;
+  // Guard here so the chart body's hooks stay unconditional (rules of hooks).
+  if (rows.length === 0) return <EmptyNotice>No dated model spend in the index.</EmptyNotice>;
+  return <ModelMixChart rows={rows} />;
+});
+
+function ModelMixChart({ rows }: { rows: ModelDayRow[] }) {
+  const firstDay = rows[0]?.day ?? "";
+  const lastDay = rows[rows.length - 1]?.day ?? "";
   const modelTotals = new Map<string, number>();
   for (const r of rows) modelTotals.set(r.model, (modelTotals.get(r.model) ?? 0) + r.cost);
   const ranked = [...modelTotals.entries()]
@@ -291,7 +417,7 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
     totals.set(band, (totals.get(band) ?? 0) + cost);
   }
   const grandTotal = [...totals.values()].reduce((s, v) => s + v, 0);
-  const days = fillDays(first.day, last.day);
+  const days = fillDays(firstDay, lastDay);
   const byDay = new Map<string, Map<string, number>>();
   for (const r of rows) {
     let m = byDay.get(r.day);
@@ -327,35 +453,78 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
     return { model, path: `${fwd.join(" ")} ${back} Z`, cls: `mix-${mi}` };
   });
   const share = (v: number) => (grandTotal > 0 ? `${((v / grandTotal) * 100).toFixed(0)}%` : "—");
+  // Crosshair finds the day; the tooltip lists every band at that day. A legend
+  // hover emphasizes one band across the stack (the second, standalone cursor).
+  const { hover, pinned, bind } = usePointerIndex(
+    days.length,
+    x,
+    lineLocate(days.length, W, pad),
+    W,
+  );
+  const hd = activeAt(hover, days, days.length, x);
+  const [focusBand, setFocusBand] = useState<string | null>(null);
+  const dayTotal = (day: string) => models.reduce((s, m) => s + (byDay.get(day)?.get(m) ?? 0), 0);
   return (
     <>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${W} ${H}`}
-        style={chartBox(W, H)}
-        role="img"
-        aria-label={`Daily model spend as a stacked area chart across ${bands.length} models`}
-      >
-        <title>Spend per model over time</title>
-        <YAxis max={maxTotal} y={y} format={usd} width={W} pad={pad} />
-        {bands.map((b) => (
-          <path key={b.model} className={`mix-band ${b.cls}`} d={b.path}>
-            <title>{`${b.model} — ${usd(totals.get(b.model) ?? 0)} total · ${share(
-              totals.get(b.model) ?? 0,
-            )} of ${usd(grandTotal)}`}</title>
-          </path>
-        ))}
-      </svg>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart hoverable"
+          viewBox={`0 0 ${W} ${H}`}
+          style={chartBox(W, H)}
+          role="img"
+          aria-label={`Daily model spend as a stacked area chart across ${bands.length} models`}
+          {...bind}
+        >
+          <title>Spend per model over time</title>
+          <YAxis max={maxTotal} y={y} format={usd} width={W} pad={pad} />
+          {bands.map((b) => (
+            <path
+              key={b.model}
+              className={`mix-band ${b.cls}${focusBand === b.model ? " hot" : ""}${
+                focusBand && focusBand !== b.model ? " dim" : ""
+              }`}
+              d={b.path}
+            />
+          ))}
+          {hd && <Crosshair x={hd.x} bottom={H - pad} top={pad} pinned={pinned} />}
+        </svg>
+        {hd && (
+          <ChartTip x={hd.x} width={W} pinned={pinned}>
+            <TipHead>{hd.p}</TipHead>
+            {models.map((m, mi) => {
+              const v = byDay.get(hd.p)?.get(m) ?? 0;
+              return v > 0 ? (
+                <TipRow
+                  key={m}
+                  label={m}
+                  value={usd(v)}
+                  color={MIX_COLORS[mi % MIX_COLORS.length]}
+                  keyKind="swatch"
+                />
+              ) : null;
+            })}
+            <TipRow label="total" value={usd(dayTotal(hd.p))} />
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>{days[0]}</span>
         <span>{days[days.length - 1]}</span>
       </div>
       <div className="legend">
         {bands.map((b) => (
-          <span key={b.model} className="legend-item">
+          <button
+            type="button"
+            key={b.model}
+            className="legend-item interactive"
+            onMouseEnter={() => setFocusBand(b.model)}
+            onMouseLeave={() => setFocusBand(null)}
+            onFocus={() => setFocusBand(b.model)}
+            onBlur={() => setFocusBand(null)}
+          >
             <span className={`legend-swatch ${b.cls}`} />
             {b.model} · {usd(totals.get(b.model) ?? 0)} · {share(totals.get(b.model) ?? 0)}
-          </span>
+          </button>
         ))}
       </div>
       {otherLabel && (
@@ -366,7 +535,7 @@ export const ModelMix = memo(function ModelMix({ rows }: { rows: ModelDayRow[] }
       <ModelMixTable bands={models} days={days} byDay={byDay} />
     </>
   );
-});
+}
 
 /** The model mix's tabular fallback: the daily series the bands are built from,
  *  bucketed by ISO week once a daily table stops being readable. */
@@ -434,12 +603,8 @@ function ModelMixTable({
 
 export type ScatterX = "wall" | "active";
 
-function ScatterDot({ p, cx, cy }: { p: ScatterSession; cx: number; cy: number }) {
-  return (
-    <circle cx={cx} cy={cy} r={3.5} className="dot">
-      <title>{`${p.title ?? p.sessionId ?? "?"}\n${usd(p.cost)} · ${duration(p.durationMs)} wall · ${duration(p.activeMs)} active · ${p.turns} turns`}</title>
-    </circle>
-  );
+function ScatterDot({ cx, cy, active }: { cx: number; cy: number; active?: boolean }) {
+  return <circle cx={cx} cy={cy} r={active ? 5 : 3.5} className={active ? "dot active" : "dot"} />;
 }
 
 export const Scatter = memo(function Scatter({
@@ -450,7 +615,6 @@ export const Scatter = memo(function Scatter({
   xAxis: ScatterX;
 }) {
   const usable = points.filter((p) => p.cost > 0);
-  if (usable.length === 0) return <EmptyNotice>No timed, costed sessions yet.</EmptyNotice>;
   const W = 900;
   const H = 260;
   const pad = 10;
@@ -463,27 +627,49 @@ export const Scatter = memo(function Scatter({
   // The y grid is drawn on the same sqrt scale the dots sit on, so a labelled
   // line means what it says.
   const yOf = (v: number) => H - pad - Math.sqrt(v / maxY) * (H - pad * 2);
+  // Nearest-point hit test: the reader only has to be closest, not dead-center
+  // on a 3.5px dot. Hooks run before the empty-state early return.
+  const { hover, bind } = usePointerNearest(usable, x, y, W, H);
+  const hp = hover !== null ? usable[hover] : null;
+  if (usable.length === 0) return <EmptyNotice>No timed, costed sessions yet.</EmptyNotice>;
   return (
     <>
-      <svg
-        className="scatter"
-        viewBox={`0 0 ${W} ${H}`}
-        style={chartBox(W, H)}
-        role="img"
-        aria-label={`Session cost by ${xAxis === "wall" ? "wall time" : "active time"} scatter plot`}
-      >
-        <title>Session cost vs duration</title>
-        <YAxis max={maxY} y={yOf} format={usd} width={W} pad={pad} />
-        {usable.map((p) =>
-          p.sessionId ? (
-            <a key={`${p.sessionId}-${p.durationMs}-${p.cost}`} href={link.session(p.sessionId)}>
-              <ScatterDot p={p} cx={x(p)} cy={y(p)} />
-            </a>
-          ) : (
-            <ScatterDot key={`?-${p.durationMs}-${p.cost}`} p={p} cx={x(p)} cy={y(p)} />
-          ),
+      <div className="chart-wrap">
+        <svg
+          className="scatter"
+          viewBox={`0 0 ${W} ${H}`}
+          style={chartBox(W, H)}
+          role="img"
+          aria-label={`Session cost by ${xAxis === "wall" ? "wall time" : "active time"} scatter plot`}
+          {...bind}
+        >
+          <title>Session cost vs duration</title>
+          <YAxis max={maxY} y={yOf} format={usd} width={W} pad={pad} />
+          {usable.map((p, i) =>
+            p.sessionId ? (
+              <a key={`${p.sessionId}-${p.durationMs}-${p.cost}`} href={link.session(p.sessionId)}>
+                <ScatterDot cx={x(p)} cy={y(p)} active={i === hover} />
+              </a>
+            ) : (
+              <ScatterDot
+                key={`?-${p.durationMs}-${p.cost}`}
+                cx={x(p)}
+                cy={y(p)}
+                active={i === hover}
+              />
+            ),
+          )}
+        </svg>
+        {hp && (
+          <ChartTip x={x(hp)} width={W}>
+            <TipHead>{hp.title ?? hp.sessionId ?? "session"}</TipHead>
+            <TipRow label="cost" value={usd(hp.cost)} color="var(--signal)" />
+            <TipRow label="wall" value={duration(hp.durationMs)} />
+            <TipRow label="active" value={duration(hp.activeMs)} />
+            <TipRow label="turns" value={count(hp.turns)} />
+          </ChartTip>
         )}
-      </svg>
+      </div>
       <div className="axis">
         <span>0</span>
         <span>

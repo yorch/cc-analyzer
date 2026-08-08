@@ -18,6 +18,16 @@ import {
   type TurnDepthStats,
   weeklySeries,
 } from "../api.ts";
+import {
+  ActiveDot,
+  activeAt,
+  ChartTip,
+  Crosshair,
+  lineLocate,
+  TipHead,
+  TipRow,
+  usePointerIndex,
+} from "../chart-hover.tsx";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
@@ -79,18 +89,35 @@ function SkillSpark({ values }: { values: number[] }) {
   const x = xScale(n, W, pad);
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
   const line = linePath(values, x, y);
+  const { hover, pinned, bind } = usePointerIndex(n, x, lineLocate(n, W, pad), W);
+  const active = activeAt(hover, values, n, x);
   return (
-    <svg
-      className="skillspark"
-      viewBox={`0 0 ${W} ${H}`}
-      style={chartBox(W, H)}
-      role="img"
-      aria-label={`Weekly skill invocation trend across ${n} weeks, peak ${Math.round(max)}`}
-    >
-      <title>Invocations per week</title>
-      <path className="burn-area" d={areaPath(line, x, n, H)} />
-      <path className="burn-line" d={line} />
-    </svg>
+    <div className="chart-wrap">
+      <svg
+        className="skillspark hoverable"
+        viewBox={`0 0 ${W} ${H}`}
+        style={chartBox(W, H)}
+        role="img"
+        aria-label={`Weekly skill invocation trend across ${n} weeks, peak ${Math.round(max)}`}
+        {...bind}
+      >
+        <title>Invocations per week</title>
+        <path className="burn-area" d={areaPath(line, x, n, H)} />
+        <path className="burn-line" d={line} />
+        {active && (
+          <>
+            <Crosshair x={active.x} bottom={H - pad} top={pad} pinned={pinned} />
+            <ActiveDot cx={active.x} cy={y(active.p)} />
+          </>
+        )}
+      </svg>
+      {active && (
+        <ChartTip x={active.x} width={W} pinned={pinned}>
+          <TipHead>{`week ${active.i + 1} of ${n}`}</TipHead>
+          <TipRow label="invocations" value={count(active.p)} color="var(--signal)" />
+        </ChartTip>
+      )}
+    </div>
   );
 }
 
