@@ -1,7 +1,13 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
 
-import { analyzeSession } from "../core/analyze.ts";
+import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
+import {
+  CLAUDE_NOT_FOUND_MESSAGE,
+  isValidModel,
+  resolveClaudeBinary,
+  runClaudeAnalysis,
+} from "../core/claude-handoff.ts";
 import {
   type ClaudeRootSource,
   claudeRoots,
@@ -21,7 +27,14 @@ import { scanInventories } from "../core/inventory.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
-import { getClaudeDirs, getCostBasis, setClaudeDirs, setCostBasis } from "../core/prefs.ts";
+import {
+  getAnalysisModel,
+  getClaudeDirs,
+  getCostBasis,
+  setClaudeDirs,
+  setCostBasis,
+} from "../core/prefs.ts";
+import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { labelProjects, rootTag } from "../core/project-labels.ts";
 import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
@@ -51,7 +64,14 @@ import {
 import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
-import { formatBytes, formatCount, formatRelativeTime, table, truncate } from "./format.ts";
+import {
+  formatBytes,
+  formatCount,
+  formatRelativeTime,
+  formatUSD,
+  table,
+  truncate,
+} from "./format.ts";
 import {
   renderParseCoverageLine,
   renderPortfolioInsights,
@@ -67,8 +87,9 @@ Usage:
   cc-analyzer                          Launch the interactive TUI
   cc-analyzer projects                 List all projects
   cc-analyzer sessions <projectId>     List sessions in a project
-  cc-analyzer analyze <id|path> [--json]
-                                       Analyze a single session
+  cc-analyzer analyze <id|path> [--json] [--with-claude] [--model <id>]
+                                       Analyze a single session (--with-claude runs a
+                                       Claude Code retrospective; --model overrides the default)
   cc-analyzer doctor <id|path> [--json]
                                        Check session health and recoverability
   cc-analyzer index [--rebuild|--check]
@@ -375,7 +396,81 @@ async function resolveSessionPath(ref: string): Promise<string | undefined> {
   return (await findSessionById(ref))?.path;
 }
 
-async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<number> {
+/** Extract a `--name value` or `--name=value` flag, returning its value (if any)
+ *  and argv with the flag and its space-form value removed. Lets the positional
+ *  filter run over the remainder without mistaking a flag value for a positional. */
+function takeFlagValue(rest: string[], name: string): { value?: string; rest: string[] } {
+  const out: string[] = [];
+  let value: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === undefined) continue;
+    if (arg === name) {
+      value = rest[i + 1];
+      i++;
+      continue;
+    }
+    if (arg.startsWith(`${name}=`)) {
+      value = arg.slice(name.length + 1);
+      continue;
+    }
+    out.push(arg);
+  }
+  return { value, rest: out };
+}
+
+/** Stream a Claude Code retrospective for a session to stdout. Text streams as
+ *  it arrives; the run's own cost prints to stderr at the end so stdout stays
+ *  the retrospective. */
+async function cmdAnalyzeWithClaude(
+  analysis: SessionAnalysis,
+  path: string,
+  pricing: PricingTable,
+  modelOverride: string | undefined,
+): Promise<number> {
+  if (modelOverride !== undefined && !isValidModel(modelOverride)) {
+    console.error(`error: invalid --model '${modelOverride}'.`);
+    return 2;
+  }
+  const claudeBin = resolveClaudeBinary();
+  if (!claudeBin) {
+    console.error(`error: ${CLAUDE_NOT_FOUND_MESSAGE}`);
+    return 1;
+  }
+  const model = modelOverride ?? getAnalysisModel();
+  process.stderr.write(`Analyzing with Claude Code (${model})…\n\n`);
+  let streamedText = false;
+  let cost: number | undefined;
+  let errored = false;
+  for await (const event of runClaudeAnalysis({
+    claudeBin,
+    sessionPath: path,
+    analysis,
+    model,
+    whatIf: sessionWhatIf(analysis.models, pricing),
+  })) {
+    if (event.type === "text") {
+      process.stdout.write(event.delta);
+      streamedText = true;
+    } else if (event.type === "result") {
+      // Older Claude Code without partial streaming carries the text only here.
+      if (!streamedText && event.text) process.stdout.write(event.text);
+      cost = event.costUsd;
+    } else {
+      errored = true;
+      process.stderr.write(`\nerror: ${event.message}\n`);
+    }
+  }
+  process.stdout.write("\n");
+  if (cost !== undefined) process.stderr.write(`\nRun cost: ${formatUSD(cost)}\n`);
+  return errored ? 1 : 0;
+}
+
+async function cmdAnalyze(
+  ref: string | undefined,
+  json: boolean,
+  opts: { withClaude?: boolean; model?: string } = {},
+): Promise<number> {
   if (!ref) {
     console.error("error: missing <id|path>.");
     return 2;
@@ -388,6 +483,10 @@ async function cmdAnalyze(ref: string | undefined, json: boolean): Promise<numbe
   const { events, errors, coverage } = await parseSessionFile(path);
   const { table: pricing } = await loadPricing();
   const analysis = analyzeSession(events, pricing, { coverage });
+
+  if (opts.withClaude) {
+    return cmdAnalyzeWithClaude(analysis, path, pricing, opts.model);
+  }
 
   if (json) {
     console.log(JSON.stringify({ ...analysis, parseErrors: errors.length }, null, 2));
@@ -807,8 +906,18 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdProjects();
     case "sessions":
       return cmdSessions(positional[0]);
-    case "analyze":
-      return cmdAnalyze(positional[0], json);
+    case "analyze": {
+      const withClaude = rest.includes("--with-claude");
+      // `--model x` puts its value where the positional filter can't see it's a
+      // flag argument, so strip the flag+value before resolving the id.
+      const { value: model, rest: rest2 } = takeFlagValue(rest, "--model");
+      if (json && withClaude) {
+        console.error("error: --json cannot be combined with --with-claude.");
+        return 2;
+      }
+      const args = rest2.filter((a) => !a.startsWith("--"));
+      return cmdAnalyze(args[0], json, { withClaude, model });
+    }
     case "doctor":
       return cmdDoctor(positional[0], json);
     case "index":

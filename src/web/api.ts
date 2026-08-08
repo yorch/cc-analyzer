@@ -1,7 +1,15 @@
 import type { Database } from "bun:sqlite";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import { analyzeSession } from "../core/analyze.ts";
+import {
+  CLAUDE_NOT_FOUND_MESSAGE,
+  isValidModel,
+  resolveClaudeBinary,
+  runClaudeAnalysis,
+  type Spawner,
+} from "../core/claude-handoff.ts";
 import type { CostBasis } from "../core/cost-framing.ts";
 import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
@@ -9,7 +17,7 @@ import { inspectIndexStatus } from "../core/index-status.ts";
 import { parseSessionFile } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
-import { getCostBasis, setCostBasis } from "../core/prefs.ts";
+import { getAnalysisModel, getCostBasis, setAnalysisModel, setCostBasis } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import {
   listIndexedProjects,
@@ -61,8 +69,17 @@ const MAX_REPORT_SLOTS = 16;
 // crawl over a big portfolio could still bloat the Map — cap it by recency.
 const MAX_RANK_SLOTS = 256;
 
+/** Injectable seams for the analyze-with-Claude route, so tests can stand in a
+ *  fake binary and subprocess without a real `claude` install. Defaults resolve
+ *  the real binary and spawner. */
+export interface ApiDeps {
+  resolveClaudeBinary?: () => string | undefined;
+  spawn?: Spawner;
+}
+
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
-export function createApi(db: Database, pricing: PricingTable): Hono {
+export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {}): Hono {
+  const resolveClaude = deps.resolveClaudeBinary ?? resolveClaudeBinary;
   const api = new Hono();
 
   api.get("/api/index-status", async (c) => c.json(await inspectIndexStatus(db)));
@@ -147,10 +164,12 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
   // server binds to loopback by default (runServe in server.ts) and is meant
   // for a single local user; the DNS-rebinding Host-header guard in
   // createApp still applies on top when loopback-only.
-  api.get("/api/prefs", (c) => c.json({ costBasis: getCostBasis() }));
+  const prefsPayload = () => ({ costBasis: getCostBasis(), analysisModel: getAnalysisModel() });
+  api.get("/api/prefs", (c) => c.json(prefsPayload()));
   // PUT is the primary write verb (replacing the whole prefs resource); POST
   // is accepted too since a JSON body handler is trivial to share in Hono and
-  // it saves SPA callers from caring which verb to use.
+  // it saves SPA callers from caring which verb to use. Each field is optional
+  // so the SPA can flip the cost basis or the analysis model independently.
   api.on(["PUT", "POST"], "/api/prefs", async (c) => {
     let body: unknown;
     try {
@@ -158,12 +177,20 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     } catch {
       return c.json({ error: "invalid JSON body" }, 400);
     }
-    const costBasis = (body as { costBasis?: unknown } | null)?.costBasis;
-    if (costBasis !== "api" && costBasis !== "subscription") {
-      return c.json({ error: 'costBasis must be "api" or "subscription"' }, 400);
+    const b = (body ?? {}) as { costBasis?: unknown; analysisModel?: unknown };
+    if (b.costBasis !== undefined) {
+      if (b.costBasis !== "api" && b.costBasis !== "subscription") {
+        return c.json({ error: 'costBasis must be "api" or "subscription"' }, 400);
+      }
+      setCostBasis(b.costBasis satisfies CostBasis);
     }
-    setCostBasis(costBasis satisfies CostBasis);
-    return c.json({ costBasis });
+    if (b.analysisModel !== undefined) {
+      if (typeof b.analysisModel !== "string" || !isValidModel(b.analysisModel)) {
+        return c.json({ error: "analysisModel must be a valid model id" }, 400);
+      }
+      setAnalysisModel(b.analysisModel);
+    }
+    return c.json(prefsPayload());
   });
 
   api.get("/api/projects", (c) => c.json(listIndexedProjects(db)));
@@ -386,6 +413,46 @@ export function createApi(db: Database, pricing: PricingTable): Hono {
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
     return c.json(buildTranscript(parsed.events));
+  });
+
+  // Analyze-with-Claude-Code: spawn a locally-installed `claude` headless and
+  // stream its retrospective back to the SPA as NDJSON (one AnalysisEvent per
+  // line). This is the tool's one *subprocess* side effect, and it stays
+  // read-only over ~/.claude: it points Claude at the session file with
+  // `--allowedTools Read` and never `--resume`s (which would append turns to the
+  // real session). Safe as an unauthenticated local write because `serve` binds
+  // to loopback (server.ts) for a single user and the DNS-rebinding guard
+  // applies. The run is the user's own Claude Code session under their normal
+  // data dir and costs real tokens, so the SPA makes it explicitly opt-in.
+  api.post("/api/sessions/:id/analyze", async (c) => {
+    const row = sessionRowById(db, c.req.param("id"));
+    if (!row) return c.json({ error: "session not found" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const requested = (body as { model?: unknown } | null)?.model;
+    const model =
+      typeof requested === "string" && requested.length > 0 ? requested : getAnalysisModel();
+    if (!isValidModel(model)) return c.json({ error: "invalid model" }, 400);
+    const claudeBin = resolveClaude();
+    if (!claudeBin) return c.json({ error: CLAUDE_NOT_FOUND_MESSAGE }, 503);
+    const parsed = await readSession(row.path);
+    if (!parsed) return c.json(staleIndex, 404);
+    const analysis = analyzeSession(parsed.events, pricing, { coverage: parsed.coverage });
+    const whatIf = sessionWhatIf(analysis.models, pricing);
+    c.header("Content-Type", "application/x-ndjson; charset=utf-8");
+    c.header("Cache-Control", "no-store");
+    return stream(c, async (s) => {
+      for await (const event of runClaudeAnalysis(
+        { claudeBin, sessionPath: row.path, analysis, model, whatIf },
+        { spawn: deps.spawn },
+      )) {
+        await s.write(`${JSON.stringify(event)}\n`);
+      }
+    });
   });
 
   return api;

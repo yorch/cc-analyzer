@@ -24,7 +24,14 @@ import {
   summarizeCompactions,
   turnFlags,
 } from "../../core/chart-series.ts";
+import {
+  ANALYSIS_MODELS,
+  CLAUDE_NOT_FOUND_MESSAGE,
+  resolveClaudeBinary,
+  runClaudeAnalysis,
+} from "../../core/claude-handoff.ts";
 import { parseSessionFile } from "../../core/parser.ts";
+import { getAnalysisModel, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
 import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
@@ -54,7 +61,7 @@ interface Props {
   onBack: () => void;
 }
 
-type Mode = "turns" | "charts" | "transcript" | "summary";
+type Mode = "turns" | "charts" | "transcript" | "summary" | "claude";
 
 interface Loaded {
   analysis: SessionAnalysis;
@@ -85,10 +92,12 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       if (input === "t") return setMode("transcript");
       if (input === "s") return setMode("summary");
       if (input === "c") return setMode("charts");
+      if (input === "a") return setMode("claude");
       if (input === "u" || input === "1") return setMode("turns");
       if (input === "2") return setMode("charts");
       if (input === "3") return setMode("transcript");
       if (input === "4") return setMode("summary");
+      if (input === "5") return setMode("claude");
       if (key.escape && mode !== "turns") return setMode("turns");
     },
     { isActive: isActive && !!data },
@@ -111,7 +120,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       </Text>
       <SummaryBand a={analysis} />
       <Box marginTop={1}>
-        {(["turns", "charts", "transcript", "summary"] as Mode[]).map((m) => (
+        {(["turns", "charts", "transcript", "summary", "claude"] as Mode[]).map((m) => (
           <Text key={m} {...(m === mode ? selection(true) : { color: role.muted })}>
             {" "}
             {m}{" "}
@@ -125,14 +134,25 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
         {mode === "charts" && <ChartsView a={analysis} columns={columns} rows={rows} />}
         {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
         {mode === "summary" && <SummaryView a={analysis} whatIf={whatIf} />}
+        {mode === "claude" && (
+          <ClaudeView
+            a={analysis}
+            sessionPath={session.path}
+            whatIf={whatIf}
+            isActive={isActive}
+            rows={rows}
+          />
+        )}
       </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · esc back"
-            : mode === "charts" || mode === "summary"
-              ? "1-4 modes · esc turns"
-              : "↑↓ move · ↵ expand · g/G jump · esc turns"}
+            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · a claude · esc back"
+            : mode === "claude"
+              ? "r run · m model · ↑↓ scroll · esc turns"
+              : mode === "charts" || mode === "summary"
+                ? "1-5 modes · esc turns"
+                : "↑↓ move · ↵ expand · g/G jump · esc turns"}
           {" · "}
           <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
         </Text>
@@ -657,6 +677,152 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
         );
       })}
       <ScrollRange offset={offset} size={pageSize} total={items.length} />
+    </Box>
+  );
+}
+
+/**
+ * "Analyze with Claude Code": runs a local `claude` headless over this session
+ * (read-only, grounded in cc-analyzer's metrics) and streams the retrospective
+ * into a scrollable pane. Opt-in (`r`) because the run costs real tokens.
+ */
+function ClaudeView({
+  a,
+  sessionPath,
+  whatIf,
+  isActive,
+  rows,
+}: {
+  a: SessionAnalysis;
+  sessionPath: string;
+  whatIf: WhatIfRepricing | undefined;
+  isActive: boolean;
+  rows: number;
+}) {
+  const claudeBin = useMemo(() => resolveClaudeBinary(), []);
+  const [model, setModel] = useState(() => getAnalysisModel());
+  const [request, setRequest] = useState<{ id: number; model: string } | null>(null);
+  const [output, setOutput] = useState("");
+  const [cost, setCost] = useState<number | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [running, setRunning] = useState(false);
+  const [scroll, setScroll] = useState(0);
+
+  useInput(
+    (input, key) => {
+      if (running) return;
+      if (input === "r") {
+        setRequest((prev) => ({ id: (prev?.id ?? 0) + 1, model }));
+        return;
+      }
+      if (input === "m") {
+        const idx = ANALYSIS_MODELS.indexOf(model as (typeof ANALYSIS_MODELS)[number]);
+        const next: string =
+          ANALYSIS_MODELS[(idx + 1) % ANALYSIS_MODELS.length] ?? ANALYSIS_MODELS[0];
+        setModel(next);
+        setAnalysisModel(next);
+        return;
+      }
+      if (key.upArrow || input === "k") return setScroll((s) => s + 1);
+      if (key.downArrow || input === "j") return setScroll((s) => Math.max(0, s - 1));
+    },
+    { isActive },
+  );
+
+  // Keyed on `request` only — changing the model must not silently start a new
+  // (billable) run. The run params are snapshotted into the request; `a`,
+  // `whatIf`, `sessionPath`, and `claudeBin` are stable for the screen.
+  useEffect(() => {
+    if (!request) return;
+    if (!claudeBin) {
+      setError(CLAUDE_NOT_FOUND_MESSAGE);
+      return;
+    }
+    let cancelled = false;
+    let streamed = false;
+    setOutput("");
+    setCost(undefined);
+    setError(undefined);
+    setScroll(0);
+    setRunning(true);
+    (async () => {
+      try {
+        for await (const event of runClaudeAnalysis({
+          claudeBin,
+          sessionPath,
+          analysis: a,
+          model: request.model,
+          whatIf,
+        })) {
+          if (cancelled) return;
+          if (event.type === "text") {
+            streamed = true;
+            setOutput((prev) => prev + event.delta);
+          } else if (event.type === "result") {
+            if (!streamed && event.text) setOutput(event.text);
+            setCost(event.costUsd);
+          } else {
+            setError(event.message);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setRunning(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [request, claudeBin, sessionPath, a, whatIf]);
+
+  const lines = output ? output.split("\n") : [];
+  const visibleRows = Math.max(3, rows - 12);
+  const maxOffset = Math.max(0, lines.length - visibleRows);
+  const off = Math.min(scroll, maxOffset);
+  const start = Math.max(0, lines.length - visibleRows - off);
+  const shown = lines.slice(start, start + visibleRows);
+
+  return (
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        Runs Claude Code locally over this session (read-only), grounded in the metrics above. A
+        real Claude Code run — it costs tokens.
+      </Text>
+      <Box marginTop={1}>
+        <Text>
+          Model <Text color={role.heading}>{model}</Text>
+          {"  ·  "}
+          {running ? (
+            <Text color={palette.amber}>analyzing…</Text>
+          ) : request ? (
+            <Text color={role.muted}>done (r to re-run)</Text>
+          ) : (
+            <Text color={role.muted}>press r to run</Text>
+          )}
+          {cost !== undefined ? (
+            <Text color={role.muted}>{`  ·  run cost ${formatUSD(cost)}`}</Text>
+          ) : null}
+        </Text>
+      </Box>
+      {!claudeBin && (
+        <Box marginTop={1}>
+          <Text color={palette.red}>{CLAUDE_NOT_FOUND_MESSAGE}</Text>
+        </Box>
+      )}
+      {error && (
+        <Box marginTop={1}>
+          <Text color={palette.red}>{error}</Text>
+        </Box>
+      )}
+      {shown.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          {shown.map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: streamed log lines have no stable id; order is fixed
+            <Text key={start + i}>{line || " "}</Text>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

@@ -26,8 +26,13 @@ import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { useProjects } from "../useProjects.ts";
 
-type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript";
-const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript"] as const;
+type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript" | "claude";
+const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript", "claude"] as const;
+
+/** One-click model choices for "Analyze with Claude Code". Mirrors
+ *  `ANALYSIS_MODELS` in `src/core/claude-handoff.ts` (bun-side, not importable
+ *  here); a persisted custom default is added to this list at render time. */
+const MODEL_OPTIONS = ["sonnet", "opus", "haiku"];
 
 /** A turn the page was asked to reveal. The nonce makes a repeat request for
  *  the same turn a new event, so clicking the same anchor twice still scrolls. */
@@ -171,8 +176,104 @@ export function Session({ id }: { id: string }) {
             items={transcript.data ?? []}
           />
         )}
+        {tab === "claude" && <SessionClaude id={id} />}
       </div>
     </>
+  );
+}
+
+/**
+ * "Analyze with Claude Code": spawns a local `claude` headless (server-side) and
+ * streams a read-only retrospective of this session, grounded in cc-analyzer's
+ * own metrics. Explicitly opt-in — nothing runs until Analyze is clicked, since
+ * the run is a real (billable) Claude Code session.
+ */
+function SessionClaude({ id }: { id: string }) {
+  const prefs = useAsync(() => api.prefs(), []);
+  const [model, setModel] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [output, setOutput] = useState("");
+  const [cost, setCost] = useState<number | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  // Adopt the persisted default once prefs load, before the user picks.
+  const defaultModel = prefs.data?.analysisModel ?? "sonnet";
+  const selected = model ?? defaultModel;
+  const options = MODEL_OPTIONS.includes(selected) ? MODEL_OPTIONS : [selected, ...MODEL_OPTIONS];
+
+  const onModelChange = (next: string) => {
+    setModel(next);
+    // Persist as the new default; best-effort, never blocks the run.
+    api.setAnalysisModel(next).catch(() => {});
+  };
+
+  const run = async () => {
+    setRunning(true);
+    setOutput("");
+    setCost(undefined);
+    setError(null);
+    setDone(false);
+    let streamed = false;
+    try {
+      await api.analyze(id, selected, (event) => {
+        if (event.type === "text") {
+          streamed = true;
+          setOutput((prev) => prev + event.delta);
+        } else if (event.type === "result") {
+          if (!streamed && event.text) setOutput(event.text);
+          setCost(event.costUsd);
+        } else {
+          setError(event.message);
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+      setDone(true);
+    }
+  };
+
+  return (
+    <div className="claude-analyze">
+      <p className="muted">
+        Runs the Claude Code CLI on your machine over this session (read-only), grounded in the
+        metrics above. It’s a real Claude Code run and costs tokens, so it only starts when you
+        click Analyze.
+      </p>
+      <div className="digest-actions">
+        <label>
+          Model{" "}
+          <select
+            value={selected}
+            onChange={(event) => onModelChange(event.target.value)}
+            disabled={running}
+          >
+            {options.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={run} disabled={running}>
+          {running ? "Analyzing…" : done ? "Analyze again" : "Analyze with Claude Code"}
+        </button>
+        {cost !== undefined && <span className="muted">Run cost: {usd(cost)}</span>}
+      </div>
+      {error && (
+        <p className="muted" role="alert">
+          {error}
+        </p>
+      )}
+      {output && (
+        <pre className="claude-output" aria-live="polite">
+          {output}
+        </pre>
+      )}
+      {running && !output && <p className="muted">Waiting for Claude Code…</p>}
+    </div>
   );
 }
 

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Spawner } from "../../src/core/claude-handoff.ts";
 import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { getCostBasis, setCostBasis } from "../../src/core/prefs.ts";
@@ -89,7 +90,7 @@ describe("web API", () => {
     await withStateDir(async () => {
       const res = await api.request("/api/prefs");
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ costBasis: "api" });
+      expect(await res.json()).toEqual({ costBasis: "api", analysisModel: "sonnet" });
     });
   });
 
@@ -101,7 +102,7 @@ describe("web API", () => {
         body: JSON.stringify({ costBasis: "subscription" }),
       });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ costBasis: "subscription" });
+      expect(await res.json()).toEqual({ costBasis: "subscription", analysisModel: "sonnet" });
       expect(getCostBasis()).toBe("subscription"); // persisted, not just echoed
     });
   });
@@ -539,5 +540,112 @@ describe("isLoopbackHost", () => {
     expect(isLoopbackHost("0.0.0.0")).toBe(false);
     expect(isLoopbackHost("example.com")).toBe(false);
     expect(isLoopbackHost("")).toBe(false);
+  });
+});
+
+/** A Spawner emitting canned stream-json, so the analyze route can be exercised
+ *  without a real `claude` install. */
+function fakeSpawn(lines: string[]): Spawner {
+  return () => ({
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        for (const line of lines) controller.enqueue(enc.encode(line));
+        controller.close();
+      },
+    }),
+    stderr: null,
+    exited: Promise.resolve(0),
+  });
+}
+
+describe("POST /api/sessions/:id/analyze", () => {
+  test("404s an unknown session id", async () => {
+    const local = createApi(db, pricing, { resolveClaudeBinary: () => "/x/claude" });
+    const res = await local.request("/api/sessions/nope/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("400s an invalid model before spawning anything", async () => {
+    const local = createApi(db, pricing, { resolveClaudeBinary: () => "/x/claude" });
+    const res = await local.request("/api/sessions/sess-1/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet; rm -rf /" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("503s when Claude Code is not installed", async () => {
+    const local = createApi(db, pricing, { resolveClaudeBinary: () => undefined });
+    const res = await local.request("/api/sessions/sess-1/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    expect(res.status).toBe(503);
+  });
+
+  test("streams NDJSON analysis events from the fake claude", async () => {
+    const lines = [
+      `${JSON.stringify({ type: "stream_event", event: { delta: { type: "text_delta", text: "Hi" } } })}\n`,
+      `${JSON.stringify({ type: "result", result: "Hi", total_cost_usd: 0.05 })}\n`,
+    ];
+    const local = createApi(db, pricing, {
+      resolveClaudeBinary: () => "/x/claude",
+      spawn: fakeSpawn(lines),
+    });
+    const res = await local.request("/api/sessions/sess-1/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    expect(res.status).toBe(200);
+    const events = (await res.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.some((e) => e.type === "text" && e.delta === "Hi")).toBe(true);
+    const result = events.find((e) => e.type === "result");
+    expect(result?.costUsd).toBe(0.05);
+  });
+});
+
+describe("/api/prefs analysisModel", () => {
+  test("GET defaults analysisModel to sonnet", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs");
+      const body = (await res.json()) as { analysisModel: string };
+      expect(body.analysisModel).toBe("sonnet");
+    });
+  });
+
+  test("PUT persists a valid analysisModel and echoes it back", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ analysisModel: "opus" }),
+      });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { analysisModel: string }).analysisModel).toBe("opus");
+      const after = (await (await api.request("/api/prefs")).json()) as { analysisModel: string };
+      expect(after.analysisModel).toBe("opus");
+    });
+  });
+
+  test("PUT rejects an invalid analysisModel with 400", async () => {
+    await withStateDir(async () => {
+      const res = await api.request("/api/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ analysisModel: "bad model!" }),
+      });
+      expect(res.status).toBe(400);
+    });
   });
 });

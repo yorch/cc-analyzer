@@ -86,6 +86,8 @@ When more than one Claude data directory is configured, the Dashboard's project 
 
 Empty results are one component, not one phrasing per panel: chart panels and tables render `EmptyNotice` ("No dated sessions in the index", "No costed sessions yet") instead of a bare muted paragraph, so an empty chart reads the same everywhere.
 
+The `Session` view's tab strip carries a sixth **claude** tab — **Analyze with Claude Code**. Its `SessionClaude` panel offers a model picker (persisted through `api.setAnalysisModel` → `PUT /api/prefs`, defaulting to `sonnet`) and an Analyze button that calls `api.analyze(id, model, onEvent)`, which POSTs `/api/sessions/:id/analyze` and dispatches each streamed NDJSON `AnalysisEvent` as it arrives — appending `text` deltas into a live output pane and showing the run's `costUsd` when the terminal `result` lands. It's explicitly opt-in (nothing runs until the button is clicked, since each run is a real, billable Claude Code session) and surfaces a friendly message when the server reports `claude` isn't installed (`503`). `AnalysisEvent` is defined locally in `web/src/api.ts` because its core home (`claude-handoff.ts`) is bun-side and can't be imported into the SPA graph.
+
 Sources: [web/src/App.tsx#L1-L46](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/App.tsx#L1-L46) [web/src/api.ts#L108-L133](https://github.com/yorch/cc-analyzer/blob/51ccd4e/web/src/api.ts#L108-L133)
 
 ## Routing and shell

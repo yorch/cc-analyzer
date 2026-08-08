@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { prefsConfigPath } from "../../src/core/paths.ts";
-import { getCostBasis, setCostBasis } from "../../src/core/prefs.ts";
+import {
+  getAnalysisModel,
+  getCostBasis,
+  setAnalysisModel,
+  setCostBasis,
+} from "../../src/core/prefs.ts";
 
 let tmpDir: string;
 let prevStateDir: string | undefined;
@@ -57,5 +62,23 @@ describe("prefs.json merge-tolerance", () => {
     setCostBasis("subscription");
     const onDisk = JSON.parse(readFileSync(prefsConfigPath(), "utf8"));
     expect(onDisk).toEqual({ someFuturePref: 42, costBasis: "subscription" });
+  });
+});
+
+describe("getAnalysisModel / setAnalysisModel", () => {
+  test("defaults to sonnet when unset", () => {
+    expect(getAnalysisModel()).toBe("sonnet");
+  });
+
+  test("round-trips a valid model and preserves other keys", () => {
+    setCostBasis("subscription");
+    setAnalysisModel("opus");
+    expect(getAnalysisModel()).toBe("opus");
+    expect(getCostBasis()).toBe("subscription");
+  });
+
+  test("ignores a stored value that fails validation", () => {
+    writeFileSync(prefsConfigPath(), JSON.stringify({ analysisModel: "bad model!" }));
+    expect(getAnalysisModel()).toBe("sonnet");
   });
 });

@@ -158,7 +158,17 @@ export interface AnalyticsResponse extends AnalyticsRollup {
 /** `/api/prefs` response shape — same for GET and the PUT echo. */
 export interface PrefsResponse {
   costBasis: CostBasis;
+  /** Persisted default model for "Analyze with Claude Code". */
+  analysisModel: string;
 }
+
+/** One streamed event from `POST /api/sessions/:id/analyze`. Mirrors
+ *  `AnalysisEvent` in `src/core/claude-handoff.ts` (a bun-side module the SPA
+ *  can't import), kept in sync by hand — the shape is small and stable. */
+export type AnalysisEvent =
+  | { type: "text"; delta: string }
+  | { type: "result"; text: string; costUsd?: number; model: string }
+  | { type: "error"; message: string };
 
 /** Server-computed session insights riding on `/api/sessions/:id`: the
  * what-if needs the pricing table and the rank needs the index, so neither
@@ -225,6 +235,42 @@ async function putJson<T>(url: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** POST the analyze request and dispatch each NDJSON line as an AnalysisEvent. */
+async function streamAnalyze(
+  id: string,
+  model: string,
+  onEvent: (event: AnalysisEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/sessions/${encodeURIComponent(id)}/analyze`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new ApiError(res.status, url, await errorBody(res));
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const flush = (line: string) => {
+    const trimmed = line.trim();
+    if (trimmed) onEvent(JSON.parse(trimmed) as AnalysisEvent);
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl = buf.indexOf("\n");
+    while (nl !== -1) {
+      flush(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      nl = buf.indexOf("\n");
+    }
+  }
+  flush(buf);
+}
+
 /** The shape `projectParam` (`src/web/api.ts`) sends on a `409`: a bare
  *  project id/name matched more than one root-qualified project. */
 export interface AmbiguousProjectError {
@@ -249,6 +295,19 @@ export const api = {
   // preference (see the write-endpoint note in src/web/api.ts). Never touches
   // Claude session data — only cc-analyzer's own prefs.json.
   setCostBasis: (costBasis: CostBasis) => putJson<PrefsResponse>("/api/prefs", { costBasis }),
+  // Persists the default model for "Analyze with Claude Code" — like
+  // setCostBasis, only touches cc-analyzer's own prefs.json.
+  setAnalysisModel: (analysisModel: string) =>
+    putJson<PrefsResponse>("/api/prefs", { analysisModel }),
+  // Spawns a local `claude` headless (server-side) and streams its retrospective
+  // back as NDJSON. `onEvent` fires per event; the promise resolves when the run
+  // ends. Opt-in and billable — the caller gates it behind a button.
+  analyze: (
+    id: string,
+    model: string,
+    onEvent: (event: AnalysisEvent) => void,
+    signal?: AbortSignal,
+  ) => streamAnalyze(id, model, onEvent, signal),
   projects: () => get<IndexedProject[]>("/api/projects"),
   sessions: (projectId: string) =>
     get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),

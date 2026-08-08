@@ -8,7 +8,10 @@ This file provides guidance to AI Agents when working with code in this reposito
 stored in `~/.claude` (or any other configured Claude data directory, several at
 once). It never writes to them; its own state (pricing cache,
 SQLite index) lives under `~/.config/cc-analyzer/`. Runtime is **Bun ≥ 1.3**;
-it ships as a single compiled binary.
+it ships as a single compiled binary. The one deliberate carve-out is the
+opt-in **Analyze-with-Claude-Code** handoff (`claude-handoff.ts`), which spawns
+a local `claude` subprocess to *read* a session — still never writing to
+`~/.claude` (see that subsystem note below).
 
 ## Commands
 
@@ -722,6 +725,40 @@ decided to and never re-opens the index to rebuild the body. A refused spawn
 falls back to the old in-process post, which is what the bounded
 `flushTelemetry()` at exit still exists to drain — on the normal path nothing is
 pending and it returns immediately.
+
+**Analyze-with-Claude-Code is the one surface that spawns a subprocess.**
+`claude-handoff.ts` (bun-side) hands a stored session to a locally-installed
+`claude` CLI for a natural-language retrospective, and it is the single
+carve-out in an otherwise read-only tool. Three invariants keep the read-only
+promise and make it work for the tool's actual audience: it points Claude at
+the session `.jsonl` **read-only** (`--allowedTools Read`, scoped with
+`--add-dir <session dir>`) and **never `--resume`s** — resume would append turns
+to the user's real session file; it does **not** pass `--bare`, because bare
+mode ignores OAuth/keychain and demands `ANTHROPIC_API_KEY`, while cc-analyzer
+explicitly serves flat-plan (Pro/Max) subscription users, so plain `claude -p`
+uses their normal login (the price is that the run loads their own
+hooks/CLAUDE.md — accepted for an interactive action); and it runs
+`--output-format stream-json`, so `runClaudeAnalysis()` parses the NDJSON into a
+tiny `AnalysisEvent` stream (`text` deltas, a terminal `result` carrying
+`total_cost_usd`, or `error`). The **prompt is grounded**: `buildAnalysisPrompt`
+leads with cc-analyzer's own metrics (cost, churn, corrections, compactions,
+top what-if alternative) so Claude reasons from real numbers, then points at the
+full transcript. `resolveClaudeBinary()` (injectable `which`, plus a
+`~/.claude/local/claude` fallback) yields the binary or `undefined` → callers
+show `CLAUDE_NOT_FOUND_MESSAGE` instead of crashing; `isValidModel()` guards the
+`--model` value (defense in depth — `Bun.spawn` takes an argv array, no shell —
+because the web route accepts it from the client). The default model is
+`DEFAULT_ANALYSIS_MODEL` (`sonnet`), overridable per run and persisted via
+`prefs.ts` (`analysisModel`, exposed on `/api/prefs`). All three frontends
+consume the one module so behavior can't drift: the CLI (`analyze --with-claude
+[--model]`, streamed to stdout, `--json` mutually exclusive), the web
+(`POST /api/sessions/:id/analyze` streams NDJSON to the SPA's **Claude** tab;
+loopback-only like the other write route, with injectable `resolveClaudeBinary`/
+`spawn` seams on `createApi` for tests), and the TUI (a `claude` mode on
+`SessionDetailScreen`, `a` to open, `r` to run, `m` to cycle model). Each run is
+a real, billable Claude Code session (the user's own, under their normal data
+dir), so every surface makes it explicitly opt-in and shows the run's own cost
+when it finishes.
 
 ## Self-update subsystem
 

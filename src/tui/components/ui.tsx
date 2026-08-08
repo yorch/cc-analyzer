@@ -86,9 +86,10 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Session detail",
     keys: [
-      ["1 / 2 / 3 / 4", "turns / charts / transcript / summary"],
-      ["u / c / t / s", "turns / charts / transcript / summary"],
+      ["1 / 2 / 3 / 4 / 5", "turns / charts / transcript / summary / claude"],
+      ["u / c / t / s / a", "turns / charts / transcript / summary / claude"],
       ["→ / tab", "focus steps (turns mode)"],
+      ["r / m", "run / switch model (claude mode)"],
       ["↑/↓ · j/k", "move"],
       ["↵ / space", "expand row"],
       ["g / G", "jump to top / bottom"],
