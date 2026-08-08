@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { analyzeSession, type SessionAnalysis } from "../../src/core/analyze.ts";
+import { burstAttributionNote } from "../../src/core/chart-series.ts";
 import type { AgentMeta } from "../../src/core/events.ts";
 import { assistantEvent, clock, toolUseBlock } from "../helpers/events.ts";
 import { samplePricing } from "../helpers/pricing.ts";
@@ -161,6 +162,23 @@ describe("subagent attribution via the per-session subagents/ layout", () => {
     const byId = new Map(a.sidechainBursts.map((b) => [b.agentId ?? "inline", b.subagentType]));
     expect(byId.get("aaa")).toBe("general-purpose");
     expect(byId.get("inline")).toBe("explorer");
+  });
+
+  test("a burst table always carries a note explaining how it was named", () => {
+    // About a quarter of real subagent transcripts ship no .meta.json (Claude
+    // Code's own compaction agents among them), so "nothing named" is common,
+    // and an unexplained table of (unmatched) rows reads as a defect.
+    const unnamed = analyze([prompt("u1", 0, "go"), main("1", 1), agentCall("aaa", "s1", 2)]);
+    expect(burstAttributionNote(unnamed.sidechainBursts)).toContain("no type metadata");
+
+    const named = analyze(
+      [prompt("u1", 0, "go"), main("1", 1), agentCall("aaa", "s1", 2)],
+      meta({ aaa: { agentType: "general-purpose" } }),
+    );
+    expect(burstAttributionNote(named.sidechainBursts)).toContain("own metadata");
+
+    // Nothing to caveat when there are no bursts at all.
+    expect(burstAttributionNote([])).toBeUndefined();
   });
 
   test("the inline layout is unaffected when no agentId is present", () => {

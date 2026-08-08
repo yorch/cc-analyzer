@@ -171,6 +171,13 @@ cases:
 
 - No `subagents/` dir → `subagentPaths: []`; behavior identical to today.
 - Unreadable subagent file → skipped, counted in `ParseCoverage.parseErrors`.
+- Unreadable **parent** file → still throws. The tolerance above is deliberately
+  asymmetric: "this subagent transcript is unreadable" is noise to route into
+  coverage, but "this session file is gone" is load-bearing — the web API turns
+  it into a stale-index 404 and the CLI reports it against the path the user
+  typed. Swallowing it would serve an empty analysis as though the session were
+  merely uneventful. (An earlier revision of this branch tolerated both and
+  broke the API's 404; the regression test for it caught the mistake.)
 - Malformed `.meta.json` → that agent has no meta; naming falls back to prompt
   matching.
 - Subagent file whose `sessionId` disagrees with the parent → still merged (the

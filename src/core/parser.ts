@@ -213,6 +213,10 @@ function stampPath(path: string, onError?: (error: ParseError) => void) {
 
 /** One file's cursor in the k-way merge. */
 interface Cursor {
+  path: string;
+  onError?: (error: ParseError) => void;
+  /** Whether an unreadable file degrades (subagents) or throws (the parent). */
+  tolerant: boolean;
   iter: AsyncGenerator<SessionEvent, ParseCoverage>;
   /** The event waiting to be emitted, or undefined once the file is drained. */
   event?: SessionEvent;
@@ -223,9 +227,36 @@ interface Cursor {
   coverage?: ParseCoverage;
 }
 
-/** Pull the next event into a cursor, capturing coverage when it drains. */
+/**
+ * Pull the next event into a cursor, capturing coverage when it drains.
+ *
+ * A **subagent** file that cannot be read at all (permissions, deleted between
+ * the scan and the read) drains its cursor and is recorded as one parse error
+ * rather than throwing: one bad transcript must not cost the reader the whole
+ * session, and it is a file discovery chose, not one the user named.
+ *
+ * The **parent** stays intolerant, because "this file is gone" is real,
+ * load-bearing information there: the web API turns it into a 404 telling the
+ * user their index is stale, and the CLI reports it against the path they
+ * typed. Swallowing it would serve an empty analysis as though the session
+ * were simply uneventful.
+ */
 async function advance(cursor: Cursor): Promise<void> {
-  const next = await cursor.iter.next();
+  let next: IteratorResult<SessionEvent, ParseCoverage>;
+  try {
+    next = await cursor.iter.next();
+  } catch (err) {
+    if (!cursor.tolerant) throw err;
+    cursor.event = undefined;
+    cursor.coverage = { lines: 1, parseErrors: 1, unknownEvents: 0 };
+    cursor.onError?.({
+      line: 0,
+      raw: "",
+      error: `unreadable file: ${String(err)}`,
+      path: cursor.path,
+    });
+    return;
+  }
   if (next.done) {
     cursor.event = undefined;
     cursor.coverage = next.value;
@@ -262,25 +293,43 @@ export async function* streamSessionTree(
   const coverage = newCoverage();
   if (paths.length === 0) return coverage;
 
-  const cursors: Cursor[] = paths.map((path) => ({
+  const cursors: Cursor[] = paths.map((path, i) => ({
+    path,
+    onError,
+    // `sessionTree` puts the parent first; everything after it is a subagent.
+    tolerant: i > 0,
     iter: streamSessionEvents(path, stampPath(path, onError)),
     key: "",
   }));
-  await Promise.all(cursors.map(advance));
 
-  for (;;) {
-    // Linear scan rather than a heap: a session has a handful of subagent
-    // files, so the constant factor beats the bookkeeping. Ties resolve to the
-    // earliest path, which puts the parent's events first.
-    let pick: Cursor | undefined;
-    for (const cursor of cursors) {
-      if (!cursor.event) continue;
-      if (!pick || cursor.key < pick.key) pick = cursor;
+  // Closing this generator early (an aborted analysis) must close every child.
+  // Without the `finally`, `.return()` stops here and the child generators stay
+  // suspended forever — plain generator semantics, verified: zero children run
+  // their cleanup. `analyzeSessionStream` calls `.return()` precisely so a
+  // failing analysis releases its readers, and the single-file path already
+  // honors that (its `for await` closes `readLines`); this makes the tree path
+  // honor the same contract. Bun's file streams do not appear to hold a
+  // descriptor open across this, so it is a correctness/hygiene fix rather than
+  // a fix for an observed leak.
+  try {
+    await Promise.all(cursors.map(advance));
+
+    for (;;) {
+      // Linear scan rather than a heap: a session has a handful of subagent
+      // files, so the constant factor beats the bookkeeping. Ties resolve to the
+      // earliest path, which puts the parent's events first.
+      let pick: Cursor | undefined;
+      for (const cursor of cursors) {
+        if (!cursor.event) continue;
+        if (!pick || cursor.key < pick.key) pick = cursor;
+      }
+      if (!pick?.event) break;
+      const event = pick.event;
+      await advance(pick);
+      yield event;
     }
-    if (!pick?.event) break;
-    const event = pick.event;
-    await advance(pick);
-    yield event;
+  } finally {
+    await Promise.all(cursors.map((c) => c.iter.return?.(coverage)));
   }
 
   for (const cursor of cursors) {

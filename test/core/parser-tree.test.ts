@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSessionTree, streamSessionTree } from "../../src/core/parser.ts";
@@ -102,6 +102,54 @@ test("a single-file tree matches the single-file reader", async () => {
   const { events, coverage } = await parseSessionTree([parent]);
   expect(events).toHaveLength(2);
   expect(coverage).toEqual({ lines: 2, parseErrors: 0, unknownEvents: 0 });
+});
+
+test("an unreadable file is skipped, not thrown, and is counted", async () => {
+  const parent = writeEvents("parent.jsonl", [userEvent("2026-08-06T10:00:00Z", "p1")]);
+  const locked = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
+  chmodSync(locked, 0o000);
+
+  const { events, errors, coverage } = await parseSessionTree([parent, locked]);
+
+  // The readable half of the session still analyzes; one bad subagent
+  // transcript must not cost the reader the whole session.
+  expect(events.map((e) => (e as { uuid?: string }).uuid)).toEqual(["p1"]);
+  expect(coverage.parseErrors).toBe(1);
+  expect(errors[0]?.path).toBe(locked);
+  expect(errors[0]?.error).toContain("unreadable file");
+
+  chmodSync(locked, 0o644);
+});
+
+test("an unreadable parent still throws, since a missing session is real news", async () => {
+  // The tolerance above is for subagent transcripts only. A parent that cannot
+  // be read means the index is stale or the path is wrong — the web API turns
+  // that into a 404 and the CLI reports it — so swallowing it would serve an
+  // empty analysis as though the session were merely uneventful.
+  const parent = writeEvents("parent.jsonl", [userEvent("2026-08-06T10:00:00Z", "p1")]);
+  const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
+  chmodSync(parent, 0o000);
+
+  expect(parseSessionTree([parent, agent])).rejects.toThrow();
+
+  chmodSync(parent, 0o644);
+});
+
+test("abandoning the stream mid-read terminates cleanly", async () => {
+  // The shape of an aborted analysis. This covers the caller-visible contract
+  // only — that `.return()` resolves and the generator is done. Whether the
+  // child readers were closed is not observable from here (see the `finally`
+  // in streamSessionTree); do not read this test as proving that.
+  const parent = writeEvents("parent.jsonl", [
+    userEvent("2026-08-06T10:00:00Z", "p1"),
+    userEvent("2026-08-06T12:00:00Z", "p2"),
+  ]);
+  const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
+
+  const iter = streamSessionTree([parent, agent]);
+  expect((await iter.next()).value).toMatchObject({ uuid: "p1" });
+  await iter.return(undefined as never);
+  expect((await iter.next()).done).toBe(true);
 });
 
 test("an empty tree yields nothing rather than throwing", async () => {
