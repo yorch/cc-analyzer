@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { EmptyNotice } from "./AsyncNotice.tsx";
 import {
   type BurnGap,
@@ -22,6 +22,19 @@ import {
   type TurnPoint,
   turnFlags,
 } from "./api.ts";
+import {
+  ActiveDot,
+  activeAt,
+  barLocate,
+  ChartTip,
+  Crosshair,
+  type HoverController,
+  type IndexHover,
+  lineLocate,
+  TipHead,
+  TipRow,
+  usePointerIndex,
+} from "./chart-hover.tsx";
 import { count, duration, usd } from "./format.ts";
 import { useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
@@ -62,6 +75,10 @@ export function SessionCharts({
   // Guard against a payload from an older server (same staleness assumption
   // `insights` is optional for): absent means no bursts, not a crash.
   const bursts = a.sidechainBursts ?? [];
+  // Context and cache chart the same per-main-chain-call axis (cache is derived
+  // point-for-point from ctx), so one shared cursor drives both: hover either
+  // and the same call lights up on the other.
+  const callCursor = useState<IndexHover | null>(null);
 
   if (a.turns.length === 0) {
     return <EmptyNotice>No turns to chart in this session.</EmptyNotice>;
@@ -74,7 +91,7 @@ export function SessionCharts({
           <h2>Context window</h2>
           <span className="muted">prompt-side tokens per main-chain API call</span>
         </div>
-        <ContextChart ctx={ctx} compactions={a.compactions} />
+        <ContextChart ctx={ctx} compactions={a.compactions} cursor={callCursor} />
       </section>
 
       {ctx.points.length > 0 && (
@@ -83,7 +100,7 @@ export function SessionCharts({
             <h2>Cache efficiency</h2>
             <span className="muted">share of each call's context served from cache</span>
           </div>
-          <CacheChart cache={cache} />
+          <CacheChart cache={cache} cursor={callCursor} />
         </section>
       )}
 
@@ -170,13 +187,20 @@ const betweenX = (pos: number, n: number, x: (i: number) => number): number =>
 /** Shared x labels for the call-indexed charts' tabular fallbacks. */
 const callLabels = (n: number): string[] => Array.from({ length: n }, (_, i) => `call ${i + 1}`);
 
-function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: Compaction[] }) {
+function ContextChart({
+  ctx,
+  compactions,
+  cursor,
+}: {
+  ctx: ContextSeries;
+  compactions: Compaction[];
+  cursor?: HoverController;
+}) {
   const { points, markers, peakTokens, contextLimit } = ctx;
   // The one canonical split: own vs subagent vs inherited (see chart-series.ts).
   const b = summarizeCompactions(compactions);
   const headroom = projectHeadroom(ctx);
   const n = points.length;
-  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   const H = 220;
   // When the window size is known, scale to it: the empty headroom above the
   // sawtooth IS the signal (how close this session ran to the ceiling).
@@ -192,6 +216,12 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
   const offset = (ms?: number) => (ms !== undefined && t0 !== undefined ? duration(ms - t0) : "?");
   // A marker sits between the last pre-compaction call and the first one after.
   const markerX = (pos: number) => betweenX(pos, n, x);
+  // Clamp the shared cursor to this chart's range: context and cache can differ
+  // by a point at the edges, and a stale index from the sibling must not read
+  // out of bounds.
+  const { hover, bind } = usePointerIndex(n, lineLocate(n), CHART_W, cursor);
+  const active = activeAt(hover, points, n, x);
+  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   return (
     <>
       <p className="muted">
@@ -208,51 +238,49 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
             Math.round(headroom.perCallTokens),
           )} tokens/call`}
       </p>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`Context-window token usage over ${n} API calls, peak ${count(peakTokens)} tokens`}
-      >
-        <title>Context-window tokens per call</title>
-        <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
-        <path className="burn-area" d={areaPath(line, x, n, H)} />
-        <path className="burn-line" d={line} />
-        {contextLimit && (
-          <line
-            className="ctx-limit"
-            x1={CHART_PAD}
-            x2={CHART_W - CHART_PAD}
-            y1={y(contextLimit)}
-            y2={y(contextLimit)}
-          >
-            <title>{`context window · ${count(contextLimit)} tokens`}</title>
-          </line>
-        )}
-        {markers.map((m, mi) => (
-          <line
-            // biome-ignore lint/suspicious/noArrayIndexKey: markers are order-stable
-            key={mi}
-            className="ctx-marker"
-            x1={markerX(m.pos)}
-            x2={markerX(m.pos)}
-            y1={CHART_PAD}
-            y2={H - CHART_PAD}
-          >
-            <title>{`compaction (${m.compaction.trigger ?? "unknown trigger"}) · +${offset(
-              m.compaction.timestamp ? Date.parse(m.compaction.timestamp) : undefined,
-            )}${m.compaction.preTokens ? ` · ${count(m.compaction.preTokens)} tokens before` : ""}${
-              m.reclaimed !== undefined ? ` · reclaimed ${count(m.reclaimed)} tokens` : ""
-            }`}</title>
-          </line>
-        ))}
-        {n <= MAX_LINE_DOTS &&
-          points.map((p, i) => {
-            const windowPct = contextLimit
-              ? ` (${pctOfLimit(p.contextTokens, contextLimit)}% of window)`
-              : "";
-            return (
+      <div className="chart-wrap">
+        <svg
+          className="burnchart hoverable"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Context-window token usage over ${n} API calls, peak ${count(peakTokens)} tokens`}
+          {...bind}
+        >
+          <title>Context-window tokens per call</title>
+          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
+          <path className="burn-area" d={areaPath(line, x, n, H)} />
+          <path className="burn-line" d={line} />
+          {contextLimit && (
+            <line
+              className="ctx-limit"
+              x1={CHART_PAD}
+              x2={CHART_W - CHART_PAD}
+              y1={y(contextLimit)}
+              y2={y(contextLimit)}
+            >
+              <title>{`context window · ${count(contextLimit)} tokens`}</title>
+            </line>
+          )}
+          {markers.map((m, mi) => (
+            <line
+              // biome-ignore lint/suspicious/noArrayIndexKey: markers are order-stable
+              key={mi}
+              className="ctx-marker"
+              x1={markerX(m.pos)}
+              x2={markerX(m.pos)}
+              y1={CHART_PAD}
+              y2={H - CHART_PAD}
+            >
+              <title>{`compaction (${m.compaction.trigger ?? "unknown trigger"}) · +${offset(
+                m.compaction.timestamp ? Date.parse(m.compaction.timestamp) : undefined,
+              )}${m.compaction.preTokens ? ` · ${count(m.compaction.preTokens)} tokens before` : ""}${
+                m.reclaimed !== undefined ? ` · reclaimed ${count(m.reclaimed)} tokens` : ""
+              }`}</title>
+            </line>
+          ))}
+          {n <= MAX_LINE_DOTS &&
+            points.map((p, i) => (
               <circle
                 // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
                 key={i}
@@ -260,16 +288,34 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
                 cx={x(i)}
                 cy={y(p.contextTokens)}
                 r={3.5}
-              >
-                <title>{`call ${i + 1} · turn #${p.turnIndex + 1} · +${offset(p.ms)}\n${count(
-                  p.contextTokens,
-                )} context${windowPct} (${count(p.cachedTokens)} cached) · ${count(
-                  p.outputTokens,
-                )} out · ${usd(p.cost)}${p.model ? ` · ${p.model}` : ""}`}</title>
-              </circle>
-            );
-          })}
-      </svg>
+              />
+            ))}
+          {active && (
+            <>
+              <Crosshair x={active.x} bottom={H - CHART_PAD} />
+              <ActiveDot cx={active.x} cy={y(active.p.contextTokens)} />
+            </>
+          )}
+        </svg>
+        {active && (
+          <ChartTip x={active.x}>
+            <TipHead>{`call ${active.i + 1} · turn #${active.p.turnIndex + 1} · +${offset(
+              active.p.ms,
+            )}`}</TipHead>
+            <TipRow
+              label="context"
+              value={`${count(active.p.contextTokens)}${
+                contextLimit ? ` (${pctOfLimit(active.p.contextTokens, contextLimit)}%)` : ""
+              }`}
+              color="var(--signal)"
+            />
+            <TipRow label="cached" value={count(active.p.cachedTokens)} />
+            <TipRow label="output" value={count(active.p.outputTokens)} />
+            <TipRow label="cost" value={usd(active.p.cost)} />
+            {active.p.model ? <TipRow label="model" value={active.p.model} /> : null}
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>call 1</span>
         <span>call {n}</span>
@@ -291,10 +337,9 @@ function ContextChart({ ctx, compactions }: { ctx: ContextSeries; compactions: C
 }
 
 /** Per-call cache hit rate on a fixed 0–100% scale — dips are cold starts. */
-function CacheChart({ cache }: { cache: CacheSeries }) {
+function CacheChart({ cache, cursor }: { cache: CacheSeries; cursor?: HoverController }) {
   const { points, hitPct, coldCalls } = cache;
   const n = points.length;
-  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   const H = 160;
   const x = xScale(n);
   const y = (pct: number) => H - CHART_PAD - (pct / 100) * (H - CHART_PAD * 2);
@@ -303,36 +348,52 @@ function CacheChart({ cache }: { cache: CacheSeries }) {
     x,
     y,
   );
+  const { hover, bind } = usePointerIndex(n, lineLocate(n), CHART_W, cursor);
+  const active = activeAt(hover, points, n, x);
+  if (n === 0) return <EmptyNotice>No main-chain API calls in this session.</EmptyNotice>;
   return (
     <>
       <p className="muted">
         hit rate {hitPct}% (token-weighted) · {coldCalls} cold call{coldCalls === 1 ? "" : "s"}
       </p>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`Cache hit rate per API call, ${hitPct}% overall`}
-      >
-        <title>Cache hit rate per call</title>
-        <path className="burn-line" d={line} />
-        {n <= MAX_LINE_DOTS &&
-          points.map((p, i) => (
-            <circle
-              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
-              key={i}
-              className="dot"
-              cx={x(i)}
-              cy={y(p.hitPct)}
-              r={3.5}
-            >
-              <title>{`call ${i + 1} · turn #${p.turnIndex + 1}\n${count(p.cached)} cached / ${count(
-                p.fresh,
-              )} fresh · ${p.hitPct}% hit`}</title>
-            </circle>
-          ))}
-      </svg>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart hoverable"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Cache hit rate per API call, ${hitPct}% overall`}
+          {...bind}
+        >
+          <title>Cache hit rate per call</title>
+          <path className="burn-line" d={line} />
+          {n <= MAX_LINE_DOTS &&
+            points.map((p, i) => (
+              <circle
+                // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+                key={i}
+                className="dot"
+                cx={x(i)}
+                cy={y(p.hitPct)}
+                r={3.5}
+              />
+            ))}
+          {active && (
+            <>
+              <Crosshair x={active.x} bottom={H - CHART_PAD} />
+              <ActiveDot cx={active.x} cy={y(active.p.hitPct)} />
+            </>
+          )}
+        </svg>
+        {active && (
+          <ChartTip x={active.x}>
+            <TipHead>{`call ${active.i + 1} · turn #${active.p.turnIndex + 1}`}</TipHead>
+            <TipRow label="hit rate" value={`${active.p.hitPct}%`} color="var(--signal)" />
+            <TipRow label="cached" value={count(active.p.cached)} />
+            <TipRow label="fresh" value={count(active.p.fresh)} />
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>call 1 (y: 0–100%)</span>
         <span>call {n}</span>
@@ -350,10 +411,9 @@ function CacheChart({ cache }: { cache: CacheSeries }) {
 
 function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
   const n = points.length;
-  if (n === 0) return <EmptyNotice>No API calls in this session.</EmptyNotice>;
   const H = 160;
-  const last = points[n - 1] as BurnPoint;
-  const max = Math.max(last.cost, 1e-9);
+  const last = points[n - 1];
+  const max = Math.max(last?.cost ?? 0, 1e-9);
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const total = linePath(
@@ -362,7 +422,7 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
     y,
   );
   const side =
-    last.sidechainCost > 0
+    last && last.sidechainCost > 0
       ? linePath(
           points.map((p) => p.sidechainCost),
           x,
@@ -372,6 +432,9 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
   const t0 = points.find((p) => p.ms !== undefined)?.ms;
   const offset = (ms?: number) => (ms !== undefined && t0 !== undefined ? duration(ms - t0) : "?");
   const idleMs = gaps.reduce((s, g) => s + g.durationMs, 0);
+  const { hover, pinned, bind } = usePointerIndex(n, lineLocate(n));
+  const active = activeAt(hover, points, n, x);
+  if (n === 0 || !last) return <EmptyNotice>No API calls in this session.</EmptyNotice>;
   return (
     <>
       <p className="muted">
@@ -380,45 +443,63 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
         {gaps.length > 0 &&
           ` · ${gaps.length} idle gap${gaps.length > 1 ? "s" : ""} (${duration(idleMs)} idle)`}
       </p>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`Cumulative session cost over ${n} API calls, ${usd(last.cost)} total`}
-      >
-        <title>Cumulative session cost</title>
-        <YAxis max={max} y={y} format={usd} />
-        {gaps.map((g) => (
-          <line
-            key={g.pos}
-            className="gap-marker"
-            x1={betweenX(g.pos, n, x)}
-            x2={betweenX(g.pos, n, x)}
-            y1={CHART_PAD}
-            y2={H - CHART_PAD}
-          >
-            <title>{`idle ${duration(g.durationMs)}`}</title>
-          </line>
-        ))}
-        <path className="burn-line" d={total} />
-        {side && <path className="burn-line side" d={side} />}
-        {n <= MAX_LINE_DOTS &&
-          points.map((p, i) => (
-            <circle
-              // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
-              key={i}
-              className="dot"
-              cx={x(i)}
-              cy={y(p.cost)}
-              r={3.5}
+      <div className="chart-wrap">
+        <svg
+          className="burnchart hoverable"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Cumulative session cost over ${n} API calls, ${usd(last.cost)} total`}
+          {...bind}
+        >
+          <title>Cumulative session cost</title>
+          <YAxis max={max} y={y} format={usd} />
+          {gaps.map((g) => (
+            <line
+              key={g.pos}
+              className="gap-marker"
+              x1={betweenX(g.pos, n, x)}
+              x2={betweenX(g.pos, n, x)}
+              y1={CHART_PAD}
+              y2={H - CHART_PAD}
             >
-              <title>{`+${offset(p.ms)} · ${usd(p.cost)} so far (${usd(p.callCost)} this call${
-                p.isSidechain ? ", sidechain" : ""
-              })`}</title>
-            </circle>
+              <title>{`idle ${duration(g.durationMs)}`}</title>
+            </line>
           ))}
-      </svg>
+          <path className="burn-line" d={total} />
+          {side && <path className="burn-line side" d={side} />}
+          {n <= MAX_LINE_DOTS &&
+            points.map((p, i) => (
+              <circle
+                // biome-ignore lint/suspicious/noArrayIndexKey: call order is fixed
+                key={i}
+                className="dot"
+                cx={x(i)}
+                cy={y(p.cost)}
+                r={3.5}
+              />
+            ))}
+          {active && (
+            <>
+              <Crosshair x={active.x} bottom={H - CHART_PAD} pinned={pinned} />
+              {side && <ActiveDot cx={active.x} cy={y(active.p.sidechainCost)} cls="side" />}
+              <ActiveDot cx={active.x} cy={y(active.p.cost)} />
+            </>
+          )}
+        </svg>
+        {active && (
+          <ChartTip x={active.x} pinned={pinned}>
+            <TipHead>{`+${offset(active.p.ms)}${
+              active.p.isSidechain ? " · sidechain call" : ""
+            }`}</TipHead>
+            <TipRow label="cumulative" value={usd(active.p.cost)} color="var(--signal)" />
+            <TipRow label="this call" value={usd(active.p.callCost)} />
+            {side ? (
+              <TipRow label="subagent" value={usd(active.p.sidechainCost)} color="var(--teal)" />
+            ) : null}
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>start</span>
         <span>{offset(points.reduce((m, p) => Math.max(m, p.ms ?? 0), 0) || undefined)}</span>
@@ -455,12 +536,13 @@ const turnValue = (t: TurnPoint, m: TurnMetric): number =>
 /** Metric label: dollars for cost, durations for time, counts otherwise. */
 const fmtTurn = (m: TurnMetric, v: number): string => (m === "time" ? duration(v) : fmt(m, v));
 
-/** The four cost categories, bottom-up in stacking order. */
+/** The four cost categories, bottom-up in stacking order. `color` mirrors each
+ *  segment's fill in styles.css, so the tooltip key matches the bar. */
 const COST_SEGS = [
-  { cls: "tb-input", key: "costInput", label: "input" },
-  { cls: "tb-output", key: "costOutput", label: "output" },
-  { cls: "tb-write", key: "costCacheWrite", label: "cache write" },
-  { cls: "tb-read", key: "costCacheRead", label: "cache read" },
+  { cls: "tb-input", key: "costInput", label: "input", color: "var(--signal)" },
+  { cls: "tb-output", key: "costOutput", label: "output", color: "var(--teal)" },
+  { cls: "tb-write", key: "costCacheWrite", label: "cache write", color: "var(--data-violet)" },
+  { cls: "tb-read", key: "costCacheRead", label: "cache read", color: "var(--data-blue)" },
 ] as const;
 
 function TurnBars({ turns }: { turns: TurnPoint[] }) {
@@ -475,6 +557,11 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
   const gap = Math.min(2, slot * 0.2);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const flagged = turns.filter((t) => turnFlags(t).length > 0).length;
+  // The mark is the hit target on a bar chart: snap to the slot under the
+  // pointer and anchor the tooltip at that bar's center (no crosshair).
+  const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
+  const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
+  const active = activeAt(hover, turns, n, xCenter);
   return (
     <>
       <div className="trend-head">
@@ -488,68 +575,95 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
         peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(turns[peakIdx]?.index ?? 0) + 1} ·{" "}
         {turns[peakIdx]?.prompt.slice(0, 60) || "no text"})
       </p>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`Per-turn ${metric} bar chart across ${n} turns, peak ${fmtTurn(
-          metric,
-          values[peakIdx] ?? 0,
-        )}`}
-      >
-        <title>Per-turn {metric}</title>
-        <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
-        {turns.map((t, i) => {
-          const v = values[i] ?? 0;
-          const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
-          const bx = CHART_PAD + i * slot + gap / 2;
-          const bw = Math.max(slot - gap, 1);
-          const flags = turnFlags(t);
-          const costSplit =
-            metric === "cost"
-              ? `\n${COST_SEGS.map((s) => `${s.label} ${usd(t[s.key])}`).join(" · ")}`
-              : "";
-          const title = `#${t.index + 1} · ${usd(t.cost)} · ${count(
-            t.ioTokens + t.cacheTokens,
-          )} tokens · ${t.apiCalls} calls (${t.mainApiCalls} main)${
-            t.wallMs !== undefined ? ` · ${duration(t.wallMs)}` : ""
-          }${costSplit}${flags.length > 0 ? `\n⚠ ${flags.join(" · ")}` : ""}\n${t.prompt || "(no text)"}`;
-          let yCursor = H - CHART_PAD;
-          return (
-            <g key={t.index}>
-              <title>{title}</title>
-              {metric === "cost" && t.cost > 0 ? (
-                COST_SEGS.map((s) => {
-                  const segH = (t[s.key] / t.cost) * h;
-                  yCursor -= segH;
-                  return (
-                    <rect
-                      key={s.cls}
-                      className={`turnbar ${s.cls}`}
-                      x={bx}
-                      y={yCursor}
-                      width={bw}
-                      height={segH}
-                    />
-                  );
-                })
-              ) : (
-                <rect className="turnbar" x={bx} y={H - CHART_PAD - h} width={bw} height={h} />
-              )}
-              {flags.length > 0 && (
-                <rect
-                  className="turn-signal"
-                  x={bx}
-                  y={H - CHART_PAD + 1.5}
-                  width={bw}
-                  height={3}
-                />
-              )}
-            </g>
-          );
-        })}
-      </svg>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Per-turn ${metric} bar chart across ${n} turns, peak ${fmtTurn(
+            metric,
+            values[peakIdx] ?? 0,
+          )}`}
+          {...bind}
+        >
+          <title>Per-turn {metric}</title>
+          <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
+          {turns.map((t, i) => {
+            const v = values[i] ?? 0;
+            const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
+            const bx = CHART_PAD + i * slot + gap / 2;
+            const bw = Math.max(slot - gap, 1);
+            const flags = turnFlags(t);
+            const hot = i === hover?.i ? " hot" : "";
+            let yCursor = H - CHART_PAD;
+            return (
+              <g key={t.index}>
+                {metric === "cost" && t.cost > 0 ? (
+                  COST_SEGS.map((s) => {
+                    const segH = (t[s.key] / t.cost) * h;
+                    yCursor -= segH;
+                    return (
+                      <rect
+                        key={s.cls}
+                        className={`turnbar ${s.cls}${hot}`}
+                        x={bx}
+                        y={yCursor}
+                        width={bw}
+                        height={segH}
+                      />
+                    );
+                  })
+                ) : (
+                  <rect
+                    className={`turnbar${hot}`}
+                    x={bx}
+                    y={H - CHART_PAD - h}
+                    width={bw}
+                    height={h}
+                  />
+                )}
+                {flags.length > 0 && (
+                  <rect
+                    className="turn-signal"
+                    x={bx}
+                    y={H - CHART_PAD + 1.5}
+                    width={bw}
+                    height={3}
+                  />
+                )}
+              </g>
+            );
+          })}
+        </svg>
+        {active && (
+          <ChartTip x={active.x} pinned={pinned}>
+            <TipHead>{`turn #${active.p.index + 1}`}</TipHead>
+            <TipRow label="cost" value={usd(active.p.cost)} color="var(--signal)" />
+            <TipRow label="tokens" value={count(active.p.ioTokens + active.p.cacheTokens)} />
+            <TipRow label="calls" value={`${active.p.apiCalls} (${active.p.mainApiCalls} main)`} />
+            {active.p.wallMs !== undefined ? (
+              <TipRow label="time" value={duration(active.p.wallMs)} />
+            ) : null}
+            {metric === "cost" && active.p.cost > 0
+              ? COST_SEGS.map((s) => (
+                  <TipRow
+                    key={s.cls}
+                    label={s.label}
+                    value={usd(active.p[s.key])}
+                    color={s.color}
+                  />
+                ))
+              : null}
+            {turnFlags(active.p).length > 0 ? (
+              <div className="tip-note">⚠ {turnFlags(active.p).join(" · ")}</div>
+            ) : null}
+            {active.p.prompt ? (
+              <div className="tip-note">{active.p.prompt.slice(0, 140)}</div>
+            ) : null}
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>turn 1</span>
         <span>turn {n}</span>
@@ -575,13 +689,16 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
   );
 }
 
-/** Step-kind groups for the tool-activity bars; the rest fold into "other". */
+/** Step-kind groups for the tool-activity bars; the rest fold into "other".
+ *  `color` mirrors each group's fill in styles.css. */
 const KIND_GROUPS = [
-  { key: "run", cls: "tk-run" },
-  { key: "read", cls: "tk-read" },
-  { key: "edit", cls: "tk-edit" },
-  { key: "search", cls: "tk-search" },
+  { key: "run", cls: "tk-run", color: "var(--signal)" },
+  { key: "read", cls: "tk-read", color: "var(--teal)" },
+  { key: "edit", cls: "tk-edit", color: "var(--data-violet)" },
+  { key: "search", cls: "tk-search", color: "var(--data-blue)" },
 ] as const;
+/** The "other" fold that closes the group list (its own colour). */
+const KIND_OTHER = { key: "other", cls: "tk-other", color: "var(--data-neutral)" } as const;
 
 /** Fold a turn's kindCounts into the chart's five groups (order preserved). */
 function groupCounts(kindCounts: Record<string, number>): number[] {
@@ -604,64 +721,85 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
-  const legend = [
-    ...KIND_GROUPS.map((g) => ({ key: g.key, cls: g.cls })),
-    { key: "other", cls: "tk-other" },
-  ];
+  const legend = [...KIND_GROUPS, KIND_OTHER];
+  const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
+  const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
+  const active = activeAt(hover, turns, n, xCenter);
+  const hgroups = active ? (perTurn[active.i] ?? []) : [];
+  const htotal = active ? (totals[active.i] ?? 0) : 0;
   return (
     <>
       <div className="trend-head">
         <h2>Tool activity</h2>
         <span className="muted">operation steps per turn, by kind</span>
       </div>
-      <svg
-        className="burnchart"
-        viewBox={`0 0 ${CHART_W} ${H}`}
-        style={chartBox(CHART_W, H)}
-        role="img"
-        aria-label={`Per-turn tool activity stacked bar chart across ${n} turns, busiest ${max} steps`}
-      >
-        <title>Per-turn tool activity</title>
-        <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
-        {turns.map((t, i) => {
-          const groups = perTurn[i] ?? [];
-          const total = totals[i] ?? 0;
-          if (total === 0) return null;
-          const h = Math.max((total / max) * (H - CHART_PAD * 2), 1.5);
-          const bx = CHART_PAD + i * slot + gap / 2;
-          const bw = Math.max(slot - gap, 1);
-          const breakdown = Object.entries(t.kindCounts)
-            .sort((a, b) => b[1] - a[1])
-            .map(([k, c]) => `${k} ${c}`)
-            .join(" · ");
-          let yCursor = H - CHART_PAD;
-          return (
-            <g key={t.index}>
-              <title>{`#${t.index + 1} · ${total} steps\n${breakdown}${
-                t.toolErrors > 0
-                  ? ` · ${t.toolErrors} tool error${t.toolErrors === 1 ? "" : "s"}`
-                  : ""
-              }`}</title>
-              {legend.map((g, gi) => {
-                const v = groups[gi] ?? 0;
-                if (v === 0) return null;
-                const segH = (v / total) * h;
-                yCursor -= segH;
-                return (
-                  <rect
-                    key={g.key}
-                    className={`turnbar ${g.cls}`}
-                    x={bx}
-                    y={yCursor}
-                    width={bw}
-                    height={segH}
-                  />
-                );
-              })}
-            </g>
-          );
-        })}
-      </svg>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Per-turn tool activity stacked bar chart across ${n} turns, busiest ${max} steps`}
+          {...bind}
+        >
+          <title>Per-turn tool activity</title>
+          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
+          {turns.map((t, i) => {
+            const groups = perTurn[i] ?? [];
+            const total = totals[i] ?? 0;
+            if (total === 0) return null;
+            const h = Math.max((total / max) * (H - CHART_PAD * 2), 1.5);
+            const bx = CHART_PAD + i * slot + gap / 2;
+            const bw = Math.max(slot - gap, 1);
+            const hot = i === hover?.i ? " hot" : "";
+            let yCursor = H - CHART_PAD;
+            return (
+              <g key={t.index}>
+                {legend.map((g, gi) => {
+                  const v = groups[gi] ?? 0;
+                  if (v === 0) return null;
+                  const segH = (v / total) * h;
+                  yCursor -= segH;
+                  return (
+                    <rect
+                      key={g.key}
+                      className={`turnbar ${g.cls}${hot}`}
+                      x={bx}
+                      y={yCursor}
+                      width={bw}
+                      height={segH}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+        {active && htotal > 0 && (
+          <ChartTip x={active.x} pinned={pinned}>
+            <TipHead>{`turn #${active.p.index + 1} · ${htotal} steps`}</TipHead>
+            {legend.map((g, gi) =>
+              (hgroups[gi] ?? 0) > 0 ? (
+                <TipRow
+                  key={g.key}
+                  label={g.key}
+                  value={count(hgroups[gi] ?? 0)}
+                  color={g.color}
+                  keyKind="swatch"
+                />
+              ) : null,
+            )}
+            {active.p.toolErrors > 0 ? (
+              <TipRow
+                label="tool errors"
+                value={count(active.p.toolErrors)}
+                color="var(--red)"
+                keyKind="swatch"
+              />
+            ) : null}
+          </ChartTip>
+        )}
+      </div>
       <div className="axis">
         <span>turn 1</span>
         <span>turn {n}</span>

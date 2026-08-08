@@ -1633,6 +1633,16 @@ p.muted {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+/* The bar's value is always shown inline, so hover only needs to acknowledge
+   the row — a brighter bar and un-muted label/count. (Placed after the base
+   rules so the higher-specificity hover selectors win by order too.) */
+.hist-row:hover .bar > span {
+  filter: brightness(1.12);
+}
+.hist-row:hover .hist-label,
+.hist-row:hover .hist-count {
+  color: var(--ink);
+}
 
 .calendar {
   width: 100%;
@@ -1752,6 +1762,165 @@ p.muted {
 }
 .scatter .dot:hover {
   opacity: 1;
+}
+
+/* ---------------------------------------------------- chart hover layer */
+/* A chart and its tooltip share this box: it is exactly as wide as the SVG, so
+   a viewBox x maps to a left-percentage that lands on the crosshair. */
+.chart-wrap {
+  position: relative;
+}
+/* The root svg captures the pointer across its whole box, so hover works
+   everywhere on a line — not only on a 3.5px dot, and even past the dot cap
+   where no dots are drawn. A crosshair cursor signals the readable plot. */
+.hoverable {
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+.chart-cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.dot.active {
+  opacity: 1;
+  stroke: var(--panel);
+  stroke-width: 1.5;
+  paint-order: stroke;
+  pointer-events: none;
+}
+.dot.active.side {
+  fill: var(--teal);
+}
+/* The hovered mark lifts so the reader sees the chart respond. */
+.turnbar.hot {
+  opacity: 1;
+}
+.mix-band.hot {
+  filter: brightness(1.12);
+  opacity: 1;
+}
+.mix-band.dim {
+  opacity: 0.18;
+}
+/* Legend items that toggle band emphasis are real buttons; strip the chrome so
+   they read as legend text, keeping only the pointer affordance. */
+button.legend-item.interactive {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+.legend-item.interactive:hover,
+.legend-item.interactive:focus-visible {
+  color: var(--ink);
+}
+/* The dense cell grids keep their per-cell native tooltip (every pixel is a
+   mark, so no crosshair is needed) and gain a hover lift for responsiveness. */
+.cal-cell:hover,
+.heat-cell:hover {
+  outline: 1.5px solid var(--ink);
+  outline-offset: -1px;
+  cursor: pointer;
+}
+
+/* The themed tooltip: values lead, labels follow. */
+.chart-tip {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 0;
+  max-width: 320px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--panel-2);
+  box-shadow: var(--shadow);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.chart-tip .tip-head {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 3px;
+  white-space: pre-line;
+}
+.chart-tip .tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-tip .tip-lbl {
+  color: var(--muted);
+  margin-right: auto;
+}
+.chart-tip .tip-val {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chart-tip .tip-key {
+  flex: none;
+  display: inline-block;
+}
+.chart-tip .tip-key.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.chart-tip .tip-key.line {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+.chart-tip .tip-note {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+  white-space: normal;
+}
+.chart-tip.pinned {
+  border-color: var(--signal);
+}
+.chart-tip .tip-pin {
+  display: block;
+  color: var(--signal);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  margin-bottom: 3px;
+}
+/* The crosshair stays put while pinned; a solid line reads as "held". */
+.chart-cross.pinned {
+  stroke: var(--signal);
+  stroke-dasharray: none;
+}
+/* Brush-to-zoom selection band. */
+.brush-sel {
+  fill: var(--signal);
+  opacity: 0.16;
+  pointer-events: none;
+}
+.chart-reset {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.chart-reset:hover {
+  color: var(--ink);
+  border-color: var(--signal);
 }
 
 .timelinewrap {

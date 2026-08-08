@@ -611,9 +611,17 @@ The UI's pages:
 - **Tools** — organized into Tools, Reliability, Compactions, Skills, Agents, and
   Environment views.
 
-Section and chart controls are URL-backed, keyboard navigable, and shareable;
-each major chart includes a collapsible data table so its values stay usable
-without a pointer. Projects and sessions can be **filtered** by name.
+Every chart is interactive: hovering shows a crosshair and a themed tooltip with
+the value at that point (line/area charts snap to the nearest point, bars and
+the scatter hit-test the nearest mark). On charts that aren't driven by a shared
+cursor, **clicking pins** the tooltip so a value can be read or compared without
+holding the pointer still, and **dragging across a trend line zooms** to that
+range (with a reset control). The context and cache session charts instead share
+one cursor — hovering either lights up the same call on the other — so they read
+the shared position rather than pinning. Section and chart controls are
+URL-backed, keyboard navigable, and shareable; each major chart includes a
+collapsible data table so its values stay usable without a pointer. Projects and
+sessions can be **filtered** by name.
 
 A **color-theme toggle** (System / Light / Dark) sits in the masthead. The
 choice is stored per-browser in `localStorage` (a theme follows the display, not
