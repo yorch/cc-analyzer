@@ -12,6 +12,10 @@ export interface ParseError {
   line: number;
   raw: string;
   error: string;
+  /** Which file the line came from. Set only by the tree readers, where line
+   * numbers alone are ambiguous across a session's parent and subagent files;
+   * the single-file readers leave it undefined. */
+  path?: string;
 }
 
 export interface ParseResult {
@@ -186,6 +190,122 @@ export async function* streamSessionEvents(
     if (outcome.event) yield outcome.event;
   }
   return coverage;
+}
+
+/**
+ * A session's files: the parent transcript first, then its subagent
+ * transcripts. The parent leads because ties in the merge below resolve by
+ * position, and a main-chain event sharing a timestamp with a subagent event
+ * should come first.
+ */
+export type SessionTree = readonly string[];
+
+/** The ordering key of one event, or undefined when it carries no timestamp. */
+function timestampOf(event: SessionEvent): string | undefined {
+  const ts = (event as { timestamp?: unknown }).timestamp;
+  return typeof ts === "string" ? ts : undefined;
+}
+
+/** Wrap an error sink so every error it receives names the file it came from. */
+function stampPath(path: string, onError?: (error: ParseError) => void) {
+  return onError ? (error: ParseError) => onError({ ...error, path }) : undefined;
+}
+
+/** One file's cursor in the k-way merge. */
+interface Cursor {
+  iter: AsyncGenerator<SessionEvent, ParseCoverage>;
+  /** The event waiting to be emitted, or undefined once the file is drained. */
+  event?: SessionEvent;
+  /** Ordering key: this event's timestamp, or the last one seen in this file.
+   * Carrying the previous value forward keeps an untimestamped event adjacent
+   * to the event it followed rather than sorting it to the front. */
+  key: string;
+  coverage?: ParseCoverage;
+}
+
+/** Pull the next event into a cursor, capturing coverage when it drains. */
+async function advance(cursor: Cursor): Promise<void> {
+  const next = await cursor.iter.next();
+  if (next.done) {
+    cursor.event = undefined;
+    cursor.coverage = next.value;
+    return;
+  }
+  cursor.event = next.value;
+  const ts = timestampOf(next.value);
+  if (ts !== undefined) cursor.key = ts;
+}
+
+/**
+ * Stream a whole session — its parent transcript merged with its subagent
+ * transcripts — as one timestamp-ordered event stream.
+ *
+ * Claude Code writes subagent work to `<sessionId>/subagents/agent-*.jsonl`
+ * rather than inline in the parent file, but those events still carry the
+ * parent's `sessionId` and `isSidechain: true`. Merging them here is what lets
+ * every existing sidechain metric keep working untouched.
+ *
+ * The merge is by timestamp, not by concatenation, because a subagent call must
+ * land in the turn that was open when it happened; appending files instead would
+ * push every subagent call into the final turn and skew per-turn cost,
+ * `turnDepths`, and `skillTurnCosts`.
+ *
+ * Memory stays O(files) — one buffered event each — so the indexer's
+ * constant-memory path survives. Events keep their within-file order regardless
+ * of whether a file's own timestamps are monotonic. Coverage is summed across
+ * every file and returned the same way `streamSessionEvents` returns it.
+ */
+export async function* streamSessionTree(
+  paths: SessionTree,
+  onError?: (error: ParseError) => void,
+): AsyncGenerator<SessionEvent, ParseCoverage> {
+  const coverage = newCoverage();
+  if (paths.length === 0) return coverage;
+
+  const cursors: Cursor[] = paths.map((path) => ({
+    iter: streamSessionEvents(path, stampPath(path, onError)),
+    key: "",
+  }));
+  await Promise.all(cursors.map(advance));
+
+  for (;;) {
+    // Linear scan rather than a heap: a session has a handful of subagent
+    // files, so the constant factor beats the bookkeeping. Ties resolve to the
+    // earliest path, which puts the parent's events first.
+    let pick: Cursor | undefined;
+    for (const cursor of cursors) {
+      if (!cursor.event) continue;
+      if (!pick || cursor.key < pick.key) pick = cursor;
+    }
+    if (!pick?.event) break;
+    const event = pick.event;
+    await advance(pick);
+    yield event;
+  }
+
+  for (const cursor of cursors) {
+    if (!cursor.coverage) continue;
+    coverage.lines += cursor.coverage.lines;
+    coverage.parseErrors += cursor.coverage.parseErrors;
+    coverage.unknownEvents += cursor.coverage.unknownEvents;
+  }
+  return coverage;
+}
+
+/**
+ * Array counterpart of `streamSessionTree` for the interactive consumers (CLI
+ * `analyze`/`doctor`, the web API, the TUI) that render a full transcript.
+ */
+export async function parseSessionTree(paths: SessionTree): Promise<ParseResult> {
+  const events: SessionEvent[] = [];
+  const errors: ParseError[] = [];
+  const iter = streamSessionTree(paths, (error) => errors.push(error));
+  let next = await iter.next();
+  while (!next.done) {
+    events.push(next.value);
+    next = await iter.next();
+  }
+  return { events, errors, coverage: next.value };
 }
 
 /** Read and parse a session JSONL file from disk, streaming it line by line. */
