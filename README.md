@@ -140,6 +140,9 @@ cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
+cc-analyzer analyze <id|path> --with-claude [--model <id>]
+                                     # run a Claude Code retrospective of the session
+                                     # (read-only; needs the `claude` CLI installed)
 cc-analyzer doctor <id|path>         # check structural health and recoverability
 cc-analyzer doctor <id|path> --json  # emit the health report as JSON
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
@@ -219,6 +222,29 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
   visible instead of silent. `cc-analyzer insights` warns (and points at
   `cc-analyzer update`) when the newest Claude Code version's sessions stop
   parsing cleanly.
+
+### Analyze with Claude Code
+
+Every session view can hand the session off to a locally-installed Claude Code
+CLI for a natural-language retrospective — what you were trying to do, where time
+and tokens went, and how to run a similar task better. cc-analyzer's own metrics
+are embedded in the prompt so Claude reasons from real numbers, not just the raw
+transcript.
+
+- **CLI**: `cc-analyzer analyze <id|path> --with-claude [--model <id>]` streams
+  the retrospective to stdout and prints the run's cost.
+- **Web**: the session page's **Claude** tab has an "Analyze with Claude Code"
+  button and a model picker.
+- **TUI**: press `a` on a session's detail screen (`r` to run, `m` to switch
+  model).
+
+It runs `claude -p` headless, pointed at the session file **read-only**
+(`--allowedTools Read`) — it never `--resume`s the real session, so it doesn't
+write to `~/.claude`. It uses your normal Claude Code login (no API key needed),
+and each run is a real, billable Claude Code session, so it only starts when you
+ask. Default model is `sonnet`; override per run, or set a default with
+`cc-analyzer analyze … --model` / the web picker. Requires the `claude` CLI on
+your `PATH`.
 
 ### Session health checks
 

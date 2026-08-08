@@ -1271,6 +1271,29 @@ p.muted {
   margin-top: 14px;
   align-items: center;
 }
+.claude-analyze select {
+  background: var(--panel, transparent);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.claude-output {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 60vh;
+  overflow-y: auto;
+}
 .loadmore button,
 .digest-actions button {
   background: none;

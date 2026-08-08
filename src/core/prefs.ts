@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { DEFAULT_ANALYSIS_MODEL, isValidModel } from "./claude-handoff.ts";
 import type { CostBasis } from "./cost-framing.ts";
 import { prefsConfigPath } from "./paths.ts";
 
@@ -14,6 +15,7 @@ import { prefsConfigPath } from "./paths.ts";
 interface PrefsConfig {
   costBasis?: CostBasis;
   claudeDirs?: string[];
+  analysisModel?: string;
   [key: string]: unknown;
 }
 
@@ -45,6 +47,20 @@ export function getCostBasis(): CostBasis {
  *  Merge-tolerant: preserves any other keys already in prefs.json. */
 export function setCostBasis(basis: CostBasis): void {
   writeConfig({ ...readConfig(), costBasis: basis });
+}
+
+/** Persisted default model for "Analyze with Claude Code" (the web dropdown and
+ *  the TUI remember the last pick). Falls back to `DEFAULT_ANALYSIS_MODEL` when
+ *  unset or when a stored value fails validation. The CLI `--model` flag
+ *  overrides this per-invocation. */
+export function getAnalysisModel(): string {
+  const model = readConfig().analysisModel;
+  return typeof model === "string" && isValidModel(model) ? model : DEFAULT_ANALYSIS_MODEL;
+}
+
+/** Persist the analysis model default. Merge-tolerant, like `setCostBasis`. */
+export function setAnalysisModel(model: string): void {
+  writeConfig({ ...readConfig(), analysisModel: model });
 }
 
 /**
