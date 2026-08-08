@@ -75,11 +75,16 @@ const MAX_RANK_SLOTS = 256;
 export interface ApiDeps {
   resolveClaudeBinary?: () => string | undefined;
   spawn?: Spawner;
+  /** Newline-heartbeat interval (ms) for the analyze stream, keeping the
+   *  connection alive through Claude Code's silent think gaps. Injectable so
+   *  tests can drive it fast; defaults to 5s. */
+  heartbeatMs?: number;
 }
 
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {}): Hono {
   const resolveClaude = deps.resolveClaudeBinary ?? resolveClaudeBinary;
+  const heartbeatMs = deps.heartbeatMs ?? 5000;
   const api = new Hono();
 
   api.get("/api/index-status", async (c) => c.json(await inspectIndexStatus(db)));
@@ -446,11 +451,23 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     c.header("Content-Type", "application/x-ndjson; charset=utf-8");
     c.header("Cache-Control", "no-store");
     return stream(c, async (s) => {
-      for await (const event of runClaudeAnalysis(
-        { claudeBin, sessionPath: row.path, analysis, model, whatIf },
-        { spawn: deps.spawn },
-      )) {
-        await s.write(`${JSON.stringify(event)}\n`);
+      // Claude Code streams thinking tokens we don't forward, so this response
+      // can go silent for a long stretch before its first visible text. Emit a
+      // bare newline on an interval as a heartbeat: it keeps bytes flowing so
+      // the connection never idles out (see `idleTimeout` in server.ts), and
+      // the SPA's NDJSON reader skips blank lines, so it's inert to the client.
+      const heartbeat = setInterval(() => {
+        s.write("\n").catch(() => {});
+      }, heartbeatMs);
+      try {
+        for await (const event of runClaudeAnalysis(
+          { claudeBin, sessionPath: row.path, analysis, model, whatIf },
+          { spawn: deps.spawn },
+        )) {
+          await s.write(`${JSON.stringify(event)}\n`);
+        }
+      } finally {
+        clearInterval(heartbeat);
       }
     });
   });

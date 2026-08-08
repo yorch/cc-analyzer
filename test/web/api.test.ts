@@ -544,13 +544,18 @@ describe("isLoopbackHost", () => {
 });
 
 /** A Spawner emitting canned stream-json, so the analyze route can be exercised
- *  without a real `claude` install. */
-function fakeSpawn(lines: string[]): Spawner {
+ *  without a real `claude` install. An optional `gapMs` delays between the
+ *  emitted lines, standing in for Claude Code's silent think gaps so the
+ *  route's heartbeat can be observed. */
+function fakeSpawn(lines: string[], gapMs = 0): Spawner {
   return () => ({
     stdout: new ReadableStream<Uint8Array>({
-      start(controller) {
+      async start(controller) {
         const enc = new TextEncoder();
-        for (const line of lines) controller.enqueue(enc.encode(line));
+        for (const line of lines) {
+          if (gapMs > 0) await new Promise((r) => setTimeout(r, gapMs));
+          controller.enqueue(enc.encode(line));
+        }
         controller.close();
       },
     }),
@@ -605,15 +610,50 @@ describe("POST /api/sessions/:id/analyze", () => {
       body: JSON.stringify({ model: "sonnet" }),
     });
     expect(res.status).toBe(200);
-    const events = (await res.text())
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const events = parseNdjson(await res.text());
     expect(events.some((e) => e.type === "text" && e.delta === "Hi")).toBe(true);
     const result = events.find((e) => e.type === "result");
     expect(result?.costUsd).toBe(0.05);
   });
+
+  test("emits newline heartbeats through silent gaps without breaking the NDJSON", async () => {
+    const lines = [
+      `${JSON.stringify({ type: "stream_event", event: { delta: { type: "text_delta", text: "Hi" } } })}\n`,
+      `${JSON.stringify({ type: "result", result: "Hi", total_cost_usd: 0.05 })}\n`,
+    ];
+    // Heartbeat far faster than the inter-line gap, so at least one bare newline
+    // lands between the two events — exactly what keeps the socket from idling
+    // out during a long think. The client-style parser must skip those blanks.
+    const local = createApi(db, pricing, {
+      resolveClaudeBinary: () => "/x/claude",
+      spawn: fakeSpawn(lines, 60),
+      heartbeatMs: 10,
+    });
+    const res = await local.request("/api/sessions/sess-1/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    // A heartbeat actually fired (there is a blank line in the raw stream)…
+    expect(raw.split("\n").some((line) => line.trim() === "")).toBe(true);
+    // …yet skipping blanks (as the SPA does) still yields clean events.
+    const events = parseNdjson(raw);
+    expect(events.some((e) => e.type === "text" && e.delta === "Hi")).toBe(true);
+    expect(events.find((e) => e.type === "result")?.costUsd).toBe(0.05);
+  });
 });
+
+/** Parse an NDJSON body the way the SPA's reader does: skip blank lines (the
+ *  route's keep-alive heartbeats) and JSON.parse the rest. */
+function parseNdjson(body: string): Record<string, unknown>[] {
+  return body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 describe("/api/prefs analysisModel", () => {
   test("GET defaults analysisModel to sonnet", async () => {

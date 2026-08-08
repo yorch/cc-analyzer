@@ -132,7 +132,16 @@ export async function runServe(opts: ServeOptions = {}): Promise<number> {
   const app = createApp(db, table, { loopbackOnly });
 
   const port = opts.port ?? 4317;
-  const server = Bun.serve({ port, hostname, fetch: app.fetch });
+  // `idleTimeout` is Bun's ceiling on how long a connection may go without any
+  // bytes on the wire. The default (10s) is far too short for the
+  // `/api/sessions/:id/analyze` handoff: Claude Code reads a large transcript
+  // and streams *thinking* tokens we don't forward, so the response can sit
+  // silent for a minute or more before its first visible text — long enough
+  // that the default closes the socket mid-run and the SPA sees an empty body
+  // ("nothing happens"). Raise it to Bun's max (255s); the route also emits a
+  // newline heartbeat during those gaps so the stream survives even longer
+  // silences (see the analyze route in api.ts).
+  const server = Bun.serve({ port, hostname, idleTimeout: 255, fetch: app.fetch });
   const shownHost =
     hostname === "127.0.0.1" ? "localhost" : hostname.includes(":") ? `[${hostname}]` : hostname;
   const url = `http://${shownHost}:${server.port}`;
