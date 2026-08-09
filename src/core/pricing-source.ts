@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import bundled from "./bundled-pricing.json" with { type: "json" };
 import { pricingCachePath } from "./paths.ts";
-import type { ModelPricing, PricingTable } from "./pricing.ts";
+import { correctPricing, type ModelPricing, type PricingTable } from "./pricing.ts";
 
 export const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -102,8 +102,20 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Load the pricing table: fresh cache -> remote fetch -> stale cache -> bundled.
  * Never throws for network reasons; always returns a usable table.
+ *
+ * `correctPricing` runs here, at the one boundary every source path passes
+ * through, so a correction can't apply to the remote table and miss the cached
+ * or bundled one. It runs *after* the cache write on purpose: the cache stores
+ * what the source said, and corrections are re-derived on read, so editing
+ * `PRICE_CORRECTIONS` takes effect without invalidating anyone's cache.
  */
 export async function loadPricing(opts: LoadPricingOptions = {}): Promise<LoadedPricing> {
+  const loaded = await loadPricingSource(opts);
+  return { ...loaded, table: correctPricing(loaded.table) };
+}
+
+/** The uncorrected table, exactly as the source published it. */
+async function loadPricingSource(opts: LoadPricingOptions): Promise<LoadedPricing> {
   const maxAgeMs = opts.maxAgeMs ?? SEVEN_DAYS_MS;
   // Bound the refresh: without a timeout, a hung network would stall every
   // command that loads pricing (analyze, index, serve, the TUI) indefinitely.

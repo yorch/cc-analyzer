@@ -523,7 +523,23 @@ it is a rate comparison only. The pricing cache is format-versioned
 (`CACHE_FORMAT_VERSION`, v3 added `above200k`), so pre-upgrade caches refresh
 instead of serving entries without the tier. Pricing comes from LiteLLM
 (remote, in `pricing-source.ts`), cached in the state dir, with `bundled-pricing.json`
-as offline fallback. A dollar figure is always computed the same way regardless of
+as offline fallback. **`PRICE_CORRECTIONS` (in `pricing.ts`) is the one place the
+source is overruled**: cc-analyzer exists to be reconciled against `claude
+/usage`, so where a published list price and the rate Claude Code actually bills
+disagree, it follows Claude Code — otherwise every comparison a user makes is
+off by the spread with nothing on screen to explain it. Each correction is
+**conditional on the stale value it corrects** (`when`), so it stops applying
+the moment the source catches up or the price moves again — a correction that
+fired unconditionally would pin a rate that outlived its own reason and nobody
+would notice. `correctPricing()` runs at the single `loadPricing()` boundary
+every source path passes through (remote, cache, bundled alike) and *after* the
+cache write, so the cache stores what the source said and edits to the list take
+effect without invalidating anyone's cache; it is pure and idempotent. The
+standing entry is `claude-sonnet-5`, which LiteLLM publishes at its
+introductory rate (in effect through 2026-08-31) while Claude Code bills the
+standard $3/$15 — a clean 1.5× across all four categories, verified against
+Claude Code's own `total_cost_usd` on a controlled single-prompt session.
+A dollar figure is always computed the same way regardless of
 how the user pays — `computeCost()` has no notion of billing plan. `cost-framing.ts`
 (bun-free, imported by the SPA) is the display-only layer on top: the `CostBasis`
 preference (`"api" | "subscription"`, persisted by `prefs.ts` under `<stateDir>/prefs.json`

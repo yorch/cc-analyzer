@@ -21,7 +21,9 @@ Claude Code stores every session as a JSONL transcript under
 per API call but **not cost** — cost is derived here from token counts and a
 per-model pricing table (fetched from [LiteLLM](https://github.com/BerriAI/litellm),
 cached locally, with a bundled fallback). Cache-read/write tokens are priced
-separately, which is where most of the real spend hides.
+separately, which is where most of the real spend hides. Where a published list
+price and the rate Claude Code actually bills disagree, cc-analyzer follows
+Claude Code, so its numbers stay comparable with `claude /usage`.
 
 The tool is **read-only**: it never writes to `~/.claude`. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.

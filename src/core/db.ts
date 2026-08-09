@@ -160,7 +160,15 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // tiered rates; (3) a zero-token call (e.g. a "<synthetic>" error stub) no
 // longer flips `cost_estimated` for the whole session. Rows written by v15
 // carry the old numbers and no claims — the bump forces the rebuild.
-export const SCHEMA_VERSION = "17";
+// v18: `claude-sonnet-5` is now priced at the rate Claude Code bills rather
+// than the introductory rate LiteLLM publishes (see `PRICE_CORRECTIONS`), a
+// 1.5x change in every token category. Cost is computed at index time and
+// stored, so v17 rows keep the understated numbers — and the incremental
+// indexer skips unchanged files, so they would keep them forever. This is a
+// pricing change rather than a shape change, but the bump is the only
+// mechanism that forces the rebuild, and "rows computed under the old rule
+// stay wrong" is exactly what it exists for.
+export const SCHEMA_VERSION = "18";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
