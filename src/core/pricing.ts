@@ -33,6 +33,76 @@ export const LONG_CONTEXT_THRESHOLD = 200_000;
 
 export type PricingTable = Record<string, ModelPricing>;
 
+/**
+ * One model whose published rate is not the rate Claude Code bills.
+ *
+ * `when` is the *stale* value being corrected, not a comment: the correction
+ * applies only while the source still publishes exactly that. This is what
+ * keeps a correction from becoming the next stale number — when the source
+ * catches up (or the price moves again) the entry simply stops matching, and
+ * the source wins. A correction that fired unconditionally would pin a rate
+ * that outlived its own reason and nobody would notice.
+ */
+interface PriceCorrection {
+  model: string;
+  reason: string;
+  when: Pick<TokenRates, "inputCostPerToken" | "outputCostPerToken">;
+  use: TokenRates;
+}
+
+/**
+ * Corrections applied on top of whatever the pricing source returned.
+ *
+ * cc-analyzer exists to be reconciled against `claude /usage`, so where the
+ * published list price and the rate Claude Code actually bills disagree, it
+ * follows Claude Code — otherwise every comparison a user makes is off by the
+ * spread, with nothing on screen to explain it.
+ */
+export const PRICE_CORRECTIONS: readonly PriceCorrection[] = [
+  {
+    model: "claude-sonnet-5",
+    // LiteLLM (and cc-analyzer's bundled snapshot) publish Sonnet 5's
+    // introductory rate, in effect through 2026-08-31. Claude Code bills the
+    // standard $3/$15 — a clean 1.5x across all four token categories — so an
+    // uncorrected table understates every Sonnet 5 session by a third.
+    reason: "LiteLLM publishes the introductory rate; Claude Code bills standard",
+    when: { inputCostPerToken: 0.000002, outputCostPerToken: 0.00001 },
+    use: {
+      inputCostPerToken: 0.000003,
+      outputCostPerToken: 0.000015,
+      cacheWrite5mCostPerToken: 0.00000375,
+      cacheWrite1hCostPerToken: 0.000006,
+      cacheReadCostPerToken: 0.0000003,
+    },
+  },
+];
+
+/** Does this entry still carry the exact rates a correction was written for? */
+function matches(entry: ModelPricing, when: PriceCorrection["when"]): boolean {
+  return (
+    entry.inputCostPerToken === when.inputCostPerToken &&
+    entry.outputCostPerToken === when.outputCostPerToken
+  );
+}
+
+/**
+ * Apply `PRICE_CORRECTIONS` to a freshly-loaded table.
+ *
+ * Pure and idempotent — a corrected entry no longer matches its own `when`, so
+ * re-running is a no-op. Everything the source knows that a correction doesn't
+ * describe (`maxInputTokens`, a long-context tier) is preserved.
+ */
+export function correctPricing(table: PricingTable): PricingTable {
+  let corrected: PricingTable | undefined;
+  for (const c of PRICE_CORRECTIONS) {
+    const entry = table[c.model];
+    if (!entry || !matches(entry, c.when)) continue;
+    corrected ??= { ...table };
+    corrected[c.model] = { ...entry, ...c.use };
+  }
+  return corrected ?? table;
+}
+
 export interface TokenCounts {
   inputTokens: number;
   outputTokens: number;
