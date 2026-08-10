@@ -168,7 +168,11 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // pricing change rather than a shape change, but the bump is the only
 // mechanism that forces the rebuild, and "rows computed under the old rule
 // stay wrong" is exactly what it exists for.
-export const SCHEMA_VERSION = "18";
+// v19: orphaned sessions are discovered — a `<id>/subagents/` directory whose
+// `<id>.jsonl` was deleted. That subagent work is real spend with no row at
+// all under v18, and the incremental indexer only revisits files it already
+// knows about, so nothing short of a rebuild would ever find them.
+export const SCHEMA_VERSION = "19";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

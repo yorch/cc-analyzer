@@ -193,12 +193,24 @@ export async function* streamSessionEvents(
 }
 
 /**
- * A session's files: the parent transcript first, then its subagent
- * transcripts. The parent leads because ties in the merge below resolve by
- * position, and a main-chain event sharing a timestamp with a subagent event
- * should come first.
+ * A session's files.
+ *
+ * The two roles are named rather than positional because they are read
+ * differently: a `parent` that cannot be read throws (a missing session file is
+ * load-bearing news — the web API turns it into a stale-index 404), while an
+ * unreadable `subagent` degrades to a recorded parse error. Naming them also
+ * lets a session exist with **no parent at all** — the main transcript deleted,
+ * its subagent transcripts left behind — which a plain `string[]` could only
+ * express by convention.
+ *
+ * Merge ties resolve toward the parent, so a main-chain event sharing a
+ * timestamp with a subagent event still comes first.
  */
-export type SessionTree = readonly string[];
+export interface SessionTree {
+  /** The parent transcript, absent when only subagent transcripts survive. */
+  parent?: string;
+  subagents: readonly string[];
+}
 
 /** The ordering key of one event, or undefined when it carries no timestamp. */
 function timestampOf(event: SessionEvent): string | undefined {
@@ -285,22 +297,30 @@ async function advance(cursor: Cursor): Promise<void> {
  * constant-memory path survives. Events keep their within-file order regardless
  * of whether a file's own timestamps are monotonic. Coverage is summed across
  * every file and returned the same way `streamSessionEvents` returns it.
+ *
+ * A tree with no `parent` is read from its subagent transcripts alone: the
+ * session's main transcript was deleted and only its subagent work survives,
+ * which is real spend that would otherwise be invisible.
  */
 export async function* streamSessionTree(
-  paths: SessionTree,
+  tree: SessionTree,
   onError?: (error: ParseError) => void,
 ): AsyncGenerator<SessionEvent, ParseCoverage> {
   const coverage = newCoverage();
-  if (paths.length === 0) return coverage;
 
-  const cursors: Cursor[] = paths.map((path, i) => ({
+  const cursors: Cursor[] = [
+    // The parent leads so merge ties resolve toward the main chain, and is the
+    // one file whose unreadability is worth failing over.
+    ...(tree.parent === undefined ? [] : [{ path: tree.parent, tolerant: false }]),
+    ...tree.subagents.map((path) => ({ path, tolerant: true })),
+  ].map(({ path, tolerant }) => ({
     path,
     onError,
-    // `sessionTree` puts the parent first; everything after it is a subagent.
-    tolerant: i > 0,
+    tolerant,
     iter: streamSessionEvents(path, stampPath(path, onError)),
     key: "",
   }));
+  if (cursors.length === 0) return coverage;
 
   // Closing this generator early (an aborted analysis) must close every child.
   // Without the `finally`, `.return()` stops here and the child generators stay
@@ -345,10 +365,10 @@ export async function* streamSessionTree(
  * Array counterpart of `streamSessionTree` for the interactive consumers (CLI
  * `analyze`/`doctor`, the web API, the TUI) that render a full transcript.
  */
-export async function parseSessionTree(paths: SessionTree): Promise<ParseResult> {
+export async function parseSessionTree(tree: SessionTree): Promise<ParseResult> {
   const events: SessionEvent[] = [];
   const errors: ParseError[] = [];
-  const iter = streamSessionTree(paths, (error) => errors.push(error));
+  const iter = streamSessionTree(tree, (error) => errors.push(error));
   let next = await iter.next();
   while (!next.done) {
     events.push(next.value);

@@ -2,6 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { type ClaudeRoot, claudeRoots, projectsDirOf, qualifyProjectId } from "./claude-roots.ts";
 import type { AgentMeta } from "./events.ts";
+import type { SessionTree } from "./parser.ts";
 import { decodeProjectLabel, type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 
 export interface ProjectInfo {
@@ -36,22 +37,43 @@ export interface SessionInfo {
   /** This session's `<id>/subagents/*.jsonl`, sorted; empty under the older
    * inline-sidechain layout. `sessionTree` turns it into a reader argument. */
   subagentPaths: string[];
+  /**
+   * Whether `path` still exists on disk.
+   *
+   * False for an **orphaned** session: the main transcript was deleted (a
+   * cleanup, a `rm` of one `.jsonl`) while `<id>/subagents/` was left behind.
+   * The subagent spend is real and was previously invisible, so the session is
+   * still discovered — `path` remains its identity even though nothing is
+   * there to read, which keeps the row key stable if the file ever returns.
+   */
+  parentExists: boolean;
   /** `agentId` → what its `.meta.json` declared. Absent entries just mean the
    * burst falls back to prompt-matching for its type. */
   agentMeta: Map<string, AgentMeta>;
 }
 
 /**
- * A session's files in reader order: the parent transcript, then its subagent
- * transcripts. The single place that decides that order, so every consumer
- * feeds `streamSessionTree`/`parseSessionTree` the same thing.
+ * The reader's view of a session's files. The single place that decides which
+ * file is the parent, so every consumer feeds `streamSessionTree` /
+ * `parseSessionTree` the same thing.
+ *
+ * An orphaned session contributes no `parent`: its main transcript is gone and
+ * only the subagent work survives.
  */
-export function sessionTree(info: Pick<SessionInfo, "path" | "subagentPaths">): string[] {
-  return [info.path, ...info.subagentPaths];
+export function sessionTree(
+  info: Pick<SessionInfo, "path" | "subagentPaths" | "parentExists">,
+): SessionTree {
+  return {
+    ...(info.parentExists ? { parent: info.path } : {}),
+    subagents: info.subagentPaths,
+  };
 }
 
 /** Everything the readers and the analyzer need to process one session. */
-export type SessionSource = Pick<SessionInfo, "path" | "subagentPaths" | "agentMeta">;
+export type SessionSource = Pick<
+  SessionInfo,
+  "path" | "subagentPaths" | "agentMeta" | "parentExists"
+>;
 
 /**
  * Build a `SessionSource` for a session known only by its file path — the CLI
@@ -61,7 +83,13 @@ export type SessionSource = Pick<SessionInfo, "path" | "subagentPaths" | "agentM
  */
 export async function sessionSourceAt(path: string): Promise<SessionSource> {
   const sub = await readSubagents(join(dirname(path), basename(path, ".jsonl")));
-  return { path, subagentPaths: sub.paths, agentMeta: sub.meta };
+  // Probed rather than assumed: the caller may be pointing at an orphan whose
+  // parent is gone, and reading that tree should yield the surviving subagent
+  // work instead of throwing on the missing file.
+  const parentExists = await Bun.file(path)
+    .exists()
+    .catch(() => false);
+  return { path, subagentPaths: sub.paths, agentMeta: sub.meta, parentExists };
 }
 
 /** The `agentId` a subagent transcript's filename encodes. */
@@ -220,12 +248,14 @@ export async function listSessionsIn(project: {
   }
 
   const sessions: SessionInfo[] = [];
+  const seen = new Set<string>();
   for (const file of files) {
     if (!file.endsWith(".jsonl")) continue;
     const path = join(project.dir, file);
     const s = await stat(path).catch(() => null);
     if (!s) continue;
     const id = basename(file, ".jsonl");
+    seen.add(id);
     const sub = await readSubagents(join(project.dir, id));
     sessions.push({
       id,
@@ -236,8 +266,36 @@ export async function listSessionsIn(project: {
       mtimeMs: Math.max(s.mtimeMs, sub.mtimeMs),
       subagentPaths: sub.paths,
       agentMeta: sub.meta,
+      parentExists: true,
     });
   }
+
+  // Orphans: a `<id>/subagents/` directory whose `<id>.jsonl` is gone. Deleting
+  // one session file does not remove the subagent transcripts beside it, and
+  // that leftover work is real spend — invisible until it is enumerated here,
+  // because the loop above can only find sessions that still have a parent.
+  for (const name of files) {
+    if (seen.has(name)) continue;
+    const dir = join(project.dir, name);
+    if (!(await isDir(dir))) continue;
+    const sub = await readSubagents(dir);
+    if (sub.paths.length === 0) continue;
+    sessions.push({
+      id: name,
+      projectId: project.id,
+      // The absent parent, not one of the surviving files: this is the row's
+      // identity, and keeping it stable means a restored `.jsonl` re-attaches
+      // to the same row instead of forking a second one.
+      path: join(project.dir, `${name}.jsonl`),
+      root: project.root,
+      sizeBytes: sub.sizeBytes,
+      mtimeMs: sub.mtimeMs,
+      subagentPaths: sub.paths,
+      agentMeta: sub.meta,
+      parentExists: false,
+    });
+  }
+
   sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return sessions;
 }
@@ -320,6 +378,7 @@ export async function findSessionById(
         mtimeMs: Math.max(s.mtimeMs, sub.mtimeMs),
         subagentPaths: sub.paths,
         agentMeta: sub.meta,
+        parentExists: true,
       };
     }
   }
