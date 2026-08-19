@@ -894,7 +894,16 @@ interrupted.
 - **Dual tsconfig**: root `tsconfig.json` targets Bun (`types: ["bun"]`, includes
   `src` + `test` + `scripts`); `web/tsconfig.json` targets the browser (`DOM` libs,
   `types: ["vite/client"]`). Web code (`src/web` server aside) that touches the DOM
-  belongs to the web config.
+  belongs to the web config. Both set `types` explicitly, which is now required
+  rather than merely tidy: **TypeScript 7** (the Go-native compiler, invoked as the
+  same `tsc`) dropped automatic `@types/*` discovery.
+- **TypeScript is a typechecker here, never an emitter.** Both configs are `noEmit`;
+  Bun and Vite do every transpile. That is what makes the TS 7 native compiler a
+  drop-in: the port's known gaps are in declaration emit, project references, and
+  the programmatic compiler API, and this repo uses none of the three — Biome lints
+  and formats, `bun test` runs the tests, and nothing in the pipeline hosts `tsc` as
+  a library. Keep it that way; a tool that embeds the compiler API would re-couple
+  the toolchain to a surface TS 7 does not ship until 7.1.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).
 - **One formatter family**: money, counts, and durations are formatted by the
   bun-free `src/core/format-shared.ts` — `formatUSD`, `formatCount` (plus
