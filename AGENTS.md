@@ -700,13 +700,31 @@ the accounting. The two layouts are **mutually exclusive** — a session with a
 `subagents/` directory has no inline sidechain usage — so merging cannot
 double-count older sessions.
 
-`discover.ts` owns the filesystem side: `SessionInfo` carries `subagentPaths`
-and `agentMeta`, `sessionTree()` is the one place deciding reader order (parent
-first, because merge ties resolve by position), and `sessionSourceAt(path)`
-builds the same thing for a session known only by its path (the CLI and web API
-resolve one that way). `sizeBytes`/`mtimeMs` are folded **across** the tree, or
-the indexer's `(size, mtime)` skip would miss a session whose only growth
-happened inside `subagents/` and leave the row stale forever.
+`discover.ts` owns the filesystem side: `SessionInfo` carries `subagentPaths`,
+`agentMeta`, and `parentExists`; `sessionTree()` is the one place deciding which
+file is the parent; and `sessionSourceAt(path)` builds the same thing for a
+session known only by its path (the CLI and web API resolve one that way).
+`sizeBytes`/`mtimeMs` are folded **across** the tree, or the indexer's
+`(size, mtime)` skip would miss a session whose only growth happened inside
+`subagents/` and leave the row stale forever.
+
+**A session can outlive its parent transcript.** Deleting one `.jsonl` does not
+remove the `subagents/` directory beside it, and that leftover work is real
+spend — invisible while discovery could only find sessions that still had a
+parent. `listSessionsIn` therefore also enumerates **orphans**: a
+`<id>/subagents/` holding at least one transcript whose `<id>.jsonl` is gone.
+An orphan's `path` stays the *absent* parent's path, so a restored `.jsonl`
+re-attaches to the same indexed row instead of forking a second one, and its
+row is all sidechain (no main chain survives to produce turns or prompts).
+**Schema v19** forces the rebuild that finds them, since the incremental
+indexer only revisits files it already knows about. The one place that must
+still tell "orphan" from "nothing here" is the web session route: an empty
+tree is a stale row and 404s, while an orphan reads normally.
+
+The tree's two roles are **named, not positional** (`{ parent?, subagents }`),
+because they are read differently — an unreadable `parent` throws where an
+unreadable subagent degrades — and because an orphan has no parent to put
+first, which a bare `string[]` could only express by convention.
 `parser.ts` owns the reading: `streamSessionTree`/`parseSessionTree` k-way
 **merge by timestamp** — not concatenation, since a subagent call must land in
 the turn that was open when it happened, or per-turn cost, `turnDepths`, and

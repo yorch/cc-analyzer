@@ -408,7 +408,12 @@ async function resolveSessionSource(ref: string): Promise<SessionSource | undefi
   }
   const found = await findSessionById(ref);
   return (
-    found && { path: found.path, subagentPaths: found.subagentPaths, agentMeta: found.agentMeta }
+    found && {
+      path: found.path,
+      subagentPaths: found.subagentPaths,
+      agentMeta: found.agentMeta,
+      parentExists: found.parentExists,
+    }
   );
 }
 

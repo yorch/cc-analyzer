@@ -25,6 +25,29 @@ separately, which is where most of the real spend hides. Where a published list
 price and the rate Claude Code actually bills disagree, cc-analyzer follows
 Claude Code, so its numbers stay comparable with `claude /usage`.
 
+### Comparing against `claude /usage`
+
+A single session's numbers should match Claude Code's own accounting. This has
+been verified by running a session with `--output-format stream-json` and
+diffing its terminal `result` event (Claude Code's own `total_cost_usd` and
+`usage`) against what cc-analyzer computes from the same session's files —
+exact to the token, and to the cent, both for a plain session and for one that
+spawns a subagent.
+
+Two things still make a *portfolio* comparison differ, by design:
+
+- **`/usage` counts the CLI process, cc-analyzer counts a session.** Its
+  "Session" panel accumulates over the running `claude` process, which can span
+  more than the one session file you are looking at. Its wall-clock duration is
+  also measured to *now*, while cc-analyzer measures last-event-minus-first.
+- **Some usage is never written to the transcript.** Background work — session
+  titling in particular — is recorded as events carrying no `usage` field at
+  all, so it exists only in Claude Code's internal accounting. cc-analyzer
+  cannot see it, and no amount of parsing will recover it.
+
+Local JSONL is also not a bill: other machines, claude.ai, and non-CLI API use
+never appear in it.
+
 The tool is **read-only**: it never writes to `~/.claude`. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.
 

@@ -32,8 +32,8 @@ function userEvent(ts: string | undefined, uuid: string, sidechain = false) {
 }
 
 /** The uuids a tree yields, in order. */
-async function uuidsOf(paths: string[]): Promise<string[]> {
-  const { events } = await parseSessionTree(paths);
+async function uuidsOf(tree: Parameters<typeof parseSessionTree>[0]): Promise<string[]> {
+  const { events } = await parseSessionTree(tree);
   return events.map((e) => (e as { uuid?: string }).uuid ?? "?");
 }
 
@@ -77,7 +77,7 @@ test("merges files into one timestamp-ordered stream", async () => {
     userEvent("2026-08-06T13:00:00Z", "a2", true),
   ]);
 
-  expect(await uuidsOf([parent, agent])).toEqual(["p1", "a1", "p2", "a2"]);
+  expect(await uuidsOf({ parent, subagents: [agent] })).toEqual(["p1", "a1", "p2", "a2"]);
 });
 
 test("keeps within-file order even when a file's timestamps go backwards", async () => {
@@ -87,7 +87,7 @@ test("keeps within-file order even when a file's timestamps go backwards", async
   ]);
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
 
-  const uuids = await uuidsOf([parent, agent]);
+  const uuids = await uuidsOf({ parent, subagents: [agent] });
   expect(uuids.indexOf("p1")).toBeLessThan(uuids.indexOf("p2"));
 });
 
@@ -99,7 +99,7 @@ test("an untimestamped event stays next to the event it followed", async () => {
   ]);
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
 
-  expect(await uuidsOf([parent, agent])).toEqual(["p1", "p1-tail", "a1", "p2"]);
+  expect(await uuidsOf({ parent, subagents: [agent] })).toEqual(["p1", "p1-tail", "a1", "p2"]);
 });
 
 test("ties resolve to the parent, which leads the tree", async () => {
@@ -107,7 +107,7 @@ test("ties resolve to the parent, which leads the tree", async () => {
   const parent = writeEvents("parent.jsonl", [userEvent(ts, "p1")]);
   const agent = writeEvents("agent.jsonl", [userEvent(ts, "a1", true)]);
 
-  expect(await uuidsOf([parent, agent])).toEqual(["p1", "a1"]);
+  expect(await uuidsOf({ parent, subagents: [agent] })).toEqual(["p1", "a1"]);
 });
 
 test("sums coverage across every file and names the file an error came from", async () => {
@@ -115,7 +115,7 @@ test("sums coverage across every file and names the file an error came from", as
   const agent = join(dir, "agent.jsonl");
   writeFileSync(agent, "{ not json\n");
 
-  const { events, errors, coverage } = await parseSessionTree([parent, agent]);
+  const { events, errors, coverage } = await parseSessionTree({ parent, subagents: [agent] });
 
   expect(events).toHaveLength(1);
   expect(coverage.lines).toBe(2);
@@ -129,7 +129,7 @@ test("a single-file tree matches the single-file reader", async () => {
     userEvent("2026-08-06T11:00:00Z", "p2"),
   ]);
 
-  const { events, coverage } = await parseSessionTree([parent]);
+  const { events, coverage } = await parseSessionTree({ parent, subagents: [] });
   expect(events).toHaveLength(2);
   expect(coverage).toEqual({ lines: 2, parseErrors: 0, unknownEvents: 0 });
 });
@@ -141,7 +141,7 @@ test("an unreadable subagent file is skipped, not thrown, and is counted", async
   // file is unreadable for root and on Windows too, where mode bits are not.
   const missing = join(dir, "agent.jsonl");
 
-  const { events, errors, coverage } = await parseSessionTree([parent, missing]);
+  const { events, errors, coverage } = await parseSessionTree({ parent, subagents: [missing] });
 
   // The readable half of the session still analyzes; one bad subagent
   // transcript must not cost the reader the whole session.
@@ -158,7 +158,7 @@ test.skipIf(!PERMISSIONS_ENFORCED)(
     const locked = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
     chmodSync(locked, 0o000);
 
-    const { events, errors, coverage } = await parseSessionTree([parent, locked]);
+    const { events, errors, coverage } = await parseSessionTree({ parent, subagents: [locked] });
 
     expect(events.map((e) => (e as { uuid?: string }).uuid)).toEqual(["p1"]);
     expect(coverage.parseErrors).toBe(1);
@@ -177,7 +177,7 @@ test("an unreadable parent still throws, since a missing session is real news", 
   const missing = join(dir, "parent.jsonl");
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
 
-  await expect(parseSessionTree([missing, agent])).rejects.toThrow();
+  await expect(parseSessionTree({ parent: missing, subagents: [agent] })).rejects.toThrow();
 });
 
 test.skipIf(!PERMISSIONS_ENFORCED)("a parent denied by permissions throws too", async () => {
@@ -185,7 +185,7 @@ test.skipIf(!PERMISSIONS_ENFORCED)("a parent denied by permissions throws too", 
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
   chmodSync(parent, 0o000);
 
-  await expect(parseSessionTree([parent, agent])).rejects.toThrow();
+  await expect(parseSessionTree({ parent, subagents: [agent] })).rejects.toThrow();
 
   chmodSync(parent, 0o644);
 });
@@ -201,14 +201,14 @@ test("abandoning the stream mid-read terminates cleanly", async () => {
   ]);
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
 
-  const iter = streamSessionTree([parent, agent]);
+  const iter = streamSessionTree({ parent, subagents: [agent] });
   expect((await iter.next()).value).toMatchObject({ uuid: "p1" });
   await iter.return(undefined as never);
   expect((await iter.next()).done).toBe(true);
 });
 
 test("an empty tree yields nothing rather than throwing", async () => {
-  const { events, coverage } = await parseSessionTree([]);
+  const { events, coverage } = await parseSessionTree({ subagents: [] });
   expect(events).toEqual([]);
   expect(coverage).toEqual({ lines: 0, parseErrors: 0, unknownEvents: 0 });
 });
@@ -217,7 +217,7 @@ test("streaming returns coverage as the generator's return value", async () => {
   const parent = writeEvents("parent.jsonl", [userEvent("2026-08-06T10:00:00Z", "p1")]);
   const agent = writeEvents("agent.jsonl", [userEvent("2026-08-06T11:00:00Z", "a1", true)]);
 
-  const iter = streamSessionTree([parent, agent]);
+  const iter = streamSessionTree({ parent, subagents: [agent] });
   let count = 0;
   let next = await iter.next();
   while (!next.done) {

@@ -65,8 +65,8 @@ test("sessionTree puts the parent first, then the subagents", async () => {
   const session = await onlySession();
   const tree = sessionTree(session);
 
-  expect(tree[0]).toBe(session.path);
-  expect(tree).toHaveLength(2);
+  expect(tree.parent).toBe(session.path);
+  expect(tree.subagents).toHaveLength(1);
 });
 
 test("folds subagent size and mtime into the parent, so growth is noticed", async () => {
@@ -90,7 +90,56 @@ test("a session with no subagents directory is unchanged", async () => {
 
   expect(session.subagentPaths).toEqual([]);
   expect(session.agentMeta.size).toBe(0);
-  expect(sessionTree(session)).toEqual([session.path]);
+  expect(sessionTree(session)).toEqual({ parent: session.path, subagents: [] });
+});
+
+test("discovers an orphan: subagent transcripts whose parent .jsonl is gone", async () => {
+  // Deleting one session file does not remove the subagent transcripts beside
+  // it, and that leftover work is real spend. Before this, nothing enumerated
+  // it — the scan could only find sessions that still had a parent.
+  writeSubagent("gone", "aaa", { agentType: "general-purpose", spawnDepth: 1 });
+
+  const session = await onlySession();
+
+  expect(session.id).toBe("gone");
+  expect(session.parentExists).toBe(false);
+  expect(session.subagentPaths).toHaveLength(1);
+  expect(session.agentMeta.get("aaa")?.agentType).toBe("general-purpose");
+});
+
+test("an orphan's tree has no parent, so the reader never looks for the missing file", async () => {
+  writeSubagent("gone", "aaa");
+
+  const tree = sessionTree(await onlySession());
+
+  expect(tree.parent).toBeUndefined();
+  expect(tree.subagents).toHaveLength(1);
+});
+
+test("an orphan keeps the absent parent's path as its identity", async () => {
+  // So a restored .jsonl re-attaches to the same indexed row rather than
+  // forking a second one under a different key.
+  writeSubagent("gone", "aaa");
+
+  expect((await onlySession()).path).toBe(join(projectDir, "gone.jsonl"));
+});
+
+test("a session directory with no subagent transcripts is not an orphan", async () => {
+  // `<id>/tool-results/` and friends sit beside `subagents/`; a session dir
+  // that never held subagent work is not a session, just a directory.
+  mkdirSync(join(projectDir, "empty", "tool-results"), { recursive: true });
+
+  expect(await listSessionsIn(PROJECT)).toEqual([]);
+});
+
+test("a live session is never also reported as an orphan", async () => {
+  writeSession("s1");
+  writeSubagent("s1", "aaa");
+
+  const sessions = await listSessionsIn(PROJECT);
+
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]?.parentExists).toBe(true);
 });
 
 test("malformed meta json leaves the agent without metadata rather than throwing", async () => {

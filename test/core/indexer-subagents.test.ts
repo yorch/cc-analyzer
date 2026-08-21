@@ -1,6 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setClaudeRootsOverride } from "../../src/core/claude-roots.ts";
@@ -165,6 +173,37 @@ test("an inline-sidechain session is unaffected by the tree reader", async () =>
   const row = sessionRow();
   expect(row.api_calls).toBe(2);
   expect(row.sidechain_calls).toBe(1);
+});
+
+test("indexes an orphan's spend, which had no row at all before", async () => {
+  // The parent is deleted but its subagent transcripts survive. That work was
+  // billed; without discovery it is invisible in every portfolio total.
+  seedSubagent("aaa", "02");
+  rmSync(join(projectDir, `${SESSION}.jsonl`));
+
+  const result = await run();
+
+  expect(result.indexed).toBe(1);
+  const row = sessionRow();
+  expect(row.sidechain_calls).toBe(1);
+  expect(row.cost_total).toBeGreaterThan(0);
+  // No main chain survives, so every call in the row is a sidechain call.
+  expect(row.api_calls).toBe(1);
+});
+
+test("a restored parent re-attaches to the orphan's row rather than forking one", async () => {
+  seedSubagent("aaa", "02");
+  const parent = join(projectDir, `${SESSION}.jsonl`);
+  const body = readFileSync(parent);
+  rmSync(parent);
+  await run();
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 1 });
+
+  writeFileSync(parent, body);
+  await run();
+
+  expect(db.query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 1 });
+  expect(sessionRow().api_calls).toBe(2);
 });
 
 test("each subagent call is counted once across the tree", async () => {

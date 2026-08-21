@@ -380,6 +380,11 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       // The whole tree: subagent transcripts live beside the parent file and
       // carry spend that belongs to this session.
       const source = await sessionSourceAt(path);
+      // Nothing left on disk at all — a stale row, so 404 rather than serve an
+      // empty analysis as though the session were merely uneventful. An orphan
+      // (parent deleted, subagent transcripts surviving) is *not* this case:
+      // it has real work to show and reads normally.
+      if (!source.parentExists && source.subagentPaths.length === 0) return undefined;
       return { ...(await parseSessionTree(sessionTree(source))), agentMeta: source.agentMeta };
     } catch {
       return undefined;
