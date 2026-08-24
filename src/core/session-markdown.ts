@@ -43,6 +43,16 @@ const mdCell = (s: string): string => s.replaceAll("|", "\\|");
 const mdEscape = (s: string): string =>
   s.replaceAll("|", "\\|").replaceAll("\n", " ").replaceAll("\r", "");
 
+export function sanitizeFilename(s: string): string {
+  return (
+    s
+      .replaceAll(/[^a-zA-Z0-9._-]/g, "-")
+      .replaceAll(/-+/g, "-")
+      .replaceAll(/^-|-$/g, "")
+      .slice(0, 80) || "session"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
@@ -80,19 +90,23 @@ export function buildSessionMarkdown(
   const framing = costFramingNote(costBasis);
 
   // Header
-  const title = a.title ?? "(untitled session)";
+  const rawTitle = a.title ?? "(untitled session)";
+  const title = redact ? "[redacted]" : rawTitle;
   out.push(`# Session: ${mdEscape(title)}`);
   out.push("");
-  const idLine = a.sessionId ? `\`${a.sessionId}\`` : "(no session id)";
-  const proj = opts.projectLabel ?? a.projectPath ?? "(unknown project)";
+  const idLine = a.sessionId ? `\`${mdEscape(a.sessionId)}\`` : "(no session id)";
+  const rawProj = opts.projectLabel ?? a.projectPath ?? "(unknown project)";
+  const proj = redact ? "[redacted]" : rawProj;
   out.push(`**Session** ${idLine} · **Project** ${mdEscape(proj)}`);
   if (a.startTime || a.endTime) {
     const s = a.startTime?.slice(0, 19).replace("T", " ") ?? "?";
     const e = a.endTime?.slice(0, 19).replace("T", " ") ?? "?";
     out.push(`**Window** ${s} → ${e}`);
   }
-  if (a.gitBranches.length) out.push(`**Branch** ${a.gitBranches.map(mdEscape).join(", ")}`);
-  if (a.versions.length) out.push(`**Claude Code** ${a.versions.join(", ")}`);
+  if (!redact) {
+    if (a.gitBranches.length) out.push(`**Branch** ${a.gitBranches.map(mdEscape).join(", ")}`);
+    if (a.versions.length) out.push(`**Claude Code** ${a.versions.join(", ")}`);
+  }
   if (a.durationMs !== undefined)
     out.push(
       `**Duration** ${formatDuration(a.durationMs)} wall · ${formatDuration(a.totals.activeMs)} active`,
@@ -451,7 +465,7 @@ export function buildSessionMarkdown(
     out.push("");
   }
 
-  // Turns — full table in export (no TTY cap)
+  // Turns — sampled when huge (same SAMPLE_CAP logic as charts) to avoid DOS
   out.push("## Turns");
   out.push("");
   if (a.turns.length === 0) {
@@ -464,11 +478,15 @@ export function buildSessionMarkdown(
     out.push("");
     const turnHeaders = ["#", "Cost", "Calls", "Tools", "Flags", "Prompt"];
     const turnAlign: ("left" | "right")[] = ["right", "right", "right", "right", "left", "left"];
+    const TURNS_SAMPLE_CAP = 300;
+    const tStep =
+      a.turns.length > TURNS_SAMPLE_CAP ? Math.ceil(a.turns.length / TURNS_SAMPLE_CAP) : 1;
+    const sampledTurns = a.turns.filter((_, i) => i % tStep === 0);
     out.push(
       mdTable(
         turnHeaders,
         turnAlign,
-        a.turns.map((t) => {
+        sampledTurns.map((t) => {
           const toolN = String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0));
           const flags = turnFlags({
             index: t.index,
@@ -504,6 +522,10 @@ export function buildSessionMarkdown(
         }),
       ),
     );
+    if (tStep > 1)
+      out.push(
+        `\n_Sampled 1/${tStep} of ${a.turns.length} turns for readability — full timeline in JSON export (capped)._`,
+      );
     out.push("");
   }
 
@@ -767,7 +789,7 @@ function mdToHtml(md: string): string {
         }
       }
       html.push("<ul>");
-      for (const it of items) html.push(`<li>${it}</li>`);
+      for (const it of items) html.push(`<li>${escHtml(it)}</li>`);
       html.push("</ul>");
       continue;
     } else if (line.startsWith("> ")) {

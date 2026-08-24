@@ -31,22 +31,26 @@ import {
   resolveClaudeBinary,
   runClaudeAnalysis,
 } from "../../core/claude-handoff.ts";
+import { openDb } from "../../core/db.ts";
 import { sessionSourceAt, sessionTree } from "../../core/discover.ts";
 import { parseSessionTree } from "../../core/parser.ts";
 import { getAnalysisModel, getCostBasis, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
-import { buildSessionHtml, buildSessionMarkdown } from "../../core/session-markdown.ts";
-import { inspectSessionHealth } from "../../core/session-health.ts";
-import { sessionCostRank } from "../../core/stats.ts";
-import { openDb } from "../../core/db.ts";
 import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
+import { inspectSessionHealth } from "../../core/session-health.ts";
 import {
   OUTCOME_CAVEAT,
   outcomeRows,
   sessionOutcomes,
   sessionWhatIf,
 } from "../../core/session-insights.ts";
+import {
+  buildSessionHtml,
+  buildSessionMarkdown,
+  sanitizeFilename,
+} from "../../core/session-markdown.ts";
+import { sessionCostRank } from "../../core/stats.ts";
 import { CORRECTION_CAVEAT, WHATIF_CAVEAT, type WhatIfRepricing } from "../../core/stats-types.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
@@ -1028,8 +1032,7 @@ function ExportView({
   const [busy, setBusy] = useState(false);
 
   const ext = format === "md" ? ".md" : format === "html" ? ".html" : ".json";
-  const sanitized = sessionId.replaceAll(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "session";
-  const filename = `cc-analyzer-${sanitized}${ext}`;
+  const filename = `cc-analyzer-${sanitizeFilename(sessionId)}${ext}`;
 
   const write = async () => {
     if (busy) return;
@@ -1047,6 +1050,11 @@ function ExportView({
       } catch {
         // index unavailable — export without rank
       }
+      // Cap transcript before builder/JSON to avoid DOS on huge sessions (same caps as CLI/Web)
+      const cappedTranscript = transcript
+        .slice(0, 600)
+        .map((t) => ({ ...t, body: t.body.slice(0, 2000) }));
+      const tx = includeTranscript ? cappedTranscript : undefined;
       let content: string;
       if (format === "md") {
         content = buildSessionMarkdown(analysis, {
@@ -1056,7 +1064,7 @@ function ExportView({
           rank,
           redact,
           includeTranscript,
-          transcript: includeTranscript ? transcript : undefined,
+          transcript: tx,
         });
       } else if (format === "html") {
         content = buildSessionHtml(analysis, {
@@ -1066,11 +1074,11 @@ function ExportView({
           rank,
           redact,
           includeTranscript,
-          transcript: includeTranscript ? transcript : undefined,
+          transcript: tx,
         });
       } else {
-        const redactedTranscript = includeTranscript
-          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
+        const redactedTranscript = tx
+          ? tx.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
           : undefined;
         const payload: Record<string, unknown> = {
           ...analysis,
@@ -1078,7 +1086,18 @@ function ExportView({
           whatIf,
           rank,
           costBasis,
-          ...(redact ? { turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })) } : {}),
+          ...(redact
+            ? {
+                title: "[redacted]",
+                projectPath: "[redacted]",
+                filesTouched: [],
+                bashCommands: {},
+                bashErrors: {},
+                commandHeads: {},
+                commandHeadErrors: {},
+                turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
+              }
+            : {}),
         };
         if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
         content = JSON.stringify(payload, null, 2);
@@ -1114,8 +1133,8 @@ function ExportView({
     <Box flexDirection="column">
       <Text color={role.heading}>Export session</Text>
       <Text color={role.muted}>
-        Same builders as CLI <Text color={role.accent}>analyze --md/--html/--json --out</Text> and Web Download —
-        byte-identical reports.
+        Same builders as CLI <Text color={role.accent}>analyze --md/--html/--json --out</Text> and
+        Web Download — byte-identical reports.
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Text>
@@ -1138,7 +1157,9 @@ function ExportView({
         <Text color={role.muted}>file {filename}</Text>
       </Box>
       <Box marginTop={1}>
-        <Text color={busy ? role.muted : palette.amber}>{busy ? "writing…" : "press w to write"}</Text>
+        <Text color={busy ? role.muted : palette.amber}>
+          {busy ? "writing…" : "press w to write"}
+        </Text>
       </Box>
       {status && (
         <Box marginTop={1}>

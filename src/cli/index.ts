@@ -49,7 +49,11 @@ import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
-import { buildSessionHtml, buildSessionMarkdown } from "../core/session-markdown.ts";
+import {
+  buildSessionHtml,
+  buildSessionMarkdown,
+  sanitizeFilename,
+} from "../core/session-markdown.ts";
 import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
@@ -529,6 +533,11 @@ async function cmdAnalyze(
 
   // --- export path: --md / --html / --json with --out / --redact / --include-transcript ---
   const wantsExport = json || opts.md || opts.html;
+  // P1-2: redact/transcript without a format would be silently ignored on the TTY render
+  if (!wantsExport && (opts.redact || opts.includeTranscript)) {
+    console.error("error: --redact and --include-transcript require --md, --html, or --json.");
+    return 2;
+  }
   if (wantsExport) {
     const whatIf = sessionWhatIf(analysis.models, pricing);
     const health = inspectSessionHealth(events, errors, coverage);
@@ -544,7 +553,17 @@ async function cmdAnalyze(
       // index unavailable — export without rank
     }
     const includeTranscript = opts.includeTranscript === true;
-    const transcript = includeTranscript ? buildTranscript(events) : undefined;
+    // Cap transcript to avoid OOM on huge sessions (same caps as markdown builder)
+    const rawTranscript = includeTranscript ? buildTranscript(events) : undefined;
+    const transcript = rawTranscript
+      ? rawTranscript.slice(0, 600).map((t) => ({ ...t, body: t.body.slice(0, 2000) }))
+      : undefined;
+    // Note if truncation happened for CLI feedback (markdown builder also truncates)
+    if (rawTranscript && rawTranscript.length > 600) {
+      console.error(
+        `note: transcript truncated to 600 of ${rawTranscript.length} items for export.`,
+      );
+    }
     const redact = opts.redact === true;
 
     const extFor = (format: string): string => {
@@ -576,7 +595,7 @@ async function cmdAnalyze(
         transcript,
       });
     } else {
-      // SAFETY: redact swaps prompt/body strings only — shape stays compatible.
+      // SAFETY: redact swaps PII only — capped transcript, stripped paths/commands/title.
       const redactedTranscript =
         includeTranscript && transcript
           ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
@@ -588,19 +607,32 @@ async function cmdAnalyze(
         whatIf,
         rank,
         costBasis,
-        ...(redact ? { turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })) } : {}),
+        ...(redact
+          ? {
+              title: "[redacted]",
+              projectPath: "[redacted]",
+              filesTouched: [],
+              bashCommands: {},
+              bashErrors: {},
+              commandHeads: {},
+              commandHeadErrors: {},
+              turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
+            }
+          : {}),
       };
       if (includeTranscript && redactedTranscript) basePayload.transcript = redactedTranscript;
       content = JSON.stringify(basePayload, null, 2);
     }
 
     if (opts.out) {
-      const outPath = await resolveOutPath(
-        opts.out,
-        analysis.sessionId ?? "session",
-        extFor(format),
-      );
-      await Bun.write(outPath, content);
+      const safeId = sanitizeFilename(analysis.sessionId ?? "session");
+      const outPath = await resolveOutPath(opts.out, safeId, extFor(format));
+      try {
+        await Bun.write(outPath, content);
+      } catch (e) {
+        console.error(`error: cannot write ${outPath}: ${(e as Error).message}`);
+        return 1;
+      }
       console.log(`Wrote ${format} export to ${outPath}`);
     } else {
       console.log(content);
@@ -631,23 +663,30 @@ async function cmdAnalyze(
 /** Resolve --out to a concrete file path. Directory → auto-named file. */
 async function resolveOutPath(out: string, sessionId: string, ext: string): Promise<string> {
   const { stat } = await import("node:fs/promises");
+  const { extname, join, dirname } = await import("node:path");
   try {
     const s = await stat(out);
     if (s.isDirectory()) {
-      const base = `cc-analyzer-${sessionId}${ext}`;
-      return `${out.replace(/\/+$/, "")}/${base}`;
+      const base = `cc-analyzer-${sanitizeFilename(sessionId)}${ext}`;
+      return join(out, base);
     }
   } catch {
     // not existing — check if parent is dir-like (trailing slash)
     if (out.endsWith("/")) {
       const { mkdir } = await import("node:fs/promises");
       await mkdir(out, { recursive: true });
-      return `${out.replace(/\/+$/, "")}/cc-analyzer-${sessionId}${ext}`;
+      return join(out, `cc-analyzer-${sanitizeFilename(sessionId)}${ext}`);
     }
   }
-  // If out has no extension, add the inferred one
-  if (!out.includes(".") || out.endsWith("/")) return `${out}${ext}`;
-  // If extension mismatches format, keep as-is (user explicit)
+  // Add inferred extension when none present (use path.extname, not String.includes)
+  if (extname(out) === "" && !out.endsWith("/")) return `${out}${ext}`;
+  // Ensure parent directory exists for nested paths like a/b/c.md
+  try {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(dirname(out), { recursive: true });
+  } catch {
+    // ignore — Bun.write will surface EACCES/ENOENT
+  }
   return out;
 }
 

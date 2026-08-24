@@ -30,7 +30,11 @@ import {
 } from "../core/queries.ts";
 import { inspectSessionHealth } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
-import { buildSessionHtml, buildSessionMarkdown } from "../core/session-markdown.ts";
+import {
+  buildSessionHtml,
+  buildSessionMarkdown,
+  sanitizeFilename,
+} from "../core/session-markdown.ts";
 import {
   activityHeatmap,
   analyticsRollup,
@@ -457,8 +461,11 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     const health = inspectSessionHealth(parsed.events, parsed.errors, parsed.coverage);
     const rank = sessionCostRank(db, id) ?? null;
     const costBasis = getCostBasis();
-    const transcript = includeTranscript ? buildTranscript(parsed.events) : undefined;
-    const base = analysis.sessionId ?? id;
+    const rawTranscript = includeTranscript ? buildTranscript(parsed.events) : undefined;
+    const transcript = rawTranscript
+      ? rawTranscript.slice(0, 600).map((t) => ({ ...t, body: t.body.slice(0, 2000) }))
+      : undefined;
+    const base = sanitizeFilename(analysis.sessionId ?? id);
     if (format === "html") {
       const html = buildSessionHtml(analysis, {
         costBasis,
@@ -474,7 +481,7 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       return c.body(html);
     }
     if (format === "json") {
-      // SAFETY: redact swaps prompt/body strings only — shape stays Record<string, unknown> compatible.
+      // SAFETY: redact strips title/path/files + caps transcript at 600/2000.
       const redactedTranscript =
         includeTranscript && transcript
           ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
@@ -485,7 +492,18 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
         whatIf,
         rank,
         costBasis,
-        ...(redact ? { turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })) } : {}),
+        ...(redact
+          ? {
+              title: "[redacted]",
+              projectPath: "[redacted]",
+              filesTouched: [],
+              bashCommands: {},
+              bashErrors: {},
+              commandHeads: {},
+              commandHeadErrors: {},
+              turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
+            }
+          : {}),
       };
       if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
       c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.json"`);
