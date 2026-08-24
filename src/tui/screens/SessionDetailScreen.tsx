@@ -33,9 +33,13 @@ import {
 } from "../../core/claude-handoff.ts";
 import { sessionSourceAt, sessionTree } from "../../core/discover.ts";
 import { parseSessionTree } from "../../core/parser.ts";
-import { getAnalysisModel, setAnalysisModel } from "../../core/prefs.ts";
+import { getAnalysisModel, getCostBasis, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
+import { buildSessionHtml, buildSessionMarkdown } from "../../core/session-markdown.ts";
+import { inspectSessionHealth } from "../../core/session-health.ts";
+import { sessionCostRank } from "../../core/stats.ts";
+import { openDb } from "../../core/db.ts";
 import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
 import {
   OUTCOME_CAVEAT,
@@ -63,11 +67,16 @@ interface Props {
   onBack: () => void;
 }
 
-type Mode = "turns" | "charts" | "transcript" | "summary" | "claude";
+type Mode = "turns" | "charts" | "transcript" | "summary" | "claude" | "export";
+
+type ExportFormat = "md" | "html" | "json";
 
 interface Loaded {
   analysis: SessionAnalysis;
   transcript: TranscriptItem[];
+  events: import("../../core/events.ts").SessionEvent[];
+  coverage: import("../../core/events.ts").ParseCoverage | undefined;
+  errors: import("../../core/parser.ts").ParseError[];
 }
 
 /** Burst rows the summary pane shows before collapsing to "+N more". The pane
@@ -84,10 +93,10 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
     (async () => {
       // The whole tree, so a session's subagent spend is part of its detail.
       const source = await sessionSourceAt(session.path);
-      const { events, coverage } = await parseSessionTree(sessionTree(source));
+      const { events, coverage, errors } = await parseSessionTree(sessionTree(source));
       const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
       const transcript = buildTranscript(events);
-      if (!cancelled) setData({ analysis, transcript });
+      if (!cancelled) setData({ analysis, transcript, events, coverage, errors });
     })();
     return () => {
       cancelled = true;
@@ -102,6 +111,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       if (input === "s") return setMode("summary");
       if (input === "c") return setMode("charts");
       if (input === "a") return setMode("claude");
+      if (input === "e" || input === "6") return setMode("export");
       if (input === "u" || input === "1") return setMode("turns");
       if (input === "2") return setMode("charts");
       if (input === "3") return setMode("transcript");
@@ -129,7 +139,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       </Text>
       <SummaryBand a={analysis} />
       <Box marginTop={1}>
-        {(["turns", "charts", "transcript", "summary", "claude"] as Mode[]).map((m) => (
+        {(["turns", "charts", "transcript", "summary", "claude", "export"] as Mode[]).map((m) => (
           <Text key={m} {...(m === mode ? selection(true) : { color: role.muted })}>
             {" "}
             {m}{" "}
@@ -152,16 +162,31 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
             rows={rows}
           />
         )}
+        {mode === "export" && (
+          <ExportView
+            key={`${session.path}-${mode}`}
+            analysis={analysis}
+            transcript={data.transcript}
+            events={data.events}
+            coverage={data.coverage}
+            errors={data.errors}
+            pricing={pricing}
+            sessionId={session.sessionId ?? analysis.sessionId ?? "session"}
+            isActive={isActive}
+          />
+        )}
       </Box>
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · a claude · esc back"
+            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · a claude · e export · esc back"
             : mode === "claude"
               ? "r run · m model · ↑↓ scroll · esc turns"
-              : mode === "charts" || mode === "summary"
-                ? "1-5 modes · esc turns"
-                : "↑↓ move · ↵ expand · g/G jump · esc turns"}
+              : mode === "export"
+                ? "f format · r redact · t transcript · w write · esc turns"
+                : mode === "charts" || mode === "summary"
+                  ? "1-6 modes · esc turns"
+                  : "↑↓ move · ↵ expand · g/G jump · esc turns"}
           {" · "}
           <Text color={palette.amberDim}>?</Text> help · ctrl-c quit
         </Text>
@@ -973,6 +998,156 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
           <Text color={role.muted}>{WHATIF_CAVEAT}</Text>
         </Box>
       )}
+    </Box>
+  );
+}
+
+function ExportView({
+  analysis,
+  transcript,
+  events,
+  coverage,
+  errors,
+  pricing,
+  sessionId,
+  isActive,
+}: {
+  analysis: SessionAnalysis;
+  transcript: TranscriptItem[];
+  events: import("../../core/events.ts").SessionEvent[];
+  coverage: import("../../core/events.ts").ParseCoverage | undefined;
+  errors: import("../../core/parser.ts").ParseError[];
+  pricing: PricingTable;
+  sessionId: string;
+  isActive: boolean;
+}) {
+  const [format, setFormat] = useState<ExportFormat>("md");
+  const [redact, setRedact] = useState(false);
+  const [includeTranscript, setIncludeTranscript] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const ext = format === "md" ? ".md" : format === "html" ? ".html" : ".json";
+  const sanitized = sessionId.replaceAll(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "session";
+  const filename = `cc-analyzer-${sanitized}${ext}`;
+
+  const write = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const costBasis = getCostBasis();
+      const whatIf = sessionWhatIf(analysis.models, pricing);
+      const health = inspectSessionHealth(events, errors, coverage);
+      let rank: ReturnType<typeof sessionCostRank> | null = null;
+      try {
+        const db = openDb();
+        rank = sessionCostRank(db, sessionId) ?? null;
+        db.close();
+      } catch {
+        // index unavailable — export without rank
+      }
+      let content: string;
+      if (format === "md") {
+        content = buildSessionMarkdown(analysis, {
+          costBasis,
+          whatIf,
+          health,
+          rank,
+          redact,
+          includeTranscript,
+          transcript: includeTranscript ? transcript : undefined,
+        });
+      } else if (format === "html") {
+        content = buildSessionHtml(analysis, {
+          costBasis,
+          whatIf,
+          health,
+          rank,
+          redact,
+          includeTranscript,
+          transcript: includeTranscript ? transcript : undefined,
+        });
+      } else {
+        const redactedTranscript = includeTranscript
+          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
+          : undefined;
+        const payload: Record<string, unknown> = {
+          ...analysis,
+          health,
+          whatIf,
+          rank,
+          costBasis,
+          ...(redact ? { turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })) } : {}),
+        };
+        if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
+        content = JSON.stringify(payload, null, 2);
+      }
+      await Bun.write(filename, content);
+      setStatus(`Wrote ${filename} (${formatCount(content.length)} chars)`);
+    } catch (err) {
+      setStatus(`Failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useInput(
+    (input) => {
+      if (input === "f") {
+        setFormat((prev) => (prev === "md" ? "html" : prev === "html" ? "json" : "md"));
+        setStatus(null);
+      } else if (input === "r") {
+        setRedact((prev) => !prev);
+        setStatus(null);
+      } else if (input === "t") {
+        setIncludeTranscript((prev) => !prev);
+        setStatus(null);
+      } else if (input === "w") {
+        void write();
+      }
+    },
+    { isActive },
+  );
+
+  return (
+    <Box flexDirection="column">
+      <Text color={role.heading}>Export session</Text>
+      <Text color={role.muted}>
+        Same builders as CLI <Text color={role.accent}>analyze --md/--html/--json --out</Text> and Web Download —
+        byte-identical reports.
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        <Text>
+          <Text color={role.muted}>format </Text>
+          <Text color={role.accent}>{format}</Text>
+          <Text color={role.muted}> (f to cycle md → html → json)</Text>
+        </Text>
+        <Text>
+          <Text color={role.muted}>redact </Text>
+          <Text color={redact ? palette.green : role.muted}>{redact ? "on" : "off"}</Text>
+          <Text color={role.muted}> (r to toggle — hides prompt/transcript)</Text>
+        </Text>
+        <Text>
+          <Text color={role.muted}>transcript </Text>
+          <Text color={includeTranscript ? palette.green : role.muted}>
+            {includeTranscript ? "included" : "omitted"}
+          </Text>
+          <Text color={role.muted}> (t to toggle — off by default)</Text>
+        </Text>
+        <Text color={role.muted}>file {filename}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={busy ? role.muted : palette.amber}>{busy ? "writing…" : "press w to write"}</Text>
+      </Box>
+      {status && (
+        <Box marginTop={1}>
+          <Text color={status.startsWith("Wrote") ? palette.green : palette.red}>{status}</Text>
+        </Box>
+      )}
+      <Box marginTop={1} flexDirection="column">
+        <Text color={role.muted}>f format · r redact · t transcript · w write · esc turns</Text>
+      </Box>
     </Box>
   );
 }
