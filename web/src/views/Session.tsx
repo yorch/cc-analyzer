@@ -21,6 +21,7 @@ import {
   WHATIF_CAVEAT,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import { copyText } from "../clipboard.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
@@ -138,6 +139,8 @@ export function Session({ id }: { id: string }) {
         )}
       </div>
 
+      <SessionExport id={id} />
+
       <div className="tabs" role="tablist" aria-label="Session Views">
         {SESSION_TABS.map((t, index) => (
           <button
@@ -182,6 +185,62 @@ export function Session({ id }: { id: string }) {
         {tab === "claude" && <SessionClaude id={id} />}
       </div>
     </>
+  );
+}
+
+function SessionExport({ id }: { id: string }) {
+  const [redact, setRedact] = useState(false);
+  const [includeTranscript, setIncludeTranscript] = useState(false);
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+
+  const doCopy = async () => {
+    try {
+      const text = await api.sessionReportText(id, { redact, transcript: includeTranscript });
+      setCopied((await copyText(text)) ? "ok" : "failed");
+    } catch {
+      setCopied("failed");
+    }
+    setTimeout(() => setCopied("idle"), 2000);
+  };
+
+  const doDownload = (format: "md" | "html" | "json") => {
+    const { url } = api.sessionReport(id, { format, redact, transcript: includeTranscript });
+    // Use a hidden anchor so the browser honors Content-Disposition without leaving the SPA.
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  return (
+    <div className="digest-actions" style={{ marginTop: 8, marginBottom: 8 }}>
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />{" "}
+        redact
+      </label>
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <input
+          type="checkbox"
+          checked={includeTranscript}
+          onChange={(e) => setIncludeTranscript(e.target.checked)}
+        />{" "}
+        transcript
+      </label>
+      <button type="button" onClick={doCopy}>
+        {copied === "ok" ? "Copied!" : copied === "failed" ? "Copy failed" : "Copy as Markdown"}
+      </button>
+      <button type="button" onClick={() => doDownload("md")}>
+        Download MD
+      </button>
+      <button type="button" onClick={() => doDownload("html")}>
+        HTML
+      </button>
+      <button type="button" onClick={() => doDownload("json")}>
+        JSON
+      </button>
+    </div>
   );
 }
 

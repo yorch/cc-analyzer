@@ -49,6 +49,7 @@ import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
+import { buildSessionHtml, buildSessionMarkdown } from "../core/session-markdown.ts";
 import { buildSetupAudit } from "../core/setup-audit.ts";
 import {
   analyticsRollup,
@@ -58,6 +59,7 @@ import {
   contextTax,
   localDayOfMs,
   parseCoverage,
+  sessionCostRank,
   whatIfRepricing,
 } from "../core/stats.ts";
 import {
@@ -69,6 +71,7 @@ import {
   telemetryStatus,
   trackCommand,
 } from "../core/telemetry.ts";
+import { buildTranscript } from "../core/transcript.ts";
 import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
@@ -95,9 +98,15 @@ Usage:
   cc-analyzer                          Launch the interactive TUI
   cc-analyzer projects                 List all projects
   cc-analyzer sessions <projectId>     List sessions in a project
-  cc-analyzer analyze <id|path> [--json] [--with-claude] [--model <id>]
+  cc-analyzer analyze <id|path> [--json|--md|--html] [--out <file>]
+                                       [--include-transcript] [--redact]
+                                       [--with-claude] [--model <id>]
                                        Analyze a single session (--with-claude runs a
-                                       Claude Code retrospective; --model overrides the default)
+                                       Claude Code retrospective; --model overrides the default).
+                                       --md/--html export full markdown/HTML; --out writes to a file
+                                       (directory auto-names cc-analyzer-<id>.md/.html/.json);
+                                       --include-transcript appends transcript (off by default);
+                                       --redact hides prompt/transcript text for sharing
   cc-analyzer doctor <id|path> [--json]
                                        Check session health and recoverability
   cc-analyzer index [--rebuild|--check]
@@ -490,7 +499,15 @@ async function cmdAnalyzeWithClaude(
 async function cmdAnalyze(
   ref: string | undefined,
   json: boolean,
-  opts: { withClaude?: boolean; model?: string } = {},
+  opts: {
+    withClaude?: boolean;
+    model?: string;
+    md?: boolean;
+    html?: boolean;
+    out?: string;
+    redact?: boolean;
+    includeTranscript?: boolean;
+  } = {},
 ): Promise<number> {
   if (!ref) {
     console.error("error: missing <id|path>.");
@@ -510,27 +527,128 @@ async function cmdAnalyze(
     return cmdAnalyzeWithClaude(analysis, path, pricing, opts.model);
   }
 
-  if (json) {
-    console.log(JSON.stringify({ ...analysis, parseErrors: errors.length }, null, 2));
-  } else {
-    console.log(
-      renderSessionSummary(analysis, {
-        color: process.stdout.isTTY && !process.env.NO_COLOR,
-        // Session-scoped what-if: computed here because the renderer never
-        // sees the pricing table.
-        whatIf: sessionWhatIf(analysis.models, pricing),
-      }),
-    );
-    // Parse coverage, not just the error count: a line kept as a tolerant
-    // "unknown" event is not skipped, but it is also not understood.
-    if (coverage.parseErrors > 0 || coverage.unknownEvents > 0) {
-      console.log(
-        `\n(${coverage.parseErrors} unparseable lines skipped, ` +
-          `${coverage.unknownEvents} kept as unknown events, of ${coverage.lines} lines)`,
-      );
+  // --- export path: --md / --html / --json with --out / --redact / --include-transcript ---
+  const wantsExport = json || opts.md || opts.html;
+  if (wantsExport) {
+    const whatIf = sessionWhatIf(analysis.models, pricing);
+    const health = inspectSessionHealth(events, errors, coverage);
+    const costBasis = getCostBasis();
+    let rank: ReturnType<typeof sessionCostRank> | null = null;
+    try {
+      const db = openDb();
+      // sessionCostRank resolves via the indexed row; may be null for unindexed sessions
+      const idForRank = analysis.sessionId ?? ref;
+      rank = sessionCostRank(db, idForRank) ?? null;
+      db.close();
+    } catch {
+      // index unavailable — export without rank
     }
+    const includeTranscript = opts.includeTranscript === true;
+    const transcript = includeTranscript ? buildTranscript(events) : undefined;
+    const redact = opts.redact === true;
+
+    const extFor = (format: string): string => {
+      if (format === "md") return ".md";
+      if (format === "html") return ".html";
+      return ".json";
+    };
+    const format = opts.html ? "html" : opts.md ? "md" : "json";
+
+    let content: string;
+    if (format === "md") {
+      content = buildSessionMarkdown(analysis, {
+        costBasis,
+        whatIf,
+        health,
+        rank,
+        redact,
+        includeTranscript,
+        transcript,
+      });
+    } else if (format === "html") {
+      content = buildSessionHtml(analysis, {
+        costBasis,
+        whatIf,
+        health,
+        rank,
+        redact,
+        includeTranscript,
+        transcript,
+      });
+    } else {
+      // SAFETY: redact swaps prompt/body strings only — shape stays compatible.
+      const redactedTranscript =
+        includeTranscript && transcript
+          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
+          : undefined;
+      const basePayload: Record<string, unknown> = {
+        ...analysis,
+        parseErrors: errors.length,
+        health,
+        whatIf,
+        rank,
+        costBasis,
+        ...(redact ? { turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })) } : {}),
+      };
+      if (includeTranscript && redactedTranscript) basePayload.transcript = redactedTranscript;
+      content = JSON.stringify(basePayload, null, 2);
+    }
+
+    if (opts.out) {
+      const outPath = await resolveOutPath(
+        opts.out,
+        analysis.sessionId ?? "session",
+        extFor(format),
+      );
+      await Bun.write(outPath, content);
+      console.log(`Wrote ${format} export to ${outPath}`);
+    } else {
+      console.log(content);
+    }
+    return 0;
+  }
+
+  // Default: terminal rendering (unchanged)
+  console.log(
+    renderSessionSummary(analysis, {
+      color: process.stdout.isTTY && !process.env.NO_COLOR,
+      // Session-scoped what-if: computed here because the renderer never
+      // sees the pricing table.
+      whatIf: sessionWhatIf(analysis.models, pricing),
+    }),
+  );
+  // Parse coverage, not just the error count: a line kept as a tolerant
+  // "unknown" event is not skipped, but it is also not understood.
+  if (coverage.parseErrors > 0 || coverage.unknownEvents > 0) {
+    console.log(
+      `\n(${coverage.parseErrors} unparseable lines skipped, ` +
+        `${coverage.unknownEvents} kept as unknown events, of ${coverage.lines} lines)`,
+    );
   }
   return 0;
+}
+
+/** Resolve --out to a concrete file path. Directory → auto-named file. */
+async function resolveOutPath(out: string, sessionId: string, ext: string): Promise<string> {
+  const { stat } = await import("node:fs/promises");
+  try {
+    const s = await stat(out);
+    if (s.isDirectory()) {
+      const base = `cc-analyzer-${sessionId}${ext}`;
+      return `${out.replace(/\/+$/, "")}/${base}`;
+    }
+  } catch {
+    // not existing — check if parent is dir-like (trailing slash)
+    if (out.endsWith("/")) {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(out, { recursive: true });
+      return `${out.replace(/\/+$/, "")}/cc-analyzer-${sessionId}${ext}`;
+    }
+  }
+  // If out has no extension, add the inferred one
+  if (!out.includes(".") || out.endsWith("/")) return `${out}${ext}`;
+  // If extension mismatches format, keep as-is (user explicit)
+  return out;
 }
 
 function renderHealthReport(ref: string, report: SessionHealthReport): string {
@@ -931,15 +1049,56 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       return cmdSessions(positional[0]);
     case "analyze": {
       const withClaude = rest.includes("--with-claude");
+      const md = rest.includes("--md");
+      const html = rest.includes("--html");
+      const redact = rest.includes("--redact");
+      const includeTranscript = rest.includes("--include-transcript");
+      const { value: out, rest: restOut } = takeFlagValue(rest, "--out");
       // `--model x` puts its value where the positional filter can't see it's a
       // flag argument, so strip the flag+value before resolving the id.
-      const { value: model, rest: rest2 } = takeFlagValue(rest, "--model");
+      const { value: model, rest: rest2 } = takeFlagValue(restOut, "--model");
       if (json && withClaude) {
         console.error("error: --json cannot be combined with --with-claude.");
         return 2;
       }
+      if (md && withClaude) {
+        console.error("error: --md cannot be combined with --with-claude.");
+        return 2;
+      }
+      if (html && withClaude) {
+        console.error("error: --html cannot be combined with --with-claude.");
+        return 2;
+      }
+      if (json && md) {
+        console.error("error: --json and --md cannot be used together.");
+        return 2;
+      }
+      if (json && html) {
+        console.error("error: --json and --html cannot be used together.");
+        return 2;
+      }
+      if (md && html) {
+        console.error("error: --md and --html cannot be used together.");
+        return 2;
+      }
+      if (out !== undefined && !json && !md && !html) {
+        console.error("error: --out requires --json, --md, or --html.");
+        return 2;
+      }
+      if (out !== undefined && out.trim() === "") {
+        console.error("error: --out needs a file path.");
+        return 2;
+      }
       const args = rest2.filter((a) => !a.startsWith("--"));
-      return cmdAnalyze(args[0], json, { withClaude, model });
+      return cmdAnalyze(args[0], json, {
+        withClaude,
+        model,
+        md,
+        html,
+        out,
+        redact,
+        includeTranscript,
+      });
     }
     case "doctor":
       return cmdDoctor(positional[0], json);
