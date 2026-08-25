@@ -325,6 +325,23 @@ export const api = {
     get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
   searchSessions: (q: string) =>
     get<SessionWithProject[]>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  /** Resolve a session by ID or file path — tries indexed lookup first, then direct path. */
+  resolveSession: async (idOrPath: string): Promise<SessionResponse> => {
+    const trimmed = idOrPath.trim();
+    // Try as ID first (handles both uuid and path via server fallback)
+    try {
+      return await get<SessionResponse>(`/api/sessions/${encodeURIComponent(trimmed)}`);
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 404 &&
+        (trimmed.endsWith(".jsonl") || trimmed.includes("/"))
+      ) {
+        throw err;
+      }
+      throw err;
+    }
+  },
   insights: () => get<InsightsResponse>("/api/insights"),
   insightsSessions: (projectId: string) =>
     get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),

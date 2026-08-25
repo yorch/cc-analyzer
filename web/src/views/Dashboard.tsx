@@ -166,6 +166,8 @@ export function Dashboard() {
         </dl>
       </section>
 
+      <SessionIdSearch />
+
       <GlobalSearch />
 
       <WeeklyDigestCard costBasis={data.costBasis} />
@@ -514,6 +516,78 @@ function Distribution({ dist }: { dist: CostDistribution }) {
       </p>
       <Histogram rows={dist.buckets.map((b) => ({ label: b.label, count: b.count }))} />
     </>
+  );
+}
+
+function SessionIdSearch() {
+  const [input, setInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const navigate = () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    setLoading(true);
+    setError(null);
+    // Use resolveSession helper which handles both ID and path via server fallback
+    api
+      .resolveSession(trimmed)
+      .then((session) => {
+        const targetId = session.sessionId ?? trimmed;
+        window.location.hash = link.session(targetId);
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("404")) {
+          setError(`Session not found: ${trimmed}`);
+        } else {
+          setError(`Failed to resolve session: ${msg}`);
+        }
+      })
+      .finally(() => setLoading(false));
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      navigate();
+    }
+  };
+
+  return (
+    <section aria-labelledby="session-id-search-title">
+      <h2 id="session-id-search-title">Open session by ID or path</h2>
+      <p className="muted">
+        Enter a session UUID or a .jsonl file path to jump directly to that session.
+      </p>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="text"
+          aria-label="Session ID or file path"
+          placeholder="e.g., 01a03650-f38d-7d62-8890-78a99b65b93a or /path/to/session.jsonl"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKeyDown}
+          style={{
+            flex: 1,
+            minWidth: "280px",
+            padding: "8px 12px",
+            border: "1px solid var(--border)",
+            borderRadius: "6px",
+            background: "var(--bg-card)",
+            color: "var(--text)",
+          }}
+        />
+        <button type="button" onClick={navigate} disabled={loading || !input.trim()}>
+          {loading ? "Resolving…" : "Open"}
+        </button>
+      </div>
+      {error && (
+        <p className="notice error-notice" role="alert" style={{ marginTop: "8px" }}>
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 
