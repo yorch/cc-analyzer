@@ -755,9 +755,15 @@ function mdToHtml(md: string): string {
       // tableLines[0]=header, [1]=separator, rest=rows
       if (tableLines.length >= 2) {
         // biome-ignore lint/style/noNonNullAssertion: guarded by length >= 2
-        const headers = tableLines[0]!.split("|").slice(1, -1).map((s) => s.trim());
+        const headers = tableLines[0]!
+          .split("|")
+          .slice(1, -1)
+          .map((s) => s.trim());
         // biome-ignore lint/style/noNonNullAssertion: guarded by length >= 2
-        const aligns = tableLines[1]!.split("|").slice(1, -1).map((s) => (s.trim().includes(":") && s.trim().endsWith(":") ? ' class="num"' : ""));
+        const aligns = tableLines[1]!
+          .split("|")
+          .slice(1, -1)
+          .map((s) => (s.trim().includes(":") && s.trim().endsWith(":") ? ' class="num"' : ""));
         html.push("<table><thead><tr>");
         for (let idx = 0; idx < headers.length; idx++)
           // biome-ignore lint/style/noNonNullAssertion: aligns same length as headers
@@ -765,7 +771,9 @@ function mdToHtml(md: string): string {
         html.push("</tr></thead><tbody>");
         for (let r = 2; r < tableLines.length; r++) {
           // biome-ignore lint/style/noNonNullAssertion: r < length
-          const cells = tableLines[r]!.split("|").slice(1, -1).map((s) => s.trim());
+          const cells = tableLines[r]!.split("|")
+            .slice(1, -1)
+            .map((s) => s.trim());
           html.push("<tr>");
           for (let idx = 0; idx < cells.length; idx++)
             // biome-ignore lint/style/noNonNullAssertion: aligns length matches headers
