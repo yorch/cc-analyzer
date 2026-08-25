@@ -114,6 +114,10 @@ export function App({ db, pricing, indexStatus }: Props) {
   const [drillSessions, setDrillSessions] = useState<IndexedSession[]>([]);
   const [openSession, setOpenSession] = useState<IndexedSession | null>(null);
   const [help, setHelp] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const moveView = (delta: number) => {
     const idx = VIEW_KEYS.indexOf(view);
@@ -121,9 +125,100 @@ export function App({ db, pricing, indexStatus }: Props) {
     if (next) setView(next);
   };
 
+  const handleSessionSearch = async (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      // Try indexed lookup first (ID)
+      const indexed = indexedSessionById(db, trimmed);
+      if (indexed) {
+        setOpenSession(indexed);
+        setSearchOpen(false);
+        setSearchInput("");
+        return;
+      }
+      // Path-like: only .jsonl files (prevents arbitrary file read like /etc/passwd)
+      const isPathLike = trimmed.endsWith(".jsonl");
+      if (isPathLike) {
+        // Create a temporary IndexedSession for path-based sessions not in index
+        // SessionDetailScreen will parse via sessionSourceAt, so we just need path
+        const tmp: IndexedSession = {
+          sessionId: trimmed.split("/").pop()?.replace(".jsonl", "") ?? trimmed,
+          path: trimmed,
+          title: null,
+          cost: 0,
+          costEstimated: false,
+          ioTokens: 0,
+          cacheTokens: 0,
+          startTime: null,
+          turns: 0,
+          apiCalls: 0,
+          toolCalls: 0,
+          mtimeMs: Date.now(),
+        };
+        // Verify the path is readable (or has subagents) before opening
+        try {
+          const { sessionSourceAt } = await import("../core/discover.ts");
+          const source = await sessionSourceAt(trimmed);
+          if (source.parentExists || source.subagentPaths.length > 0) {
+            setOpenSession(tmp);
+            setSearchOpen(false);
+            setSearchInput("");
+            return;
+          }
+        } catch {
+          // Filesystem probe failed — fall through to not-found
+        }
+      }
+      setSearchError(`Session not found: ${trimmed}`);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // Search prompt input handler — active only when search is open
+  useInput(
+    (input, key) => {
+      if (!searchOpen) return;
+      if (key.escape) {
+        setSearchOpen(false);
+        setSearchInput("");
+        setSearchError(null);
+        return;
+      }
+      if (key.return) {
+        void handleSessionSearch(searchInput);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setSearchInput((prev) => prev.slice(0, -1));
+        return;
+      }
+      // Printable characters (including paste which arrives as multiple chars in quick succession)
+      if (input && !key.ctrl && !key.meta && input.length === 1) {
+        setSearchInput((prev) => prev + input);
+        return;
+      }
+      // Handle paste of multiple characters (e.g., full path)
+      if (input && input.length > 1 && !key.ctrl && !key.meta) {
+        setSearchInput((prev) => prev + input);
+      }
+    },
+    { isActive: searchOpen && !help },
+  );
+
   useInput(
     (input, key) => {
       if (input === "?") return setHelp(true);
+      if (input === "/" && !searchOpen) {
+        setSearchOpen(true);
+        setSearchInput("");
+        setSearchError(null);
+        return;
+      }
+      if (searchOpen) return; // search prompt owns input when open
       if (focus !== "rail") return; // body focus: the active view owns input
       if (key.upArrow) return moveView(-1);
       if (key.downArrow) return moveView(1);
@@ -155,6 +250,37 @@ export function App({ db, pricing, indexStatus }: Props) {
     return (
       <Box flexDirection="column" padding={1}>
         <HelpOverlay isActive onClose={() => setHelp(false)} />
+      </Box>
+    );
+  }
+
+  if (searchOpen) {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="cyan"
+          paddingX={1}
+          paddingY={1}
+        >
+          <Text bold color="cyan">
+            Open session by ID or path
+          </Text>
+          <Text color={role.muted}>
+            Enter session UUID or .jsonl path — Enter to open, Esc to cancel
+          </Text>
+          <Box marginTop={1}>
+            <Text color="cyan">❯ </Text>
+            <Text>{searchInput}</Text>
+            <Text color={role.muted}>█</Text>
+          </Box>
+          {searchLoading && <Text color={role.muted}>Resolving…</Text>}
+          {searchError && <Text color="red">{searchError}</Text>}
+          <Box marginTop={1}>
+            <Text color={role.muted}>Press Enter to open · Esc to cancel · paste supported</Text>
+          </Box>
+        </Box>
       </Box>
     );
   }
@@ -218,14 +344,14 @@ export function App({ db, pricing, indexStatus }: Props) {
 
   const keyHints =
     focus === "rail"
-      ? "↑↓ switch view · ↵ focus list · 1-6 jump"
+      ? "↑↓ switch view · ↵ focus list · 1-6 jump · / search"
       : drill
-        ? "type filter · tab sort · ↑↓ move · ↵ open · esc back"
+        ? "type filter · tab sort · ↑↓ move · ↵ open · esc back · / search"
         : view === "trends"
-          ? "tab/1·2·3·4 panel · m metric · g granularity · esc menu"
+          ? "tab/1·2·3·4 panel · m metric · g granularity · esc menu · / search"
           : view === "tools"
-            ? "tab/1·2·3·4 panel · s sort · ↑↓ scroll · esc menu"
-            : "type filter · tab sort · ↑↓ move · ↵ open · esc menu";
+            ? "tab/1·2·3·4 panel · s sort · ↑↓ scroll · esc menu · / search"
+            : "type filter · tab sort · ↑↓ move · ↵ open · esc menu · / search";
 
   let body: React.ReactNode;
   if (drill) {

@@ -24,6 +24,7 @@ import {
   listIndexedProjects,
   listIndexedSessions,
   resolveIndexedProject,
+  type SessionWithProject,
   searchSessions,
   sessionPathById,
   sessionRowById,
@@ -373,10 +374,48 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // Registered before "/api/sessions/:id" so "search" isn't captured as an id.
   api.get("/api/sessions/search", (c) => {
     const q = c.req.query("q") ?? "";
+    if (q.length > 200) return c.json({ error: "q too long" }, 400);
     const parsed = Number(c.req.query("limit") ?? "100");
     // Clamp: LIMIT -1 is "unlimited" in SQLite, and huge values are abuse.
     const limit = Number.isInteger(parsed) ? Math.min(Math.max(parsed, 1), 1000) : 100;
-    return c.json(q.trim() ? searchSessions(db, q, limit) : []);
+    const trimmed = q.trim();
+    if (!trimmed) return c.json([]);
+    // Exact ID lookup: if q is an exact session id, return that session first (DB-derived, no FS read).
+    // Path-like queries are handled as fuzzy search via searchSessions (no direct FS read over HTTP).
+    if (/^[0-9a-f-]{8,}/i.test(trimmed)) {
+      const exact = sessionRowById(db, trimmed);
+      if (exact) {
+        type RawSessionRow = Omit<SessionWithProject, "costEstimated"> & { costEstimated: number };
+        const session = db
+          .query(
+            `SELECT session_id AS sessionId, path, title, project_path AS projectPath, cost_total AS cost, cost_estimated AS costEstimated, (input_tokens + output_tokens) AS ioTokens, (cache_write_5m + cache_write_1h + cache_read) AS cacheTokens, start_time AS startTime, turns, api_calls AS apiCalls, tool_calls AS toolCalls, mtime_ms AS mtimeMs FROM sessions WHERE path = ? LIMIT 1`,
+          )
+          .get(exact.path) as RawSessionRow | undefined;
+        if (session) {
+          // Return exact match first, then supplement with fuzzy results (deduped)
+          const likeResults = searchSessions(db, trimmed, limit - 1);
+          const exactPath = exact.path;
+          const deduped = likeResults.filter((r) => r.path !== exactPath);
+          const mapped: SessionWithProject = {
+            sessionId: session.sessionId,
+            path: session.path,
+            title: session.title,
+            projectPath: session.projectPath,
+            cost: session.cost,
+            costEstimated: session.costEstimated === 1,
+            ioTokens: session.ioTokens,
+            cacheTokens: session.cacheTokens,
+            startTime: session.startTime,
+            turns: session.turns,
+            apiCalls: session.apiCalls,
+            toolCalls: session.toolCalls,
+            mtimeMs: session.mtimeMs,
+          };
+          return c.json([mapped, ...deduped]);
+        }
+      }
+    }
+    return c.json(searchSessions(db, trimmed, limit));
   });
 
   // The index is a disposable cache, so an indexed path can be stale — a
@@ -405,14 +444,15 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // The outcome ratios are NOT here: `sessionOutcomes` is bun-free, so the
   // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
-    const id = c.req.param("id");
-    // The indexed row, not just its path: `projectId` rides along so the client
-    // can resolve the session's project by its globally unique id. Matching on
-    // `projectPath` would be ambiguous once two Claude roots hold a project for
-    // the same working directory.
+    const rawId = c.req.param("id");
+    const id = decodeURIComponent(rawId);
+    // Indexed lookup only — Web never does direct filesystem path reads from user input (security).
+    // CLI supports id|path via resolveSessionSource, but HTTP is DB-derived only to avoid arbitrary file read.
     const row = sessionRowById(db, id);
     if (!row) return c.json({ error: "session not found" }, 404);
-    const parsed = await readSession(row.path);
+    const resolvedPath = row.path;
+    const projectId = row.projectId;
+    const parsed = await readSession(resolvedPath);
     if (!parsed) return c.json(staleIndex, 404);
     const analysis = analyzeSession(parsed.events, pricing, {
       coverage: parsed.coverage,
@@ -425,13 +465,14 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     capSlots("rank:", MAX_RANK_SLOTS);
     return c.json({
       ...analysis,
-      projectId: row.projectId,
+      projectId: projectId!,
       insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
     });
   });
 
   api.get("/api/sessions/:id/transcript", async (c) => {
-    const path = sessionPathById(db, c.req.param("id"));
+    const rawId = decodeURIComponent(c.req.param("id"));
+    const path = sessionPathById(db, rawId);
     if (!path) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);

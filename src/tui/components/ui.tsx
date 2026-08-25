@@ -96,6 +96,15 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "Session search",
+    keys: [
+      ["/", "open session by ID or .jsonl path"],
+      ["type", "enter ID or path"],
+      ["↵", "open session"],
+      ["esc", "cancel"],
+    ],
+  },
+  {
     title: "Session charts legend",
     keys: [
       ["▼", "context compaction"],
