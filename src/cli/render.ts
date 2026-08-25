@@ -295,25 +295,44 @@ export function renderSessionSummary(
     lines.push(muted(WHATIF_CAVEAT, options));
   }
 
-  const toolRows = Object.entries(a.tools)
-    .sort((x, y) => y[1] - x[1])
-    .map(([t, c]) => [t, String(c)]);
+  const toolRows = Object.entries(a.tools).sort((x, y) => y[1] - x[1]);
   if (toolRows.length) {
-    lines.push(`\n${section("Tools", options)}`);
-    lines.push(table(["tool", "count"], toolRows, { align: ["left", "right"] }));
+    lines.push(`\n${section("Tools — per-tool counts with error rate", options)}`);
+    lines.push(
+      table(
+        ["tool", "count", "errors", "err %"],
+        toolRows.map(([t, c]) => {
+          const errs = a.toolErrors[t] ?? 0;
+          const pct = c > 0 ? `${Math.round((errs / c) * 100)}%` : "0%";
+          return [t, String(c), String(errs), pct];
+        }),
+        { align: ["left", "right", "right", "right"] },
+      ),
+    );
   }
 
   const skillEntries = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
   if (skillEntries.length) {
-    lines.push(`\n${section("Skills", options)}`);
+    lines.push(
+      `\n${section("Skills — per-skill uses, turn-scoped cost, and error rate", options)}`,
+    );
     lines.push(
       table(
-        ["skill", "uses", "turns", "turn $"],
+        ["skill", "uses", "turns", "turn $", "errors", "err %"],
         skillEntries.map(([s, n]) => {
           const attributed = a.skillTurnCosts[s];
-          return [s, String(n), String(attributed?.turns ?? 0), formatUSD(attributed?.cost ?? 0)];
+          const errs = a.skillErrors[s] ?? 0;
+          const errPct = n > 0 ? `${Math.round((errs / n) * 100)}%` : "0%";
+          return [
+            s,
+            String(n),
+            String(attributed?.turns ?? 0),
+            formatUSD(attributed?.cost ?? 0),
+            String(errs),
+            errPct,
+          ];
         }),
-        { align: ["left", "right", "right", "right"] },
+        { align: ["left", "right", "right", "right", "right", "right"] },
       ),
     );
     lines.push(muted(SKILL_COST_CAVEAT, options));

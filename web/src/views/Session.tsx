@@ -13,6 +13,7 @@ import {
   type SessionAnalysis,
   type SessionResponse,
   type SidechainBurst,
+  SKILL_COST_CAVEAT,
   sessionOutcomes,
   type TranscriptItem,
   type Turn,
@@ -449,20 +450,78 @@ function Summary({ a }: { a: SessionResponse }) {
           <p className="muted">{WHATIF_CAVEAT}</p>
         </section>
       )}
-      <div style={{ marginTop: 12 }}>
-        {Object.entries(a.tools).map(([t, n]) => (
-          <span className="tag" key={t}>
-            {t} {n}
-          </span>
-        ))}
-      </div>
+      {/* Detailed tools & skills breakdown — session-level, with error rates and turn-scoped cost */}
+      {Object.keys(a.tools).length > 0 && (
+        <section className="summary-group" style={{ marginTop: 12 }}>
+          <h2>Tools</h2>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th className="num">Count</th>
+                  <th className="num">Errors</th>
+                  <th className="num">Err %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(a.tools)
+                  .sort((x, y) => y[1] - x[1])
+                  .map(([tool, n]) => {
+                    const errs = a.toolErrors[tool] ?? 0;
+                    const pct = n > 0 ? Math.round((errs / n) * 100) : 0;
+                    return (
+                      <tr key={tool}>
+                        <td>{tool}</td>
+                        <td className="num">{n}</td>
+                        <td className="num">{errs}</td>
+                        <td className="num">{pct}%</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {Object.keys(a.skills).length > 0 && (
-        <p className="muted">
-          Skills:{" "}
-          {Object.entries(a.skills)
-            .map(([s, n]) => `${s}:${n}`)
-            .join(", ")}
-        </p>
+        <section className="summary-group" style={{ marginTop: 12 }}>
+          <h2>Skills</h2>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Skill</th>
+                  <th className="num">Uses</th>
+                  <th className="num">Turns</th>
+                  <th className="num">Turn $</th>
+                  <th className="num">Errors</th>
+                  <th className="num">Err %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(a.skills)
+                  .sort((x, y) => y[1] - x[1])
+                  .map(([skill, uses]) => {
+                    const attr = a.skillTurnCosts[skill];
+                    const errs = a.skillErrors[skill] ?? 0;
+                    const errPct = uses > 0 ? Math.round((errs / uses) * 100) : 0;
+                    return (
+                      <tr key={skill}>
+                        <td>{skill}</td>
+                        <td className="num">{uses}</td>
+                        <td className="num">{attr?.turns ?? 0}</td>
+                        <td className="num">{usd(attr?.cost ?? 0)}</td>
+                        <td className="num">{errs}</td>
+                        <td className="num">{errPct}%</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted">{SKILL_COST_CAVEAT}</p>
+        </section>
       )}
       {a.subagents.length > 0 && <p className="muted">Subagents: {a.subagents.join(", ")}</p>}
     </section>

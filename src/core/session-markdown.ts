@@ -312,33 +312,46 @@ export function buildSessionMarkdown(
     }
   }
 
-  // Tools
+  // Tools — per-tool counts with error rate (session-level breakdown)
   const toolRows = Object.entries(a.tools).sort((x, y) => y[1] - x[1]);
   if (toolRows.length > 0) {
     out.push("## Tools");
     out.push("");
     out.push(
       mdTable(
-        ["Tool", "Count"],
-        ["left", "right"],
-        toolRows.map(([k, v]) => [mdCell(k), String(v)]),
+        ["Tool", "Count", "Errors", "Err %"],
+        ["left", "right", "right", "right"],
+        toolRows.map(([k, v]) => {
+          const errs = a.toolErrors[k] ?? 0;
+          const pct = v > 0 ? `${Math.round((errs / v) * 100)}%` : "0%";
+          return [mdCell(k), String(v), String(errs), pct];
+        }),
       ),
     );
     out.push("");
   }
 
-  // Skills
+  // Skills — per-skill uses, turn-scoped cost, and error rate (session-level breakdown)
   const skillEntries = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
   if (skillEntries.length > 0) {
     out.push("## Skills");
     out.push("");
     out.push(
       mdTable(
-        ["Skill", "Uses", "Turns", "Turn $"],
-        ["left", "right", "right", "right"],
+        ["Skill", "Uses", "Turns", "Turn $", "Errors", "Err %"],
+        ["left", "right", "right", "right", "right", "right"],
         skillEntries.map(([s, n]) => {
           const attr = a.skillTurnCosts[s];
-          return [mdCell(s), String(n), String(attr?.turns ?? 0), formatUSD(attr?.cost ?? 0)];
+          const errs = a.skillErrors[s] ?? 0;
+          const errPct = n > 0 ? `${Math.round((errs / n) * 100)}%` : "0%";
+          return [
+            mdCell(s),
+            String(n),
+            String(attr?.turns ?? 0),
+            formatUSD(attr?.cost ?? 0),
+            String(errs),
+            errPct,
+          ];
         }),
       ),
     );
