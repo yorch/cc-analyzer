@@ -970,7 +970,7 @@ export function buildSessionHtml(a: SessionAnalysis, opts: SessionMarkdownOption
 <script>try{const t=localStorage.getItem("cc-theme");const m=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";const r=t||m;if(r==="light")document.documentElement.setAttribute("data-theme","light");}catch{}</script>
 <body>
 <div class="wrap">
-<header class="masthead"><h1>${title}</h1><button type="button" class="theme-toggle" onclick="try{const r=document.documentElement;const c=r.getAttribute("data-theme")==="light"?"dark":"light";r.setAttribute("data-theme",c);localStorage.setItem("cc-theme",c)}catch{}" aria-label="Toggle theme">◐ Theme</button></header>
+<header class="masthead"><h1>${title}</h1><button type="button" class="theme-toggle" onclick="try{const r=document.documentElement;const c=r.getAttribute('data-theme')==='light'?'dark':'light';r.setAttribute('data-theme',c);localStorage.setItem('cc-theme',c)}catch{}" aria-label="Toggle theme">◐ Theme</button></header>
 <div class="ai-summary">${aiSummary}</div>
 ${kpiCards}
 <div class="provenance">${provenance}</div>
