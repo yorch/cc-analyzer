@@ -695,21 +695,85 @@ export function buildSessionMarkdown(
 // ---------------------------------------------------------------------------
 
 const HTML_STYLE = `
-:root{--bg:#0f1115;--card:#171a21;--border:#242836;--text:#e6e8ef;--muted:#9aa0b8;--accent:#6ea8fe;--warn:#f5a623;--err:#ff6b6b;--ok:#51cf66}
-*{box-sizing:border-box}body{margin:0;font:14px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--text);background:var(--bg)}
-a{color:var(--accent)}h1{font-size:22px;margin:0 0 6px}h2{font-size:16px;margin:22px 0 8px;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:6px}h3{font-size:14px;margin:16px 0 6px;color:var(--muted)}
-.wrap{max-width:980px;margin:0 auto;padding:28px 20px}
-.meta{color:var(--muted);font-size:13px;line-height:1.5}
-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 12px}
-th,td{padding:6px 8px;border:1px solid var(--border);text-align:left;vertical-align:top}
-th{background:var(--card);font-weight:600}
-td.num{text-align:right;font-variant-numeric:tabular-nums}
-.muted{color:var(--muted)}.warn{color:var(--warn)}.err{color:var(--err)}.pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--card)}
-pre{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;overflow:auto;font-size:12.5px;line-height:1.5}
-code{background:var(--card);border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-size:12.5px}
-.card{border:1px solid var(--border);background:var(--card);border-radius:10px;padding:12px 14px;margin:8px 0}
-.kicker{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-@media print{body{background:#fff;color:#111} .wrap{max-width:none;padding:12px} table,th,td,pre,.card{border-color:#ddd} pre,.card{background:#f8f9fb}}
+:root{
+  --bg:#0f1115; --bg-card:#1a1d23; --bg-hover:#232730; --bg-elevated:#232730;
+  --border:#2a2d35; --border-strong:#3a3d47; --border-subtle:rgba(255,255,255,0.06);
+  --text:#e8eaed; --text-muted:#9aa0a6; --text-faint:#6b7280;
+  --accent:#6c7bfe; --accent-bg:rgba(108,123,254,0.12); --accent-strong:#818cf8;
+  --success:#34d399; --warning:#fbbf24; --danger:#f87171;
+  --radius:12px; --radius-sm:8px; --radius-xs:6px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+[data-theme="light"]{
+  --bg:#f8f9fb; --bg-card:#ffffff; --bg-hover:#f3f4f6; --bg-elevated:#ffffff;
+  --border:#e5e7eb; --border-strong:#d1d5db; --border-subtle:#f3f4f6;
+  --text:#111827; --text-muted:#6b7280; --text-faint:#9ca3af;
+  --accent:#4f46e5; --accent-bg:rgba(79,70,229,0.08); --accent-strong:#4338ca;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f8f9fb; --bg-card:#ffffff; --border:#e5e7eb; --text:#111827; --text-muted:#6b7280;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font:14px/1.6 var(--font-sans);color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
+@media (prefers-reduced-motion: reduce){*{transition:none !important; scroll-behavior:auto !important}}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+h1{font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.02em;margin:0 0 4px}
+h2{font-size:15px;line-height:1.4;font-weight:600;letter-spacing:-0.01em;margin:28px 0 6px;color:var(--text);padding-bottom:8px;border-bottom:1px solid var(--border)}
+h2 .kicker{display:block;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);margin-bottom:4px}
+h3{font-size:13px;font-weight:600;color:var(--text-muted);margin:20px 0 8px}
+.wrap{max-width:1024px;margin:0 auto;padding:28px 24px}
+@media (max-width:640px){.wrap{padding:20px 16px}}
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.masthead h1{margin:0}
+.theme-toggle{appearance:none;border:1px solid var(--border);background:var(--bg-card);color:var(--text-muted);border-radius:999px;padding:6px 12px;font:12px var(--font-sans);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.theme-toggle:hover{background:var(--bg-hover);color:var(--text)}
+.theme-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ai-summary{background:var(--accent-bg);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius);padding:14px 16px;margin:16px 0 20px;font-size:13.5px;line-height:1.6;color:var(--text)}
+.ai-summary strong{color:var(--accent-strong)}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0 24px}
+.kpi-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.kpi-card .label{font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px}
+.kpi-card .value{font-size:20px;font-weight:700;letter-spacing:-0.02em;line-height:1.2;font-variant-numeric:tabular-nums}
+.kpi-card .sub{font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.4}
+.kpi-card .trend{font-size:11px;margin-top:6px}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:12px 0}
+.meta{color:var(--text-muted);font-size:12.5px;line-height:1.5}
+.provenance{font-size:12px;color:var(--text-faint);margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0 16px}
+thead th{font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:none;border-bottom:2px solid var(--border-strong);padding:8px 10px;text-align:left;white-space:nowrap}
+thead th.num{text-align:right}
+tbody td{padding:8px 10px;border:none;border-bottom:1px solid var(--border-subtle);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--bg-hover)}
+td.num{font-family:var(--font-mono);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+th.num{text-align:right}
+td .bar-wrap{position:relative}
+td .bar{position:absolute;inset:2px 0; background:var(--accent-bg);border-radius:3px;pointer-events:none}
+td .bar-val{position:relative}
+.muted{color:var(--text-muted)}.warn{color:var(--warning)}.err{color:var(--danger)}.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;border:1px solid var(--border);background:var(--bg-card)}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;overflow:auto;font:12.5px/1.6 var(--font-mono)}
+code{font-family:var(--font-mono);background:var(--bg-card);border:1px solid var(--border);padding:1px 5px;border-radius:4px;font-size:12px}
+.kicker{font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);font-weight:600}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media print{
+  :root{--bg:#fff;--bg-card:#fff;--text:#111827;--text-muted:#4b5563;--border:#e5e7eb;--border-subtle:#f3f4f6}
+  body{font-size:10pt;max-width:none;background:#fff;color:#111}
+  .wrap{max-width:none;padding:12px}
+  .masthead{border-bottom:2px solid #111}
+  .theme-toggle,.no-print{display:none !important}
+  table,th,td,pre,.card,.kpi-card{border-color:#ddd}
+  pre,.card,.kpi-card{background:#fff;box-shadow:none}
+  details{display:block !important} details > *:not(summary){display:block !important}
+  thead th{position:static}
+  a{color:#111;text-decoration:none} a[href]::after{content:" (" attr(href) ")";font-size:8pt;color:#6b7280;word-break:break-all}
+  table{page-break-inside:auto} tr{page-break-inside:avoid;page-break-after:auto} section{break-inside:avoid}
+  @page{margin:16mm 12mm; size:A4}
+}
 `;
 
 function escHtml(s: string): string {
@@ -718,6 +782,61 @@ function escHtml(s: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function buildAiSummary(a: SessionAnalysis, opts: SessionMarkdownOptions): string {
+  const c = a.totals.cost.total;
+  const turns = a.totals.turns;
+  const dur = formatDuration(a.durationMs);
+  const cachePct = (() => {
+    const t = a.totals.tokens;
+    const total =
+      t.cacheReadTokens +
+      t.cacheWrite5mTokens +
+      t.cacheWrite1hTokens +
+      t.inputTokens +
+      t.outputTokens;
+    return total > 0 ? Math.round((t.cacheReadTokens / total) * 100) : 0;
+  })();
+  const topTool = Object.entries(a.tools).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "—";
+  const diag = buildSessionDiagnostics(a);
+  const warn = diag.filter((d) => d.severity === "warning").length;
+  const framing = opts.costBasis === "subscription" ? "API-equivalent value" : "cost";
+  let summary = `This session ${framing} <strong>${escHtml(formatUSD(c))}</strong> over <strong>${escHtml(dur)}</strong> across <strong>${turns} turns</strong>`;
+  if (a.totals.toolCalls > 0)
+    summary += ` and <strong>${a.totals.toolCalls} tool calls</strong> (top: ${escHtml(topTool)})`;
+  summary += ".";
+  if (diag.length > 0) {
+    summary += ` Detected <strong>${diag.length} diagnostic${diag.length === 1 ? "" : "s"}</strong>${warn > 0 ? ` (${warn} warning${warn === 1 ? "" : "s"})` : ""} — `;
+    summary += diag
+      .slice(0, 2)
+      .map((d) => escHtml(d.title))
+      .join(", ");
+    if (diag.length > 2) summary += ` +${diag.length - 2} more`;
+    summary += ".";
+  } else {
+    summary += " No major cost or context patterns crossed thresholds.";
+  }
+  if (cachePct > 0) summary += ` Cache hit <strong>${cachePct}%</strong>.`;
+  return summary;
+}
+
+function buildKpiCards(a: SessionAnalysis): string {
+  const c = a.totals.cost;
+  const t = a.totals.tokens;
+  const cacheRead = t.cacheReadTokens;
+  const cacheWrite = t.cacheWrite5mTokens + t.cacheWrite1hTokens;
+  const totalCache = cacheRead + cacheWrite;
+  const cacheHit =
+    totalCache > 0 ? Math.round((cacheRead / (cacheRead + t.inputTokens + cacheWrite)) * 100) : 0;
+  const models = Object.keys(a.models).join(", ") || "—";
+  return `
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="label">Total ${a.totals.cost.estimated ? "(est.)" : ""} cost</div><div class="value">${escHtml(formatUSD(c.total))}</div><div class="sub">${escHtml(formatUSD(c.input))} in · ${escHtml(formatUSD(c.output))} out</div></div>
+    <div class="kpi-card"><div class="label">Duration</div><div class="value">${escHtml(formatDuration(a.durationMs))}</div><div class="sub">${escHtml(formatDuration(a.totals.activeMs))} active · ${a.totals.turns} turns · ${a.totals.apiCalls} calls</div></div>
+    <div class="kpi-card"><div class="label">Tokens</div><div class="value">${escHtml(formatCount(t.inputTokens + t.outputTokens))}</div><div class="sub">+${escHtml(formatCount(totalCache))} cache · ${escHtml(models)}</div></div>
+    <div class="kpi-card"><div class="label">Cache hit</div><div class="value">${cacheHit}%</div><div class="sub">${escHtml(formatCount(cacheRead))} read · ${escHtml(formatCount(cacheWrite))} write</div></div>
+  </div>`;
 }
 
 function mdToHtml(md: string): string {
@@ -836,19 +955,28 @@ function mdToHtml(md: string): string {
 }
 
 export function buildSessionHtml(a: SessionAnalysis, opts: SessionMarkdownOptions = {}): string {
+  const aiSummary = buildAiSummary(a, opts);
+  const kpiCards = buildKpiCards(a);
   const md = buildSessionMarkdown(a, opts);
   const body = mdToHtml(md);
   const title = escHtml(a.title ?? a.sessionId ?? "Session export");
+  const provenance = `Generated ${new Date().toISOString().slice(0, 10)} · cc-analyzer · Session ${escHtml(a.sessionId ?? "—")} `;
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} — cc-analyzer</title>
 <style>${HTML_STYLE}</style>
+<script>try{const t=localStorage.getItem("cc-theme");const m=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";const r=t||m;if(r==="light")document.documentElement.setAttribute("data-theme","light");}catch{}</script>
 <body>
 <div class="wrap">
+<header class="masthead"><h1>${title}</h1><button type="button" class="theme-toggle" onclick="try{const r=document.documentElement;const c=r.getAttribute("data-theme")==="light"?"dark":"light";r.setAttribute("data-theme",c);localStorage.setItem("cc-theme",c)}catch{}" aria-label="Toggle theme">◐ Theme</button></header>
+<div class="ai-summary">${aiSummary}</div>
+${kpiCards}
+<div class="provenance">${provenance}</div>
 ${body}
 </div>
+<script>document.querySelectorAll("table").forEach(t=>{const max=Math.max(...[...t.querySelectorAll("tbody tr")].map(r=>parseFloat(r.cells[1]?.textContent?.replace(/[^\\d.]/g,"")||"0")||0),1);t.querySelectorAll("tbody tr").forEach(r=>{const c=r.cells[1];if(!c||!c.textContent.includes("$"))return;const v=parseFloat(c.textContent.replace(/[^\\d.]/g,"")||"0");const pct=Math.min(100,Math.round((v/max)*100));c.innerHTML='<div class="bar-wrap"><div class="bar" style="width:'+pct+'%"></div><span class="bar-val">'+c.textContent+'</span></div>';c.style.position="relative";});});</script>
 </body>
 </html>`;
 }
