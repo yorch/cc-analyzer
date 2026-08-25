@@ -282,6 +282,7 @@ export function buildSessionMarkdown(
     );
     out.push("");
     out.push(
+      // biome-ignore lint/style/noNonNullAssertion: guarded by whatIf.summary.bestModel check
       `Cheapest single model: **${mdEscape(s.bestModel!)}** at ${formatUSD(s.bestCost)} ` +
         `(${formatSignedUSD(s.bestDelta)} vs actual ${formatUSD(s.actualCost)}` +
         `${s.fallbackAlternatives ? ", stock alternatives" : ""}).`,
@@ -584,6 +585,7 @@ export function buildSessionMarkdown(
     // Burn series tail
     const burn = buildBurnSeries(a);
     if (burn.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by burn.length > 0
       const last = burn[burn.length - 1]!;
       out.push("### Cumulative cost");
       out.push("");
@@ -751,26 +753,22 @@ function mdToHtml(md: string): string {
       }
       // tableLines[0]=header, [1]=separator, rest=rows
       if (tableLines.length >= 2) {
-        const headers = tableLines[0]
-          ?.split("|")
-          .slice(1, -1)
-          .map((s) => s.trim());
-        const aligns = tableLines[1]
-          ?.split("|")
-          .slice(1, -1)
-          .map((s) => (s.trim().includes(":") && s.trim().endsWith(":") ? ' class="num"' : ""));
+        // biome-ignore lint/style/noNonNullAssertion: guarded by length >= 2
+        const headers = tableLines[0]!.split("|").slice(1, -1).map((s) => s.trim());
+        // biome-ignore lint/style/noNonNullAssertion: guarded by length >= 2
+        const aligns = tableLines[1]!.split("|").slice(1, -1).map((s) => (s.trim().includes(":") && s.trim().endsWith(":") ? ' class="num"' : ""));
         html.push("<table><thead><tr>");
         for (let idx = 0; idx < headers.length; idx++)
-          html.push(`<th${aligns[idx] ?? ""}>${escHtml(headers[idx] ?? "")}</th>`);
+          // biome-ignore lint/style/noNonNullAssertion: aligns same length as headers
+          html.push(`<th${aligns[idx] ?? ""}>${escHtml(headers[idx]! ?? "")}</th>`);
         html.push("</tr></thead><tbody>");
         for (let r = 2; r < tableLines.length; r++) {
-          const cells = tableLines[r]
-            ?.split("|")
-            .slice(1, -1)
-            .map((s) => s.trim());
+          // biome-ignore lint/style/noNonNullAssertion: r < length
+          const cells = tableLines[r]!.split("|").slice(1, -1).map((s) => s.trim());
           html.push("<tr>");
           for (let idx = 0; idx < cells.length; idx++)
-            html.push(`<td${aligns[idx] ?? ""}>${escHtml(cells[idx] ?? "")}</td>`);
+            // biome-ignore lint/style/noNonNullAssertion: aligns length matches headers
+            html.push(`<td${aligns[idx] ?? ""}>${escHtml(cells[idx]! ?? "")}</td>`);
           html.push("</tr>");
         }
         html.push("</tbody></table>");
@@ -780,12 +778,13 @@ function mdToHtml(md: string): string {
       // Collect list block
       const items: string[] = [];
       while (i < lines.length && (lines[i]?.startsWith("- ") ?? false)) {
-        items.push(lines[i]?.slice(2));
+        // biome-ignore lint/style/noNonNullAssertion: guarded by while condition
+        items.push(lines[i]!.slice(2));
         i++;
         // handle indented continuation line "  - Next:"
         if (i < lines.length && lines[i]?.startsWith("  - ")) {
-          items[items.length - 1] +=
-            `<br><span class="muted">${escHtml(lines[i]?.slice(4))}</span>`;
+          // biome-ignore lint/style/noNonNullAssertion: guarded by if
+          items[items.length - 1] += `<br><span class="muted">${escHtml(lines[i]!.slice(4))}</span>`;
           i++;
         }
       }
