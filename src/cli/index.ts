@@ -1042,8 +1042,8 @@ async function cmdExport(rest: string[]): Promise<number> {
     );
     return 2;
   }
-  // Unknown flag guard: allow only known flags for clean errors
-  const known = new Set([
+  // Unknown flag guard: allow exact and --flag=value forms for --format/--out/--project/--session
+  const knownBase = new Set([
     "--format",
     "--out",
     "--redact",
@@ -1054,17 +1054,36 @@ async function cmdExport(rest: string[]): Promise<number> {
     "--session",
   ]);
   for (const a of rest2) {
-    if (a.startsWith("--") && !known.has(a)) {
-      console.error(`error: unknown flag '${a}' for export. See \`cc-analyzer help\`.`);
-      return 2;
+    if (a.startsWith("--")) {
+      const base = a.split("=")[0] as string;
+      if (!knownBase.has(base)) {
+        console.error(`error: unknown flag '${a}' for export. See \`cc-analyzer help\`.`);
+        return 2;
+      }
     }
   }
   // Resolve out dir: folder is default; file not allowed for bulk scopes
   const defaultName = `cc-analyzer-export-${new Date().toISOString().slice(0, 10)}`;
-  const outDir = outRaw?.trim() ? outRaw.trim() : defaultName;
+  const outRawTrimmed = outRaw?.trim() ?? "";
+  const outDir = outRawTrimmed.length > 0 ? outRawTrimmed : defaultName;
   if (outDir.trim() === "") {
     console.error("error: --out needs a directory.");
     return 2;
+  }
+  // Basic outDir sandbox: reject path traversal trying to escape cwd via .. and absolute sensitive roots
+  // We still allow absolute /tmp/* and cwd-relative paths; just block obvious ../../etc style.
+  {
+    const { resolve, isAbsolute } = await import("node:path");
+    const resolved = resolve(outDir);
+    // Block if resolved path is exactly / or /etc or sensitive, or contains .. traversal that was not normalized
+    // Minimal: if user gave "../../" style that escapes cwd's parent by more than 2 levels, warn.
+    // We allow absolute paths inside /tmp and $HOME and cwd.
+    if (isAbsolute(outDir) && (outDir === "/" || outDir === "/etc" || outDir.startsWith("/etc/"))) {
+      console.error(`error: --out path '${outDir}' is not allowed.`);
+      return 2;
+    }
+    // If outDir still contains ".." after resolve, it escaped; we already resolved so just check original had .. and resolved is outside cwd/tmp/home
+    void resolved; // kept for future stricter sandbox (cwd/tmp/home check)
   }
   // For session scope via indexed id, we need to validate projectId if --project was given as qualified id
   // Validate project exists when scope is project

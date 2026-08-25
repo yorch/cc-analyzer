@@ -12,8 +12,10 @@
 
 import type { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { analyzeSession } from "./analyze.ts";
+import { claudeRoots } from "./claude-roots.ts";
 import { sessionSourceAt, sessionTree } from "./discover.ts";
 import { parseSessionTree } from "./parser.ts";
 import { getCostBasis } from "./prefs.ts";
@@ -58,8 +60,12 @@ function ensureDir(path: string): void {
 }
 
 function csvEscape(v: unknown): string {
-  const s = String(v ?? "");
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replaceAll('"', '""')}"`;
+  let s = String(v ?? "");
+  // Excel formula injection protection: prefix =, +, -, @
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("'")) {
+    return `"${s.replaceAll('"', '""')}"`;
+  }
   return s;
 }
 
@@ -71,6 +77,36 @@ function writeCsv(path: string, headers: string[], rows: string[][]): void {
 // redact helper for CSV fields
 const redactVal = (v: string, redact: boolean, placeholder = "[redacted]"): string =>
   redact ? placeholder : v;
+
+// ---------------------------------------------------------------------------
+// Security helpers
+// ---------------------------------------------------------------------------
+
+function isPathUnderRoots(p: string): boolean {
+  const expanded = p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+  const abs = resolve(expanded);
+  for (const r of claudeRoots()) {
+    const rel = relative(r.path, abs);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return true;
+  }
+  return false;
+}
+
+function validateOutDir(outDir: string): void {
+  if (outDir.split("/").includes("..") || outDir.split("\\").includes("..")) {
+    throw new Error("--out must not contain '..' traversal");
+  }
+  // Reject absolute sensitive locations like /etc, /bin, /usr, /System
+  const abs = resolve(outDir);
+  const sensitive = ["/etc", "/bin", "/usr", "/System", "/var/db"];
+  for (const s of sensitive) {
+    if (abs === s || abs.startsWith(`${s}/`)) {
+      throw new Error(`--out must not be inside sensitive directory '${s}'`);
+    }
+  }
+}
+
+const LARGE_PORTFOLIO_GUARD = 2000;
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -268,7 +304,15 @@ async function analyzeOneByPath(
   pricing: PricingTable,
 ): Promise<{ analysis: ReturnType<typeof analyzeSession>; path: string } | null> {
   try {
-    // Try as file path first
+    // Guard: only allow file paths under configured claudeRoots()
+    const looksLikePath =
+      idOrPath.includes("/") ||
+      idOrPath.endsWith(".jsonl") ||
+      isAbsolute(idOrPath) ||
+      idOrPath.startsWith("~/");
+    if (looksLikePath && !isPathUnderRoots(idOrPath)) {
+      throw new Error(`--session path '${idOrPath}' is not under a configured Claude root`);
+    }
     let source: Awaited<ReturnType<typeof sessionSourceAt>>;
     try {
       source = await sessionSourceAt(idOrPath);
@@ -288,14 +332,26 @@ async function analyzeOneByPath(
 }
 
 function redactAnalysisJson(raw: Record<string, unknown>): Record<string, unknown> {
-  const turns = (raw.turns as Array<Record<string, unknown>> | undefined)?.map((t) => ({
-    ...t,
-    prompt: "[redacted]",
-  }));
+  const turns = (raw.turns as Array<Record<string, unknown>> | undefined)?.map((t) => {
+    const apiCalls = (t.apiCalls as Array<Record<string, unknown>> | undefined)?.map((c) => {
+      const steps = (c.steps as Array<Record<string, unknown>> | undefined)?.map((s) => {
+        const detail = s.detail as Record<string, unknown> | undefined;
+        if (!detail) return s;
+        return {
+          ...s,
+          detail: { ...detail, input: "[redacted]", result: "[redacted]" },
+        };
+      });
+      return steps ? { ...c, steps } : c;
+    });
+    return { ...t, prompt: "[redacted]", apiCalls };
+  });
   return {
     ...raw,
     title: "[redacted]",
     projectPath: "[redacted]",
+    gitBranches: [],
+    versions: [],
     filesTouched: [],
     bashCommands: {},
     bashErrors: {},
@@ -316,6 +372,13 @@ async function writeDetailedArtifacts(
   const needDetail =
     formats.has("json") || formats.has("md") || formats.has("html") || formats.has("csv");
   if (!needDetail) return { written: 0, skipped: 0 };
+
+  // Large portfolio guard: for >2k sessions, skip per-session detailed files unless scoped
+  if (rows.length > LARGE_PORTFOLIO_GUARD && formats.has("json")) {
+    console.error(
+      `warning: large export (${rows.length} sessions) — per-session json/md/html will be heavy. Use --project or --format csv for a lightweight portfolio.`,
+    );
+  }
 
   const jsonDir = join(baseDir, "sessions");
   const mdDir = join(baseDir, "markdown");
@@ -356,26 +419,46 @@ async function writeDetailedArtifacts(
   const needTurns = formats.has("csv");
   const needModels = formats.has("csv");
 
-  for (const row of rows) {
-    const analysis = await analyzeOne(row, pricing);
-    if (!analysis) {
+  // Concurrency pool (8)
+  const CONCURRENCY = 8;
+  const queue = [...rows];
+
+  const processRow = async (row: SessionRow): Promise<void> => {
+    let parsed: Awaited<ReturnType<typeof parseSessionTree>> | null = null;
+    let source: Awaited<ReturnType<typeof sessionSourceAt>> | null = null;
+    let analysis: ReturnType<typeof analyzeSession> | null = null;
+    try {
+      source = await sessionSourceAt(row.path);
+      if (!source.parentExists && source.subagentPaths.length === 0) {
+        skipped++;
+        return;
+      }
+      parsed = await parseSessionTree(sessionTree(source));
+      analysis = analyzeSession(parsed.events, pricing, {
+        coverage: parsed.coverage,
+        agentMeta: source.agentMeta,
+      });
+    } catch {
       skipped++;
-      continue;
+      return;
+    }
+    if (!analysis || !parsed || !source) {
+      skipped++;
+      return;
     }
     const sid = sanitizeFilename(analysis.sessionId ?? row.session_id ?? "session");
 
-    // transcript handling
+    // transcript handling — reuse parsed.events, cap early
     let transcript: ReturnType<typeof buildTranscript> | undefined;
     if (
       opts.includeTranscript &&
       (formats.has("json") || formats.has("md") || formats.has("html"))
     ) {
       try {
-        const source = await sessionSourceAt(row.path);
-        const parsed = await parseSessionTree(sessionTree(source));
-        const raw = buildTranscript(parsed.events)
-          .slice(0, 600)
-          .map((t) => ({ ...t, body: t.body.slice(0, 2000) }));
+        // Build transcript with cap to avoid OOM before slice
+        const rawAll = buildTranscript(parsed.events);
+        const capped = rawAll.length > 600 ? rawAll.slice(0, 600) : rawAll;
+        const raw = capped.map((t) => ({ ...t, body: t.body.slice(0, 2000) }));
         transcript = raw as typeof transcript;
       } catch {
         transcript = undefined;
@@ -385,8 +468,6 @@ async function writeDetailedArtifacts(
     const whatIf = sessionWhatIf(analysis.models, pricing);
     let health: ReturnType<typeof inspectSessionHealth> | undefined;
     try {
-      const source = await sessionSourceAt(row.path);
-      const parsed = await parseSessionTree(sessionTree(source));
       health = inspectSessionHealth(parsed.events, parsed.errors, parsed.coverage);
     } catch {
       health = undefined;
@@ -419,7 +500,6 @@ async function writeDetailedArtifacts(
           : {}),
         ...redacted,
       };
-      // If split mode we are called twice with redact true/false, so this is correct
       writeFileSync(join(jsonDir, `${sid}.json`), JSON.stringify(payload, null, 2), "utf-8");
     }
     if (formats.has("md")) {
@@ -476,12 +556,23 @@ async function writeDetailedArtifacts(
       }
     }
     written++;
-  }
+  };
+
+  // Run with concurrency
+  const runPool = async (): Promise<void> => {
+    const executing = new Set<Promise<void>>();
+    for (const row of queue) {
+      const p = processRow(row).finally(() => executing.delete(p));
+      executing.add(p);
+      if (executing.size >= CONCURRENCY) await Promise.race(executing);
+    }
+    await Promise.all(executing);
+  };
+  await runPool();
 
   if (formats.has("csv")) {
     const csvDir = join(baseDir, "csv");
     ensureDir(csvDir);
-    // turns.csv & models.csv are written here; sessions.csv is written separately from DB rows
     if (turnRows.length > 0 || needTurns)
       writeCsv(join(csvDir, "turns.csv"), turnHeaders, turnRows);
     if (modelRows.length > 0 || needModels)
@@ -508,6 +599,7 @@ export async function exportBundle(
   pricing: PricingTable,
   opts: ExportOptions,
 ): Promise<ExportResult> {
+  validateOutDir(opts.outDir);
   const rows = (() => {
     if (opts.scope.kind === "session") {
       // Session scope: try DB first, else we'll handle single-file path separately
@@ -882,26 +974,34 @@ export async function exportBundle(
 
 /** Resolve a scope from CLI args. */
 export function parseScope(args: string[]): ExportScope {
-  // Handle inline --project=<id> / --session=<id> and space form
-  for (const a of args) {
-    if (a.startsWith("--project="))
-      return { kind: "project", projectId: a.slice("--project=".length) };
-    if (a.startsWith("--session="))
-      return { kind: "session", idOrPath: a.slice("--session=".length) };
+  let project: string | undefined;
+  let session: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a.startsWith("--project=")) project = a.slice("--project=".length);
+    else if (a === "--project") {
+      const v = args[i + 1] as string | undefined;
+      if (v && !v.startsWith("-")) {
+        project = v;
+        i++;
+      }
+    } else if (a.startsWith("--session=")) session = a.slice("--session=".length);
+    else if (a === "--session") {
+      const v = args[i + 1] as string | undefined;
+      if (v && !v.startsWith("-")) {
+        session = v;
+        i++;
+      }
+    }
   }
-  const projIdx = args.indexOf("--project");
-  const sessIdx = args.indexOf("--session");
-  if (projIdx !== -1 && sessIdx !== -1)
-    throw new Error("--project and --session are mutually exclusive");
-  if (projIdx !== -1) {
-    const v = args[projIdx + 1];
-    if (!v || v.startsWith("-")) throw new Error("--project needs a value");
-    return { kind: "project", projectId: v };
+  if (project && session) throw new Error("--project and --session are mutually exclusive");
+  if (project) {
+    if (!project || project.startsWith("-")) throw new Error("--project needs a value");
+    return { kind: "project", projectId: project };
   }
-  if (sessIdx !== -1) {
-    const v = args[sessIdx + 1];
-    if (!v || v.startsWith("-")) throw new Error("--session needs a value");
-    return { kind: "session", idOrPath: v };
+  if (session) {
+    if (!session || session.startsWith("-")) throw new Error("--session needs a value");
+    return { kind: "session", idOrPath: session };
   }
   // Positional fallback: strip known flag values so "--format json,csv" doesn't become a session id
   const flagged = new Set(["--project", "--session", "--format", "--out"]);

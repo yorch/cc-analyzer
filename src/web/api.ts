@@ -108,6 +108,8 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       .get() as { n: number; t: number };
     return `${r.n}:${r.t}`;
   };
+  // Single-flight guard for bulk export to avoid /tmp OOM via parallel exports.
+  let isExporting = false;
   /**
    * One memo table for every cached thing here — built values and serialized
    * payloads alike. A slot holds one value at a time and rebuilds when its
@@ -570,6 +572,8 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // then zips and streams as attachment. Mirrors the CLI `export` so the two
   // can't drift; the zip step uses the `zip` CLI available on macOS/Linux.
   api.get("/api/export", async (c) => {
+    // Single-flight guard to avoid parallel large exports OOMing via /tmp + heap.
+    if (isExporting) return c.json({ error: "export already in progress, try again shortly" }, 429);
     const formatRaw = c.req.query("format");
     let formats: ReturnType<typeof parseFormats>;
     try {
@@ -608,15 +612,29 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     const redactParam = c.req.query("redact");
     const split = c.req.query("split") === "1" || c.req.query("split") === "true";
     const redact = split ? false : redactParam === "1" || redactParam === "true";
-    if (redactParam === "1" && split)
+    // Fix P1: any redact value with split should 400 (was only "1")
+    if (redactParam && split)
       return c.json({ error: "redact and split are mutually exclusive" }, 400);
     const includeTranscript =
       c.req.query("transcript") === "1" || c.req.query("transcript") === "true";
+    // Auth warning for network-exposed export (loopback-only is default; --host 0.0.0.0 disables it)
+    const host = c.req.header("host") ?? "";
+    const isLoopback =
+      host.includes("127.0.0.1") ||
+      host.includes("localhost") ||
+      host.includes("::1") ||
+      host === "";
+    if (!isLoopback) {
+      console.warn(
+        `export requested from non-loopback host ${host} — bulk export contains portfolio data; consider using ?redact=1 or restricting --host`,
+      );
+    }
     const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
     const tmpBase = mkdtempSync(joinPath(tmpdir(), "cc-analyzer-export-"));
     const outDir = joinPath(tmpBase, "export");
+    isExporting = true;
     try {
       await exportBundle(db, pricing, {
         scope,
@@ -643,8 +661,6 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
         zipped = false;
       }
       if (zipped) {
-        const file = Bun.file(zipPath);
-        const buf = await file.arrayBuffer();
         const suffix =
           scope.kind === "project"
             ? `-${scope.projectId.slice(0, 8)}`
@@ -655,15 +671,26 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
         const name = `cc-analyzer-export${suffix}${privacy}-${new Date().toISOString().slice(0, 10)}.zip`;
         c.header("Content-Type", "application/zip");
         c.header("Content-Disposition", `attachment; filename="${name}"`);
-        // Cleanup after response: schedule delete on next tick
-        setTimeout(() => {
+        // Stream file to avoid loading whole 400MB zip into heap (P0 DoS)
+        return stream(c, async (s) => {
+          const fileStream = Bun.file(zipPath).stream();
+          const reader = fileStream.getReader();
           try {
-            rmSync(tmpBase, { recursive: true, force: true });
-          } catch (_e) {
-            // ignore cleanup failure
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await s.write(value);
+            }
+          } finally {
+            reader.releaseLock();
+            try {
+              rmSync(tmpBase, { recursive: true, force: true });
+            } catch (_e) {
+              // ignore cleanup failure
+            }
+            isExporting = false;
           }
-        }, 5000);
-        return c.body(buf, 200);
+        });
       }
       // Fallback: no zip binary — return manifest + hint
       const manifestBuf = await Bun.file(joinPath(outDir, "manifest.json"))
@@ -671,7 +698,12 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
         .catch(() => new ArrayBuffer(0));
       const manifestText =
         manifestBuf.byteLength > 0 ? new TextDecoder().decode(manifestBuf) : "{}";
-      rmSync(tmpBase, { recursive: true, force: true });
+      try {
+        rmSync(tmpBase, { recursive: true, force: true });
+      } catch (_e) {
+        // ignore
+      }
+      isExporting = false;
       return c.json(
         { error: "zip not available on server", manifest: JSON.parse(manifestText) },
         500,
@@ -682,6 +714,7 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       } catch (_e) {
         // ignore cleanup failure
       }
+      isExporting = false;
       return c.json({ error: (e as Error).message }, 500);
     }
   });
