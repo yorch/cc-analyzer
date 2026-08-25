@@ -46,7 +46,7 @@ const mdEscape = (s: string): string =>
 export function sanitizeFilename(s: string): string {
   return (
     s
-      .replaceAll(/[^a-zA-Z0-9._-]/g, "-")
+      .replaceAll(/[^a-zA-Z0-9_-]/g, "-")
       .replaceAll(/-+/g, "-")
       .replaceAll(/^-|-$/g, "")
       .slice(0, 80) || "session"
