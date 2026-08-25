@@ -51,7 +51,12 @@ import {
   sanitizeFilename,
 } from "../../core/session-markdown.ts";
 import { sessionCostRank } from "../../core/stats.ts";
-import { CORRECTION_CAVEAT, WHATIF_CAVEAT, type WhatIfRepricing } from "../../core/stats-types.ts";
+import {
+  CORRECTION_CAVEAT,
+  SKILL_COST_CAVEAT,
+  WHATIF_CAVEAT,
+  type WhatIfRepricing,
+} from "../../core/stats-types.ts";
 import type { TurnStep } from "../../core/steps.ts";
 import { buildTranscript, type TranscriptItem } from "../../core/transcript.ts";
 import { brailleChart, markerRow, sparkline } from "../charts.ts";
@@ -905,28 +910,37 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
       {Object.keys(a.tools).length > 0 &&
         line(
           "tools",
-          Object.entries(a.tools)
-            .sort((x, y) => y[1] - x[1])
-            .map(([tool, count]) => {
+          (() => {
+            const sorted = Object.entries(a.tools).sort((x, y) => y[1] - x[1]);
+            const shown = sorted.slice(0, 6).map(([tool, count]) => {
               const errs = a.toolErrors[tool] ?? 0;
-              return `${tool}:${count}${errs > 0 ? ` (${errs} err ${Math.round((errs / count) * 100)}%)` : ""}`;
-            })
-            .join(" · ") || "-",
+              const pct = count > 0 ? `${Math.round((errs / count) * 100)}%` : "0%";
+              return `${tool}:${count} (${errs} err ${pct})`;
+            });
+            const more = sorted.length > 6 ? ` +${sorted.length - 6} more` : "";
+            return shown.join(" · ") + more || "-";
+          })(),
         )}
-      {Object.keys(a.skills).length > 0 &&
-        line(
-          "skills",
-          Object.entries(a.skills)
-            .sort((x, y) => y[1] - x[1])
-            .map(([skill, uses]) => {
-              const attr = a.skillTurnCosts[skill];
-              const errs = a.skillErrors[skill] ?? 0;
-              const errPct = uses > 0 ? ` ${Math.round((errs / uses) * 100)}% err` : "";
-              const cost = formatUSD(attr?.cost ?? 0);
-              return `${skill}:${uses} (${attr?.turns ?? 0} turns ${cost}${errs > 0 ? `,${errPct}` : ""})`;
-            })
-            .join(" · ") || "-",
-        )}
+      {Object.keys(a.skills).length > 0 && (
+        <Box flexDirection="column">
+          {line(
+            "skills",
+            (() => {
+              const sorted = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
+              const shown = sorted.slice(0, 6).map(([skill, uses]) => {
+                const attr = a.skillTurnCosts[skill];
+                const errs = a.skillErrors[skill] ?? 0;
+                const errPct = uses > 0 ? `${Math.round((errs / uses) * 100)}%` : "0%";
+                const cost = formatUSD(attr?.cost ?? 0);
+                return `${skill}:${uses} (${attr?.turns ?? 0} turns ${cost} ${errs} err ${errPct})`;
+              });
+              const more = sorted.length > 6 ? ` +${sorted.length - 6} more` : "";
+              return shown.join(" · ") + more || "-";
+            })(),
+          )}
+          <Text color={role.muted}>{SKILL_COST_CAVEAT}</Text>
+        </Box>
+      )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
       {/* Per-burst rows answer "which subagent burst cost $3", which the
        * type list above cannot. Rendered here rather than in the charts
