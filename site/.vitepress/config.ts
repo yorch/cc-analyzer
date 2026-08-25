@@ -1,3 +1,4 @@
+// @ts-nocheck — site has its own VitePress toolchain (site/package.json), not the root tsconfig
 import { defineConfig } from "vitepress";
 import { fileURLToPath } from "node:url";
 
@@ -121,6 +122,7 @@ export default defineConfig({
             { text: "7. Analytics & Insights", link: "/docs/7-analytics-and-insights" },
             { text: "8. Updates & Distribution", link: "/docs/8-updates-and-distribution" },
             { text: "9. Docs Site", link: "/docs/9-docs-site" },
+            { text: "10. Recipes & Use Cases", link: "/docs/10-recipes" },
             { text: "Glossary", link: "/docs/glossary" },
           ],
         },

@@ -28,7 +28,13 @@ import {
   sessionPathById,
   sessionRowById,
 } from "../core/queries.ts";
+import { inspectSessionHealth } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
+import {
+  buildSessionHtml,
+  buildSessionMarkdown,
+  sanitizeFilename,
+} from "../core/session-markdown.ts";
 import {
   activityHeatmap,
   analyticsRollup,
@@ -430,6 +436,91 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     const parsed = await readSession(path);
     if (!parsed) return c.json(staleIndex, 404);
     return c.json(buildTranscript(parsed.events));
+  });
+
+  // Shareable per-session export — markdown / html / json, single-file, no server needed
+  // to view. Mirrors the CLI `analyze --md|--html|--json --out` builder so both
+  // surfaces produce byte-identical reports. Redaction hides prompt/transcript
+  // text for external sharing; transcript inclusion is opt-in (size!).
+  api.get("/api/sessions/:id/report", async (c) => {
+    const id = c.req.param("id");
+    const row = sessionRowById(db, id);
+    if (!row) return c.json({ error: "session not found" }, 404);
+    const parsed = await readSession(row.path);
+    if (!parsed) return c.json(staleIndex, 404);
+    const analysis = analyzeSession(parsed.events, pricing, {
+      coverage: parsed.coverage,
+      agentMeta: parsed.agentMeta,
+    });
+    const format = (c.req.query("format") ?? "md").toLowerCase();
+    if (format !== "md" && format !== "markdown" && format !== "html" && format !== "json")
+      return c.json({ error: 'format must be "md", "html", or "json"' }, 400);
+    const redact = c.req.query("redact") === "1";
+    const includeTranscript = c.req.query("transcript") === "1";
+    const whatIf = sessionWhatIf(analysis.models, pricing);
+    const health = inspectSessionHealth(parsed.events, parsed.errors, parsed.coverage);
+    const rank = sessionCostRank(db, id) ?? null;
+    const costBasis = getCostBasis();
+    const rawTranscript = includeTranscript ? buildTranscript(parsed.events) : undefined;
+    const transcript = rawTranscript
+      ? rawTranscript.slice(0, 600).map((t) => ({ ...t, body: t.body.slice(0, 2000) }))
+      : undefined;
+    const base = sanitizeFilename(analysis.sessionId ?? id);
+    if (format === "html") {
+      const html = buildSessionHtml(analysis, {
+        costBasis,
+        whatIf,
+        health,
+        rank,
+        redact,
+        includeTranscript,
+        transcript,
+      });
+      c.header("Content-Type", "text/html; charset=utf-8");
+      c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.html"`);
+      return c.body(html);
+    }
+    if (format === "json") {
+      // SAFETY: redact strips title/path/files + caps transcript at 600/2000.
+      const redactedTranscript =
+        includeTranscript && transcript
+          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
+          : undefined;
+      const payload: Record<string, unknown> = {
+        ...analysis,
+        health,
+        whatIf,
+        rank,
+        costBasis,
+        ...(redact
+          ? {
+              title: "[redacted]",
+              projectPath: "[redacted]",
+              filesTouched: [],
+              bashCommands: {},
+              bashErrors: {},
+              commandHeads: {},
+              commandHeadErrors: {},
+              turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
+            }
+          : {}),
+      };
+      if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
+      c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.json"`);
+      return c.json(payload);
+    }
+    const md = buildSessionMarkdown(analysis, {
+      costBasis,
+      whatIf,
+      health,
+      rank,
+      redact,
+      includeTranscript,
+      transcript,
+    });
+    c.header("Content-Type", "text/markdown; charset=utf-8");
+    c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.md"`);
+    return c.body(md);
   });
 
   // Analyze-with-Claude-Code: spawn a locally-installed `claude` headless and

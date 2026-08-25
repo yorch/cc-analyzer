@@ -255,7 +255,12 @@ async function streamAnalyze(
   let buf = "";
   const flush = (line: string) => {
     const trimmed = line.trim();
-    if (trimmed) onEvent(JSON.parse(trimmed) as AnalysisEvent);
+    if (!trimmed) return;
+    try {
+      onEvent(JSON.parse(trimmed) as AnalysisEvent);
+    } catch {
+      // ignore malformed NDJSON line (heartbeat / partial)
+    }
   };
   for (;;) {
     const { done, value } = await reader.read();
@@ -326,6 +331,38 @@ export const api = {
   trends: () => get<TrendsResponse>("/api/trends"),
   analytics: () => get<AnalyticsResponse>("/api/analytics"),
   audit: () => get<SetupAudit>("/api/audit"),
+  /** Download a shareable per-session export. Mirrors the CLI `analyze --md|--html|--json --out`. */
+  sessionReport: (
+    id: string,
+    opts: { format?: "md" | "html" | "json"; redact?: boolean; transcript?: boolean } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.format) params.set("format", opts.format);
+    if (opts.redact) params.set("redact", "1");
+    if (opts.transcript) params.set("transcript", "1");
+    const q = params.toString();
+    const url = `/api/sessions/${encodeURIComponent(id)}/report${q ? `?${q}` : ""}`;
+    return {
+      url,
+      fetch: () =>
+        fetch(url).then((r) => {
+          if (!r.ok) throw new ApiError(r.status, url, undefined);
+          return r.blob();
+        }),
+    };
+  },
+  /** Fetch the markdown export as text (for Copy button). */
+  sessionReportText: (id: string, opts: { redact?: boolean; transcript?: boolean } = {}) => {
+    const params = new URLSearchParams({ format: "md" });
+    if (opts.redact) params.set("redact", "1");
+    if (opts.transcript) params.set("transcript", "1");
+    return fetch(`/api/sessions/${encodeURIComponent(id)}/report?${params.toString()}`).then(
+      (r) => {
+        if (!r.ok) throw new ApiError(r.status, `/api/sessions/${id}/report`, undefined);
+        return r.text();
+      },
+    );
+  },
   /** One week's digest. `insights: false` asks the server to skip the
    * current-state insight snapshot — the dashboard card renders none of it, and
    * assembling those signals is the expensive half of the response. */
