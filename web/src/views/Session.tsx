@@ -24,6 +24,7 @@ import {
 import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
+import { ExportPanel } from "../ExportPanel.tsx";
 import { count, duration, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
 import { SessionCharts } from "../SessionCharts.tsx";
@@ -141,6 +142,7 @@ export function Session({ id }: { id: string }) {
       </div>
 
       <SessionExport id={id} />
+      <ExportPanel sessionId={id} />
 
       <div className="tabs" role="tablist" aria-label="Session Views">
         {SESSION_TABS.map((t, index) => (

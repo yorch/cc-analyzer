@@ -29,6 +29,7 @@ import {
   sessionSourceAt,
   sessionTree,
 } from "../core/discover.ts";
+import { exportBundle, parseFormats, parseScope } from "../core/export.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
@@ -121,6 +122,12 @@ Usage:
   cc-analyzer insights [--json]        Ranked, actionable findings across the whole portfolio
   cc-analyzer report [--week YYYY-MM-DD] [--md|--json]
                                        Weekly digest: last complete week vs the week before
+  cc-analyzer export [--project <id>] [--session <id|path>]
+                                     [--format json,csv,md,html|all] [--out <dir>]
+                                     [--redact|--split] [--include-transcript] [--zip]
+                                       Export portfolio / project / session data.
+                                       Formats are mixable (default json). Folder output;
+                                       --zip writes a .zip, --split emits private/ + shareable/.
   cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                        Launch the local web app
   cc-analyzer pricing update           Refresh the pricing cache
@@ -1008,6 +1015,105 @@ async function cmdUpdate(checkOnly: boolean): Promise<number> {
   }
 }
 
+async function cmdExport(rest: string[]): Promise<number> {
+  let scope: ReturnType<typeof parseScope>;
+  try {
+    scope = parseScope(rest);
+  } catch (e) {
+    console.error(`error: ${(e as Error).message}`);
+    return 2;
+  }
+  const { value: formatRaw, rest: rest1 } = takeFlagValue(rest, "--format");
+  let formats: ReturnType<typeof parseFormats>;
+  try {
+    formats = parseFormats(formatRaw);
+  } catch (e) {
+    console.error(`error: ${(e as Error).message}`);
+    return 2;
+  }
+  const { value: outRaw, rest: rest2 } = takeFlagValue(rest1, "--out");
+  const redact = rest2.includes("--redact");
+  const split = rest2.includes("--split");
+  const includeTranscript = rest2.includes("--include-transcript");
+  const zip = rest2.includes("--zip");
+  if (redact && split) {
+    console.error(
+      "error: --redact and --split are mutually exclusive (split already includes both).",
+    );
+    return 2;
+  }
+  // Unknown flag guard: allow only known flags for clean errors
+  const known = new Set([
+    "--format",
+    "--out",
+    "--redact",
+    "--split",
+    "--include-transcript",
+    "--zip",
+    "--project",
+    "--session",
+  ]);
+  for (const a of rest2) {
+    if (a.startsWith("--") && !known.has(a)) {
+      console.error(`error: unknown flag '${a}' for export. See \`cc-analyzer help\`.`);
+      return 2;
+    }
+  }
+  // Resolve out dir: folder is default; file not allowed for bulk scopes
+  const defaultName = `cc-analyzer-export-${new Date().toISOString().slice(0, 10)}`;
+  const outDir = outRaw?.trim() ? outRaw.trim() : defaultName;
+  if (outDir.trim() === "") {
+    console.error("error: --out needs a directory.");
+    return 2;
+  }
+  // For session scope via indexed id, we need to validate projectId if --project was given as qualified id
+  // Validate project exists when scope is project
+  if (scope.kind === "project") {
+    const dbCheck = openDb();
+    const rows = dbCheck
+      .query("SELECT 1 FROM sessions WHERE project_id = ? LIMIT 1")
+      .get(scope.projectId) as unknown;
+    dbCheck.close();
+    if (!rows) {
+      console.error(
+        `error: project '${scope.projectId}' not found in index. Run \`cc-analyzer projects\` to list ids. Re-index if the project is new.`,
+      );
+      return 1;
+    }
+  }
+  // Session scope with --project value already handled via scope; positional session via file will be validated in exportBundle
+  const db = openDb();
+  // For portfolio/project scope the index must not be empty (otherwise empty zip).
+  if ((scope.kind === "portfolio" || scope.kind === "project") && isIndexEmpty(db)) {
+    db.close();
+    console.error("Index is empty. Run `cc-analyzer index` first.");
+    return 1;
+  }
+  const { table: pricing } = await loadPricing();
+  try {
+    const result = await exportBundle(db, pricing, {
+      scope,
+      formats,
+      outDir,
+      redact,
+      split,
+      includeTranscript,
+      zip,
+    });
+    db.close();
+    const privacy = split ? "split (private/ + shareable/)" : redact ? "redacted" : "private";
+    console.log(
+      `Exported ${result.sessions} sessions (${privacy}, ${[...formats].join(",")}) to ${result.outDir}${zip ? ".zip" : ""}${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`,
+    );
+    if (split) console.log(`  private/ and shareable/ subfolders present.`);
+    return 0;
+  } catch (e) {
+    db.close();
+    console.error(`export failed: ${(e as Error).message}`);
+    return 1;
+  }
+}
+
 /** Commands that emit a passive "update available" notice when appropriate. */
 const NOTIFY_COMMANDS = new Set([
   "projects",
@@ -1019,6 +1125,7 @@ const NOTIFY_COMMANDS = new Set([
   "audit",
   "insights",
   "report",
+  "export",
   "pricing",
 ]);
 
@@ -1034,7 +1141,7 @@ const NOTIFY_COMMANDS = new Set([
  * not pointed at). Refusing is the honest option; `claude-dir set` is the way to
  * scope these for real.
  */
-const INDEX_BACKED = new Set(["index", "stats", "audit", "insights", "report", "serve"]);
+const INDEX_BACKED = new Set(["index", "stats", "audit", "insights", "report", "export", "serve"]);
 
 /** Whether the roots in effect came from `--claude-dir=` rather than config. */
 const flagScoped = (): boolean => claudeRoots()[0]?.source === "flag";
@@ -1072,6 +1179,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "audit",
     "insights",
     "report",
+    "export",
     "serve",
     "pricing",
     "update",
@@ -1162,6 +1270,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       }
       return cmdReport(json, md, weekArg(rest));
     }
+    case "export":
+      return cmdExport(rest);
     case "serve": {
       const portArg = rest.find((a) => a.startsWith("--port="));
       let port: number | undefined;

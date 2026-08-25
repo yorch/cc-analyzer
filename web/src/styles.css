@@ -1975,3 +1975,46 @@ button.legend-item.interactive {
   font-family: var(--font-mono);
   font-size: 12px;
 }
+
+/* export panel */
+.export-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+.export-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.export-select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+.export-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+.export-button {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.export-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.export-hint {
+  margin-top: 8px;
+}

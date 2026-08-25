@@ -14,6 +14,7 @@ import type { CostBasis } from "../core/cost-framing.ts";
 import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { sessionSourceAt, sessionTree } from "../core/discover.ts";
+import { exportBundle, parseFormats } from "../core/export.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { parseSessionTree } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
@@ -562,6 +563,127 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     c.header("Content-Type", "text/markdown; charset=utf-8");
     c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.md"`);
     return c.body(md);
+  });
+
+  // Bulk export: portfolio / project / session × json / csv / md / html, mixable,
+  // with redact/split privacy. Writes to a temp dir via the shared exportBundle
+  // then zips and streams as attachment. Mirrors the CLI `export` so the two
+  // can't drift; the zip step uses the `zip` CLI available on macOS/Linux.
+  api.get("/api/export", async (c) => {
+    const formatRaw = c.req.query("format");
+    let formats: ReturnType<typeof parseFormats>;
+    try {
+      formats = parseFormats(formatRaw ?? undefined);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+    const project = c.req.query("project");
+    const session = c.req.query("session");
+    if (project && session)
+      return c.json({ error: "project and session are mutually exclusive" }, 400);
+    const scope = session
+      ? { kind: "session" as const, idOrPath: session }
+      : project
+        ? { kind: "project" as const, projectId: project }
+        : { kind: "portfolio" as const };
+    // Lenient project validation: 404 if unknown, 409 if ambiguous (same rule as /api/projects/:id/*).
+    if (scope.kind === "project") {
+      const m = resolveIndexedProject(db, scope.projectId);
+      if (m.status === "unknown") return c.json({ error: "project not found" }, 404);
+      if (m.status === "ambiguous")
+        return c.json({ error: "ambiguous project", candidates: m.candidates }, 409);
+      scope.projectId = m.id;
+    }
+    if (scope.kind === "session" && !sessionRowById(db, scope.idOrPath)) {
+      // Not indexed — allow direct file fallback? Web is DB-derived only (no arbitrary path read), so 404.
+      return c.json({ error: "session not found" }, 404);
+    }
+    // Index empty guard for portfolio/project (same as stats/insights).
+    if (
+      (scope.kind === "portfolio" || scope.kind === "project") &&
+      db.query("SELECT 1 FROM sessions LIMIT 1").get() === null
+    ) {
+      return c.json({ error: "index is empty" }, 404);
+    }
+    const redactParam = c.req.query("redact");
+    const split = c.req.query("split") === "1" || c.req.query("split") === "true";
+    const redact = split ? false : redactParam === "1" || redactParam === "true";
+    if (redactParam === "1" && split)
+      return c.json({ error: "redact and split are mutually exclusive" }, 400);
+    const includeTranscript =
+      c.req.query("transcript") === "1" || c.req.query("transcript") === "true";
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const tmpBase = mkdtempSync(joinPath(tmpdir(), "cc-analyzer-export-"));
+    const outDir = joinPath(tmpBase, "export");
+    try {
+      await exportBundle(db, pricing, {
+        scope,
+        formats,
+        outDir,
+        redact,
+        split,
+        includeTranscript,
+        zip: false,
+      });
+      const zipPath = `${outDir}.zip`;
+      // Best-effort zip via CLI (available on macOS/Linux). Fallback: stream folder listing as JSON if zip missing.
+      let zipped = false;
+      try {
+        const { dirname: dirName2, basename: baseName2 } = await import("node:path");
+        const proc = Bun.spawn(["zip", "-r", "-q", zipPath, baseName2(outDir)], {
+          stdout: "pipe",
+          stderr: "pipe",
+          cwd: dirName2(outDir) || ".",
+        });
+        await proc.exited;
+        if (proc.exitCode === 0 && existsSync(zipPath)) zipped = true;
+      } catch (_e) {
+        zipped = false;
+      }
+      if (zipped) {
+        const file = Bun.file(zipPath);
+        const buf = await file.arrayBuffer();
+        const suffix =
+          scope.kind === "project"
+            ? `-${scope.projectId.slice(0, 8)}`
+            : scope.kind === "session"
+              ? `-${scope.idOrPath.slice(0, 8)}`
+              : "";
+        const privacy = split ? "-split" : redact ? "-redacted" : "";
+        const name = `cc-analyzer-export${suffix}${privacy}-${new Date().toISOString().slice(0, 10)}.zip`;
+        c.header("Content-Type", "application/zip");
+        c.header("Content-Disposition", `attachment; filename="${name}"`);
+        // Cleanup after response: schedule delete on next tick
+        setTimeout(() => {
+          try {
+            rmSync(tmpBase, { recursive: true, force: true });
+          } catch (_e) {
+            // ignore cleanup failure
+          }
+        }, 5000);
+        return c.body(buf, 200);
+      }
+      // Fallback: no zip binary — return manifest + hint
+      const manifestBuf = await Bun.file(joinPath(outDir, "manifest.json"))
+        .arrayBuffer()
+        .catch(() => new ArrayBuffer(0));
+      const manifestText =
+        manifestBuf.byteLength > 0 ? new TextDecoder().decode(manifestBuf) : "{}";
+      rmSync(tmpBase, { recursive: true, force: true });
+      return c.json(
+        { error: "zip not available on server", manifest: JSON.parse(manifestText) },
+        500,
+      );
+    } catch (e) {
+      try {
+        rmSync(tmpBase, { recursive: true, force: true });
+      } catch (_e) {
+        // ignore cleanup failure
+      }
+      return c.json({ error: (e as Error).message }, 500);
+    }
   });
 
   // Analyze-with-Claude-Code: spawn a locally-installed `claude` headless and

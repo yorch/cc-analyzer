@@ -380,6 +380,37 @@ export const api = {
       },
     );
   },
+  /** Bulk export: portfolio / project / session × json / csv / md / html (mixable), with redact/split privacy.
+   *  Mirrors the CLI `export` — always streams a zip.
+   */
+  bulkExport: (
+    opts: {
+      format?: string;
+      project?: string;
+      session?: string;
+      redact?: boolean;
+      split?: boolean;
+      transcript?: boolean;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.format) params.set("format", opts.format);
+    if (opts.project) params.set("project", opts.project);
+    if (opts.session) params.set("session", opts.session);
+    if (opts.redact) params.set("redact", "1");
+    if (opts.split) params.set("split", "1");
+    if (opts.transcript) params.set("transcript", "1");
+    const q = params.toString();
+    const url = `/api/export${q ? `?${q}` : ""}`;
+    return {
+      url,
+      fetch: () =>
+        fetch(url).then((r) => {
+          if (!r.ok) throw new ApiError(r.status, url, undefined);
+          return r.blob();
+        }),
+    };
+  },
   /** One week's digest. `insights: false` asks the server to skip the
    * current-state insight snapshot — the dashboard card renders none of it, and
    * assembling those signals is the expensive half of the response. */

@@ -13,6 +13,7 @@ import {
   type ToolUsageRow,
   type TurnDepthStats,
 } from "../api.ts";
+import { ExportPanel } from "../ExportPanel.tsx";
 import { count, relTime, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
@@ -121,6 +122,8 @@ export function Project({ id }: { id: string }) {
         value={view}
         onChange={setView}
       />
+
+      {view === "overview" && <ExportPanel projectId={id} />}
 
       {view === "overview" && trends && (
         <ViewPanel id="project" view={view}>

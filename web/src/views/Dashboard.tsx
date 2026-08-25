@@ -23,6 +23,7 @@ import {
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
+import { ExportPanel } from "../ExportPanel.tsx";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
@@ -171,6 +172,8 @@ export function Dashboard() {
       <GlobalSearch />
 
       <WeeklyDigestCard costBasis={data.costBasis} />
+
+      <ExportPanel />
 
       <StatCards data={data} />
 
