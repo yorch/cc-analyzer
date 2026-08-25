@@ -14,6 +14,7 @@ import type { CostBasis } from "../core/cost-framing.ts";
 import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { sessionSourceAt, sessionTree } from "../core/discover.ts";
+import { exportBundle, parseFormats } from "../core/export.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { parseSessionTree } from "../core/parser.ts";
 import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
@@ -107,6 +108,8 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       .get() as { n: number; t: number };
     return `${r.n}:${r.t}`;
   };
+  // Single-flight guard for bulk export to avoid /tmp OOM via parallel exports.
+  let isExporting = false;
   /**
    * One memo table for every cached thing here — built values and serialized
    * payloads alike. A slot holds one value at a time and rebuilds when its
@@ -562,6 +565,158 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     c.header("Content-Type", "text/markdown; charset=utf-8");
     c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.md"`);
     return c.body(md);
+  });
+
+  // Bulk export: portfolio / project / session × json / csv / md / html, mixable,
+  // with redact/split privacy. Writes to a temp dir via the shared exportBundle
+  // then zips and streams as attachment. Mirrors the CLI `export` so the two
+  // can't drift; the zip step uses the `zip` CLI available on macOS/Linux.
+  api.get("/api/export", async (c) => {
+    // Single-flight guard to avoid parallel large exports OOMing via /tmp + heap.
+    if (isExporting) return c.json({ error: "export already in progress, try again shortly" }, 429);
+    const formatRaw = c.req.query("format");
+    let formats: ReturnType<typeof parseFormats>;
+    try {
+      formats = parseFormats(formatRaw ?? undefined);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+    const project = c.req.query("project");
+    const session = c.req.query("session");
+    if (project && session)
+      return c.json({ error: "project and session are mutually exclusive" }, 400);
+    const scope = session
+      ? { kind: "session" as const, idOrPath: session }
+      : project
+        ? { kind: "project" as const, projectId: project }
+        : { kind: "portfolio" as const };
+    // Lenient project validation: 404 if unknown, 409 if ambiguous (same rule as /api/projects/:id/*).
+    if (scope.kind === "project") {
+      const m = resolveIndexedProject(db, scope.projectId);
+      if (m.status === "unknown") return c.json({ error: "project not found" }, 404);
+      if (m.status === "ambiguous")
+        return c.json({ error: "ambiguous project", candidates: m.candidates }, 409);
+      scope.projectId = m.id;
+    }
+    if (scope.kind === "session" && !sessionRowById(db, scope.idOrPath)) {
+      // Not indexed — allow direct file fallback? Web is DB-derived only (no arbitrary path read), so 404.
+      return c.json({ error: "session not found" }, 404);
+    }
+    // Index empty guard for portfolio/project (same as stats/insights).
+    if (
+      (scope.kind === "portfolio" || scope.kind === "project") &&
+      db.query("SELECT 1 FROM sessions LIMIT 1").get() === null
+    ) {
+      return c.json({ error: "index is empty" }, 404);
+    }
+    const redactParam = c.req.query("redact");
+    const split = c.req.query("split") === "1" || c.req.query("split") === "true";
+    const redact = split ? false : redactParam === "1" || redactParam === "true";
+    // Fix P1: any redact value with split should 400 (was only "1")
+    if (redactParam && split)
+      return c.json({ error: "redact and split are mutually exclusive" }, 400);
+    const includeTranscript =
+      c.req.query("transcript") === "1" || c.req.query("transcript") === "true";
+    // Auth warning for network-exposed export (loopback-only is default; --host 0.0.0.0 disables it)
+    const host = c.req.header("host") ?? "";
+    const isLoopback =
+      host.includes("127.0.0.1") ||
+      host.includes("localhost") ||
+      host.includes("::1") ||
+      host === "";
+    if (!isLoopback) {
+      console.warn(
+        `export requested from non-loopback host ${host} — bulk export contains portfolio data; consider using ?redact=1 or restricting --host`,
+      );
+    }
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const tmpBase = mkdtempSync(joinPath(tmpdir(), "cc-analyzer-export-"));
+    const outDir = joinPath(tmpBase, "export");
+    isExporting = true;
+    try {
+      await exportBundle(db, pricing, {
+        scope,
+        formats,
+        outDir,
+        redact,
+        split,
+        includeTranscript,
+        zip: false,
+      });
+      const zipPath = `${outDir}.zip`;
+      // Best-effort zip via CLI (available on macOS/Linux). Fallback: stream folder listing as JSON if zip missing.
+      let zipped = false;
+      try {
+        const { dirname: dirName2, basename: baseName2 } = await import("node:path");
+        const proc = Bun.spawn(["zip", "-r", "-q", zipPath, baseName2(outDir)], {
+          stdout: "pipe",
+          stderr: "pipe",
+          cwd: dirName2(outDir) || ".",
+        });
+        await proc.exited;
+        if (proc.exitCode === 0 && existsSync(zipPath)) zipped = true;
+      } catch (_e) {
+        zipped = false;
+      }
+      if (zipped) {
+        const suffix =
+          scope.kind === "project"
+            ? `-${scope.projectId.slice(0, 8)}`
+            : scope.kind === "session"
+              ? `-${scope.idOrPath.slice(0, 8)}`
+              : "";
+        const privacy = split ? "-split" : redact ? "-redacted" : "";
+        const name = `cc-analyzer-export${suffix}${privacy}-${new Date().toISOString().slice(0, 10)}.zip`;
+        c.header("Content-Type", "application/zip");
+        c.header("Content-Disposition", `attachment; filename="${name}"`);
+        // Stream file to avoid loading whole 400MB zip into heap (P0 DoS)
+        return stream(c, async (s) => {
+          const fileStream = Bun.file(zipPath).stream();
+          const reader = fileStream.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await s.write(value);
+            }
+          } finally {
+            reader.releaseLock();
+            try {
+              rmSync(tmpBase, { recursive: true, force: true });
+            } catch (_e) {
+              // ignore cleanup failure
+            }
+            isExporting = false;
+          }
+        });
+      }
+      // Fallback: no zip binary — return manifest + hint
+      const manifestBuf = await Bun.file(joinPath(outDir, "manifest.json"))
+        .arrayBuffer()
+        .catch(() => new ArrayBuffer(0));
+      const manifestText =
+        manifestBuf.byteLength > 0 ? new TextDecoder().decode(manifestBuf) : "{}";
+      try {
+        rmSync(tmpBase, { recursive: true, force: true });
+      } catch (_e) {
+        // ignore
+      }
+      isExporting = false;
+      return c.json(
+        { error: "zip not available on server", manifest: JSON.parse(manifestText) },
+        500,
+      );
+    } catch (e) {
+      try {
+        rmSync(tmpBase, { recursive: true, force: true });
+      } catch (_e) {
+        // ignore cleanup failure
+      }
+      isExporting = false;
+      return c.json({ error: (e as Error).message }, 500);
+    }
   });
 
   // Analyze-with-Claude-Code: spawn a locally-installed `claude` headless and

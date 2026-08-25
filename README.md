@@ -179,6 +179,12 @@ cc-analyzer audit [--json]           # cross-reference your installed setup with
 cc-analyzer insights [--json]        # ranked, actionable findings across the whole portfolio
 cc-analyzer report [--week YYYY-MM-DD] [--md|--json]
                                      # weekly digest: last complete week vs the week before
+cc-analyzer export [--project <id>] [--session <id|path>]
+                                     [--format json,csv,md,html|all] [--out <dir>]
+                                     [--redact|--split] [--include-transcript] [--zip]
+                                     # bulk export portfolio/project/session — folder by default,
+                                     # --zip for archive; --split emits private/ + shareable/
+                                     # reuses same builders as analyze; parquet deferred
 cc-analyzer serve [--port=4317] [--host=127.0.0.1] [--refresh] [--open]
                                      # launch the local web app
 cc-analyzer pricing update           # refresh the pricing cache
@@ -216,6 +222,19 @@ file. `<projectId>` is the encoded directory name shown by `projects`.
 ### Sharing a session
 
 Every session can be exported as a **single-file, shareable artifact** — Markdown, standalone HTML (inline dark theme, print stylesheet) or JSON — built by the same bun-free `src/core/session-markdown.ts` so the CLI, web (`GET /api/sessions/:id/report?format=md&redact=1&transcript=1`) and TUI (`e` → `f`/`r`/`t` → `w` writes `./cc-analyzer-<id>.*`) are byte-identical. By default exports omit the transcript (opt-in with `--include-transcript`, capped at 600 items × 2000 chars, sampled charts at 300) and show file paths; add `--redact` to hide prompts, transcript bodies, title, project path and file lists for external sharing (sanitized filenames, `Content-Disposition: attachment` on the web). See the [Recipes & Use Cases](https://cc-analyzer.brnby.com/docs/10-recipes) for redacted team share, pre-standup thrash triage, post-mortem with transcript, what-if, and weekly digest recipes.
+
+### Bulk export (portfolio / project / session)
+
+`cc-analyzer export` writes a **folder** (add `--zip` for `...zip`) covering all three scopes — portfolio (default), `--project <id>`, or `--session <id|path>` — in any mix of formats via `--format json,csv,md,html|all` (default `json`). It reuses the same bun-free builders as `analyze` (`session-markdown.ts`, `analyze.ts`) so the Web `GET /api/export?format=&project=&session=&redact=&split=&transcript=` and CLI are byte-identical. Output is `manifest.json` + `portfolio.json`/`project.json`/`session.json` + `sessions.json` + `sessions/<id>.json` + `markdown/<id>.md` + `html/<id>.html` + `csv/sessions.csv` + `csv/turns.csv` + `csv/models.csv`. Privacy is `private` by default, `--redact` for shareable, or `--split` for both trees `private/` + `shareable/` (shareable hides prompts/transcript, title, project path, files). Add `--include-transcript` to embed the capped transcript (600×2000). Examples:
+
+```bash
+cc-analyzer export --format all --out ./export --split   # whole portfolio, both trees
+cc-analyzer export --project <id> --format json,csv --out ./proj
+cc-analyzer export --session <id> --format md --redact --out ./share
+curl "http://localhost:4317/api/export?format=json,csv&project=<id>&redact=1" -o export.zip
+```
+
+CSV is `sessions.csv` (one row per session) + `turns.csv` (one row per turn, prompt redacted when `--redact`) + `models.csv` (one row per model per session). Parquet is deferred — CSV covers the analytics use-case for now. See `cc-analyzer export --help` and the web Dashboard/Project/Session **Export** panels.
 
 ### What the analysis reports
 
