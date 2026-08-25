@@ -748,6 +748,7 @@ function mdToHtml(md: string): string {
       // Collect contiguous table lines
       const tableLines: string[] = [];
       while (i < lines.length && (lines[i]?.startsWith("| ") ?? false)) {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by while condition
         tableLines.push(lines[i]!);
         i++;
       }
