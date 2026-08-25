@@ -902,18 +902,30 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
       {line("tool calls", String(a.totals.toolCalls))}
       {line("duration", formatDuration(a.durationMs))}
       {line("models", Object.keys(a.models).join(", ") || "-")}
-      {line(
-        "tools",
-        Object.entries(a.tools)
-          .map(([t, n]) => `${t}:${n}`)
-          .join(" ") || "-",
-      )}
+      {Object.keys(a.tools).length > 0 &&
+        line(
+          "tools",
+          Object.entries(a.tools)
+            .sort((x, y) => y[1] - x[1])
+            .map(([tool, count]) => {
+              const errs = a.toolErrors[tool] ?? 0;
+              return `${tool}:${count}${errs > 0 ? ` (${errs} err ${Math.round((errs / count) * 100)}%)` : ""}`;
+            })
+            .join(" · ") || "-",
+        )}
       {Object.keys(a.skills).length > 0 &&
         line(
           "skills",
           Object.entries(a.skills)
-            .map(([s, n]) => `${s}:${n}`)
-            .join(" "),
+            .sort((x, y) => y[1] - x[1])
+            .map(([skill, uses]) => {
+              const attr = a.skillTurnCosts[skill];
+              const errs = a.skillErrors[skill] ?? 0;
+              const errPct = uses > 0 ? ` ${Math.round((errs / uses) * 100)}% err` : "";
+              const cost = formatUSD(attr?.cost ?? 0);
+              return `${skill}:${uses} (${attr?.turns ?? 0} turns ${cost}${errs > 0 ? `,${errPct}` : ""})`;
+            })
+            .join(" · ") || "-",
         )}
       {a.subagents.length > 0 && line("subagents", a.subagents.join(", "))}
       {/* Per-burst rows answer "which subagent burst cost $3", which the
