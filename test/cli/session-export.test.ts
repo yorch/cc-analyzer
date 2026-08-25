@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,7 +55,11 @@ async function run(args: string[]): Promise<{ code: number; stdout: string; stde
 
 describe("analyze export", () => {
   test("analyze --md emits markdown with expected sections", async () => {
-    const r = await run(["analyze", join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"), "--md"]);
+    const r = await run([
+      "analyze",
+      join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"),
+      "--md",
+    ]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("# Session:");
     expect(r.stdout).toContain("## Overview");
@@ -63,7 +67,11 @@ describe("analyze export", () => {
   });
 
   test("analyze --html emits standalone html", async () => {
-    const r = await run(["analyze", join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"), "--html"]);
+    const r = await run([
+      "analyze",
+      join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"),
+      "--html",
+    ]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("<!doctype html>");
     expect(r.stdout).toContain("cc-analyzer");
@@ -148,7 +156,11 @@ describe("analyze export", () => {
   });
 
   test("analyze --redact without format exits 2", async () => {
-    const r = await run(["analyze", join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"), "--redact"]);
+    const r = await run([
+      "analyze",
+      join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl"),
+      "--redact",
+    ]);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("require --md");
   });

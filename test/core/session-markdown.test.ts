@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import type { SessionAnalysis } from "../../src/core/analyze.ts";
 import { analyzeSession } from "../../src/core/analyze.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
+import { inspectSessionHealth } from "../../src/core/session-health.ts";
+import { sessionWhatIf } from "../../src/core/session-insights.ts";
 import {
   buildSessionHtml,
   buildSessionMarkdown,
   sanitizeFilename,
 } from "../../src/core/session-markdown.ts";
-import { inspectSessionHealth } from "../../src/core/session-health.ts";
-import type { SessionAnalysis } from "../../src/core/analyze.ts";
-import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
-import { sessionWhatIf } from "../../src/core/session-insights.ts";
+import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const at = clock(2026, 7, 1, 10);
 
@@ -18,12 +18,14 @@ function makeAnalysis(overrides?: SessionEvent[]): {
   analysis: SessionAnalysis;
   events: SessionEvent[];
 } {
-  const events: SessionEvent[] =
-    overrides ??
-    [
-      promptEvent("u1", at(0), "hello world"),
-      assistantEvent({ uuid: "a1", timestamp: at(0, 5), usage: { input_tokens: 10, output_tokens: 20 } }),
-    ];
+  const events: SessionEvent[] = overrides ?? [
+    promptEvent("u1", at(0), "hello world"),
+    assistantEvent({
+      uuid: "a1",
+      timestamp: at(0, 5),
+      usage: { input_tokens: 10, output_tokens: 20 },
+    }),
+  ];
   const analysis = analyzeSession(events, pricing);
   return { analysis, events };
 }
@@ -60,7 +62,9 @@ describe("buildSessionMarkdown", () => {
       assistantEvent({
         uuid: "a1",
         timestamp: at(0, 5),
-        content: [{ type: "tool_use", id: "t1", name: "Write", input: { file_path: "/secret/file.ts" } }],
+        content: [
+          { type: "tool_use", id: "t1", name: "Write", input: { file_path: "/secret/file.ts" } },
+        ],
         usage: { input_tokens: 10, output_tokens: 20 },
       }),
     ]);
@@ -126,7 +130,13 @@ describe("buildSessionMarkdown", () => {
     const events: SessionEvent[] = [];
     for (let i = 0; i < 400; i++) {
       events.push(promptEvent(`u${i}`, at(0), `p${i}`));
-      events.push(assistantEvent({ uuid: `a${i}`, timestamp: at(i), usage: { input_tokens: 100, output_tokens: 20 } }));
+      events.push(
+        assistantEvent({
+          uuid: `a${i}`,
+          timestamp: at(i),
+          usage: { input_tokens: 100, output_tokens: 20 },
+        }),
+      );
     }
     const analysis = analyzeSession(events, pricing);
     if (analysis.turns.length === 0) return; // aggregate mode skip
@@ -176,7 +186,7 @@ describe("buildSessionMarkdown", () => {
 describe("buildSessionHtml", () => {
   test("is standalone html with escaped XSS", () => {
     const { analysis } = makeAnalysis();
-    analysis.title = '<img src=x onerror=alert(1)>';
+    analysis.title = "<img src=x onerror=alert(1)>";
     const html = buildSessionHtml(analysis);
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("&lt;img");
@@ -187,8 +197,16 @@ describe("buildSessionHtml", () => {
     // Create a diagnostic that would inject HTML
     const result = makeAnalysis([
       promptEvent("u1", at(0), "hello"),
-      assistantEvent({ uuid: "a1", timestamp: at(0, 5), usage: { input_tokens: 10000, output_tokens: 1 } }),
-      assistantEvent({ uuid: "a2", timestamp: at(1), usage: { input_tokens: 160_000, output_tokens: 1 } }),
+      assistantEvent({
+        uuid: "a1",
+        timestamp: at(0, 5),
+        usage: { input_tokens: 10000, output_tokens: 1 },
+      }),
+      assistantEvent({
+        uuid: "a2",
+        timestamp: at(1),
+        usage: { input_tokens: 160_000, output_tokens: 1 },
+      }),
     ]);
     const analysis = result.analysis;
     const events = result.events;
@@ -197,7 +215,15 @@ describe("buildSessionHtml", () => {
     // Manually craft health with injection
     const evilHealth = {
       ...health,
-      findings: [{ code: "unparseable-lines" as const, severity: "error" as const, title: '<script>alert(1)</script>', evidence: '<b>evil</b>', action: 'fix' }],
+      findings: [
+        {
+          code: "unparseable-lines" as const,
+          severity: "error" as const,
+          title: "<script>alert(1)</script>",
+          evidence: "<b>evil</b>",
+          action: "fix",
+        },
+      ],
     };
     const html = buildSessionHtml(analysis, { health: evilHealth as any });
     expect(html).not.toContain("<script>alert(1)</script>");

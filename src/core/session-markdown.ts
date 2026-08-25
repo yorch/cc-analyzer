@@ -751,12 +751,12 @@ function mdToHtml(md: string): string {
       }
       // tableLines[0]=header, [1]=separator, rest=rows
       if (tableLines.length >= 2) {
-        const headers = tableLines[0]!
-          .split("|")
+        const headers = tableLines[0]
+          ?.split("|")
           .slice(1, -1)
           .map((s) => s.trim());
-        const aligns = tableLines[1]!
-          .split("|")
+        const aligns = tableLines[1]
+          ?.split("|")
           .slice(1, -1)
           .map((s) => (s.trim().includes(":") && s.trim().endsWith(":") ? ' class="num"' : ""));
         html.push("<table><thead><tr>");
@@ -764,7 +764,8 @@ function mdToHtml(md: string): string {
           html.push(`<th${aligns[idx] ?? ""}>${escHtml(headers[idx] ?? "")}</th>`);
         html.push("</tr></thead><tbody>");
         for (let r = 2; r < tableLines.length; r++) {
-          const cells = tableLines[r]!.split("|")
+          const cells = tableLines[r]
+            ?.split("|")
             .slice(1, -1)
             .map((s) => s.trim());
           html.push("<tr>");
@@ -779,12 +780,12 @@ function mdToHtml(md: string): string {
       // Collect list block
       const items: string[] = [];
       while (i < lines.length && (lines[i]?.startsWith("- ") ?? false)) {
-        items.push(lines[i]!.slice(2));
+        items.push(lines[i]?.slice(2));
         i++;
         // handle indented continuation line "  - Next:"
         if (i < lines.length && lines[i]?.startsWith("  - ")) {
           items[items.length - 1] +=
-            '<br><span class="muted">' + escHtml(lines[i]!.slice(4)) + "</span>";
+            `<br><span class="muted">${escHtml(lines[i]?.slice(4))}</span>`;
           i++;
         }
       }
