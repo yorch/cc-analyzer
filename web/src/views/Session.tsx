@@ -519,7 +519,9 @@ function Summary({ a }: { a: SessionResponse }) {
               </tbody>
             </table>
           </div>
-          <p className="muted">Turn $ = cost of turns that invoked the skill (correlational, not causal)</p>
+          <p className="muted">
+            Turn $ = cost of turns that invoked the skill (correlational, not causal)
+          </p>
         </section>
       )}
       {a.subagents.length > 0 && <p className="muted">Subagents: {a.subagents.join(", ")}</p>}

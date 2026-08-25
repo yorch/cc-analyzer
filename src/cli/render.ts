@@ -313,7 +313,9 @@ export function renderSessionSummary(
 
   const skillEntries = Object.entries(a.skills).sort((x, y) => y[1] - x[1]);
   if (skillEntries.length) {
-    lines.push(`\n${section("Skills — per-skill uses, turn-scoped cost, and error rate", options)}`);
+    lines.push(
+      `\n${section("Skills — per-skill uses, turn-scoped cost, and error rate", options)}`,
+    );
     lines.push(
       table(
         ["skill", "uses", "turns", "turn $", "errors", "err %"],
