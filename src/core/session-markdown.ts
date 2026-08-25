@@ -792,7 +792,7 @@ function mdToHtml(md: string): string {
         i++;
         // handle indented continuation line "  - Next:"
         if (i < lines.length && lines[i]?.startsWith("  - ")) {
-          // biome-ignore lint/style/noNonNullAssertion: guarded by if
+          // biome-ignore format lint/style/noNonNullAssertion: guarded by if
           items[items.length - 1] += `<br><span class="muted">${escHtml(lines[i]!.slice(4))}</span>`;
           i++;
         }
