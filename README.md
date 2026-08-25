@@ -165,6 +165,7 @@ cc-analyzer projects                 # list all projects, by session count
 cc-analyzer sessions <projectId>     # list sessions in a project
 cc-analyzer analyze <id|path>        # analyze one session (human-readable)
 cc-analyzer analyze <id|path> --json # analyze one session (machine-readable)
+cc-analyzer analyze <id|path> --md --out share.md --redact  # shareable Markdown/HTML/JSON (also --html/--json, --include-transcript)
 cc-analyzer analyze <id|path> --with-claude [--model <id>]
                                      # run a Claude Code retrospective of the session
                                      # (read-only; needs the `claude` CLI installed)
@@ -211,6 +212,10 @@ rows, so the no-parse guarantee holds.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.
+
+### Sharing a session
+
+Every session can be exported as a **single-file, shareable artifact** — Markdown, standalone HTML (inline dark theme, print stylesheet) or JSON — built by the same bun-free `src/core/session-markdown.ts` so the CLI, web (`GET /api/sessions/:id/report?format=md&redact=1&transcript=1`) and TUI (`e` → `f`/`r`/`t` → `w` writes `./cc-analyzer-<id>.*`) are byte-identical. By default exports omit the transcript (opt-in with `--include-transcript`, capped at 600 items × 2000 chars, sampled charts at 300) and show file paths; add `--redact` to hide prompts, transcript bodies, title, project path and file lists for external sharing (sanitized filenames, `Content-Disposition: attachment` on the web). See the [Recipes & Use Cases](https://cc-analyzer.brnby.com/docs/10-recipes) for redacted team share, pre-standup thrash triage, post-mortem with transcript, what-if, and weekly digest recipes.
 
 ### What the analysis reports
 
