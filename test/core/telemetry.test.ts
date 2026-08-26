@@ -191,7 +191,16 @@ function captureDispatch(opts: { spawnThrows?: boolean } = {}) {
   const spy = spyOn(Bun, "spawn").mockImplementation(((options: Record<string, unknown>) => {
     if (opts.spawnThrows) throw new Error("EAGAIN");
     spawns.push(options);
-    return { unref() {} };
+    // Mock the piped stdin writable so spawnPoster can write payload without error
+    return {
+      stdin: {
+        write: (chunk: string) => {
+          (options as Record<string, unknown>).stdinPayload = chunk;
+        },
+        end: () => {},
+      },
+      unref() {},
+    };
   }) as unknown as typeof Bun.spawn);
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -208,11 +217,18 @@ function captureDispatch(opts: { spawnThrows?: boolean } = {}) {
   };
 }
 
-/** The three argv slots the poster marker introduces: marker, endpoint, payload. */
-function posterParts(cmd: string[]): { url: string; body: { props: Record<string, string> } } {
+/** The argv slots the poster marker introduces: marker, endpoint (payload is via stdin, not argv). */
+function posterParts(cmd: string[]): { url: string } {
   const at = cmd.indexOf(POSTER_COMMAND);
   expect(at).toBeGreaterThan(-1);
-  return { url: cmd[at + 1] as string, body: JSON.parse(cmd[at + 2] as string) };
+  return { url: cmd[at + 1] as string };
+}
+
+function decodeStdin(spawn: Record<string, unknown>): { props: Record<string, string> } {
+  // spawnPoster pipes via stdin:"pipe" + write; mock captures as stdinPayload
+  const raw = (spawn.stdinPayload ?? spawn.stdin) as Uint8Array | string;
+  const text = raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
+  return JSON.parse(text);
 }
 
 describe("trackCommand", () => {
@@ -244,12 +260,18 @@ describe("trackCommand", () => {
     expect(cap.fetches).toHaveLength(0);
     expect(cap.spawns).toHaveLength(1);
     const spawn = cap.spawns[0] as Record<string, unknown>;
-    const { url, body } = posterParts(spawn.cmd as string[]);
+    const { url } = posterParts(spawn.cmd as string[]);
     expect(url).toBe("https://plausible.test");
+    const body = decodeStdin(spawn);
     expect(body.props.name).toBe("serve");
-    // Detached with no stdio is what lets it outlive the parent's process.exit().
+    // Detached with piped stdin is what lets it outlive the parent's process.exit()
+    // while keeping payload out of ps output (argv no longer carries JSON).
     expect(spawn.detached).toBe(true);
-    expect(spawn.stdio).toEqual(["ignore", "ignore", "ignore"]);
+    expect(spawn.stdin).toBe("pipe");
+    expect(spawn.stdout).toBe("ignore");
+    expect(spawn.stderr).toBe("ignore");
+    expect((spawn.cmd as string[]).join(" ")).not.toContain('"name":"serve"');
+    expect(String((spawn as Record<string, unknown>).stdinPayload)).toContain('"name":"serve"');
     expect(spawn.windowsHide).toBe(true);
   });
 
@@ -289,7 +311,7 @@ describe("trackCommand", () => {
 });
 
 describe("posterArgv", () => {
-  test("re-invokes this entrypoint with the endpoint and prebuilt payload", () => {
+  test("re-invokes this entrypoint with the endpoint (payload is via stdin, not argv)", () => {
     const body = buildEventBody("stats");
     const argv = posterArgv("https://plausible.test", body);
     // The suite runs from source, so execPath is bun and the entrypoint follows.
@@ -297,12 +319,20 @@ describe("posterArgv", () => {
     expect(argv[1]).toBe(Bun.main);
     expect(argv[2]).toBe(POSTER_COMMAND);
     expect(argv[3]).toBe("https://plausible.test");
-    expect(JSON.parse(argv[4] as string)).toEqual(body);
+    expect(argv).toHaveLength(4);
+    // Payload must NOT appear in argv (ps exposure fix)
+    expect(argv.join(" ")).not.toContain(JSON.stringify(body));
   });
 
-  test("payload is a single argv entry, so nothing is word-split or shell-parsed", () => {
+  test("argv never carries JSON payload (ps-safe)", () => {
     const argv = posterArgv("https://plausible.test", buildEventBody("analyze"));
-    expect(argv).toHaveLength(5);
+    expect(argv).toHaveLength(4);
+    expect(argv.join(" ")).not.toContain('"props"');
+  });
+
+  test("posterArgv is argv-length stable regardless of body", () => {
+    expect(posterArgv("https://plausible.test")).toHaveLength(4);
+    expect(posterArgv("https://plausible.test", buildEventBody("stats"))).toHaveLength(4);
   });
 });
 
@@ -345,6 +375,34 @@ describe("runTelemetryPoster", () => {
       globalThis.fetch = orig;
     }
     expect(called).toBe(false);
+  });
+
+  test("reads payload from stdin when not in argv (ps-safe path)", async () => {
+    const body = buildEventBody("projects");
+    let url: string | undefined;
+    let init: RequestInit | undefined;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (u: string, i: RequestInit) => {
+      url = u;
+      init = i;
+      return new Response("", { status: 202 });
+    }) as unknown as typeof fetch;
+    // SAFETY: test-only mock of Bun.stdin and isTTY to exercise piped stdin path
+    const origIsTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origBunStdin = (Bun as unknown as { stdin?: unknown }).stdin;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = false;
+    (Bun as unknown as { stdin?: unknown }).stdin = {
+      text: async () => JSON.stringify(body),
+    };
+    try {
+      expect(await runTelemetryPoster("https://plausible.test")).toBe(0);
+    } finally {
+      globalThis.fetch = origFetch;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origIsTTY;
+      (Bun as unknown as { stdin?: unknown }).stdin = origBunStdin;
+    }
+    expect(url).toBe("https://plausible.test/api/event");
+    expect(JSON.parse(String(init?.body)).props.name).toBe("projects");
   });
 
   // The marker is reachable by hand, so it re-checks the switch: an opted-out
