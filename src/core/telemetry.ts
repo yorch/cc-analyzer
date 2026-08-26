@@ -175,13 +175,13 @@ const INLINE_FLUSH_MS = 100;
  * re-runs itself; from source, `process.execPath` is the bun interpreter, so the
  * entrypoint has to be passed along. The endpoint travels in argv rather than
  * being re-derived from the environment so the child posts exactly where the
- * parent decided to — and the payload is the already-built body, so the child
- * never touches the index or the session data to reconstruct it. Exposed for tests.
+ * parent decided to — and the payload is piped via stdin (not argv) so it never
+ * appears in `ps` output. The optional `body` param is retained for backward
+ * compatibility (ignored); callers should pipe the body via `spawnPoster`. Exposed for tests.
  */
-export function posterArgv(url: string, body: EventBody): string[] {
-  const payload = JSON.stringify(body);
+export function posterArgv(url: string, _body?: EventBody): string[] {
   const self = isCompiledBinary() ? [process.execPath] : [process.execPath, Bun.main];
-  return [...self, POSTER_COMMAND, url, payload];
+  return [...self, POSTER_COMMAND, url];
 }
 
 /**
@@ -197,15 +197,27 @@ export function posterArgv(url: string, body: EventBody): string[] {
  */
 function spawnPoster(body: EventBody): boolean {
   try {
-    Bun.spawn({
-      cmd: posterArgv(plausibleUrl(), body),
-      // Ignored stdio is what lets the parent exit without waiting on the child
-      // (and keeps a stray beacon from ever writing to the user's terminal).
-      stdio: ["ignore", "ignore", "ignore"],
+    const payload = JSON.stringify(body);
+    const proc = Bun.spawn({
+      cmd: posterArgv(plausibleUrl()),
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       detached: true,
       windowsHide: true,
       env: process.env,
-    }).unref();
+    });
+    try {
+      // SAFETY: Bun.spawn with stdin:"pipe" exposes a writable stdin at runtime
+      const stdin = (proc as unknown as { stdin?: { write: (c: string) => void; end: () => void } })
+        .stdin;
+      stdin?.write(payload);
+      stdin?.end();
+    } catch {
+      // if pipe write fails, child will see empty stdin and return 0 (no post)
+    }
+    // SAFETY: Bun.spawn detached proc exposes unref at runtime though types omit it
+    (proc as unknown as { unref?: () => void }).unref?.();
     return true;
   } catch {
     return false;
@@ -236,13 +248,47 @@ export function trackCommand(name: string, extraProps: Record<string, string> = 
  * cannot be used to send an event while telemetry is off.
  */
 export async function runTelemetryPoster(url?: string, payload?: string): Promise<number> {
-  if (!url || !payload || !isTelemetryEnabled()) return 0;
+  if (!url || !isTelemetryEnabled()) return 0;
+  let raw: string | undefined = payload;
+  if (!raw) {
+    // Payload not in argv — read from piped stdin (new path). Only attempt
+    // when stdin is piped to avoid hanging on manual TTY invocations.
+    try {
+      if (process.stdin.isTTY !== true) {
+        // Prefer Bun's native stdin helper when available
+        try {
+          // SAFETY: Bun global gains stdin.text at runtime; types don't declare it
+          const bunStdin = (Bun as unknown as { stdin?: { text?: () => Promise<string> } }).stdin;
+          if (bunStdin && typeof bunStdin.text === "function") {
+            const t = await bunStdin.text();
+            if (t && t.trim() !== "") raw = t;
+          }
+        } catch {
+          // fall through to Node fallback
+        }
+        if (!raw) {
+          try {
+            const { readFileSync } = await import("node:fs");
+            // SAFETY: fd 0 is stdin; sync read is safe here because isTTY===false guarantees piped EOF
+            const txt = readFileSync(0, "utf8") as string;
+            if (txt.trim() !== "") raw = txt;
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      // treat as no payload
+    }
+  }
+  if (!raw) return 0;
   let body: EventBody;
   try {
-    body = JSON.parse(payload) as EventBody;
+    body = JSON.parse(raw) as EventBody;
   } catch {
     return 0;
   }
+  if (!isTelemetryEnabled()) return 0;
   await postEvent(body, url, POSTER_TIMEOUT_MS);
   return 0;
 }
