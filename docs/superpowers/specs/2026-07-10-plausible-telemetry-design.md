@@ -71,8 +71,9 @@ config; each surface consumes it as appropriate.
 ```
 
 The docs site is a separate static-build lifecycle and cannot read the runtime
-setting; its opt-out is Plausible's built-in `plausible_ignore` localStorage flag +
-Do-Not-Track, documented rather than surfaced as UI.
+setting; its opt-out is Plausible's built-in `plausible_ignore` localStorage flag
+(the public docs site is not covered by `DO_NOT_TRACK`), documented rather than
+surfaced as UI.
 
 ## Component 1 — `src/core/telemetry.ts` (new)
 
@@ -91,13 +92,16 @@ Single authority. Public surface:
 - `telemetryStatus(): { enabled: boolean; reason: string }` — for `telemetry status`.
 
 Config file: `${STATE_DIR}/telemetry.json`
+
 ```json
 { "enabled": true, "noticeShown": true }
 ```
+
 `enabled` is only written by the `telemetry on|off` subcommand; absence = default on.
 `STATE_DIR` resolves via the existing `CC_ANALYZER_STATE_DIR` mechanism.
 
 Event payload (Plausible Events API):
+
 ```
 POST https://plausible.brnby.com/api/event
 Headers: Content-Type: application/json
@@ -154,12 +158,16 @@ sanitize the URL.
 
 - `injectSpaTelemetry()` (server): when enabled, inject a config into the served HTML
   before `</head>`:
+
   ```html
   <script>window.__CC_TELEMETRY__={"domain":"cc-analyzer-webui","endpoint":"https://plausible.brnby.com/api/event"}</script>
   ```
+
   The inline classic script runs before the deferred module bundle, so the config is set
   before the SPA reads it; `<` in any value is escaped so it can't break out of the tag.
   When disabled, inject nothing — the config's **absence** is the SPA's opt-out.
+  The server evaluates this once at startup and injects the same HTML for its
+  lifetime — flipping telemetry off requires restarting `serve`.
 - `web/src/telemetry.ts` (SPA): `initTelemetry()` reads `window.__CC_TELEMETRY__` and, if
   present, calls the tracker's `init({ domain, endpoint, autoCapturePageviews: false,
   captureOnLocalhost: true })`. `captureOnLocalhost` replaces the old `script.local.js`
@@ -174,8 +182,9 @@ sanitize the URL.
 ## Component 4 — Docs site (`site/.vitepress/config.ts`)
 
 - Load the local `/analytics.js` helper from the `head` array. The helper checks
-  browser Do-Not-Track and `localStorage.plausible_ignore` before dynamically
-  initializing Plausible and requesting the site-specific tracker at
+  `localStorage.plausible_ignore` (the public docs site is not covered by
+  `DO_NOT_TRACK`) before dynamically initializing Plausible and requesting the
+  site-specific tracker at
   `https://plausible.brnby.com/js/pa-ngd1ppRBUHfoOrHRCjEei.js`.
 - The generated `pa-*` tracker is the installation snippet assigned to
   `cc-analyzer.brnby.com`; keep the opaque id synchronized with the Plausible
