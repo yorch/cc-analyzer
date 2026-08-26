@@ -50,7 +50,8 @@ function writeConfig(cfg: TelemetryConfig): void {
 
 const NOTICE =
   "\ncc-analyzer collects anonymous usage stats to improve the tool.\n" +
-  "No session content, paths, or personal data is ever sent.\n" +
+  "Sends only: command name, version, OS/arch, coarse session-count bucket (web: view type only, no IDs).\n" +
+  "No session content, prompts, paths, or personal data is ever sent.\n" +
   "Disable: CC_ANALYZER_TELEMETRY=0  (or run: cc-analyzer telemetry off)\n\n";
 
 const PROMPT = "Disable anonymous telemetry? [y/N] ";
