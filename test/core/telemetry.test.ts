@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { indexDbPath, telemetryConfigPath } from "../../src/core/paths.ts";
+import * as telemetry from "../../src/core/telemetry.ts";
 import {
   bucketize,
   buildEventBody,
@@ -110,7 +111,7 @@ describe("telemetryStatus / isTelemetryEnabled", () => {
 });
 
 describe("maybeShowFirstRunNotice", () => {
-  test("writes once, persists noticeShown, silent thereafter", () => {
+  test("writes once, persists noticeShown, silent thereafter", async () => {
     const chunks: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((s: string) => {
@@ -118,8 +119,8 @@ describe("maybeShowFirstRunNotice", () => {
       return true;
     }) as typeof process.stderr.write;
     try {
-      maybeShowFirstRunNotice();
-      maybeShowFirstRunNotice();
+      await maybeShowFirstRunNotice();
+      await maybeShowFirstRunNotice();
     } finally {
       process.stderr.write = orig;
     }
@@ -129,7 +130,7 @@ describe("maybeShowFirstRunNotice", () => {
     expect(cfg.noticeShown).toBe(true);
   });
 
-  test("does nothing when disabled", () => {
+  test("does nothing when disabled", async () => {
     process.env.CC_ANALYZER_TELEMETRY = "0";
     let wrote = false;
     const orig = process.stderr.write.bind(process.stderr);
@@ -138,12 +139,140 @@ describe("maybeShowFirstRunNotice", () => {
       return true;
     }) as typeof process.stderr.write;
     try {
-      maybeShowFirstRunNotice();
+      await maybeShowFirstRunNotice();
     } finally {
       process.stderr.write = orig;
     }
     expect(wrote).toBe(false);
     expect(existsSync(telemetryConfigPath())).toBe(false);
+  });
+
+  test("non-interactive keeps ON without prompt", async () => {
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    const origStdinTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origStderrTTY = (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = false;
+    (process.stderr as unknown as { isTTY?: boolean }).isTTY = false;
+    try {
+      await maybeShowFirstRunNotice();
+    } finally {
+      process.stderr.write = origWrite;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origStdinTTY;
+      (process.stderr as unknown as { isTTY?: boolean }).isTTY = origStderrTTY;
+    }
+    expect(chunks.join("")).toContain("anonymous usage stats");
+    expect(chunks.join("")).not.toContain("Disable anonymous telemetry? [y/N]");
+    expect(isTelemetryEnabled()).toBe(true);
+    const cfg = JSON.parse(readFileSync(telemetryConfigPath(), "utf8"));
+    expect(cfg.noticeShown).toBe(true);
+  });
+
+  test("interactive y disables telemetry", async () => {
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    const origStdinTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origStderrTTY = (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = true;
+    (process.stderr as unknown as { isTTY?: boolean }).isTTY = true;
+    const spy = spyOn(telemetry, "readPromptAnswer").mockResolvedValue("y");
+    try {
+      await maybeShowFirstRunNotice();
+    } finally {
+      process.stderr.write = origWrite;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origStdinTTY;
+      (process.stderr as unknown as { isTTY?: boolean }).isTTY = origStderrTTY;
+      spy.mockRestore();
+    }
+    expect(chunks.join("")).toContain("Telemetry disabled");
+    expect(isTelemetryEnabled()).toBe(false);
+    const cfg = JSON.parse(readFileSync(telemetryConfigPath(), "utf8"));
+    expect(cfg.noticeShown).toBe(true);
+    expect(cfg.enabled).toBe(false);
+  });
+
+  test("interactive N keeps telemetry enabled", async () => {
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    const origStdinTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origStderrTTY = (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = true;
+    (process.stderr as unknown as { isTTY?: boolean }).isTTY = true;
+    const spy = spyOn(telemetry, "readPromptAnswer").mockResolvedValue("n");
+    try {
+      await maybeShowFirstRunNotice();
+    } finally {
+      process.stderr.write = origWrite;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origStdinTTY;
+      (process.stderr as unknown as { isTTY?: boolean }).isTTY = origStderrTTY;
+      spy.mockRestore();
+    }
+    expect(chunks.join("")).toContain("Telemetry remains enabled");
+    expect(isTelemetryEnabled()).toBe(true);
+    const cfg = JSON.parse(readFileSync(telemetryConfigPath(), "utf8"));
+    expect(cfg.noticeShown).toBe(true);
+  });
+
+  test("interactive timeout keeps telemetry enabled", async () => {
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    const origStdinTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origStderrTTY = (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = true;
+    (process.stderr as unknown as { isTTY?: boolean }).isTTY = true;
+    const spy = spyOn(telemetry, "readPromptAnswer").mockResolvedValue(null);
+    try {
+      await maybeShowFirstRunNotice();
+    } finally {
+      process.stderr.write = origWrite;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origStdinTTY;
+      (process.stderr as unknown as { isTTY?: boolean }).isTTY = origStderrTTY;
+      spy.mockRestore();
+    }
+    expect(isTelemetryEnabled()).toBe(true);
+    const cfg = JSON.parse(readFileSync(telemetryConfigPath(), "utf8"));
+    expect(cfg.noticeShown).toBe(true);
+  });
+
+  test("json flag suppresses interactive prompt", async () => {
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    const origStdinTTY = (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    const origStderrTTY = (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+    (process.stdin as unknown as { isTTY?: boolean }).isTTY = true;
+    (process.stderr as unknown as { isTTY?: boolean }).isTTY = true;
+    const spy = spyOn(telemetry, "readPromptAnswer").mockResolvedValue("y");
+    try {
+      await maybeShowFirstRunNotice({ json: true });
+    } finally {
+      process.stderr.write = origWrite;
+      (process.stdin as unknown as { isTTY?: boolean }).isTTY = origStdinTTY;
+      (process.stderr as unknown as { isTTY?: boolean }).isTTY = origStderrTTY;
+      spy.mockRestore();
+    }
+    expect(spy).not.toHaveBeenCalled();
+    expect(chunks.join("")).not.toContain("Disable anonymous telemetry? [y/N]");
+    expect(chunks.join("")).toContain("anonymous usage stats");
   });
 });
 

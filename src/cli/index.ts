@@ -1204,7 +1204,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     "update",
   ]);
   if (command === undefined || TRACKED.has(command)) {
-    maybeShowFirstRunNotice();
+    await maybeShowFirstRunNotice({ json });
     trackCommand(command ?? "tui");
   }
 

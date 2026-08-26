@@ -53,6 +53,8 @@ const NOTICE =
   "No session content, paths, or personal data is ever sent.\n" +
   "Disable: CC_ANALYZER_TELEMETRY=0  (or run: cc-analyzer telemetry off)\n\n";
 
+const PROMPT = "Disable anonymous telemetry? [y/N] ";
+
 /**
  * Resolve whether telemetry is enabled and why. Disable precedence (first match
  * wins): CC_ANALYZER_TELEMETRY -> DO_NOT_TRACK -> CI -> persisted config -> on.
@@ -83,14 +85,60 @@ export function setTelemetryEnabled(enabled: boolean): void {
   writeConfig({ ...readConfig(), enabled });
 }
 
+/** Read a line from the terminal with a timeout. Exported for tests. */
+export async function readPromptAnswer(
+  promptText: string,
+  timeoutMs = 30_000,
+): Promise<string | null> {
+  try {
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      const result = await Promise.race([
+        rl.question(promptText),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+      ]);
+      return result;
+    } finally {
+      rl.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Print the one-time notice on first enabled run, then remember it. stderr so
- *  piped stdout stays clean. No-op when disabled or already shown. */
-export function maybeShowFirstRunNotice(): void {
+ *  piped stdout stays clean. No-op when disabled or already shown. In an
+ *  interactive TTY (and not --json/CI) it also prompts once: y/yes disables
+ *  telemetry for this and future runs; any other answer keeps it enabled. */
+export async function maybeShowFirstRunNotice(opts?: { json?: boolean }): Promise<void> {
   if (!isTelemetryEnabled()) return;
   const cfg = readConfig();
   if (cfg.noticeShown) return;
+  const isInteractive =
+    process.stdin.isTTY === true &&
+    process.stderr.isTTY === true &&
+    !process.env.CI &&
+    opts?.json !== true;
+  if (!isInteractive) {
+    process.stderr.write(NOTICE);
+    writeConfig({ ...cfg, noticeShown: true });
+    return;
+  }
   process.stderr.write(NOTICE);
-  writeConfig({ ...cfg, noticeShown: true });
+  const answer = await readPromptAnswer(PROMPT, 30_000);
+  const normalized = (answer ?? "").trim().toLowerCase();
+  const wantsOff = normalized === "y" || normalized === "yes";
+  if (wantsOff) {
+    writeConfig({ ...cfg, enabled: false, noticeShown: true });
+    process.stderr.write("Telemetry disabled. Enable anytime with: cc-analyzer telemetry on\n");
+  } else {
+    if (answer === null) process.stderr.write("\n");
+    writeConfig({ ...cfg, noticeShown: true });
+    process.stderr.write(
+      "Telemetry remains enabled. Disable anytime with: CC_ANALYZER_TELEMETRY=0 or cc-analyzer telemetry off\n",
+    );
+  }
 }
 
 /** Map a session count to a non-identifying scale bucket. */
