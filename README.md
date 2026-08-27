@@ -706,7 +706,11 @@ The per-session view offers:
   calls, or wall time, so the expensive turn is one click away instead of buried
   at #480, and every turn states its **share of the session** (`18% of
   session`) plus a **cost shape** naming why it was expensive — subagent burst,
-  cache churn, long generation, or a long context read many times over. The color-coded **transcript** reader is windowed
+  cache churn, long generation, or a long context read many times over. Each
+  expanded API call shows the **tokens its steps added to the context**
+  (`+47.0k ctx`), so "this `Read` filled the window" is readable rather than
+  inferred. It is an attribution heuristic over token counts, never a derived
+  dollar figure. The color-coded **transcript** reader is windowed
   ("show more") so very large sessions stay responsive.
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom

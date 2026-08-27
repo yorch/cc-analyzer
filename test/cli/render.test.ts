@@ -9,7 +9,7 @@ import {
   contextTax,
   whatIfRepricing,
 } from "../../src/core/stats.ts";
-import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
+import { CONTEXT_GROWTH_CAVEAT, INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -261,6 +261,49 @@ describe("renderSessionSummary · turns table", () => {
     expect(out).toContain("shape");
     expect(out).toContain("cache churn");
     expect(out).toContain("the cache was rewritten 1 time");
+  });
+
+  test("attributes context growth to the issuing call, with the caveat verbatim", () => {
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "read the file"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/big.txt" } }],
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+        assistantEvent({
+          uuid: "a1",
+          timestamp: at(2),
+          usage: { input_tokens: 47_110, output_tokens: 10 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).toContain("Context growth");
+    expect(out).toContain("Read");
+    expect(out).toContain(CONTEXT_GROWTH_CAVEAT);
+    // A token delta, never a derived dollar for "carried" cost.
+    expect(out).not.toContain("carried");
+  });
+
+  test("omits the context-growth section when nothing entered the context", () => {
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "hi"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).not.toContain("Context growth");
+    expect(out).not.toContain(CONTEXT_GROWTH_CAVEAT);
   });
 
   test("keeps session order (and the plain heading) when everything fits", () => {

@@ -168,6 +168,30 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 
+  test("the turns detail attributes context growth and prints its caveat verbatim", async () => {
+    const { lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    const frame = lastFrame() ?? "";
+    // Turn 1's second call grew the prompt by ~1k over the first call's
+    // prompt + output; the delta is attributed to the call that issued it.
+    expect(frame).toMatch(/context: \+[\d.]+k after call 2/);
+    // A mandatory caveat renders verbatim and is allowed to wrap — the frame
+    // is width-limited, so assert on its opening clause rather than the whole
+    // string, and separately that it was not truncate()d with an ellipsis.
+    expect(frame).toContain("Context growth attributes each prompt-side increase");
+    expect(frame).not.toContain("Context growth attributes each prompt…");
+    unmount();
+  });
+
   test("transcript mode: items collapse and expand", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen

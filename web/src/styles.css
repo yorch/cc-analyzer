@@ -1223,6 +1223,16 @@ p.muted {
   color: var(--faint);
   font-size: 11px;
 }
+/* Per-call context growth beside an API call ("+47.0k ctx"). `.big` marks a
+   call carrying a large share of everything that entered the context. */
+.ctxgrowth {
+  color: var(--data-blue);
+  cursor: help;
+}
+.ctxgrowth.big {
+  color: var(--signal);
+  font-weight: 600;
+}
 /* Cost-shape badge on a turn header: why the turn cost what it did. Dotted
    underline because the full evidence sentence lives in its title tooltip. */
 .turnshape {

@@ -14,10 +14,12 @@ import { analyzeSession } from "../../core/analyze.ts";
 import {
   buildBurnSeries,
   buildCacheSeries,
+  buildContextGrowth,
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
   burstAttributionNote,
+  type ContextGrowthEntry,
   groupSidechainBursts,
   modelMixRows,
   pctOfLimit,
@@ -55,6 +57,7 @@ import {
 } from "../../core/session-markdown.ts";
 import { sessionCostRank } from "../../core/stats.ts";
 import {
+  CONTEXT_GROWTH_CAVEAT,
   CORRECTION_CAVEAT,
   SKILL_COST_CAVEAT,
   WHATIF_CAVEAT,
@@ -101,6 +104,10 @@ const BURST_ROWS_SHOWN = 5;
  *  Five is the smallest count that reliably says something about a real
  *  session and still fits beside the sort indicator on a narrow terminal. */
 const PARETO_ROWS = 5;
+
+/** Context-growth contributors named on the turns detail line. Two fits a
+ *  narrow pane; the rest are visible in `analyze`'s Context growth table. */
+const GROWTH_ENTRIES_SHOWN = 2;
 
 export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
@@ -241,10 +248,19 @@ interface TurnRow {
   steps: TurnStep[];
   /** What this turn's cost is made of, from the shared `turnCostShape`. */
   shape: TurnCostShape | undefined;
+  /** Per-call context growth issued in this turn, biggest first. */
+  growth: ContextGrowthEntry[];
 }
 
 function turnRows(a: SessionAnalysis): TurnRow[] {
   const shapes = new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)]));
+  const growth = new Map<number, ContextGrowthEntry[]>();
+  for (const entry of buildContextGrowth(a).entries) {
+    const list = growth.get(entry.turnIndex) ?? [];
+    list.push(entry);
+    growth.set(entry.turnIndex, list);
+  }
+  for (const list of growth.values()) list.sort((x, y) => y.deltaTokens - x.deltaTokens);
   return a.turns.map((t) => {
     const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
     const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
@@ -257,6 +273,7 @@ function turnRows(a: SessionAnalysis): TurnRow[] {
       prompt: t.prompt,
       steps: t.apiCalls.flatMap((c) => c.steps),
       shape: shapes.get(t.index),
+      growth: growth.get(t.index) ?? [],
     };
   });
 }
@@ -312,10 +329,12 @@ function TurnsPane({
     setExpanded(new Set());
   };
 
+  // The steps pane scrolls against its OWN (reduced) height, not the master
+  // list's, or the cursor would run off the visible slice.
   const selectStep = (next: number) => {
     const n = Math.max(0, Math.min(next, steps.length - 1));
     setStepSel(n);
-    setStepOff(scrollOffset(n, stepOff, pageSize));
+    setStepOff(scrollOffset(n, stepOff, detailPageSize));
   };
 
   useInput(
@@ -384,6 +403,21 @@ function TurnsPane({
     </Box>
   );
 
+  // "+47.0k after call 2 (Read)" — the biggest few contributors in this turn.
+  const growthLine = (turn?.growth ?? [])
+    .slice(0, GROWTH_ENTRIES_SHOWN)
+    .map(
+      (e) =>
+        `+${formatCount(e.deltaTokens)} after call ${e.callIndex + 1}` +
+        (e.steps.length > 0 ? ` (${truncate(e.steps.join(", "), 28)})` : ""),
+    )
+    .join(" · ");
+  // The screen is a pinned-height frame with `overflow: hidden`, so lines added
+  // to the detail pane must come OUT of its step list rather than pushing the
+  // footer off the bottom. The caveat wraps, so it is budgeted at two rows.
+  const detailExtraRows = (turn?.shape ? 1 : 0) + (growthLine ? 3 : 0);
+  const detailPageSize = Math.max(3, pageSize - detailExtraRows);
+
   const detail = (
     <Box flexDirection="column">
       <Text color={role.heading}>
@@ -398,17 +432,27 @@ function TurnsPane({
           shape: {turn.shape.detail}
         </Text>
       ) : null}
+      {growthLine ? (
+        <Text color={role.muted} wrap="truncate-end">
+          context: {growthLine}
+        </Text>
+      ) : null}
+      {growthLine ? (
+        // Mandatory caveat: printed verbatim and allowed to wrap. Truncating a
+        // caveat would leave the number standing without its qualification.
+        <Text color={role.muted}>{CONTEXT_GROWTH_CAVEAT}</Text>
+      ) : null}
       {steps.length === 0 ? (
         <Text color={role.muted}>(no steps)</Text>
       ) : (
-        steps.slice(stepOff, stepOff + pageSize).map((step, i) => {
+        steps.slice(stepOff, stepOff + detailPageSize).map((step, i) => {
           const idx = stepOff + i;
           const sel = idx === stepSel && pane === "steps";
           const open = expanded.has(idx);
           return <StepRow key={idx} step={step} selected={sel} expanded={open} />;
         })
       )}
-      <ScrollRange offset={stepOff} size={pageSize} total={steps.length} />
+      <ScrollRange offset={stepOff} size={detailPageSize} total={steps.length} />
     </Box>
   );
 

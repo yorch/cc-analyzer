@@ -3,6 +3,7 @@ import { analyzeSession } from "../../src/core/analyze.ts";
 import {
   buildBurnSeries,
   buildCacheSeries,
+  buildContextGrowth,
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
@@ -545,5 +546,130 @@ describe("buildTurnSeries · cost composition", () => {
     expect(first?.cacheWriteCalls).toBe(0);
     expect(series[1]?.cacheWriteCalls).toBe(1);
     expect(series[1]?.costSidechain).toBe(0);
+  });
+});
+
+describe("buildContextGrowth", () => {
+  /** Prompt-side tokens of a call, spelled as the analyzer sees them. */
+  const call = (id: string, second: number, prompt: number, output: number, opts = {}) =>
+    assistant(id, second, { input_tokens: prompt, output_tokens: output }, opts);
+
+  test("attributes each prompt-side increase to the previous call's steps", () => {
+    // 100 in / 10 out, then 400 in: 400 - 100 - 10 = 290 entered the context
+    // between the two calls, attributable to what call `a` issued.
+    const grown = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 100, 10), call("b", 10, 400, 10)],
+      pricing,
+    );
+    const growth = buildContextGrowth(grown);
+    expect(growth.entries).toHaveLength(1);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+    expect(growth.entries[0]?.turnIndex).toBe(0);
+    expect(growth.entries[0]?.callIndex).toBe(0);
+    expect(growth.totalTokens).toBe(290);
+    expect(growth.entries[0]?.share).toBe(1);
+  });
+
+  test("a flat or shrinking context yields no entry, never a negative delta", () => {
+    // 100 in / 10 out then 110 in is pure carry-over: nothing new entered.
+    const flat = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 100, 10), call("b", 10, 110, 10)],
+      pricing,
+    );
+    expect(buildContextGrowth(flat).entries).toHaveLength(0);
+    const shrunk = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 500, 10), call("b", 10, 200, 10)],
+      pricing,
+    );
+    expect(buildContextGrowth(shrunk).entries).toHaveLength(0);
+    expect(buildContextGrowth(shrunk).totalTokens).toBe(0);
+  });
+
+  test("skips (and counts) the pair a compaction landed between", () => {
+    // The window reset between the two calls, so the difference is a
+    // demolition, not a payload — reporting it would invent an attribution.
+    const compacted = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 400, 10),
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: ts(7),
+          compactMetadata: { trigger: "auto", preTokens: 410 },
+        } as unknown as SessionEvent,
+        call("b", 10, 900, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(compacted);
+    expect(growth.entries).toHaveLength(0);
+    expect(growth.skippedAcrossCompactions).toBe(1);
+    expect(growth.totalTokens).toBe(0);
+  });
+
+  test("ignores sidechain calls — subagents run in their own context window", () => {
+    const withSide = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 100, 10),
+        call("s", 6, 99_000, 10, { sidechain: true }),
+        call("b", 10, 400, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(withSide);
+    // The subagent's huge prompt neither creates nor distorts an entry.
+    expect(growth.entries).toHaveLength(1);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+  });
+
+  test("names the operation steps that plausibly carried the payload", () => {
+    const withRead = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        assistantEvent({
+          uuid: "a",
+          timestamp: ts(5),
+          content: [
+            { type: "text", text: "reading" },
+            { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/big.txt" } },
+          ],
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+        call("b", 10, 47_110, 10),
+      ],
+      pricing,
+    );
+    const entry = buildContextGrowth(withRead).entries[0];
+    expect(entry?.deltaTokens).toBe(47_000);
+    // Narration is not an operation and is excluded, matching kindCounts.
+    expect(entry?.steps).toEqual(["Read"]);
+  });
+
+  test("carries growth across a turn boundary — one window, not one per turn", () => {
+    const twoTurns = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 100, 10),
+        prompt("u2", 8, "more"),
+        call("b", 10, 400, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(twoTurns);
+    expect(growth.entries).toHaveLength(1);
+    // Attributed to the ISSUING call, which lives in the first turn.
+    expect(growth.entries[0]?.turnIndex).toBe(0);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+  });
+
+  test("an empty or single-call session attributes nothing and shares nothing", () => {
+    const lone = analyzeSession([prompt("u1", 0, "go"), call("a", 5, 100, 10)], pricing);
+    const growth = buildContextGrowth(lone);
+    expect(growth.entries).toHaveLength(0);
+    expect(growth.totalTokens).toBe(0);
+    // Guarded like every other share on these surfaces.
+    expect(buildContextGrowth(analyzeSession([], pricing)).totalTokens).toBe(0);
   });
 });

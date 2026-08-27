@@ -11,7 +11,7 @@
  */
 
 import type { Compaction, IdlePeriod, SessionAnalysis, SidechainBurst } from "./analyze.ts";
-import { cacheTokens, ioTokens } from "./pricing.ts";
+import { cacheTokens, ioTokens, promptTokens } from "./pricing.ts";
 
 /**
  * A session's *own* compaction: not a subagent's (which compacted its own
@@ -230,6 +230,146 @@ export function projectHeadroom(ctx: ContextSeries): HeadroomProjection | undefi
   return {
     perCallTokens,
     callsToLimit: Math.max(0, Math.ceil((contextLimit - last.contextTokens) / perCallTokens)),
+  };
+}
+
+/**
+ * One main-chain API call's contribution to context growth: how much bigger
+ * the *next* call's prompt was than this call's prompt plus its own output —
+ * i.e. the payload that entered the context between the two, attributable to
+ * the steps this call issued.
+ */
+export interface ContextGrowthEntry {
+  turnIndex: number;
+  /** Position of the issuing call within its turn's `apiCalls` — the join key
+   * every render site already has (they all iterate that array). */
+  callIndex: number;
+  /** Tokens that entered the context after this call. Always > 0: a flat or
+   * shrinking prompt means nothing entered, which is not an observation. */
+  deltaTokens: number;
+  /** Share of everything this series attributes (0..1). */
+  share: number;
+  /** Labels of the operation steps this call issued — what plausibly carried
+   * the payload ("Read", "Bash"). Narration and thinking are not operations
+   * and are excluded, matching `TurnPoint.kindCounts`. */
+  steps: string[];
+}
+
+export interface ContextGrowthSeries {
+  /** Positive deltas in session order. */
+  entries: ContextGrowthEntry[];
+  /** Σ of the deltas — the denominator behind every `share`. */
+  totalTokens: number;
+  /** Call pairs skipped because a compaction landed between them. A compaction
+   * resets the window, so the "growth" across it is a demolition, not a
+   * payload; surfacing the count keeps the omission visible instead of silent. */
+  skippedAcrossCompactions: number;
+}
+
+/**
+ * An entry at or above this share of the session's attributed growth is worth
+ * pointing at. A tenth is deliberately low: the interesting finding is usually
+ * "one `Read` is 40% of everything that entered the context", and a threshold
+ * tuned to catch only that would stay silent on the equally actionable case of
+ * five tool results at 12% each.
+ */
+export const CONTEXT_GROWTH_FLAG_SHARE = 0.1;
+
+/**
+ * Attribute context growth to the calls that caused it.
+ *
+ * Main-chain call N+1's prompt side is, near enough, call N's prompt side plus
+ * call N's output plus whatever tool results landed between them, so
+ *
+ *     delta = promptTokens(N+1) − promptTokens(N) − outputTokens(N)
+ *
+ * is the payload that entered the context, and it belongs to the steps call N
+ * issued. That is what turns a context chart into the sentence a reader wants:
+ * "this `Read` added 47k tokens to the context".
+ *
+ * Three deliberate limits:
+ * - **Main chain only.** Sidechains run in their own context windows, the same
+ *   rule `buildContextSeries` follows; mixing them in would fake both growth
+ *   and collapse.
+ * - **Compactions break the chain.** A boundary between two calls resets the
+ *   window, so the pair is skipped (and counted) rather than reported as a
+ *   large negative or, worse, clamped to a meaningless zero.
+ * - **No dollar figure.** `Δtokens × remaining calls × cache-read rate` looks
+ *   like the obvious next step and is not: cache TTL expiry and later
+ *   compactions both break the multiplication. A token delta is an
+ *   observation; a carried-cost dollar would be a fragile model. See
+ *   `CONTEXT_GROWTH_CAVEAT`, which every render site prints verbatim.
+ */
+export function buildContextGrowth(analysis: SessionAnalysis): ContextGrowthSeries {
+  // The session's own, timestamped compactions — the same set the context
+  // chart marks, so "where the window reset" means one thing across surfaces.
+  const boundaries = summarizeCompactions(analysis.compactions)
+    .own.map((c) => (c.timestamp ? Date.parse(c.timestamp) : Number.NaN))
+    .filter((ms) => !Number.isNaN(ms))
+    .sort((a, b) => a - b);
+
+  interface Issued {
+    turnIndex: number;
+    callIndex: number;
+    promptTokens: number;
+    outputTokens: number;
+    steps: string[];
+    ms?: number;
+  }
+
+  // Shares need the final total, so deltas accumulate first and the shares
+  // are derived in one pass at the end.
+  const raw: Omit<ContextGrowthEntry, "share">[] = [];
+  let previous: Issued | undefined;
+  let totalTokens = 0;
+  let skippedAcrossCompactions = 0;
+
+  for (const turn of analysis.turns) {
+    for (const [callIndex, call] of turn.apiCalls.entries()) {
+      if (call.isSidechain) continue;
+      const parsed = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
+      const current: Issued = {
+        turnIndex: turn.index,
+        callIndex,
+        promptTokens: promptTokens(call.tokens),
+        outputTokens: call.tokens.outputTokens,
+        steps: call.steps
+          .filter((step) => step.kind !== "note" && step.kind !== "thinking")
+          .map((step) => step.label),
+        ...(Number.isNaN(parsed) ? {} : { ms: parsed }),
+      };
+      const prev = previous;
+      previous = current;
+      if (!prev) continue;
+      const from = prev.ms;
+      const to = current.ms;
+      // Untimed calls cannot be placed against a boundary; treating that as
+      // "no compaction" is the safe default — the delta is still real, and a
+      // spurious skip would hide a genuine contributor.
+      if (
+        from !== undefined &&
+        to !== undefined &&
+        boundaries.some((ms) => ms > from && ms <= to)
+      ) {
+        skippedAcrossCompactions += 1;
+        continue;
+      }
+      const deltaTokens = current.promptTokens - prev.promptTokens - prev.outputTokens;
+      if (deltaTokens <= 0) continue;
+      totalTokens += deltaTokens;
+      raw.push({
+        turnIndex: prev.turnIndex,
+        callIndex: prev.callIndex,
+        deltaTokens,
+        steps: prev.steps,
+      });
+    }
+  }
+
+  return {
+    entries: raw.map((e) => ({ ...e, share: shareOf(e.deltaTokens, totalTokens) })),
+    totalTokens,
+    skippedAcrossCompactions,
   };
 }
 

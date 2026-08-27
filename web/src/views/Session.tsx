@@ -2,9 +2,13 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  buildContextGrowth,
   buildSessionDiagnostics,
   buildTurnSeries,
   burstAttributionNote,
+  CONTEXT_GROWTH_CAVEAT,
+  CONTEXT_GROWTH_FLAG_SHARE,
+  type ContextGrowthEntry,
   type CostRankCohort,
   cumulativeShares,
   formatSignedUSD,
@@ -899,6 +903,14 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
     () => new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)])),
     [a],
   );
+  // Per-call context growth, keyed by the (turn, call-position) pair this view
+  // already iterates — so the expanded call blocks below can say what each
+  // call's steps put into the context.
+  const growth = useMemo(() => buildContextGrowth(a), [a]);
+  const growthByCall = useMemo(
+    () => new Map(growth.entries.map((e) => [`${e.turnIndex}.${e.callIndex}`, e])),
+    [growth],
+  );
   // A requested turn widens the window before the scroll runs, so the anchor
   // exists by the time the effect below looks for it. Its POSITION, not its
   // number: under a cost sort turn #480 can be the first row.
@@ -974,6 +986,7 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
                       <span className="muted">{call.model ?? "?"}</span>
                       <span className="muted">
                         {usd(call.cost.total)} · {tokensOf(call.tokens)}
+                        <ContextGrowthTag entry={growthByCall.get(`${t.index}.${ci}`)} />
                       </span>
                     </div>
                     {call.steps.map((step, si) => (
@@ -987,7 +1000,32 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
         );
       })}
       {more}
+      {growth.entries.length > 0 && <p className="muted">{CONTEXT_GROWTH_CAVEAT}</p>}
     </div>
+  );
+}
+
+/**
+ * "+47.0k ctx" beside an API call: what the steps that call issued put into
+ * the context, from the shared `buildContextGrowth`. Flagged when the call is
+ * a large share of everything that entered the context this session — a token
+ * delta only, never a derived dollar (see `CONTEXT_GROWTH_CAVEAT`).
+ */
+function ContextGrowthTag({ entry }: { entry?: ContextGrowthEntry }) {
+  if (!entry) return null;
+  const big = entry.share >= CONTEXT_GROWTH_FLAG_SHARE;
+  return (
+    <>
+      {" · "}
+      <span
+        className={big ? "ctxgrowth big" : "ctxgrowth"}
+        title={`${entry.steps.join(", ") || "this call"} added ${count(
+          entry.deltaTokens,
+        )} tokens to the context — ${pct(entry.share)} of this session's context growth`}
+      >
+        +{count(entry.deltaTokens)} ctx
+      </span>
+    </>
   );
 }
 

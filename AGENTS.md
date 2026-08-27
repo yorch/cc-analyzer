@@ -219,6 +219,33 @@ flagging" predicate (interrupted / correction / retries / test failures /
 redundant reads / tool errors) — the web tooltips and marks and the TUI ▲ row
 both render exactly its output; the web timeline's red lanes are deliberately
 the narrower user-intervention subset (interrupted/correction only).
+**Context growth is attributed, never priced.** `buildContextGrowth()`
+(bun-free, beside the other series) answers "what filled the window": main-chain
+call N+1's prompt side is call N's prompt side plus call N's output plus
+whatever tool results landed between them, so `delta = promptTokens(N+1) −
+promptTokens(N) − outputTokens(N)` is the payload that entered the context, and
+it belongs to the steps call N issued — the sentence a reader actually wants
+("this `Read` added 47k tokens to the context"). It reuses the existing
+`promptTokens()` (pricing.ts) rather than re-deriving the sum. Three limits are
+deliberate: **main chain only** (sidechains have their own windows, the rule
+`buildContextSeries` already follows); **compactions break the chain** (a
+boundary between two calls resets the window, so the pair is skipped and
+counted in `skippedAcrossCompactions` rather than reported as a huge negative
+or clamped to a meaningless zero); and **no dollar figure** — `Δtokens ×
+remaining calls × cache-read rate` looks like the obvious next step and is not,
+because cache TTL expiry and later compactions both break the multiplication. A
+token delta is an observation; a carried-cost dollar would be a fragile model.
+Non-positive deltas produce no entry at all (nothing entered is not an
+observation), and `CONTEXT_GROWTH_FLAG_SHARE` (0.1) is the one threshold render
+sites use to mark a large contributor. `CONTEXT_GROWTH_CAVEAT` (stats-types)
+prints **verbatim** at every render site: the web expanded Turns view (a
+`+47.0k ctx` tag per call, flagged when big), the CLI `analyze` **Context
+growth** table (top 10 by delta, with the attributed total and the
+skipped-pair count), and the TUI turns detail line. In the TUI those lines come
+out of the step list's own page size — the screen is a pinned-height frame with
+`overflow: hidden`, so a caveat that wraps must shrink the list rather than
+push the footer off the bottom.
+
 `turnCostShape()` is its cost-composition sibling and follows the same
 one-predicate/many-render-sites rule: a pure function of `TurnPoint` naming
 **why** a turn was expensive — `subagent` (≥60% of the turn's cost ran on

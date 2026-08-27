@@ -1,5 +1,6 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
 import {
+  buildContextGrowth,
   buildTurnSeries,
   burstAttributionNote,
   cumulativeShares,
@@ -36,6 +37,7 @@ import type {
   WhatIfRepricing,
 } from "../core/stats.ts";
 import {
+  CONTEXT_GROWTH_CAVEAT,
   CORRECTION_CAVEAT,
   type CorrectionStats,
   INDEXED_COST_CAVEAT,
@@ -149,6 +151,12 @@ function humanEntries(rec: Record<string, number>, limit = Number.POSITIVE_INFIN
  *  turn the reader came for. Rows stay in cost order and carry their real turn
  *  number, so the ordering is visible rather than implied. */
 const TURNS_ROW_CAP = 40;
+
+/** Context-growth rows the report prints. A long session produces one entry
+ *  per main-chain call, and the reading is entirely about the outliers — the
+ *  tail of 200-token deltas is noise, and `--json` carries it for anyone who
+ *  wants it. */
+const CONTEXT_GROWTH_ROW_CAP = 10;
 
 /** Render a full single-session analysis as a text report. */
 export function renderSessionSummary(
@@ -472,6 +480,43 @@ export function renderSessionSummary(
         options,
       ),
     );
+  }
+
+  // What actually filled the context window, attributed to the calls whose
+  // steps put it there. Ranked by size (the whole point is the outliers) and
+  // capped, since a long session has one entry per main-chain call.
+  const growth = buildContextGrowth(a);
+  if (growth.entries.length > 0) {
+    lines.push(`\n${section("Context growth", options)}`);
+    const top = [...growth.entries]
+      .sort((x, y) => y.deltaTokens - x.deltaTokens)
+      .slice(0, CONTEXT_GROWTH_ROW_CAP);
+    lines.push(
+      table(
+        ["turn", "call", "tokens", "share", "issued by"],
+        top.map((e) => [
+          `#${e.turnIndex + 1}`,
+          String(e.callIndex + 1),
+          formatCount(e.deltaTokens),
+          pct(e.share),
+          truncate(e.steps.join(", ") || "(no tool steps)", 48),
+        ]),
+        { align: ["right", "right", "right", "right", "left"] },
+      ),
+    );
+    const notes = [`${formatCount(growth.totalTokens)} tokens attributed across the session`];
+    if (growth.entries.length > top.length) {
+      notes.push(`${growth.entries.length - top.length} smaller contributors not shown`);
+    }
+    if (growth.skippedAcrossCompactions > 0) {
+      notes.push(
+        `${growth.skippedAcrossCompactions} call pair${
+          growth.skippedAcrossCompactions === 1 ? "" : "s"
+        } skipped across a compaction`,
+      );
+    }
+    lines.push(muted(`${notes.join(" · ")}.`, options));
+    lines.push(muted(CONTEXT_GROWTH_CAVEAT, options));
   }
 
   return lines.join("\n");
