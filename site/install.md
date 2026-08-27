@@ -1,20 +1,21 @@
 ---
 title: Install
-description: Install cc-analyzer — one-line installer, prebuilt binaries, checksum verification, self-update, and running from source.
+description: Install cc-analyzer — one-line installer, prebuilt binaries, checksum checks, self-update, and running from source.
 ---
 
 # Install cc-analyzer
 
 `cc-analyzer` ships as a **single self-contained binary** for macOS, Linux, and
-Windows — no Bun, Node, or other runtime required. It is **read-only**: it never
-writes to `~/.claude`, and its own state (pricing cache, session index) lives
-under `~/.config/cc-analyzer/`.
+Windows — no Bun, Node, or other runtime required. Ordinary analysis is
+**read-only** over Claude's source transcripts and configuration. Its own state
+lives under `$CC_ANALYZER_STATE_DIR`, then `$XDG_CONFIG_HOME/cc-analyzer`, then
+`~/.config/cc-analyzer/`.
 
 ## One-line install
 
 The installer detects your OS and architecture, downloads the matching binary
 from the [latest release](https://github.com/yorch/cc-analyzer/releases/latest),
-verifies its checksum, and installs it.
+checks its checksum when the release publishes a manifest, and installs it.
 
 ::: code-group
 
@@ -99,7 +100,7 @@ xattr -d com.apple.quarantine /usr/local/bin/cc-analyzer
 
 ### Verify the checksum
 
-The one-line installer verifies automatically. For a manual download, compare the
+The one-line installer checks automatically when `SHA256SUMS` is available. For a manual download, compare the
 binary's hash against the release `SHA256SUMS`:
 
 ```sh

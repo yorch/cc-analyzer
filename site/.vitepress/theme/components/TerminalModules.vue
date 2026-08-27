@@ -35,7 +35,7 @@ const modules = [
   {
     id: "private",
     title: "Read-only health checks & privacy",
-    body: "cc-analyzer doctor checks parser integrity, conversation links, tool results, and interrupted prompts without touching the source. It never writes to ~/.claude, and your session data stays local.",
+    body: "cc-analyzer doctor checks parser integrity, conversation links, tool results, and interrupted prompts without touching the source. Normal analysis is local; the optional Claude handoff is explained in the privacy guide.",
     icon: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2.5"/>',
   },
 ];

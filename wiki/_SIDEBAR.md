@@ -12,4 +12,5 @@
 - [7. Analytics & Insights](./7-analytics-and-insights.md)
 - [8. Updates & Distribution](./8-updates-and-distribution.md)
 - [9. Docs Site](./9-docs-site.md)
+- [10. Recipes & Use Cases](./10-recipes.md)
 - [Glossary](./glossary.md)
