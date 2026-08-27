@@ -596,11 +596,16 @@ The views:
   tokens spent before you type) and the cheapest single model your token mix
   could have run on.
 - **Trends** — a four-panel time-series dashboard (`tab` / `1`·`2`·`3`·`4`): a
-  braille **burn** chart (`m` cycles cost/tokens/sessions, `g` the
-  day/week/month granularity), an activity **heatmap** by local weekday × hour
-  (`m` toggles to cost), a contribution-style **calendar** (`m` toggles
-  cost/sessions), and a **models** panel ranking each model's spend with a weekly
-  sparkline, total, and share.
+  braille **burn** chart with y-axis value labels (`m` cycles cost/tokens/sessions,
+  `g` the day/week/month granularity — it now opens at the finest bucketing that
+  still fits the chart's width instead of always starting at day, so a long
+  portfolio history opens weekly or monthly rather than cramming hundreds of
+  daily points into however many terminal columns there are), an activity **heatmap** by local
+  weekday × hour (`m` toggles to cost), a contribution-style **calendar** (`m`
+  toggles cost/sessions), and a **models** panel with a date-range line under the
+  header and each model's weekly sparkline padded to that shared range and scaled
+  to one shared ceiling — so rows stacked above one another read as one timeline
+  instead of each implying its own — alongside total and share.
 - **Tools** — a four-panel view (`tab` / `1`·`2`·`3`·`4`): **tools** ranked by
   invocations with error count and rate (`s` sorts); **skills** in more depth
   (invocations, sessions, distinct projects, error rate, turn- and
@@ -624,10 +629,13 @@ input/result), plus **charts**, **transcript**, and **summary** modes
 
 - **Charts** — the braille context-window sawtooth (`▼` compaction markers,
   "% of window", and a headroom projection when the context is growing), a
-  per-call **cache-hit sparkline** with cold-call count, cost-per-call and
-  cost-per-turn sparklines annotated with idle gaps and `▲` markers on
-  interrupted/correction/thrash turns, plus in-session model-mix and per-burst
-  subagent spend lines.
+  per-call **cache-hit chart** with cold-call count (each column shows its
+  worst call, since a rate's dips are its signal; drawn only when the screen's
+  row budget allows real height, and omitted otherwise — at the fixed one-row
+  height it used to have, any hit rate above ~87% read as a solid block),
+  cost-per-call and cost-per-turn sparklines annotated with idle
+  gaps and `▲` markers on interrupted/correction/thrash turns, plus in-session
+  model-mix and per-burst subagent spend lines.
 - **Summary** — the same evidence-backed context and cost diagnostics as the CLI
   and web app, plus **cost-per-outcome** ratios and a session-scoped **what-if
   repricing** line (each with its caveat).
@@ -653,7 +661,8 @@ deliberately want to expose it to your network.
 
 The UI's pages:
 
-- **Dashboard** — the portfolio overview, with a top-15 project table.
+- **Dashboard** — the portfolio overview, with a monthly spend bar chart above
+  its sortable table and a top-15 project table.
 - **Projects** — every indexed project, unpaginated and sortable/filterable, with
   cache-waste and portfolio-finding counts folded in from the same signals as
   Insights. Each drills into Overview, Sessions, Trends, and Files views.
@@ -662,8 +671,11 @@ The UI's pages:
   project-scoped), then the same cache-efficiency hit-list as the TUI, plus
   **context tax** per project and the **what-if model repricing** table, each
   carrying its caveat inline.
-- **Trends** — 30-day, peak-spend, and error-rate headlines plus burn, calendar,
-  model-mix, activity, scatter, reliability, subagent, and concurrency charts.
+- **Trends** — 30-day, peak-spend, and error-rate headlines plus burn (opens at
+  the finest day/week/month granularity that still fits the chart's width, so a
+  long portfolio history doesn't cram hundreds of daily points into it; the
+  granularity toggle still overrides it), calendar, model-mix, activity, scatter,
+  reliability, subagent, and concurrency charts.
 - **Tools** — organized into Tools, Reliability, Compactions, Skills, Agents, and
   Environment views.
 
@@ -695,12 +707,13 @@ The per-session view offers:
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom
   projection when the context is growing), a **cache-efficiency** chart (per-call
-  hit rate, cold calls), cumulative cost with **idle-gap** markers, per-turn bars
-  toggling cost/tokens/calls/depth/time (the cost metric stacks the four token
-  categories; interrupted/correction/thrash turns carry warning markers), plus
-  **tool-activity** bars, an in-session **model mix**, and a **subagent bursts**
-  table attributing sidechain spend to the specific agents that ran (typed
-  best-effort from their spawn prompts when metadata is unavailable).
+  hit rate against a fixed 0–100% y-axis, cold calls), cumulative cost with
+  **idle-gap** markers, per-turn bars toggling cost/tokens/calls/depth/time (the
+  cost metric stacks the four token categories; interrupted/correction/thrash
+  turns carry warning markers), plus **tool-activity** bars, an in-session
+  **model mix**, and a **subagent bursts** table attributing sidechain spend to
+  the specific agents that ran (typed best-effort from their spawn prompts when
+  metadata is unavailable).
 - **Summary** — groups spend/tokens, execution, and environment details, then
   explainable context and cost diagnostics with suggested next actions,
   **cost-per-outcome** ratios, a session-scoped **what-if repricing** summary, and
