@@ -2,11 +2,15 @@ import { memo } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  type ConcurrencyDayRow,
   type ConcurrencySummary,
   calendarWeeks,
   type DayRow,
   type ErrorWeekRow,
+  fitGranularity,
+  type Granularity,
   type HeatCell,
+  MIN_PX_PER_POINT,
   type SidechainDayRow,
   shiftDay,
   weekOf,
@@ -17,6 +21,8 @@ import { useHashParam } from "../router.ts";
 import { Seg } from "../Seg.tsx";
 import {
   BurnPanel,
+  CHART_PAD,
+  CHART_W,
   fmt,
   type HeatMetric,
   LineChart,
@@ -269,8 +275,44 @@ const SidechainTrend = memo(function SidechainTrend({ rows }: { rows: SidechainD
   );
 });
 
+/**
+ * Bucket the day-scale concurrency series the same way the Burn chart buckets
+ * spend — by whatever granularity `fitGranularity` says fits the plot width —
+ * but by max rather than sum: "max concurrent sessions in a week" is the
+ * meaningful rollup for a peak, where a total would just double-count overlap.
+ */
+function bucketConcurrency(
+  days: ConcurrencyDayRow[],
+  granularity: Granularity,
+): { label: string; maxConcurrent: number }[] {
+  if (granularity === "day")
+    return days.map((d) => ({ label: d.day, maxConcurrent: d.maxConcurrent }));
+  const out: { label: string; maxConcurrent: number }[] = [];
+  let curKey = "";
+  for (const d of days) {
+    const key = granularity === "month" ? d.day.slice(0, 7) : weekOf(d.day);
+    let p = out[out.length - 1];
+    if (!p || key !== curKey) {
+      p = { label: key, maxConcurrent: 0 };
+      out.push(p);
+      curKey = key;
+    }
+    p.maxConcurrent = Math.max(p.maxConcurrent, d.maxConcurrent);
+  }
+  return out;
+}
+
 const Concurrency = memo(function Concurrency({ summary }: { summary: ConcurrencySummary }) {
   if (summary.days.length === 0) return <EmptyNotice>No timed sessions in the index.</EmptyNotice>;
+  // Same density fit the Burn chart uses (see trend-charts.tsx): a year of
+  // daily peaks in a fixed-width chart is as unreadable as a year of daily
+  // spend. No user-facing granularity toggle here, so this is the only
+  // choice, not a default with an override.
+  const granularity = fitGranularity(
+    summary.days.length,
+    Math.floor((CHART_W - CHART_PAD * 2) / MIN_PX_PER_POINT),
+  );
+  const series = bucketConcurrency(summary.days, granularity);
   return (
     <>
       <p className="muted">
@@ -278,8 +320,8 @@ const Concurrency = memo(function Concurrency({ summary }: { summary: Concurrenc
         {(summary.parallelDayShare * 100).toFixed(0)}% of active days ran ≥2 in parallel
       </p>
       <LineChart
-        values={summary.days.map((d) => d.maxConcurrent)}
-        labels={summary.days.map((d) => d.day)}
+        values={series.map((d) => d.maxConcurrent)}
+        labels={series.map((d) => d.label)}
         format={(v) => `${v} concurrent`}
         height={100}
       />

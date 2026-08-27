@@ -22,6 +22,14 @@ import {
   type WeeklyDigest,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import {
+  activeAt,
+  barLocate,
+  ChartTip,
+  TipHead,
+  TipRow,
+  usePointerIndex,
+} from "../chart-hover.tsx";
 import { copyText } from "../clipboard.ts";
 import { ExportPanel } from "../ExportPanel.tsx";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
@@ -30,6 +38,7 @@ import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
 import { SortTh } from "../SortTh.tsx";
+import { CHART_PAD, CHART_W, chartBox, YAxis } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 
@@ -184,6 +193,10 @@ export function Dashboard() {
 
       <section>
         <h2>Spend by month</h2>
+        {/* On this data the SHAPE (a flat year, then a ramp) is the story — a
+            table alone hides it. The sortable table below stays as the exact-
+            values / accessible fallback. */}
+        <MonthBarChart rows={byMonth} />
         <div className="tablewrap">
           <table>
             <thead>
@@ -351,6 +364,74 @@ export function Dashboard() {
           </div>
         </section>
       )}
+    </>
+  );
+}
+
+/**
+ * Monthly spend as bars. `rows` arrives in ascending `month` order (the
+ * `spendByMonth` query's `ORDER BY month`) — the ramp this chart exists to
+ * show only reads correctly chronologically, never re-sorted by the table
+ * below. A discrete per-month total is a bar-chart quantity, not a line: with
+ * ~14 points a bar per month stays individually readable, which is why this
+ * doesn't reuse the continuous `LineChart`.
+ */
+function MonthBarChart({ rows }: { rows: MonthRow[] }) {
+  const n = rows.length;
+  const H = 160;
+  const max = Math.max(...rows.map((r) => r.cost), 1e-9);
+  // Guard div-by-zero for the empty series; the early return below (after
+  // every hook has run — rules of hooks) is what actually degrades it.
+  const slot = (CHART_W - CHART_PAD * 2) / Math.max(n, 1);
+  const gap = Math.min(4, slot * 0.25);
+  const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
+  const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
+  const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
+  const active = activeAt(hover, rows, n, xCenter);
+  if (n === 0) return null;
+  return (
+    <>
+      <div className="chart-wrap">
+        <svg
+          className="burnchart"
+          viewBox={`0 0 ${CHART_W} ${H}`}
+          style={chartBox(CHART_W, H)}
+          role="img"
+          aria-label={`Spend by month bar chart across ${n} months, peak ${usd(max)}`}
+          {...bind}
+        >
+          <title>Spend by month</title>
+          <YAxis max={max} y={y} format={usd} />
+          {rows.map((r, i) => {
+            const h = r.cost > 0 ? Math.max((r.cost / max) * (H - CHART_PAD * 2), 1.5) : 0;
+            const bx = CHART_PAD + i * slot + gap / 2;
+            const bw = Math.max(slot - gap, 1);
+            const hot = i === hover?.i ? " hot" : "";
+            return (
+              <rect
+                key={r.month}
+                className={`turnbar${hot}`}
+                x={bx}
+                y={H - CHART_PAD - h}
+                width={bw}
+                height={h}
+              />
+            );
+          })}
+        </svg>
+        {active && (
+          <ChartTip x={xCenter(active.i)} pinned={pinned}>
+            <TipHead>{active.p.month}</TipHead>
+            <TipRow label="cost" value={usd(active.p.cost)} color="var(--signal)" />
+            <TipRow label="sessions" value={count(active.p.sessions)} />
+            <TipRow label="tokens" value={tokens(active.p.ioTokens, active.p.cacheTokens)} />
+          </ChartTip>
+        )}
+      </div>
+      <div className="axis">
+        <span>{rows[0]?.month}</span>
+        <span>{rows[n - 1]?.month}</span>
+      </div>
     </>
   );
 }

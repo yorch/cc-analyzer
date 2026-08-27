@@ -5,13 +5,15 @@
  * `stats-types.ts`, so both pages chart the same numbers.
  */
 
-import { type CSSProperties, memo, useRef, useState } from "react";
+import { type CSSProperties, memo, type RefObject, useEffect, useRef, useState } from "react";
 import { EmptyNotice } from "./AsyncNotice.tsx";
 import type { DayRow, ModelDayRow, ScatterSession } from "./api.ts";
 import {
   type BurnMetric,
   bucketSeries,
+  fitGranularity,
   type Granularity,
+  MIN_PX_PER_POINT,
   metricValue,
   shiftDay,
   weekOf,
@@ -58,9 +60,18 @@ export const MAX_LINE_DOTS = 366;
 export const chartBox = (w: number, h: number): CSSProperties => ({ aspectRatio: `${w} / ${h}` });
 
 /**
- * The one y-scale affordance these charts get: a faint gridline at the top and
- * middle of the value scale, each labelled in the chart's own formatter. Not a
- * full axis — just enough to read a height off the page instead of hovering.
+ * The one y-scale affordance these charts get: a faint gridline at the top,
+ * middle, and floor of the value scale, each labelled in the chart's own
+ * formatter. Not a full axis — just enough to read a height off the page
+ * instead of hovering.
+ *
+ * Every series here starts its first point at exactly `x = pad` (`xScale`'s
+ * definition), the same spot these labels sit — so a label is backed by its
+ * own solid `y-tick-bg` rect, sized to the text. Every caller renders `<YAxis>`
+ * *after* its data marks so the backdrop actually lands on top — the charts
+ * here and the session charts in `SessionCharts.tsx` alike. Rendering it
+ * first (as all of them did until this fix) still works and still type-checks,
+ * it just puts the label back under the line, which is the bug.
  */
 export function YAxis({
   max,
@@ -79,21 +90,60 @@ export function YAxis({
   const ticks = [
     { key: "max", value: max },
     { key: "mid", value: max / 2 },
+    { key: "zero", value: 0 },
   ];
   // No aria-hidden: the enclosing svg is role="img" with its own label, so
   // assistive tech never walks into these marks anyway.
   return (
     <g className="y-axis">
-      {ticks.map((t) => (
-        <g key={t.key}>
-          <line className="y-grid" x1={pad} x2={width - pad} y1={y(t.value)} y2={y(t.value)} />
-          <text className="y-tick" x={pad + 2} y={Math.max(y(t.value) - 3, 9)}>
-            {format(t.value)}
-          </text>
-        </g>
-      ))}
+      {ticks.map((t) => {
+        const label = format(t.value);
+        const ty = Math.max(y(t.value) - 3, 9);
+        // Rough monospace glyph width (`--font-mono` at the `.y-tick` 10px
+        // size, ~6px/char) — only needs to cover the text, not measure it
+        // exactly, since it's a backdrop rather than a layout constraint.
+        const labelW = label.length * 6 + 6;
+        return (
+          <g key={t.key}>
+            <line className="y-grid" x1={pad} x2={width - pad} y1={y(t.value)} y2={y(t.value)} />
+            <rect className="y-tick-bg" x={pad} y={ty - 8} width={labelW} height={11} />
+            <text className="y-tick" x={pad + 2} y={ty}>
+              {label}
+            </text>
+          </g>
+        );
+      })}
     </g>
   );
+}
+
+/**
+ * The element's real rendered CSS width, and a ref to attach to it.
+ *
+ * Density decisions cannot use `CHART_W`: that is a viewBox coordinate space,
+ * and every chart is `width: 100%`, so the same 900-unit box paints at ~795px
+ * in a desktop column and ~360px on a phone. Treating viewBox units as pixels
+ * under-buckets a dense series worst on the narrowest screens, which is where
+ * an unreadable chart costs the most.
+ *
+ * Returns 0 until measured (and where `ResizeObserver` is unavailable), so
+ * callers get the coarsest bucketing for one paint rather than a wrong-but-
+ * confident fine one, then settle on the real answer.
+ */
+export function useRenderedWidth<T extends Element>(): [RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
 }
 
 /** The tabular fallback every chart carries: exact values for keyboard, touch,
@@ -290,13 +340,15 @@ export function LineChart({
           onPointerCancel={onPointerCancel}
         >
           <title>{title}</title>
-          <YAxis max={max} y={y} format={tick} />
           {area && <path className="burn-area" d={areaPath(line, x, n, H)} />}
           <path className="burn-line" d={line} />
           {n <= MAX_LINE_DOTS &&
             vValues.map((v, i) => (
               <circle key={vLabels[i]} cx={x(i)} cy={y(v)} r={3.5} className="dot" />
             ))}
+          {/* Drawn after the marks above, so a label's backdrop actually sits
+           *  on top of whatever data crosses its point — see YAxis's doc. */}
+          <YAxis max={max} y={y} format={tick} />
           {brushRect && (
             <rect
               className="brush-sel"
@@ -342,14 +394,40 @@ export const BurnPanel = memo(function BurnPanel({ daily }: { daily: DayRow[] })
   const metrics = ["cost", "tokens", "sessions"] as const;
   const granularities = ["day", "week", "month"] as const;
   const [metric, setMetric] = useHashParam<BurnMetric>("burn", "cost", metrics);
-  const [granularity, setGranularity] = useHashParam<Granularity>("by", "day", granularities);
+  // Day granularity plots one point per `daily` row, and a long history
+  // collapses into moiré. `fitGranularity` picks the finest bucketing that
+  // still gives each point `MIN_PX_PER_POINT`.
+  //
+  // Two things this must NOT do. It must not measure against `CHART_W`:
+  // viewBox units are not pixels — every chart is `width: 100%`, so a
+  // 900-unit box paints at ~795px on a laptop and ~360px on a phone, and
+  // sizing off the viewBox under-buckets worst exactly where the screen is
+  // smallest. And it must not ride in as `useHashParam`'s fallback: that hook
+  // captures the fallback once via `useState(read)`, so a width-derived
+  // default would freeze at whatever the first paint measured.
+  //
+  // So the URL carries an explicit `"auto"` instead, and the fit is derived
+  // on every render from the measured width. An explicit `by=day` still wins
+  // and still survives a resize.
+  const [wrapRef, renderedWidth] = useRenderedWidth<HTMLDivElement>();
+  const [byParam, setBy] = useHashParam<Granularity | "auto">("by", "auto", [
+    "auto",
+    ...granularities,
+  ]);
+  const granularity =
+    byParam === "auto"
+      ? fitGranularity(daily.length, Math.floor(renderedWidth / MIN_PX_PER_POINT))
+      : byParam;
+  const setGranularity = setBy as (next: Granularity) => void;
   const series = bucketSeries(daily, granularity);
   const values = series.map((p) => metricValue(p, metric));
   const total = values.reduce((s, v) => s + v, 0);
   const peakIdx = values.reduce((b, v, i) => (v > (values[b] ?? -1) ? i : b), 0);
   const avg = values.length ? total / values.length : 0;
   return (
-    <>
+    // The ref rides the panel wrapper, not the chart itself: the SVG lives
+    // inside LineChart, and the wrapper is the same width the chart paints at.
+    <div ref={wrapRef}>
       <div className="trend-head">
         <h2>Burn</h2>
         <span className="seg-group">
@@ -388,7 +466,7 @@ export const BurnPanel = memo(function BurnPanel({ daily }: { daily: DayRow[] })
           />
         </>
       )}
-    </>
+    </div>
   );
 });
 
@@ -500,7 +578,6 @@ function ModelMixChart({ rows }: { rows: ModelDayRow[] }) {
           {...bind}
         >
           <title>Spend per model over time</title>
-          <YAxis max={maxTotal} y={y} format={usd} width={W} pad={pad} />
           {bands.map((b) => (
             <path
               key={b.model}
@@ -510,6 +587,8 @@ function ModelMixChart({ rows }: { rows: ModelDayRow[] }) {
               d={b.path}
             />
           ))}
+          {/* After the bands, so a label's backdrop sits on top — see YAxis's doc. */}
+          <YAxis max={maxTotal} y={y} format={usd} width={W} pad={pad} />
           {hd && <Crosshair x={hd.x} bottom={H - pad} top={pad} pinned={pinned} />}
         </svg>
         {hd && (
@@ -627,8 +706,54 @@ function ModelMixTable({
 
 export type ScatterX = "wall" | "active";
 
-function ScatterDot({ cx, cy, active }: { cx: number; cy: number; active?: boolean }) {
-  return <circle cx={cx} cy={cy} r={active ? 5 : 3.5} className={active ? "dot active" : "dot"} />;
+/** Below this many plotted points, dots stay fully opaque — there's no
+ *  overplotting to correct for yet. */
+const SCATTER_DENSE_REF = 50;
+/** However dense the plot gets, a dot never fades past this — some ink has to
+ *  survive so the corner still reads as "many points", not "empty". */
+const SCATTER_MIN_OPACITY = 0.08;
+
+/**
+ * Per-dot opacity that falls off with point count so the dense, cheap-and-short
+ * corner (where sessions pile up) doesn't collapse into one saturated blob —
+ * the opposite of what makes that corner worth reading. Total "ink" (opacity ×
+ * count) grows only as √n, the standard overplotting fix for scatter plots;
+ * simpler than binning and doesn't need a second visual language on the chart.
+ */
+function scatterDotOpacity(n: number): number {
+  if (n <= SCATTER_DENSE_REF) return 1;
+  return Math.max(Math.sqrt(SCATTER_DENSE_REF / n), SCATTER_MIN_OPACITY);
+}
+
+function ScatterDot({
+  cx,
+  cy,
+  active,
+  linked,
+  density,
+}: {
+  cx: number;
+  cy: number;
+  active?: boolean;
+  /** Whether this point opens a session on click (wrapped in an `<a>` by the
+   *  caller) — unlinked points get a hollow, muted treatment so they don't
+   *  read as clickable. */
+  linked: boolean;
+  /** Density-scaled opacity for the common (non-hovered) case; ignored once
+   *  `active`, where the shared `.dot.active` rule takes over so the nearest
+   *  point still pops regardless of how faint the plot is. */
+  density: number;
+}) {
+  const cls = ["dot", active && "active", !linked && "unlinked"].filter(Boolean).join(" ");
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={active ? 5 : 3.5}
+      className={cls}
+      style={active || !linked ? undefined : { opacity: density }}
+    />
+  );
 }
 
 export const Scatter = memo(function Scatter({
@@ -639,6 +764,11 @@ export const Scatter = memo(function Scatter({
   xAxis: ScatterX;
 }) {
   const usable = points.filter((p) => p.cost > 0);
+  // Sessions with no recorded cost can't place on a cost axis at all — dropped
+  // from the plot AND its table, so the caption below has to say so rather
+  // than let the count quietly read as "covered everything".
+  const dropped = points.length - usable.length;
+  const dotOpacity = scatterDotOpacity(usable.length);
   const W = 900;
   const H = 260;
   const pad = 10;
@@ -668,11 +798,10 @@ export const Scatter = memo(function Scatter({
           {...bind}
         >
           <title>Session cost vs duration</title>
-          <YAxis max={maxY} y={yOf} format={usd} width={W} pad={pad} />
           {usable.map((p, i) =>
             p.sessionId ? (
               <a key={`${p.sessionId}-${p.durationMs}-${p.cost}`} href={link.session(p.sessionId)}>
-                <ScatterDot cx={x(p)} cy={y(p)} active={i === hover} />
+                <ScatterDot cx={x(p)} cy={y(p)} active={i === hover} linked density={dotOpacity} />
               </a>
             ) : (
               <ScatterDot
@@ -680,9 +809,13 @@ export const Scatter = memo(function Scatter({
                 cx={x(p)}
                 cy={y(p)}
                 active={i === hover}
+                linked={false}
+                density={dotOpacity}
               />
             ),
           )}
+          {/* After the dots, so a label's backdrop sits on top — see YAxis's doc. */}
+          <YAxis max={maxY} y={yOf} format={usd} width={W} pad={pad} />
         </svg>
         {hp && (
           <ChartTip x={x(hp)} width={W}>
@@ -700,6 +833,12 @@ export const Scatter = memo(function Scatter({
           {xAxis} time → {duration(maxX)}
         </span>
       </div>
+      {dropped > 0 && (
+        <p className="muted spark-cap">
+          {count(dropped)} session{dropped === 1 ? "" : "s"} with no recorded cost{" "}
+          {dropped === 1 ? "is" : "are"} not plotted.
+        </p>
+      )}
       <details className="chart-data">
         <summary>View Session Data</summary>
         <div className="tablewrap">
@@ -753,7 +892,10 @@ export const ScatterPanel = memo(function ScatterPanel({ points }: { points: Sca
             value={xAxis}
             onChange={setXAxis}
           />
-          <span className="muted"> · sqrt scales · click a dot to open the session</span>
+          <span className="muted">
+            {" "}
+            · sqrt scales · filled dots open their session, hollow dots aren’t linked to one
+          </span>
         </span>
       </div>
       <Scatter points={points} xAxis={xAxis} />
