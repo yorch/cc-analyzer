@@ -9,8 +9,8 @@ import {
   contextTax,
   whatIfRepricing,
 } from "../../src/core/stats.ts";
-import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
-import { clock } from "../helpers/events.ts";
+import { CONTEXT_GROWTH_CAVEAT, INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
+import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
@@ -178,5 +178,140 @@ describe("renderStats · skills", () => {
     db.close();
 
     expect(out).toContain(INDEXED_COST_CAVEAT);
+  });
+});
+
+/**
+ * A session of `turns` prompts, one assistant call each. Turn `costliest`
+ * (0-based) is given a far larger prompt so it dominates the session's spend
+ * from deep inside the timeline — the case a chronological truncation hides.
+ */
+function sessionWithTurns(turns: number, costliest: number): SessionAnalysis {
+  const events: Events = [];
+  for (let i = 0; i < turns; i++) {
+    events.push(promptEvent(`u${i}`, at(i * 2), `prompt number ${i}`));
+    events.push(
+      assistantEvent({
+        uuid: `a${i}`,
+        timestamp: at(i * 2 + 1),
+        usage: { input_tokens: i === costliest ? 100_000 : 10, output_tokens: 5 },
+      }),
+    );
+  }
+  return analyzeSession(events, pricing);
+}
+
+describe("renderSessionSummary · turns table", () => {
+  test("ranks by cost and says so once the row cap bites", () => {
+    // 60 turns > the 40-row cap, with the expensive one at #48 — well past
+    // where a first-40 slice would have stopped.
+    const out = renderSessionSummary(sessionWithTurns(60, 47));
+    expect(out).toContain("Turns · top 40 by cost");
+    expect(out).toContain("Ranked by cost, not session order");
+    expect(out).toContain("20 cheaper turns not shown");
+    // The costliest turn is present and leads the table.
+    expect(out).toContain("prompt number 47");
+    const table = out.slice(out.indexOf("Turns · top 40 by cost"));
+    expect(table.indexOf("prompt number 47")).toBeLessThan(table.indexOf("prompt number 0"));
+  });
+
+  test("carries a per-turn share, and a cumulative share only when ranked", () => {
+    const ranked = renderSessionSummary(sessionWithTurns(60, 47));
+    expect(ranked).toContain("share");
+    expect(ranked).toContain("cum");
+    const plain = renderSessionSummary(sessionWithTurns(5, 3));
+    expect(plain).toContain("share");
+    // A running total down a chronological list is a burn curve, not a share.
+    expect(plain).not.toContain("cum");
+  });
+
+  test("a $0 session prints 0% shares rather than NaN%", () => {
+    // No pricing table entry for the fixture model => every turn costs $0.
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "hello"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          model: "some-unpriceable-model",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      ],
+      {},
+    );
+    const out = renderSessionSummary(a);
+    expect(out).not.toContain("NaN");
+    expect(out).toContain("0%");
+  });
+
+  test("names why a turn was expensive, with the shape legend under the table", () => {
+    // One turn whose cost is almost all cache writes: the prefix kept changing.
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "rewrite the config"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 200_000 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).toContain("shape");
+    expect(out).toContain("cache churn");
+    expect(out).toContain("the cache was rewritten 1 time");
+  });
+
+  test("attributes context growth to the issuing call, with the caveat verbatim", () => {
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "read the file"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/big.txt" } }],
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+        assistantEvent({
+          uuid: "a1",
+          timestamp: at(2),
+          usage: { input_tokens: 47_110, output_tokens: 10 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).toContain("Context growth");
+    expect(out).toContain("Read");
+    expect(out).toContain(CONTEXT_GROWTH_CAVEAT);
+    // A token delta, never a derived dollar for "carried" cost.
+    expect(out).not.toContain("carried");
+  });
+
+  test("omits the context-growth section when nothing entered the context", () => {
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "hi"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).not.toContain("Context growth");
+    expect(out).not.toContain(CONTEXT_GROWTH_CAVEAT);
+  });
+
+  test("keeps session order (and the plain heading) when everything fits", () => {
+    const out = renderSessionSummary(sessionWithTurns(5, 3));
+    expect(out).toContain("▸ Turns");
+    expect(out).not.toContain("top 40 by cost");
+    expect(out).not.toContain("Ranked by cost");
+    const table = out.slice(out.indexOf("▸ Turns"));
+    expect(table.indexOf("prompt number 0")).toBeLessThan(table.indexOf("prompt number 3"));
   });
 });

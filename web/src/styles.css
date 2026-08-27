@@ -785,6 +785,14 @@ th.num {
 .turnbar:hover {
   opacity: 1;
 }
+/* cumulative-share (Pareto) overlay on the ranked per-turn bars — its own
+   0-100% scale, so it is drawn in a distinct hue from the bars it crosses */
+.pareto-line {
+  fill: none;
+  stroke: var(--data-clay);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
 /* idle-gap marker on the cumulative-cost chart (neutral, unlike the red
    compaction marker) */
 .gap-marker {
@@ -1214,6 +1222,41 @@ p.muted {
   flex: none;
   color: var(--faint);
   font-size: 11px;
+}
+/* Turn boundary in the transcript reader: the anchor charts and tables scroll
+   to, carrying that turn's price so the words and the money read together. */
+.turndivider {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-strong);
+  font-size: 12px;
+  scroll-margin-top: 12px;
+}
+/* "read in transcript" affordance under a turn header — outside the expand
+   button, since a nested button would be invalid and swallow the click. */
+.turnjump {
+  margin: 0 0 8px 18px;
+  font-size: 12px;
+}
+/* Per-call context growth beside an API call ("+47.0k ctx"). `.big` marks a
+   call carrying a large share of everything that entered the context. */
+.ctxgrowth {
+  color: var(--data-blue);
+  cursor: help;
+}
+.ctxgrowth.big {
+  color: var(--signal);
+  font-weight: 600;
+}
+/* Cost-shape badge on a turn header: why the turn cost what it did. Dotted
+   underline because the full evidence sentence lives in its title tooltip. */
+.turnshape {
+  color: var(--data-clay);
+  border-bottom: 1px dotted var(--data-clay);
+  cursor: help;
 }
 .ok {
   color: var(--teal);

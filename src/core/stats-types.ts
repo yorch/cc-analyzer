@@ -878,6 +878,21 @@ export interface WhatIfRepricing {
   rows: WhatIfRow[];
 }
 
+/**
+ * The caveat every context-growth surface prints, verbatim. The per-call token
+ * delta is an *attribution heuristic*, not a bill: it says how much bigger the
+ * next prompt was, and charges that to the steps the previous call issued.
+ * Anything else that entered the context between the two calls — a hook's
+ * output, a queued user message, an injected reminder — lands in the same
+ * number, and no dollar figure is derived from it (cache TTL expiry and
+ * compactions both break the "Δtokens × remaining calls × cache-read rate"
+ * multiplication that would look so plausible).
+ */
+export const CONTEXT_GROWTH_CAVEAT =
+  "Context growth attributes each prompt-side increase to the steps the previous API call issued. " +
+  "It is an attribution heuristic over main-chain calls, not a bill: anything else that entered the " +
+  "context between two calls lands in the same number, and no dollar cost is derived from it.";
+
 /** Every render site of a what-if repricing (portfolio or single-session)
  * prints this verbatim. */
 export const WHATIF_CAVEAT =

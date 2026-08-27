@@ -1,5 +1,13 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
-import { buildTurnSeries, burstAttributionNote, turnFlags } from "../core/chart-series.ts";
+import {
+  buildContextGrowth,
+  buildTurnSeries,
+  burstAttributionNote,
+  cumulativeShares,
+  shareOf,
+  turnCostShape,
+  turnFlags,
+} from "../core/chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import {
   digestSummaryRows,
@@ -29,6 +37,7 @@ import type {
   WhatIfRepricing,
 } from "../core/stats.ts";
 import {
+  CONTEXT_GROWTH_CAVEAT,
   CORRECTION_CAVEAT,
   type CorrectionStats,
   INDEXED_COST_CAVEAT,
@@ -134,8 +143,20 @@ function humanEntries(rec: Record<string, number>, limit = Number.POSITIVE_INFIN
 }
 
 /** Turns tables render at most this many rows; a session with more prints a
- *  truncation note and points at `--json` for the rest. */
+ *  truncation note and points at `--json` for the rest.
+ *
+ *  The rows are the costliest ones, not the first ones. A chronological cut
+ *  answers "how did this session open", which is the one question a truncated
+ *  turns table is never asked — and on a 400-turn session it reliably hid the
+ *  turn the reader came for. Rows stay in cost order and carry their real turn
+ *  number, so the ordering is visible rather than implied. */
 const TURNS_ROW_CAP = 40;
+
+/** Context-growth rows the report prints. A long session produces one entry
+ *  per main-chain call, and the reading is entirely about the outliers — the
+ *  tail of 200-token deltas is noise, and `--json` carries it for anyone who
+ *  wants it. */
+const CONTEXT_GROWTH_ROW_CAP = 10;
 
 /** Render a full single-session analysis as a text report. */
 export function renderSessionSummary(
@@ -381,34 +402,121 @@ export function renderSessionSummary(
     lines.push(...factLines);
   }
 
-  lines.push(`\n${section("Turns", options)}`);
+  const ranked = a.turns.length > TURNS_ROW_CAP;
+  lines.push(`\n${section(ranked ? `Turns · top ${TURNS_ROW_CAP} by cost` : "Turns", options)}`);
   // `turnFlags()` is the one "is this turn worth flagging" predicate both
   // frontends render (interrupted / correction / retries / test failures /
   // redundant reads / tool errors); join by turn index rather than array
   // position since detail mode is the only mode this renderer ever sees.
-  const flagsByTurn = new Map(buildTurnSeries(a).map((t) => [t.index, turnFlags(t).join(" · ")]));
-  const shownTurns = a.turns.slice(0, TURNS_ROW_CAP);
+  // Both per-turn predicates come off the SAME series: `turnFlags` (what went
+  // wrong in this turn) and `turnCostShape` (what the turn's cost is made of).
+  const points = buildTurnSeries(a);
+  const flagsByTurn = new Map(points.map((t) => [t.index, turnFlags(t).join(" · ")]));
+  const shapeByTurn = new Map(points.map((t) => [t.index, turnCostShape(t)]));
+  // Ranked only when the cap actually bites: a session that fits prints its
+  // whole narrative in order, which is the more useful reading of a short
+  // session and keeps `#` monotonic wherever it can be.
+  const shownTurns = ranked
+    ? [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, TURNS_ROW_CAP)
+    : a.turns;
+  // Share of the session's own spend, guarded by the shared `shareOf` — a $0
+  // session prints 0%, never NaN%. `cum` only rides along on the ranked table,
+  // where a running total answers "how much of this session is these N turns";
+  // down a chronological list it would be a burn curve wearing a share's label.
+  const sessionCost = a.totals.cost.total;
+  const cum = ranked
+    ? cumulativeShares(
+        shownTurns.map((t) => t.cost.total),
+        sessionCost,
+      )
+    : [];
   lines.push(
     table(
-      ["#", "cost", "calls", "tools", "flags", "prompt"],
-      shownTurns.map((t) => [
+      ranked
+        ? ["#", "cost", "share", "cum", "calls", "tools", "shape", "flags", "prompt"]
+        : ["#", "cost", "share", "calls", "tools", "shape", "flags", "prompt"],
+      shownTurns.map((t, i) => [
         String(t.index + 1),
         formatUSD(t.cost.total),
+        pct(shareOf(t.cost.total, sessionCost)),
+        ...(ranked ? [pct(cum[i] ?? 0)] : []),
         String(t.apiCalls.length),
         String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0)),
+        shapeByTurn.get(t.index)?.label ?? "",
         flagsByTurn.get(t.index) ?? "",
-        truncate(t.prompt || "(no text)", 60),
+        truncate(t.prompt || "(no text)", ranked ? 34 : 48),
       ]),
-      { align: ["right", "right", "right", "right", "left", "left"] },
+      {
+        align: ranked
+          ? ["right", "right", "right", "right", "right", "right", "left", "left", "left"]
+          : ["right", "right", "right", "right", "right", "left", "left", "left"],
+      },
     ),
   );
-  if (a.turns.length > TURNS_ROW_CAP) {
+  // The `shape` column is a two-word label; this legend is where its detail
+  // sentence lives in a fixed-width table. Printed only when some turn on
+  // screen actually carries a shape — most sessions have a few, not all.
+  const shapesShown = new Map(
+    shownTurns
+      .map((t) => shapeByTurn.get(t.index))
+      .filter((shape): shape is NonNullable<typeof shape> => shape !== undefined)
+      .map((shape) => [shape.kind, shape]),
+  );
+  if (shapesShown.size > 0) {
     lines.push(
       muted(
-        `… ${a.turns.length - TURNS_ROW_CAP} more turns — use --json for the full list.`,
+        `Shape — why the turn cost what it did: ${[...shapesShown.values()]
+          .map((shape) => `${shape.label} = ${shape.detail.split(" — ")[1] ?? shape.detail}`)
+          .join(" · ")}.`,
         options,
       ),
     );
+  }
+  if (ranked) {
+    lines.push(
+      muted(
+        `Ranked by cost, not session order — ${a.turns.length - TURNS_ROW_CAP} cheaper turns ` +
+          "not shown; use --json for the full timeline.",
+        options,
+      ),
+    );
+  }
+
+  // What actually filled the context window, attributed to the calls whose
+  // steps put it there. Ranked by size (the whole point is the outliers) and
+  // capped, since a long session has one entry per main-chain call.
+  const growth = buildContextGrowth(a);
+  if (growth.entries.length > 0) {
+    lines.push(`\n${section("Context growth", options)}`);
+    const top = [...growth.entries]
+      .sort((x, y) => y.deltaTokens - x.deltaTokens)
+      .slice(0, CONTEXT_GROWTH_ROW_CAP);
+    lines.push(
+      table(
+        ["turn", "call", "tokens", "share", "issued by"],
+        top.map((e) => [
+          `#${e.turnIndex + 1}`,
+          String(e.callIndex + 1),
+          formatCount(e.deltaTokens),
+          pct(e.share),
+          truncate(e.steps.join(", ") || "(no tool steps)", 48),
+        ]),
+        { align: ["right", "right", "right", "right", "left"] },
+      ),
+    );
+    const notes = [`${formatCount(growth.totalTokens)} tokens attributed across the session`];
+    if (growth.entries.length > top.length) {
+      notes.push(`${growth.entries.length - top.length} smaller contributors not shown`);
+    }
+    if (growth.skippedAcrossCompactions > 0) {
+      notes.push(
+        `${growth.skippedAcrossCompactions} call pair${
+          growth.skippedAcrossCompactions === 1 ? "" : "s"
+        } skipped across a compaction`,
+      );
+    }
+    lines.push(muted(`${notes.join(" · ")}.`, options));
+    lines.push(muted(CONTEXT_GROWTH_CAVEAT, options));
   }
 
   return lines.join("\n");

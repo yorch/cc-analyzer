@@ -11,7 +11,7 @@
  */
 
 import type { Compaction, IdlePeriod, SessionAnalysis, SidechainBurst } from "./analyze.ts";
-import { cacheTokens, ioTokens } from "./pricing.ts";
+import { cacheTokens, ioTokens, promptTokens } from "./pricing.ts";
 
 /**
  * A session's *own* compaction: not a subagent's (which compacted its own
@@ -52,6 +52,33 @@ export function dedupeCompactions(compactions: Compaction[], seen: Set<string>):
 /** Percentage of a context window used, rounded to whole percent. */
 export const pctOfLimit = (tokens: number, limit: number): number =>
   Math.round((tokens / limit) * 100);
+
+/**
+ * One part's share of a session total, as a 0..1 fraction — the ONE guarded
+ * division behind every "18% of session" label. A $0 session is not a defect
+ * (a cached-out run, an unpriced model, a session that only read), and every
+ * one of these surfaces would otherwise print `NaN%`, so an empty total reads
+ * as a 0 share rather than as an error.
+ */
+export const shareOf = (value: number, total: number): number => (total > 0 ? value / total : 0);
+
+/**
+ * Running share of `total` down a list of values — the cumulative column that
+ * lets "these 5 turns are 61% of the spend" be read straight off a ranked
+ * table, and the Pareto curve over a cost-ranked bar chart.
+ *
+ * The reading is only meaningful when the values are already in the order the
+ * reader sees them (descending, for a Pareto), which is the caller's business:
+ * this helper deliberately does not sort, because the render site owns both
+ * the ordering and the decision to show a cumulative column at all.
+ */
+export function cumulativeShares(values: number[], total: number): number[] {
+  let running = 0;
+  return values.map((value) => {
+    running += value;
+    return shareOf(running, total);
+  });
+}
 
 /** Split a session's compaction records the one canonical way. */
 export function summarizeCompactions(compactions: Compaction[]): CompactionBreakdown {
@@ -206,6 +233,146 @@ export function projectHeadroom(ctx: ContextSeries): HeadroomProjection | undefi
   };
 }
 
+/**
+ * One main-chain API call's contribution to context growth: how much bigger
+ * the *next* call's prompt was than this call's prompt plus its own output —
+ * i.e. the payload that entered the context between the two, attributable to
+ * the steps this call issued.
+ */
+export interface ContextGrowthEntry {
+  turnIndex: number;
+  /** Position of the issuing call within its turn's `apiCalls` — the join key
+   * every render site already has (they all iterate that array). */
+  callIndex: number;
+  /** Tokens that entered the context after this call. Always > 0: a flat or
+   * shrinking prompt means nothing entered, which is not an observation. */
+  deltaTokens: number;
+  /** Share of everything this series attributes (0..1). */
+  share: number;
+  /** Labels of the operation steps this call issued — what plausibly carried
+   * the payload ("Read", "Bash"). Narration and thinking are not operations
+   * and are excluded, matching `TurnPoint.kindCounts`. */
+  steps: string[];
+}
+
+export interface ContextGrowthSeries {
+  /** Positive deltas in session order. */
+  entries: ContextGrowthEntry[];
+  /** Σ of the deltas — the denominator behind every `share`. */
+  totalTokens: number;
+  /** Call pairs skipped because a compaction landed between them. A compaction
+   * resets the window, so the "growth" across it is a demolition, not a
+   * payload; surfacing the count keeps the omission visible instead of silent. */
+  skippedAcrossCompactions: number;
+}
+
+/**
+ * An entry at or above this share of the session's attributed growth is worth
+ * pointing at. A tenth is deliberately low: the interesting finding is usually
+ * "one `Read` is 40% of everything that entered the context", and a threshold
+ * tuned to catch only that would stay silent on the equally actionable case of
+ * five tool results at 12% each.
+ */
+export const CONTEXT_GROWTH_FLAG_SHARE = 0.1;
+
+/**
+ * Attribute context growth to the calls that caused it.
+ *
+ * Main-chain call N+1's prompt side is, near enough, call N's prompt side plus
+ * call N's output plus whatever tool results landed between them, so
+ *
+ *     delta = promptTokens(N+1) − promptTokens(N) − outputTokens(N)
+ *
+ * is the payload that entered the context, and it belongs to the steps call N
+ * issued. That is what turns a context chart into the sentence a reader wants:
+ * "this `Read` added 47k tokens to the context".
+ *
+ * Three deliberate limits:
+ * - **Main chain only.** Sidechains run in their own context windows, the same
+ *   rule `buildContextSeries` follows; mixing them in would fake both growth
+ *   and collapse.
+ * - **Compactions break the chain.** A boundary between two calls resets the
+ *   window, so the pair is skipped (and counted) rather than reported as a
+ *   large negative or, worse, clamped to a meaningless zero.
+ * - **No dollar figure.** `Δtokens × remaining calls × cache-read rate` looks
+ *   like the obvious next step and is not: cache TTL expiry and later
+ *   compactions both break the multiplication. A token delta is an
+ *   observation; a carried-cost dollar would be a fragile model. See
+ *   `CONTEXT_GROWTH_CAVEAT`, which every render site prints verbatim.
+ */
+export function buildContextGrowth(analysis: SessionAnalysis): ContextGrowthSeries {
+  // The session's own, timestamped compactions — the same set the context
+  // chart marks, so "where the window reset" means one thing across surfaces.
+  const boundaries = summarizeCompactions(analysis.compactions)
+    .own.map((c) => (c.timestamp ? Date.parse(c.timestamp) : Number.NaN))
+    .filter((ms) => !Number.isNaN(ms))
+    .sort((a, b) => a - b);
+
+  interface Issued {
+    turnIndex: number;
+    callIndex: number;
+    promptTokens: number;
+    outputTokens: number;
+    steps: string[];
+    ms?: number;
+  }
+
+  // Shares need the final total, so deltas accumulate first and the shares
+  // are derived in one pass at the end.
+  const raw: Omit<ContextGrowthEntry, "share">[] = [];
+  let previous: Issued | undefined;
+  let totalTokens = 0;
+  let skippedAcrossCompactions = 0;
+
+  for (const turn of analysis.turns) {
+    for (const [callIndex, call] of turn.apiCalls.entries()) {
+      if (call.isSidechain) continue;
+      const parsed = call.timestamp ? Date.parse(call.timestamp) : Number.NaN;
+      const current: Issued = {
+        turnIndex: turn.index,
+        callIndex,
+        promptTokens: promptTokens(call.tokens),
+        outputTokens: call.tokens.outputTokens,
+        steps: call.steps
+          .filter((step) => step.kind !== "note" && step.kind !== "thinking")
+          .map((step) => step.label),
+        ...(Number.isNaN(parsed) ? {} : { ms: parsed }),
+      };
+      const prev = previous;
+      previous = current;
+      if (!prev) continue;
+      const from = prev.ms;
+      const to = current.ms;
+      // Untimed calls cannot be placed against a boundary; treating that as
+      // "no compaction" is the safe default — the delta is still real, and a
+      // spurious skip would hide a genuine contributor.
+      if (
+        from !== undefined &&
+        to !== undefined &&
+        boundaries.some((ms) => ms > from && ms <= to)
+      ) {
+        skippedAcrossCompactions += 1;
+        continue;
+      }
+      const deltaTokens = current.promptTokens - prev.promptTokens - prev.outputTokens;
+      if (deltaTokens <= 0) continue;
+      totalTokens += deltaTokens;
+      raw.push({
+        turnIndex: prev.turnIndex,
+        callIndex: prev.callIndex,
+        deltaTokens,
+        steps: prev.steps,
+      });
+    }
+  }
+
+  return {
+    entries: raw.map((e) => ({ ...e, share: shareOf(e.deltaTokens, totalTokens) })),
+    totalTokens,
+    skippedAcrossCompactions,
+  };
+}
+
 /** One call's cache split (derived from the context series' points). */
 export interface CachePoint {
   ms?: number;
@@ -351,6 +518,93 @@ export function turnFlags(t: TurnPoint): string[] {
   return flags;
 }
 
+export type TurnCostShapeKind = "subagent" | "cache-churn" | "generation" | "long-context";
+
+/** What a turn's cost is *made of* — see `turnCostShape`. */
+export interface TurnCostShape {
+  kind: TurnCostShapeKind;
+  /** Two words, for a table column. */
+  label: string;
+  /** One sentence naming the evidence behind the label. */
+  detail: string;
+}
+
+// Thresholds. Each is a share of the turn's own cost, so they are scale-free:
+// a $0.02 turn and a $4 turn are classified by the same rule. Written as
+// named constants because the rationale is the load-bearing part, exactly as
+// `portfolio-diagnostics.ts` does for its rules.
+//
+// A clear majority, not a bare one (0.5). The four token categories split the
+// bill four ways, so a sidechain share above 0.5 is already "more than all
+// main-chain work put together"; 0.6 keeps the label off turns where the main
+// chain did comparable work and the burst merely tipped the total.
+const SHAPE_SIDECHAIN_SHARE = 0.6;
+// Cache writes cost ~1.25x the input rate and, in a healthy turn, happen once:
+// the prefix is written and every later call reads it back cheaply. A majority
+// of the bill going to writes means the prefix kept changing under the turn —
+// each call paid to re-establish a cache the next one invalidated.
+const SHAPE_CACHE_WRITE_SHARE = 0.5;
+// Output is the priciest category per token (5x input on Anthropic's tiers)
+// but a turn emits far fewer output tokens than it re-reads context tokens, so
+// output is normally a thin slice. A third of the bill means the model was
+// genuinely writing at length — a large file, a long plan — not looping.
+const SHAPE_OUTPUT_SHARE = 0.35;
+// Cache-read dominance on its own is the *healthy* shape and says nothing, so
+// this rule needs the second half: many round trips over the same big context.
+// Six is where "a couple of tool calls" stops being a fair description — the
+// same prompt has now been re-read at least six times, which is exactly what
+// makes a large context expensive even when every read hits cache.
+const SHAPE_CACHE_READ_SHARE = 0.5;
+const SHAPE_LONG_CONTEXT_CALLS = 6;
+
+/**
+ * WHY this turn was expensive, as one named shape — the cost-composition
+ * counterpart to `turnFlags`, and like it the single definition every render
+ * site shares (web Turns rows and the per-turn bar tooltip, the CLI turns
+ * table, the TUI turns detail) so the reading cannot drift between surfaces.
+ *
+ * A pure function of `TurnPoint`, and deliberately returns `undefined` rather
+ * than a "mixed" bucket when no component dominates: most turns have no shape
+ * worth naming, and inventing a label for them would bury the ones that do.
+ * Rules are checked most-specific-first, so a subagent burst is named as one
+ * even though its own cost is also cache-heavy.
+ */
+export function turnCostShape(t: TurnPoint): TurnCostShape | undefined {
+  if (t.cost <= 0) return undefined;
+  const share = (part: number) => part / t.cost;
+  if (share(t.costSidechain) >= SHAPE_SIDECHAIN_SHARE) {
+    return {
+      kind: "subagent",
+      label: "subagent",
+      detail: `subagent burst — ${Math.round(share(t.costSidechain) * 100)}% of this turn's cost ran in subagents`,
+    };
+  }
+  if (share(t.costCacheWrite) >= SHAPE_CACHE_WRITE_SHARE) {
+    return {
+      kind: "cache-churn",
+      label: "cache churn",
+      detail: `context churn — the cache was rewritten ${t.cacheWriteCalls} time${
+        t.cacheWriteCalls === 1 ? "" : "s"
+      } in this turn`,
+    };
+  }
+  if (share(t.costOutput) >= SHAPE_OUTPUT_SHARE) {
+    return {
+      kind: "generation",
+      label: "generation",
+      detail: `long generation — ${Math.round(share(t.costOutput) * 100)}% of this turn's cost is output tokens`,
+    };
+  }
+  if (share(t.costCacheRead) >= SHAPE_CACHE_READ_SHARE && t.apiCalls >= SHAPE_LONG_CONTEXT_CALLS) {
+    return {
+      kind: "long-context",
+      label: "long context",
+      detail: `long context, many round trips — ${t.apiCalls} calls re-reading a large cached prompt`,
+    };
+  }
+  return undefined;
+}
+
 /** One subagent type's summed burst spend (see `groupSidechainBursts`). */
 export interface SubagentTypeRow {
   /** Best-effort type, with unmatched bursts folded into "(unmatched)". */
@@ -414,9 +668,18 @@ export interface TurnPoint {
   costOutput: number;
   costCacheWrite: number;
   costCacheRead: number;
+  /** The part of `cost` that ran on sidechains (subagent calls). The four
+   * categories above split the turn's bill by token type; this splits the same
+   * bill by *who spent it*, which is what lets `turnCostShape` name a subagent
+   * burst without reaching back into `Turn.apiCalls`. */
+  costSidechain: number;
   ioTokens: number;
   cacheTokens: number;
   apiCalls: number;
+  /** Calls in this turn that wrote to the prompt cache. A healthy turn writes
+   * once and reads it back; the count is what makes "the cache was rewritten
+   * N times" a measurement rather than an adjective. */
+  cacheWriteCalls: number;
   mainApiCalls: number;
   /** Wall-clock span of the turn, when both ends are timestamped. */
   wallMs?: number;
@@ -440,7 +703,11 @@ export function buildTurnSeries(analysis: SessionAnalysis): TurnPoint[] {
   return analysis.turns.map((turn) => {
     const kindCounts: Record<string, number> = {};
     let toolErrors = 0;
+    let costSidechain = 0;
+    let cacheWriteCalls = 0;
     for (const call of turn.apiCalls) {
+      if (call.isSidechain) costSidechain += call.cost.total;
+      if (call.tokens.cacheWrite5mTokens + call.tokens.cacheWrite1hTokens > 0) cacheWriteCalls += 1;
       for (const step of call.steps) {
         if (step.kind === "note" || step.kind === "thinking") continue;
         kindCounts[step.kind] = (kindCounts[step.kind] ?? 0) + 1;
@@ -457,9 +724,11 @@ export function buildTurnSeries(analysis: SessionAnalysis): TurnPoint[] {
       costOutput: turn.cost.output,
       costCacheWrite: turn.cost.cacheWrite,
       costCacheRead: turn.cost.cacheRead,
+      costSidechain,
       ioTokens: ioTokens(turn.tokens),
       cacheTokens: cacheTokens(turn.tokens),
       apiCalls: turn.apiCalls.length,
+      cacheWriteCalls,
       mainApiCalls: turn.mainApiCalls,
       ...(wallMs !== undefined ? { wallMs } : {}),
       kindCounts,

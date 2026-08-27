@@ -14,15 +14,20 @@ import { analyzeSession } from "../../core/analyze.ts";
 import {
   buildBurnSeries,
   buildCacheSeries,
+  buildContextGrowth,
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
   burstAttributionNote,
+  type ContextGrowthEntry,
   groupSidechainBursts,
   modelMixRows,
   pctOfLimit,
   projectHeadroom,
+  shareOf,
   summarizeCompactions,
+  type TurnCostShape,
+  turnCostShape,
   turnFlags,
 } from "../../core/chart-series.ts";
 import {
@@ -52,6 +57,7 @@ import {
 } from "../../core/session-markdown.ts";
 import { sessionCostRank } from "../../core/stats.ts";
 import {
+  CONTEXT_GROWTH_CAVEAT,
   CORRECTION_CAVEAT,
   SKILL_COST_CAVEAT,
   WHATIF_CAVEAT,
@@ -65,6 +71,7 @@ import { scrollOffset } from "../scroll.ts";
 import { masterWidth } from "../shell/MasterDetail.tsx";
 import { KIND_COLOR, palette, role, STEP_COLOR, STEP_ICON, selection } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
+import { type SortField, useSort } from "../useSort.ts";
 import { layoutMode } from "../useTermSize.ts";
 
 interface Props {
@@ -93,9 +100,30 @@ interface Loaded {
  *  style choice — the caveats below the table must stay visible. */
 const BURST_ROWS_SHOWN = 5;
 
+/** How many top turns the ranked turns header sums into its "top N = X%" read.
+ *  Five is the smallest count that reliably says something about a real
+ *  session and still fits beside the sort indicator on a narrow terminal. */
+const PARETO_ROWS = 5;
+
+/** Context-growth contributors named on the turns detail line. Two fits a
+ *  narrow pane; the rest are visible in `analyze`'s Context growth table. */
+const GROWTH_ENTRIES_SHOWN = 2;
+
 export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [mode, setMode] = useState<Mode>("turns");
+  // The turns pane's cursor, lifted to the screen so `t` can open the
+  // transcript AT that turn rather than at the top — the TUI half of the web's
+  // charts/turns → transcript trail. The nonce makes a repeat request a new
+  // event, exactly as the web focus protocol does.
+  const [selectedTurn, setSelectedTurn] = useState(0);
+  const [transcriptFocus, setTranscriptFocus] = useState<{ turn: number; nonce: number } | null>(
+    null,
+  );
+  const openTranscriptAt = (turn: number) => {
+    setTranscriptFocus((prev) => ({ turn, nonce: (prev?.nonce ?? 0) + 1 }));
+    setMode("transcript");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -116,14 +144,14 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
   // esc itself (steps→turns→close for turns mode; back-to-turns for the others).
   useInput(
     (input, key) => {
-      if (input === "t") return setMode("transcript");
+      if (input === "t") return openTranscriptAt(selectedTurn);
       if (input === "s") return setMode("summary");
       if (input === "c") return setMode("charts");
       if (input === "a") return setMode("claude");
       if (input === "e" || input === "6") return setMode("export");
       if (input === "u" || input === "1") return setMode("turns");
       if (input === "2") return setMode("charts");
-      if (input === "3") return setMode("transcript");
+      if (input === "3") return openTranscriptAt(selectedTurn);
       if (input === "4") return setMode("summary");
       if (input === "5") return setMode("claude");
       if (key.escape && mode !== "turns") return setMode("turns");
@@ -157,10 +185,23 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       </Box>
       <Box marginTop={1} flexGrow={1} flexDirection="column" overflow="hidden">
         {mode === "turns" && (
-          <TurnsPane a={analysis} columns={columns} isActive={isActive} onBack={onBack} />
+          <TurnsPane
+            a={analysis}
+            columns={columns}
+            isActive={isActive}
+            onBack={onBack}
+            onSelectTurn={setSelectedTurn}
+          />
         )}
         {mode === "charts" && <ChartsView a={analysis} columns={columns} rows={rows} />}
-        {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
+        {mode === "transcript" && (
+          <TranscriptView
+            items={data.transcript}
+            isActive={isActive}
+            a={analysis}
+            focus={transcriptFocus}
+          />
+        )}
         {mode === "summary" && <SummaryView a={analysis} whatIf={whatIf} />}
         {mode === "claude" && (
           <ClaudeView
@@ -188,7 +229,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · a claude · e export · esc back"
+            ? "↑↓ turn · →/tab steps · o/O sort · g/G jump · c charts · t read turn · s summary · a claude · e export · esc back"
             : mode === "claude"
               ? "r run · m model · ↑↓ scroll · esc turns"
               : mode === "export"
@@ -226,19 +267,51 @@ interface TurnRow {
   index: number;
   cost: number;
   calls: number;
+  tokens: number;
+  wallMs: number;
   prompt: string;
   steps: TurnStep[];
+  /** What this turn's cost is made of, from the shared `turnCostShape`. */
+  shape: TurnCostShape | undefined;
+  /** Per-call context growth issued in this turn, biggest first. */
+  growth: ContextGrowthEntry[];
 }
 
 function turnRows(a: SessionAnalysis): TurnRow[] {
-  return a.turns.map((t) => ({
-    index: t.index,
-    cost: t.cost.total,
-    calls: t.apiCalls.length,
-    prompt: t.prompt,
-    steps: t.apiCalls.flatMap((c) => c.steps),
-  }));
+  const shapes = new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)]));
+  const growth = new Map<number, ContextGrowthEntry[]>();
+  for (const entry of buildContextGrowth(a).entries) {
+    const list = growth.get(entry.turnIndex) ?? [];
+    list.push(entry);
+    growth.set(entry.turnIndex, list);
+  }
+  for (const list of growth.values()) list.sort((x, y) => y.deltaTokens - x.deltaTokens);
+  return a.turns.map((t) => {
+    const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
+    const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
+    return {
+      index: t.index,
+      cost: t.cost.total,
+      calls: t.apiCalls.length,
+      tokens: ioTokens(t.tokens) + cacheTokens(t.tokens),
+      wallMs: Number.isNaN(start) || Number.isNaN(end) ? 0 : end - start,
+      prompt: t.prompt,
+      steps: t.apiCalls.flatMap((c) => c.steps),
+      shape: shapes.get(t.index),
+      growth: growth.get(t.index) ?? [],
+    };
+  });
 }
+
+/** Sort keys for the turns list. `index` leads because a session is a
+ *  narrative — ranking by cost is the added lens, one `o` away. */
+const TURN_SORT_FIELDS: SortField<TurnRow>[] = [
+  { key: "index", label: "turn", value: (t) => t.index },
+  { key: "cost", label: "cost", value: (t) => t.cost },
+  { key: "tokens", label: "tokens", value: (t) => t.tokens },
+  { key: "calls", label: "calls", value: (t) => t.calls },
+  { key: "time", label: "time", value: (t) => t.wallMs },
+];
 
 /** Turns list (master) → selected turn's steps (detail), with a turns↔steps
  * focus toggle mirroring the app shell's rail↔body model. */
@@ -247,13 +320,23 @@ function TurnsPane({
   columns,
   isActive,
   onBack,
+  onSelectTurn,
 }: {
   a: SessionAnalysis;
   columns: number;
   isActive: boolean;
   onBack: () => void;
+  /** Reports the highlighted turn's index so the screen can open other modes
+   *  at the same turn. Sorting reorders rows, so this is the turn's own index,
+   *  never its position in the list. */
+  onSelectTurn?: (turnIndex: number) => void;
 }) {
-  const rows = useMemo(() => turnRows(a), [a]);
+  const all = useMemo(() => turnRows(a), [a]);
+  // Ascending by default so the list opens in session order; `o` cycles the
+  // key and `O` flips the direction (tab is already the turns↔steps toggle).
+  const sort = useSort(TURN_SORT_FIELDS, 1);
+  const rows = sort.sorted(all);
+  const sessionCost = a.totals.cost.total;
   const [pane, setPane] = useState<"turns" | "steps">("turns");
   const [turnSel, setTurnSel] = useState(0);
   const [turnOff, setTurnOff] = useState(0);
@@ -266,6 +349,12 @@ function TurnsPane({
   const activeTurn = Math.min(turnSel, Math.max(0, rows.length - 1));
   const turn = rows[activeTurn];
   const steps = turn?.steps ?? [];
+  // `selectTurn` covers every move, but the pane's opening row (and the row
+  // under the cursor after a re-sort) never passes through it.
+  const selectedIndex = turn?.index;
+  useEffect(() => {
+    if (selectedIndex !== undefined) onSelectTurn?.(selectedIndex);
+  }, [selectedIndex, onSelectTurn]);
 
   const selectTurn = (next: number) => {
     const n = Math.max(0, Math.min(next, rows.length - 1));
@@ -274,12 +363,16 @@ function TurnsPane({
     setStepSel(0);
     setStepOff(0);
     setExpanded(new Set());
+    const row = rows[n];
+    if (row) onSelectTurn?.(row.index);
   };
 
+  // The steps pane scrolls against its OWN (reduced) height, not the master
+  // list's, or the cursor would run off the visible slice.
   const selectStep = (next: number) => {
     const n = Math.max(0, Math.min(next, steps.length - 1));
     setStepSel(n);
-    setStepOff(scrollOffset(n, stepOff, pageSize));
+    setStepOff(scrollOffset(n, stepOff, detailPageSize));
   };
 
   useInput(
@@ -289,6 +382,16 @@ function TurnsPane({
         if (key.upArrow || input === "k") return selectTurn(activeTurn - 1);
         if (input === "g") return selectTurn(0);
         if (input === "G") return selectTurn(rows.length - 1);
+        // Re-ordering moves rows under the cursor, so both keys reset the
+        // selection to the top rather than leaving it on an arbitrary turn.
+        if (input === "o") {
+          sort.cycle();
+          return selectTurn(0);
+        }
+        if (input === "O") {
+          sort.reverse();
+          return selectTurn(0);
+        }
         if ((key.rightArrow || key.tab || key.return) && steps.length > 0) return setPane("steps");
         if (key.escape) return onBack();
         return;
@@ -306,15 +409,30 @@ function TurnsPane({
     { isActive },
   );
 
-  const promptW = wide ? Math.max(8, masterWidth(columns) - 18) : 40;
+  const promptW = wide ? Math.max(8, masterWidth(columns) - 26) : 34;
+  // A running share reads as a Pareto only while the list is ranked descending
+  // by the very column it accumulates; in session order it would just be a
+  // burn curve wearing a share's label, so the line appears only in that order.
+  const ranked = sort.key === "cost" && sort.dir === -1;
+  const paretoRows = Math.min(PARETO_ROWS, rows.length);
+  const paretoShare = ranked
+    ? shareOf(
+        rows.slice(0, paretoRows).reduce((sum, r) => sum + r.cost, 0),
+        sessionCost,
+      )
+    : 0;
   const master = (
     <Box flexDirection="column">
-      <Text color={role.muted}>turns · {rows.length}</Text>
+      <Text color={role.muted}>
+        turns · {rows.length} · {sort.label}
+        {ranked && paretoRows > 0 ? ` · top ${paretoRows} = ${pct(paretoShare)}` : ""}
+      </Text>
       {rows.slice(turnOff, turnOff + pageSize).map((r, i) => {
         const sel = turnOff + i === activeTurn;
         return (
           <Text key={r.index} {...selection(sel && pane === "turns")}>
             {sel && pane === "turns" ? "❯" : " "} #{r.index + 1} {formatUSD(r.cost).padStart(8)}{" "}
+            {pct(shareOf(r.cost, sessionCost)).padStart(4)}{" "}
             {truncate(r.prompt || "(no text)", promptW)}
           </Text>
         );
@@ -323,22 +441,56 @@ function TurnsPane({
     </Box>
   );
 
+  // "+47.0k after call 2 (Read)" — the biggest few contributors in this turn.
+  const growthLine = (turn?.growth ?? [])
+    .slice(0, GROWTH_ENTRIES_SHOWN)
+    .map(
+      (e) =>
+        `+${formatCount(e.deltaTokens)} after call ${e.callIndex + 1}` +
+        (e.steps.length > 0 ? ` (${truncate(e.steps.join(", "), 28)})` : ""),
+    )
+    .join(" · ");
+  // The screen is a pinned-height frame with `overflow: hidden`, so lines added
+  // to the detail pane must come OUT of its step list rather than pushing the
+  // footer off the bottom. The caveat wraps, so it is budgeted at two rows.
+  const detailExtraRows = (turn?.shape ? 1 : 0) + (growthLine ? 3 : 0);
+  const detailPageSize = Math.max(3, pageSize - detailExtraRows);
+
   const detail = (
     <Box flexDirection="column">
       <Text color={role.heading}>
-        turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)}
+        turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)} ·{" "}
+        {pct(shareOf(turn?.cost ?? 0, sessionCost))} of session
       </Text>
+      {turn?.shape ? (
+        // The detail pane, not the master list: the shape's value is its
+        // evidence sentence, and the narrow master column has no room for it
+        // without eating the prompt preview that makes a turn recognisable.
+        <Text color={role.muted} wrap="truncate-end">
+          shape: {turn.shape.detail}
+        </Text>
+      ) : null}
+      {growthLine ? (
+        <Text color={role.muted} wrap="truncate-end">
+          context: {growthLine}
+        </Text>
+      ) : null}
+      {growthLine ? (
+        // Mandatory caveat: printed verbatim and allowed to wrap. Truncating a
+        // caveat would leave the number standing without its qualification.
+        <Text color={role.muted}>{CONTEXT_GROWTH_CAVEAT}</Text>
+      ) : null}
       {steps.length === 0 ? (
         <Text color={role.muted}>(no steps)</Text>
       ) : (
-        steps.slice(stepOff, stepOff + pageSize).map((step, i) => {
+        steps.slice(stepOff, stepOff + detailPageSize).map((step, i) => {
           const idx = stepOff + i;
           const sel = idx === stepSel && pane === "steps";
           const open = expanded.has(idx);
           return <StepRow key={idx} step={step} selected={sel} expanded={open} />;
         })
       )}
-      <ScrollRange offset={stepOff} size={pageSize} total={steps.length} />
+      <ScrollRange offset={stepOff} size={detailPageSize} total={steps.length} />
     </Box>
   );
 
@@ -711,18 +863,55 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   );
 }
 
-function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
+function TranscriptView({
+  items,
+  isActive,
+  a,
+  focus,
+}: {
+  items: TranscriptItem[];
+  isActive: boolean;
+  a: SessionAnalysis;
+  /** Open at this turn (see `openTranscriptAt`). The nonce re-fires the jump
+   *  when the same turn is requested twice. */
+  focus?: { turn: number; nonce: number } | null;
+}) {
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
   const pageSize = usePageSize(11);
+  // `TranscriptItem.turnIndex` is what lets the reader's position in the words
+  // carry a price tag; the first item of each turn is where the divider goes
+  // and where a focus request lands.
+  const costByTurn = useMemo(() => new Map(a.turns.map((t) => [t.index, t.cost.total])), [a]);
+  const sessionCost = a.totals.cost.total;
+  const turnStarts = useMemo(() => {
+    const starts = new Map<number, number>();
+    items.forEach((item, i) => {
+      if (!starts.has(item.turnIndex)) starts.set(item.turnIndex, i);
+    });
+    return starts;
+  }, [items]);
 
   const select = (next: number) => {
     const n = Math.max(0, Math.min(next, items.length - 1));
     setCursor(n);
     setOffset(scrollOffset(n, offset, pageSize));
   };
+
+  // Depends on the whole `focus` object, not its fields: the nonce inside it is
+  // what makes asking for the same turn twice jump twice (the web session view
+  // uses the identical protocol).
+  useEffect(() => {
+    if (!focus) return;
+    const start = turnStarts.get(focus.turn);
+    if (start === undefined) return;
+    setCursor(start);
+    // Put the turn's first item at the top of the pane, not mid-scroll: the
+    // reader asked to start reading here.
+    setOffset(Math.max(0, Math.min(start, Math.max(0, items.length - pageSize))));
+  }, [focus, turnStarts, items.length, pageSize]);
 
   useInput(
     (input, key) => {
@@ -743,12 +932,23 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   return (
     <Box flexDirection="column">
       {visible.map((item, i) => {
-        const selected = offset + i === activeCursor;
+        const position = offset + i;
+        const selected = position === activeCursor;
         const isOpen = expanded.has(item.index);
         const chevron = item.body ? (isOpen ? "▾" : "▸") : " ";
         const preview = item.body.split("\n")[0] ?? "";
+        const startsTurn = turnStarts.get(item.turnIndex) === position;
+        const turnCost = costByTurn.get(item.turnIndex);
         return (
           <Box key={item.index} flexDirection="column">
+            {startsTurn ? (
+              <Text color={role.muted}>
+                ── turn #{item.turnIndex + 1}
+                {turnCost !== undefined
+                  ? ` · ${formatUSD(turnCost)} · ${pct(shareOf(turnCost, sessionCost))} of session`
+                  : ""}
+              </Text>
+            ) : null}
             <Text bold {...(selected ? selection(true) : { color: KIND_COLOR[item.kind] })}>
               {chevron} {item.label}
               {item.isError ? " ✗" : ""}

@@ -2,35 +2,46 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
+  buildContextGrowth,
   buildSessionDiagnostics,
+  buildTurnSeries,
   burstAttributionNote,
+  CONTEXT_GROWTH_CAVEAT,
+  CONTEXT_GROWTH_FLAG_SHARE,
+  type ContextGrowthEntry,
   type CostRankCohort,
+  cumulativeShares,
   formatSignedUSD,
   groupSidechainBursts,
   MIN_RANK_COHORT,
   OUTCOME_CAVEAT,
   outcomeRows,
+  pct,
   type SessionAnalysis,
   type SessionResponse,
   type SidechainBurst,
   SKILL_COST_CAVEAT,
   sessionOutcomes,
+  shareOf,
   type TranscriptItem,
   type Turn,
   type TurnStep,
   topEntries,
+  turnCostShape,
   WHATIF_CAVEAT,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { ExportPanel } from "../ExportPanel.tsx";
-import { count, duration, tokensOf, usd } from "../format.ts";
+import { cacheOf, count, duration, ioOf, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
+import { Seg } from "../Seg.tsx";
 import { SessionCharts } from "../SessionCharts.tsx";
 import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { useProjects } from "../useProjects.ts";
+import { type Accessors, useSort } from "../useSort.ts";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript" | "claude";
 const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript", "claude"] as const;
@@ -59,6 +70,15 @@ export function Session({ id }: { id: string }) {
   const goToTurn = (turnIndex: number) => {
     setFocus((prev) => ({ turn: turnIndex, nonce: (prev?.nonce ?? 0) + 1 }));
     setTab("turns");
+  };
+  // The other half of the trail: a chart or a turn row can hand the reader
+  // straight to the words, at the expensive spot, instead of dead-ending in a
+  // table. Same focus protocol as `goToTurn`, against the transcript's own
+  // window and anchors.
+  const [transcriptFocus, setTranscriptFocus] = useState<TurnFocus | null>(null);
+  const goToTranscript = (turnIndex: number) => {
+    setTranscriptFocus((prev) => ({ turn: turnIndex, nonce: (prev?.nonce ?? 0) + 1 }));
+    setTab("transcript");
   };
   // Sticky once the transcript tab has been opened, so switching tabs doesn't
   // refetch — but the (potentially huge) transcript is never fetched eagerly.
@@ -173,16 +193,24 @@ export function Session({ id }: { id: string }) {
       </div>
 
       <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
-        {tab === "summary" && <Summary a={a} />}
-        {tab === "charts" && <SessionCharts a={a} onGoToTurn={goToTurn} />}
+        {tab === "summary" && (
+          <Summary a={a} onGoToTurn={goToTurn} onGoToTranscript={goToTranscript} />
+        )}
+        {tab === "charts" && (
+          <SessionCharts a={a} onGoToTurn={goToTurn} onGoToTranscript={goToTranscript} />
+        )}
         {tab === "timeline" && <Timeline a={a} />}
-        {tab === "turns" && <Turns a={a} focus={focus} />}
+        {tab === "turns" && <Turns a={a} focus={focus} onGoToTranscript={goToTranscript} />}
         {tab === "transcript" && (
           <Transcript
             loading={transcript.loading}
             error={transcript.error}
             retry={transcript.retry}
             items={transcript.data ?? []}
+            focus={transcriptFocus}
+            turns={a.turns}
+            sessionCost={a.totals.cost.total}
+            onGoToTurn={goToTurn}
           />
         )}
         {tab === "claude" && <SessionClaude id={id} />}
@@ -364,7 +392,103 @@ function pickRankCohort(
   return undefined;
 }
 
-function Summary({ a }: { a: SessionResponse }) {
+/** Rows in the Summary tab's "Costliest turns" block. Enough to answer "where
+ *  did the money go" at a glance without turning the summary into a second
+ *  Turns tab — the link into Turns is there for the rest. */
+const COSTLIEST_TURNS = 5;
+
+/**
+ * The few turns that dominate the session's spend, as an entry point rather
+ * than a report: every row jumps into the Turns tab at that turn. Ordered by
+ * cost, so a session whose expensive turn sits at #480 still leads with it.
+ */
+function CostliestTurns({
+  a,
+  onGoToTurn,
+  onGoToTranscript,
+}: {
+  a: SessionAnalysis;
+  onGoToTurn: (turnIndex: number) => void;
+  onGoToTranscript: (turnIndex: number) => void;
+}) {
+  const rows = useMemo(
+    () => [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, COSTLIEST_TURNS),
+    [a],
+  );
+  const sessionCost = a.totals.cost.total;
+  // Rows are already cost-descending, which is what makes the running share a
+  // Pareto reading ("the top 3 are 61% of the spend") rather than a burn curve.
+  const cum = useMemo(
+    () =>
+      cumulativeShares(
+        rows.map((t) => t.cost.total),
+        sessionCost,
+      ),
+    [rows, sessionCost],
+  );
+  if (rows.length === 0 || (rows[0]?.cost.total ?? 0) <= 0) return null;
+  return (
+    <section className="summary-group" style={{ marginTop: 12 }}>
+      <h2>Costliest turns</h2>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th className="num">Cost</th>
+              <th className="num">Share</th>
+              <th className="num">Cumulative</th>
+              <th className="num">Calls</th>
+              <th>Prompt</th>
+              <th>Read</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t, i) => (
+              <tr key={t.index}>
+                <td className="num">
+                  <button
+                    type="button"
+                    className="row-button"
+                    title={`Open turn #${t.index + 1} in the Turns tab`}
+                    onClick={() => onGoToTurn(t.index)}
+                  >
+                    #{t.index + 1}
+                  </button>
+                </td>
+                <td className="num">{usd(t.cost.total)}</td>
+                <td className="num">{pct(shareOf(t.cost.total, sessionCost))}</td>
+                <td className="num">{pct(cum[i] ?? 0)}</td>
+                <td className="num">{t.apiCalls.length}</td>
+                <td className="muted">{t.prompt.slice(0, 80) || "(no text)"}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="row-button"
+                    title={`Read turn #${t.index + 1} in the transcript`}
+                    onClick={() => onGoToTranscript(t.index)}
+                  >
+                    transcript
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function Summary({
+  a,
+  onGoToTurn,
+  onGoToTranscript,
+}: {
+  a: SessionResponse;
+  onGoToTurn: (i: number) => void;
+  onGoToTranscript: (i: number) => void;
+}) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
@@ -441,7 +565,8 @@ function Summary({ a }: { a: SessionResponse }) {
         )}
       </div>
       {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
-      <Subagents bursts={a.sidechainBursts} />
+      <CostliestTurns a={a} onGoToTurn={onGoToTurn} onGoToTranscript={onGoToTranscript} />
+      <Subagents bursts={a.sidechainBursts} onGoToTurn={onGoToTurn} />
       {whatIf?.summary.bestModel && (
         <section className="summary-group" style={{ marginTop: 12 }}>
           <h2>What-if repricing</h2>
@@ -538,7 +663,13 @@ function Summary({ a }: { a: SessionResponse }) {
  * render, rollup first, because a session with many same-type agents is
  * unreadable as bursts alone.
  */
-function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
+function Subagents({
+  bursts,
+  onGoToTurn,
+}: {
+  bursts: SidechainBurst[];
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
   const rows = useMemo(() => groupSidechainBursts(bursts), [bursts]);
   const note = burstAttributionNote(bursts);
   if (bursts.length === 0) return null;
@@ -590,7 +721,9 @@ function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
                   )}
                 </td>
                 <td className="muted">{b.agentId ?? "-"}</td>
-                <td className="num">{b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-"}</td>
+                <td className="num">
+                  <BurstTurnCell turnIndex={b.turnIndex} onGoToTurn={onGoToTurn} />
+                </td>
                 <td className="num">{b.apiCalls}</td>
                 <td className="num">{usd(b.cost)}</td>
               </tr>
@@ -600,6 +733,29 @@ function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
       </div>
       {note && <p className="muted">{note}</p>}
     </section>
+  );
+}
+
+/** A burst's turn number as a control into the Turns tab. `SidechainBurst`
+ *  has carried `turnIndex` all along; this is the link it never had. */
+function BurstTurnCell({
+  turnIndex,
+  onGoToTurn,
+}: {
+  turnIndex?: number;
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
+  if (turnIndex === undefined) return <>-</>;
+  if (!onGoToTurn) return <>#{turnIndex + 1}</>;
+  return (
+    <button
+      type="button"
+      className="row-button"
+      title={`Open turn #${turnIndex + 1} in the Turns tab`}
+      onClick={() => onGoToTurn(turnIndex)}
+    >
+      #{turnIndex + 1}
+    </button>
   );
 }
 
@@ -785,11 +941,58 @@ function useWindowed(total: number, step: number, atLeast = 0): { limit: number;
   return { limit, more };
 }
 
-function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
+/** Wall-clock span of a turn, when both ends are timestamped. */
+function turnWallMs(t: Turn): number | undefined {
+  const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
+  const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
+  return Number.isNaN(start) || Number.isNaN(end) ? undefined : end - start;
+}
+
+const TURN_SORT_KEYS = ["index", "cost", "tokens", "calls", "time"] as const;
+
+const TURN_ACCESSORS: Accessors<Turn> = {
+  index: (t) => t.index,
+  cost: (t) => t.cost.total,
+  tokens: (t) => ioOf(t.tokens) + cacheOf(t.tokens),
+  calls: (t) => t.apiCalls.length,
+  time: (t) => turnWallMs(t) ?? 0,
+};
+
+function Turns({
+  a,
+  focus,
+  onGoToTranscript,
+}: {
+  a: SessionAnalysis;
+  focus?: TurnFocus | null;
+  onGoToTranscript?: (turnIndex: number) => void;
+}) {
   const [open, setOpen] = useState<Set<number>>(new Set());
+  // Index-ascending by default: a session is a narrative, and ranking is an
+  // added lens rather than a replacement. Clicking the active key flips the
+  // direction, exactly as `SortTh` does for the tabled views.
+  const sort = useSort(a.turns, TURN_ACCESSORS, "index", "asc");
+  const rows = sort.sorted;
+  const sessionCost = a.totals.cost.total;
+  // `turnCostShape` is a pure function of the shared `TurnPoint`, so it is
+  // derived from the same series the charts use and joined by turn index.
+  const shapes = useMemo(
+    () => new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)])),
+    [a],
+  );
+  // Per-call context growth, keyed by the (turn, call-position) pair this view
+  // already iterates — so the expanded call blocks below can say what each
+  // call's steps put into the context.
+  const growth = useMemo(() => buildContextGrowth(a), [a]);
+  const growthByCall = useMemo(
+    () => new Map(growth.entries.map((e) => [`${e.turnIndex}.${e.callIndex}`, e])),
+    [growth],
+  );
   // A requested turn widens the window before the scroll runs, so the anchor
-  // exists by the time the effect below looks for it.
-  const { limit, more } = useWindowed(a.turns.length, TURNS_WINDOW, focus ? focus.turn + 1 : 0);
+  // exists by the time the effect below looks for it. Its POSITION, not its
+  // number: under a cost sort turn #480 can be the first row.
+  const focusPos = focus ? rows.findIndex((t) => t.index === focus.turn) : -1;
+  const { limit, more } = useWindowed(rows.length, TURNS_WINDOW, focusPos + 1);
   useEffect(() => {
     if (!focus) return;
     document.getElementById(turnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
@@ -804,7 +1007,25 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
 
   return (
     <div>
-      {a.turns.slice(0, limit).map((t) => {
+      <div className="trend-head">
+        <span className="seg-group">
+          sort{" "}
+          <Seg
+            label="Turn sort key"
+            options={TURN_SORT_KEYS}
+            value={sort.key as (typeof TURN_SORT_KEYS)[number]}
+            onChange={sort.toggle}
+          />{" "}
+          <span className="muted" aria-hidden="true">
+            {sort.dir === "asc" ? "▲" : "▼"}
+          </span>
+          <span className="sr-only">
+            sorted by {sort.key}, {sort.dir === "asc" ? "ascending" : "descending"}; activate the
+            active key again to reverse
+          </span>
+        </span>
+      </div>
+      {rows.slice(0, limit).map((t) => {
         const expanded = open.has(t.index);
         return (
           <div className="item" id={turnAnchorId(t.index)} key={t.index}>
@@ -816,7 +1037,16 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
             >
               <span className="muted">{expanded ? "▾" : "▸"}</span>{" "}
               <span className="num">#{t.index + 1}</span> · {usd(t.cost.total)} ·{" "}
+              <span className="muted">{pct(shareOf(t.cost.total, sessionCost))} of session</span> ·{" "}
               <span className="muted">{tokensOf(t.tokens)}</span> · {t.apiCalls.length} calls ·{" "}
+              {shapes.get(t.index) ? (
+                <>
+                  <span className="turnshape" title={shapes.get(t.index)?.detail}>
+                    {shapes.get(t.index)?.label}
+                  </span>{" "}
+                  ·{" "}
+                </>
+              ) : null}
               <span className="muted">
                 {Object.entries(t.toolCounts)
                   .map(([n, c]) => `${n}:${c}`)
@@ -824,6 +1054,18 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
               </span>
               <div className="turnprompt">{t.prompt.slice(0, 140) || "(no text)"}</div>
             </button>
+            {onGoToTranscript && (
+              // Outside the expand button: a nested button would be invalid
+              // markup and would swallow the expand click.
+              <button
+                type="button"
+                className="row-button turnjump"
+                title={`Read turn #${t.index + 1} in the transcript`}
+                onClick={() => onGoToTranscript(t.index)}
+              >
+                read in transcript →
+              </button>
+            )}
             {expanded && (
               <div className="turncalls">
                 {t.apiCalls.map((call, ci) => (
@@ -833,6 +1075,7 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
                       <span className="muted">{call.model ?? "?"}</span>
                       <span className="muted">
                         {usd(call.cost.total)} · {tokensOf(call.tokens)}
+                        <ContextGrowthTag entry={growthByCall.get(`${t.index}.${ci}`)} />
                       </span>
                     </div>
                     {call.steps.map((step, si) => (
@@ -846,7 +1089,32 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
         );
       })}
       {more}
+      {growth.entries.length > 0 && <p className="muted">{CONTEXT_GROWTH_CAVEAT}</p>}
     </div>
+  );
+}
+
+/**
+ * "+47.0k ctx" beside an API call: what the steps that call issued put into
+ * the context, from the shared `buildContextGrowth`. Flagged when the call is
+ * a large share of everything that entered the context this session — a token
+ * delta only, never a derived dollar (see `CONTEXT_GROWTH_CAVEAT`).
+ */
+function ContextGrowthTag({ entry }: { entry?: ContextGrowthEntry }) {
+  if (!entry) return null;
+  const big = entry.share >= CONTEXT_GROWTH_FLAG_SHARE;
+  return (
+    <>
+      {" · "}
+      <span
+        className={big ? "ctxgrowth big" : "ctxgrowth"}
+        title={`${entry.steps.join(", ") || "this call"} added ${count(
+          entry.deltaTokens,
+        )} tokens to the context — ${pct(entry.share)} of this session's context growth`}
+      >
+        +{count(entry.deltaTokens)} ctx
+      </span>
+    </>
   );
 }
 
@@ -922,18 +1190,49 @@ const STEP_ICON: Record<string, string> = {
 
 const TRANSCRIPT_WINDOW = 200;
 
+/** The anchor id every transcript turn divider carries, so a chart or a turn
+ *  row can point the reader at where a turn's words start. Distinct from
+ *  `turnAnchorId` — both tabs can be mounted in the same document. */
+export const transcriptTurnAnchorId = (turnIndex: number): string =>
+  `transcript-turn-${turnIndex + 1}`;
+
 function Transcript({
   loading,
   error,
   retry,
   items,
+  focus,
+  turns,
+  sessionCost,
+  onGoToTurn,
 }: {
   loading: boolean;
   error: string | null;
   retry: () => void;
   items: TranscriptItem[];
+  focus?: TurnFocus | null;
+  turns: Turn[];
+  sessionCost: number;
+  onGoToTurn?: (turnIndex: number) => void;
 }) {
-  const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW);
+  // `TranscriptItem.turnIndex` has always been there and nothing read it. It
+  // is what lets the reader's position in the words carry a price tag.
+  const costByTurn = useMemo(() => new Map(turns.map((t) => [t.index, t.cost.total])), [turns]);
+  // First item of each turn — where a divider goes, and what a focus request
+  // resolves to. Positional, so the window can be widened to reach it.
+  const turnStarts = useMemo(() => {
+    const starts = new Map<number, number>();
+    items.forEach((item, i) => {
+      if (!starts.has(item.turnIndex)) starts.set(item.turnIndex, i);
+    });
+    return starts;
+  }, [items]);
+  const focusPos = focus ? (turnStarts.get(focus.turn) ?? -1) : -1;
+  const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW, focusPos + 1);
+  useEffect(() => {
+    if (!focus) return;
+    document.getElementById(transcriptTurnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
+  }, [focus]);
   if (loading) return <LoadingNotice>Loading transcript…</LoadingNotice>;
   if (error)
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load the transcript." />;
@@ -943,16 +1242,63 @@ function Transcript({
       <p className="muted">
         {count(items.length)} items{items.length > limit ? ` · showing ${limit}` : ""}
       </p>
-      {shown.map((item) => (
-        <div className={`item k-${item.kind}`} key={item.index}>
-          <div className="head">
-            {item.label}
-            {item.isError && <span className="err"> ✗ error</span>}
+      {shown.map((item, i) => (
+        <div key={item.index}>
+          {turnStarts.get(item.turnIndex) === i && (
+            <TurnDivider
+              turnIndex={item.turnIndex}
+              cost={costByTurn.get(item.turnIndex)}
+              sessionCost={sessionCost}
+              onGoToTurn={onGoToTurn}
+            />
+          )}
+          <div className={`item k-${item.kind}`}>
+            <div className="head">
+              {item.label}
+              {item.isError && <span className="err"> ✗ error</span>}
+            </div>
+            <pre>{item.body || "(empty)"}</pre>
           </div>
-          <pre>{item.body || "(empty)"}</pre>
         </div>
       ))}
       {more}
     </section>
+  );
+}
+
+/** A turn boundary in the transcript, priced. Also the anchor charts and
+ *  tables scroll to, which is why it carries an id even with no cost known
+ *  (an aggregate-mode payload, or items before the first real prompt). */
+function TurnDivider({
+  turnIndex,
+  cost,
+  sessionCost,
+  onGoToTurn,
+}: {
+  turnIndex: number;
+  cost?: number;
+  sessionCost: number;
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
+  return (
+    <div className="turndivider" id={transcriptTurnAnchorId(turnIndex)}>
+      {onGoToTurn ? (
+        <button
+          type="button"
+          className="row-button"
+          title={`Open turn #${turnIndex + 1} in the Turns tab`}
+          onClick={() => onGoToTurn(turnIndex)}
+        >
+          turn #{turnIndex + 1}
+        </button>
+      ) : (
+        <span>turn #{turnIndex + 1}</span>
+      )}
+      {cost !== undefined && (
+        <span className="muted">
+          {usd(cost)} · {pct(shareOf(cost, sessionCost))} of session
+        </span>
+      )}
+    </div>
   );
 }

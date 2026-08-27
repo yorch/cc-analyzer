@@ -122,6 +122,76 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 
+  test("o cycles the turn sort key and O flips its direction", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    // The list opens in session order, ascending — a session is a narrative.
+    expect(lastFrame() ?? "").toContain("turn \u2191");
+    await settleInput();
+    stdin.write("o"); // cycle: turn -> cost
+    await waitForFrame(lastFrame, "cost \u2191");
+    stdin.write("O"); // flip to descending: the costliest turn leads
+    await waitForFrame(lastFrame, "cost \u2193");
+    expect(lastFrame() ?? "").toContain("cost \u2193");
+    unmount();
+  });
+
+  test("turns carry their share of the session, and ranking summarises the top", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    // The detail header states the selected turn's share outright.
+    expect(lastFrame() ?? "").toMatch(/turn #1 · \d+ calls · \$[\d.]+ · \d+% of session/);
+    await settleInput();
+    stdin.write("o"); // cycle: turn -> cost
+    await waitForFrame(lastFrame, "cost \u2191");
+    stdin.write("O"); // descending — now the running share is a Pareto read
+    await waitForFrame(lastFrame, (f) => /top \d+ = \d+%/.test(f));
+    expect(lastFrame() ?? "").toMatch(/top \d+ = \d+%/);
+    unmount();
+  });
+
+  test("the turns detail attributes context growth and prints its caveat verbatim", async () => {
+    const { lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    const frame = lastFrame() ?? "";
+    // Turn 1's second call grew the prompt by ~1k over the first call's
+    // prompt + output; the delta is attributed to the call that issued it.
+    expect(frame).toMatch(/context: \+[\d.]+k after call 2/);
+    // A mandatory caveat renders verbatim and is allowed to wrap — the frame
+    // is width-limited, so assert on its opening clause rather than the whole
+    // string, and separately that it was not truncate()d with an ellipsis.
+    expect(frame).toContain("Context growth attributes each prompt-side increase");
+    expect(frame).not.toContain("Context growth attributes each prompt…");
+    unmount();
+  });
+
   test("transcript mode: items collapse and expand", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen
@@ -143,6 +213,37 @@ describe("SessionDetailScreen (smoke)", () => {
     stdin.write("\r"); // expand the item under the cursor
     await waitForFrame(lastFrame, "▾");
     expect(lastFrame() ?? "").toContain("▾"); // now expanded
+    unmount();
+  });
+
+  test("t opens the transcript at the selected turn, with priced turn dividers", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
+    stdin.write("G"); // last turn
+    await waitForFrame(lastFrame, "Bash");
+    stdin.write("t"); // read THAT turn, not the top of the transcript
+    await waitForFrame(lastFrame, "esc turns");
+    // Every turn boundary in the words carries that turn's price and share.
+    expect(lastFrame() ?? "").toMatch(/── turn #1 · \$[\d.]+ · \d+% of session/);
+    expect(lastFrame() ?? "").toMatch(/── turn #2 · \$[\d.]+ · \d+% of session/);
+    // The cursor landed on turn 2's prompt, not at the top: expanding the item
+    // under it opens *that* prompt while turn 1's stays collapsed. (This
+    // fixture's transcript fits one page, so scroll position proves nothing.)
+    stdin.write("\r");
+    await waitForFrame(lastFrame, "▾ You");
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("▾ You");
+    expect(frame).toContain("▸ You Add a hello function");
     unmount();
   });
 });

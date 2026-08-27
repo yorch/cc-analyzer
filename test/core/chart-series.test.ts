@@ -3,15 +3,20 @@ import { analyzeSession } from "../../src/core/analyze.ts";
 import {
   buildBurnSeries,
   buildCacheSeries,
+  buildContextGrowth,
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
+  cumulativeShares,
   dedupeCompactions,
   isOwnCompaction,
   modelMixRows,
   pctOfLimit,
   projectHeadroom,
+  shareOf,
   summarizeCompactions,
+  type TurnPoint,
+  turnCostShape,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
 import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
@@ -408,5 +413,263 @@ describe("modelMixRows", () => {
     expect(rows.map((r) => r.model)).toEqual(["claude-opus-4-7", "claude-sonnet-4-5"]);
     expect(rows.reduce((s, r) => s + r.share, 0)).toBeCloseTo(1, 10);
     expect(rows[0]?.apiCalls).toBe(1);
+  });
+});
+
+describe("shareOf / cumulativeShares", () => {
+  test("share is the plain fraction of the total", () => {
+    expect(shareOf(1, 4)).toBe(0.25);
+    expect(shareOf(4, 4)).toBe(1);
+  });
+
+  test("a zero total reads as a 0 share, never NaN", () => {
+    // A $0 session is ordinary (fully cached, unpriced model, read-only run);
+    // every share label on these surfaces divides by a number the user can
+    // legitimately have driven to zero.
+    expect(shareOf(0, 0)).toBe(0);
+    expect(Number.isNaN(shareOf(5, 0))).toBe(false);
+    expect(cumulativeShares([0, 0, 0], 0)).toEqual([0, 0, 0]);
+  });
+
+  test("cumulative shares accumulate in the order given and end at 1", () => {
+    const cum = cumulativeShares([5, 3, 2], 10);
+    expect(cum).toEqual([0.5, 0.8, 1]);
+  });
+
+  test("cumulative shares do not sort — the caller owns the ordering", () => {
+    // Same values, session order: the running total is a burn curve, which is
+    // exactly why render sites only show it over ranked rows.
+    expect(cumulativeShares([2, 3, 5], 10)).toEqual([0.2, 0.5, 1]);
+  });
+
+  test("a truncated ranked list stops short of 1", () => {
+    // The CLI's top-40 table and the Summary's top-5 block both accumulate a
+    // slice, so the last cumulative cell is "how much of the session these
+    // rows are" — not 100%.
+    expect(cumulativeShares([5, 3], 10)).toEqual([0.5, 0.8]);
+  });
+});
+
+/** A TurnPoint with every field at a neutral zero; each test sets only the
+ *  fields its rule actually reads, which is the point of the classifier being
+ *  a pure function of this shape. */
+const point = (over: Partial<TurnPoint>): TurnPoint => ({
+  index: 0,
+  cost: 0,
+  costInput: 0,
+  costOutput: 0,
+  costCacheWrite: 0,
+  costCacheRead: 0,
+  costSidechain: 0,
+  ioTokens: 0,
+  cacheTokens: 0,
+  apiCalls: 0,
+  cacheWriteCalls: 0,
+  mainApiCalls: 0,
+  kindCounts: {},
+  toolErrors: 0,
+  interrupted: false,
+  correction: false,
+  retries: 0,
+  testFailures: 0,
+  redundantReads: 0,
+  prompt: "",
+  ...over,
+});
+
+describe("turnCostShape", () => {
+  test("a $0 turn has no shape (and never divides by zero)", () => {
+    expect(turnCostShape(point({ cost: 0, costOutput: 0 }))).toBeUndefined();
+  });
+
+  test("names a subagent burst above the sidechain-share threshold", () => {
+    expect(turnCostShape(point({ cost: 10, costSidechain: 6 }))?.kind).toBe("subagent");
+    // A bare majority is not a shape: the main chain did comparable work.
+    expect(turnCostShape(point({ cost: 10, costSidechain: 5.5 }))?.kind).not.toBe("subagent");
+  });
+
+  test("a subagent burst wins over its own cache-heavy composition", () => {
+    // A burst's cost is cache-dominated too; the more specific rule must win,
+    // or every subagent turn would read as generic cache churn.
+    const shape = turnCostShape(
+      point({ cost: 10, costSidechain: 7, costCacheWrite: 6, costCacheRead: 3 }),
+    );
+    expect(shape?.kind).toBe("subagent");
+  });
+
+  test("cache-write dominance is context churn, and counts the rewrites", () => {
+    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 6, cacheWriteCalls: 7 }));
+    expect(shape?.kind).toBe("cache-churn");
+    expect(shape?.detail).toContain("the cache was rewritten 7 times");
+  });
+
+  test("a single rewrite reads in the singular", () => {
+    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 9, cacheWriteCalls: 1 }));
+    expect(shape?.detail).toContain("rewritten 1 time in this turn");
+  });
+
+  test("output dominance is a long generation", () => {
+    expect(turnCostShape(point({ cost: 10, costOutput: 4 }))?.kind).toBe("generation");
+    expect(turnCostShape(point({ cost: 10, costOutput: 3 }))?.kind).not.toBe("generation");
+  });
+
+  test("cache-read dominance is a shape only with many round trips", () => {
+    // The healthy shape on its own says nothing; it is the repetition over one
+    // big context that makes it worth naming.
+    expect(turnCostShape(point({ cost: 10, costCacheRead: 8, apiCalls: 2 }))).toBeUndefined();
+    const shape = turnCostShape(point({ cost: 10, costCacheRead: 8, apiCalls: 9 }));
+    expect(shape?.kind).toBe("long-context");
+    expect(shape?.detail).toContain("9 calls");
+  });
+
+  test("no dominant component yields no shape rather than a 'mixed' bucket", () => {
+    const even = point({
+      cost: 10,
+      costInput: 2.5,
+      costOutput: 2.5,
+      costCacheWrite: 2.5,
+      costCacheRead: 2.5,
+      apiCalls: 12,
+    });
+    expect(turnCostShape(even)).toBeUndefined();
+  });
+});
+
+describe("buildTurnSeries · cost composition", () => {
+  test("splits sidechain cost out of the turn and counts cache writes", () => {
+    const series = buildTurnSeries(analysis);
+    const first = series[0];
+    // Call `b` in the shared fixture runs on a sidechain inside turn 1.
+    expect(first?.costSidechain).toBeGreaterThan(0);
+    expect(first?.costSidechain).toBeLessThan(first?.cost ?? 0);
+    // No call in turn 1 writes to cache; turn 2's single call does.
+    expect(first?.cacheWriteCalls).toBe(0);
+    expect(series[1]?.cacheWriteCalls).toBe(1);
+    expect(series[1]?.costSidechain).toBe(0);
+  });
+});
+
+describe("buildContextGrowth", () => {
+  /** Prompt-side tokens of a call, spelled as the analyzer sees them. */
+  const call = (id: string, second: number, prompt: number, output: number, opts = {}) =>
+    assistant(id, second, { input_tokens: prompt, output_tokens: output }, opts);
+
+  test("attributes each prompt-side increase to the previous call's steps", () => {
+    // 100 in / 10 out, then 400 in: 400 - 100 - 10 = 290 entered the context
+    // between the two calls, attributable to what call `a` issued.
+    const grown = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 100, 10), call("b", 10, 400, 10)],
+      pricing,
+    );
+    const growth = buildContextGrowth(grown);
+    expect(growth.entries).toHaveLength(1);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+    expect(growth.entries[0]?.turnIndex).toBe(0);
+    expect(growth.entries[0]?.callIndex).toBe(0);
+    expect(growth.totalTokens).toBe(290);
+    expect(growth.entries[0]?.share).toBe(1);
+  });
+
+  test("a flat or shrinking context yields no entry, never a negative delta", () => {
+    // 100 in / 10 out then 110 in is pure carry-over: nothing new entered.
+    const flat = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 100, 10), call("b", 10, 110, 10)],
+      pricing,
+    );
+    expect(buildContextGrowth(flat).entries).toHaveLength(0);
+    const shrunk = analyzeSession(
+      [prompt("u1", 0, "go"), call("a", 5, 500, 10), call("b", 10, 200, 10)],
+      pricing,
+    );
+    expect(buildContextGrowth(shrunk).entries).toHaveLength(0);
+    expect(buildContextGrowth(shrunk).totalTokens).toBe(0);
+  });
+
+  test("skips (and counts) the pair a compaction landed between", () => {
+    // The window reset between the two calls, so the difference is a
+    // demolition, not a payload — reporting it would invent an attribution.
+    const compacted = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 400, 10),
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: ts(7),
+          compactMetadata: { trigger: "auto", preTokens: 410 },
+        } as unknown as SessionEvent,
+        call("b", 10, 900, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(compacted);
+    expect(growth.entries).toHaveLength(0);
+    expect(growth.skippedAcrossCompactions).toBe(1);
+    expect(growth.totalTokens).toBe(0);
+  });
+
+  test("ignores sidechain calls — subagents run in their own context window", () => {
+    const withSide = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 100, 10),
+        call("s", 6, 99_000, 10, { sidechain: true }),
+        call("b", 10, 400, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(withSide);
+    // The subagent's huge prompt neither creates nor distorts an entry.
+    expect(growth.entries).toHaveLength(1);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+  });
+
+  test("names the operation steps that plausibly carried the payload", () => {
+    const withRead = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        assistantEvent({
+          uuid: "a",
+          timestamp: ts(5),
+          content: [
+            { type: "text", text: "reading" },
+            { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/big.txt" } },
+          ],
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }),
+        call("b", 10, 47_110, 10),
+      ],
+      pricing,
+    );
+    const entry = buildContextGrowth(withRead).entries[0];
+    expect(entry?.deltaTokens).toBe(47_000);
+    // Narration is not an operation and is excluded, matching kindCounts.
+    expect(entry?.steps).toEqual(["Read"]);
+  });
+
+  test("carries growth across a turn boundary — one window, not one per turn", () => {
+    const twoTurns = analyzeSession(
+      [
+        prompt("u1", 0, "go"),
+        call("a", 5, 100, 10),
+        prompt("u2", 8, "more"),
+        call("b", 10, 400, 10),
+      ],
+      pricing,
+    );
+    const growth = buildContextGrowth(twoTurns);
+    expect(growth.entries).toHaveLength(1);
+    // Attributed to the ISSUING call, which lives in the first turn.
+    expect(growth.entries[0]?.turnIndex).toBe(0);
+    expect(growth.entries[0]?.deltaTokens).toBe(290);
+  });
+
+  test("an empty or single-call session attributes nothing and shares nothing", () => {
+    const lone = analyzeSession([prompt("u1", 0, "go"), call("a", 5, 100, 10)], pricing);
+    const growth = buildContextGrowth(lone);
+    expect(growth.entries).toHaveLength(0);
+    expect(growth.totalTokens).toBe(0);
+    // Guarded like every other share on these surfaces.
+    expect(buildContextGrowth(analyzeSession([], pricing)).totalTokens).toBe(0);
   });
 });
