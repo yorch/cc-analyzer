@@ -1,3 +1,5 @@
+import { formatCompactDuration } from "../../src/core/format-shared.ts";
+
 export function usd(n: number): string {
   const digits = n !== 0 && Math.abs(n) < 0.01 ? 4 : Math.abs(n) < 1000 ? 2 : 0;
   return new Intl.NumberFormat(undefined, {
@@ -30,16 +32,14 @@ export const cacheOf = (t: TokenCounts): number =>
 /** Token label from a TokenCounts: "213M +52B cache". */
 export const tokensOf = (t: TokenCounts): string => tokens(ioOf(t), cacheOf(t));
 
-export function duration(ms?: number): string {
-  if (ms === undefined || Number.isNaN(ms)) return "-";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ${m % 60}m`;
-  return `${Math.floor(h / 24)}d`;
-}
+/**
+ * The shared compact duration, re-exported under the SPA's own name. This was a
+ * private copy that grew a day band the shared formatter lacked, so the same
+ * figure read "1657d" here and "39770h 1m" in the TUI. Per the one-formatter-
+ * family rule, the day band moved into `format-shared.ts` and this became an
+ * alias — keep it that way rather than re-implementing a band locally.
+ */
+export const duration = formatCompactDuration;
 
 export function relTime(ms: number): string {
   const diff = Date.now() - ms;

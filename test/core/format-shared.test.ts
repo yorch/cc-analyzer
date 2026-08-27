@@ -50,11 +50,25 @@ describe("durations", () => {
   test("the terminal form carries the leftover seconds, the compact one doesn't", () => {
     expect(formatDuration(1000 * 60 * 3 + 20_000)).toBe("3m 20s");
     expect(formatCompactDuration(1000 * 60 * 3 + 20_000)).toBe("3m");
-    // Both agree below a minute and above an hour.
+    // Both agree below a minute and inside the hours band.
     expect(formatDuration(45_000)).toBe("45s");
     expect(formatCompactDuration(45_000)).toBe("45s");
     expect(formatDuration(1000 * 60 * 95)).toBe("1h 35m");
     expect(formatCompactDuration(1000 * 60 * 95)).toBe("1h 35m");
+  });
+
+  test("the day band takes over past 48h, so hour counts stay countable", () => {
+    const hours = (n: number) => n * 3_600_000;
+    // Below the band both forms still read in hours — "36h 10m" is the reading
+    // a person wants for a long-running session.
+    expect(formatDuration(hours(36) + 600_000)).toBe("36h 10m");
+    expect(formatCompactDuration(hours(36))).toBe("36h 0m");
+    // Above it, the terminal form keeps the leftover hours and the compact one
+    // drops to whole days. A portfolio's total time with Claude used to render
+    // as "39770h 1m" here while the SPA's private copy said "1657d".
+    expect(formatDuration(hours(433) + 480_000)).toBe("18d 1h");
+    expect(formatCompactDuration(hours(433))).toBe("18d");
+    expect(formatCompactDuration(hours(39_770))).toBe("1657d");
   });
 
   test("negative durations (deltas) keep their sign", () => {
