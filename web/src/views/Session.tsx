@@ -71,6 +71,15 @@ export function Session({ id }: { id: string }) {
     setFocus((prev) => ({ turn: turnIndex, nonce: (prev?.nonce ?? 0) + 1 }));
     setTab("turns");
   };
+  // The other half of the trail: a chart or a turn row can hand the reader
+  // straight to the words, at the expensive spot, instead of dead-ending in a
+  // table. Same focus protocol as `goToTurn`, against the transcript's own
+  // window and anchors.
+  const [transcriptFocus, setTranscriptFocus] = useState<TurnFocus | null>(null);
+  const goToTranscript = (turnIndex: number) => {
+    setTranscriptFocus((prev) => ({ turn: turnIndex, nonce: (prev?.nonce ?? 0) + 1 }));
+    setTab("transcript");
+  };
   // Sticky once the transcript tab has been opened, so switching tabs doesn't
   // refetch — but the (potentially huge) transcript is never fetched eagerly.
   // Derived from `tab` in an effect so any way of reaching the tab (deep link,
@@ -184,16 +193,24 @@ export function Session({ id }: { id: string }) {
       </div>
 
       <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
-        {tab === "summary" && <Summary a={a} onGoToTurn={goToTurn} />}
-        {tab === "charts" && <SessionCharts a={a} onGoToTurn={goToTurn} />}
+        {tab === "summary" && (
+          <Summary a={a} onGoToTurn={goToTurn} onGoToTranscript={goToTranscript} />
+        )}
+        {tab === "charts" && (
+          <SessionCharts a={a} onGoToTurn={goToTurn} onGoToTranscript={goToTranscript} />
+        )}
         {tab === "timeline" && <Timeline a={a} />}
-        {tab === "turns" && <Turns a={a} focus={focus} />}
+        {tab === "turns" && <Turns a={a} focus={focus} onGoToTranscript={goToTranscript} />}
         {tab === "transcript" && (
           <Transcript
             loading={transcript.loading}
             error={transcript.error}
             retry={transcript.retry}
             items={transcript.data ?? []}
+            focus={transcriptFocus}
+            turns={a.turns}
+            sessionCost={a.totals.cost.total}
+            onGoToTurn={goToTurn}
           />
         )}
         {tab === "claude" && <SessionClaude id={id} />}
@@ -388,9 +405,11 @@ const COSTLIEST_TURNS = 5;
 function CostliestTurns({
   a,
   onGoToTurn,
+  onGoToTranscript,
 }: {
   a: SessionAnalysis;
   onGoToTurn: (turnIndex: number) => void;
+  onGoToTranscript: (turnIndex: number) => void;
 }) {
   const rows = useMemo(
     () => [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, COSTLIEST_TURNS),
@@ -421,6 +440,7 @@ function CostliestTurns({
               <th className="num">Cumulative</th>
               <th className="num">Calls</th>
               <th>Prompt</th>
+              <th>Read</th>
             </tr>
           </thead>
           <tbody>
@@ -441,6 +461,16 @@ function CostliestTurns({
                 <td className="num">{pct(cum[i] ?? 0)}</td>
                 <td className="num">{t.apiCalls.length}</td>
                 <td className="muted">{t.prompt.slice(0, 80) || "(no text)"}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="row-button"
+                    title={`Read turn #${t.index + 1} in the transcript`}
+                    onClick={() => onGoToTranscript(t.index)}
+                  >
+                    transcript
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -450,7 +480,15 @@ function CostliestTurns({
   );
 }
 
-function Summary({ a, onGoToTurn }: { a: SessionResponse; onGoToTurn: (i: number) => void }) {
+function Summary({
+  a,
+  onGoToTurn,
+  onGoToTranscript,
+}: {
+  a: SessionResponse;
+  onGoToTurn: (i: number) => void;
+  onGoToTranscript: (i: number) => void;
+}) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
@@ -527,8 +565,8 @@ function Summary({ a, onGoToTurn }: { a: SessionResponse; onGoToTurn: (i: number
         )}
       </div>
       {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
-      <CostliestTurns a={a} onGoToTurn={onGoToTurn} />
-      <Subagents bursts={a.sidechainBursts} />
+      <CostliestTurns a={a} onGoToTurn={onGoToTurn} onGoToTranscript={onGoToTranscript} />
+      <Subagents bursts={a.sidechainBursts} onGoToTurn={onGoToTurn} />
       {whatIf?.summary.bestModel && (
         <section className="summary-group" style={{ marginTop: 12 }}>
           <h2>What-if repricing</h2>
@@ -625,7 +663,13 @@ function Summary({ a, onGoToTurn }: { a: SessionResponse; onGoToTurn: (i: number
  * render, rollup first, because a session with many same-type agents is
  * unreadable as bursts alone.
  */
-function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
+function Subagents({
+  bursts,
+  onGoToTurn,
+}: {
+  bursts: SidechainBurst[];
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
   const rows = useMemo(() => groupSidechainBursts(bursts), [bursts]);
   const note = burstAttributionNote(bursts);
   if (bursts.length === 0) return null;
@@ -677,7 +721,9 @@ function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
                   )}
                 </td>
                 <td className="muted">{b.agentId ?? "-"}</td>
-                <td className="num">{b.turnIndex !== undefined ? `#${b.turnIndex + 1}` : "-"}</td>
+                <td className="num">
+                  <BurstTurnCell turnIndex={b.turnIndex} onGoToTurn={onGoToTurn} />
+                </td>
                 <td className="num">{b.apiCalls}</td>
                 <td className="num">{usd(b.cost)}</td>
               </tr>
@@ -687,6 +733,29 @@ function Subagents({ bursts }: { bursts: SidechainBurst[] }) {
       </div>
       {note && <p className="muted">{note}</p>}
     </section>
+  );
+}
+
+/** A burst's turn number as a control into the Turns tab. `SidechainBurst`
+ *  has carried `turnIndex` all along; this is the link it never had. */
+function BurstTurnCell({
+  turnIndex,
+  onGoToTurn,
+}: {
+  turnIndex?: number;
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
+  if (turnIndex === undefined) return <>-</>;
+  if (!onGoToTurn) return <>#{turnIndex + 1}</>;
+  return (
+    <button
+      type="button"
+      className="row-button"
+      title={`Open turn #${turnIndex + 1} in the Turns tab`}
+      onClick={() => onGoToTurn(turnIndex)}
+    >
+      #{turnIndex + 1}
+    </button>
   );
 }
 
@@ -889,7 +958,15 @@ const TURN_ACCESSORS: Accessors<Turn> = {
   time: (t) => turnWallMs(t) ?? 0,
 };
 
-function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
+function Turns({
+  a,
+  focus,
+  onGoToTranscript,
+}: {
+  a: SessionAnalysis;
+  focus?: TurnFocus | null;
+  onGoToTranscript?: (turnIndex: number) => void;
+}) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   // Index-ascending by default: a session is a narrative, and ranking is an
   // added lens rather than a replacement. Clicking the active key flips the
@@ -977,6 +1054,18 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
               </span>
               <div className="turnprompt">{t.prompt.slice(0, 140) || "(no text)"}</div>
             </button>
+            {onGoToTranscript && (
+              // Outside the expand button: a nested button would be invalid
+              // markup and would swallow the expand click.
+              <button
+                type="button"
+                className="row-button turnjump"
+                title={`Read turn #${t.index + 1} in the transcript`}
+                onClick={() => onGoToTranscript(t.index)}
+              >
+                read in transcript →
+              </button>
+            )}
             {expanded && (
               <div className="turncalls">
                 {t.apiCalls.map((call, ci) => (
@@ -1101,18 +1190,49 @@ const STEP_ICON: Record<string, string> = {
 
 const TRANSCRIPT_WINDOW = 200;
 
+/** The anchor id every transcript turn divider carries, so a chart or a turn
+ *  row can point the reader at where a turn's words start. Distinct from
+ *  `turnAnchorId` — both tabs can be mounted in the same document. */
+export const transcriptTurnAnchorId = (turnIndex: number): string =>
+  `transcript-turn-${turnIndex + 1}`;
+
 function Transcript({
   loading,
   error,
   retry,
   items,
+  focus,
+  turns,
+  sessionCost,
+  onGoToTurn,
 }: {
   loading: boolean;
   error: string | null;
   retry: () => void;
   items: TranscriptItem[];
+  focus?: TurnFocus | null;
+  turns: Turn[];
+  sessionCost: number;
+  onGoToTurn?: (turnIndex: number) => void;
 }) {
-  const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW);
+  // `TranscriptItem.turnIndex` has always been there and nothing read it. It
+  // is what lets the reader's position in the words carry a price tag.
+  const costByTurn = useMemo(() => new Map(turns.map((t) => [t.index, t.cost.total])), [turns]);
+  // First item of each turn — where a divider goes, and what a focus request
+  // resolves to. Positional, so the window can be widened to reach it.
+  const turnStarts = useMemo(() => {
+    const starts = new Map<number, number>();
+    items.forEach((item, i) => {
+      if (!starts.has(item.turnIndex)) starts.set(item.turnIndex, i);
+    });
+    return starts;
+  }, [items]);
+  const focusPos = focus ? (turnStarts.get(focus.turn) ?? -1) : -1;
+  const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW, focusPos + 1);
+  useEffect(() => {
+    if (!focus) return;
+    document.getElementById(transcriptTurnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
+  }, [focus]);
   if (loading) return <LoadingNotice>Loading transcript…</LoadingNotice>;
   if (error)
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load the transcript." />;
@@ -1122,16 +1242,63 @@ function Transcript({
       <p className="muted">
         {count(items.length)} items{items.length > limit ? ` · showing ${limit}` : ""}
       </p>
-      {shown.map((item) => (
-        <div className={`item k-${item.kind}`} key={item.index}>
-          <div className="head">
-            {item.label}
-            {item.isError && <span className="err"> ✗ error</span>}
+      {shown.map((item, i) => (
+        <div key={item.index}>
+          {turnStarts.get(item.turnIndex) === i && (
+            <TurnDivider
+              turnIndex={item.turnIndex}
+              cost={costByTurn.get(item.turnIndex)}
+              sessionCost={sessionCost}
+              onGoToTurn={onGoToTurn}
+            />
+          )}
+          <div className={`item k-${item.kind}`}>
+            <div className="head">
+              {item.label}
+              {item.isError && <span className="err"> ✗ error</span>}
+            </div>
+            <pre>{item.body || "(empty)"}</pre>
           </div>
-          <pre>{item.body || "(empty)"}</pre>
         </div>
       ))}
       {more}
     </section>
+  );
+}
+
+/** A turn boundary in the transcript, priced. Also the anchor charts and
+ *  tables scroll to, which is why it carries an id even with no cost known
+ *  (an aggregate-mode payload, or items before the first real prompt). */
+function TurnDivider({
+  turnIndex,
+  cost,
+  sessionCost,
+  onGoToTurn,
+}: {
+  turnIndex: number;
+  cost?: number;
+  sessionCost: number;
+  onGoToTurn?: (turnIndex: number) => void;
+}) {
+  return (
+    <div className="turndivider" id={transcriptTurnAnchorId(turnIndex)}>
+      {onGoToTurn ? (
+        <button
+          type="button"
+          className="row-button"
+          title={`Open turn #${turnIndex + 1} in the Turns tab`}
+          onClick={() => onGoToTurn(turnIndex)}
+        >
+          turn #{turnIndex + 1}
+        </button>
+      ) : (
+        <span>turn #{turnIndex + 1}</span>
+      )}
+      {cost !== undefined && (
+        <span className="muted">
+          {usd(cost)} · {pct(shareOf(cost, sessionCost))} of session
+        </span>
+      )}
+    </div>
   );
 }

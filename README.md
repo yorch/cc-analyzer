@@ -702,7 +702,8 @@ The per-session view offers:
 - **Turns** — expands each turn into a **step timeline** (assistant narration,
   thinking markers, and tool operations with a one-line summary and a result
   status/hint like `✓ 71 lines` or `✗ error…`), each step click-to-expand for its
-  full input and result. The list is **sortable** by turn number, cost, tokens,
+  full input and result, and each turn links straight into the transcript at its
+  own words. The list is **sortable** by turn number, cost, tokens,
   calls, or wall time, so the expensive turn is one click away instead of buried
   at #480, and every turn states its **share of the session** (`18% of
   session`) plus a **cost shape** naming why it was expensive — subagent burst,
@@ -711,7 +712,9 @@ The per-session view offers:
   (`+47.0k ctx`), so "this `Read` filled the window" is readable rather than
   inferred. It is an attribution heuristic over token counts, never a derived
   dollar figure. The color-coded **transcript** reader is windowed
-  ("show more") so very large sessions stay responsive.
+  ("show more") and carries a **priced turn divider** at each boundary
+  (`turn #12 · $1.42 · 18% of session`), so a chart, a ranked table, and the
+  words are one trail rather than three separate views.
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom
   projection when the context is growing), a **cache-efficiency** chart (per-call

@@ -1223,6 +1223,24 @@ p.muted {
   color: var(--faint);
   font-size: 11px;
 }
+/* Turn boundary in the transcript reader: the anchor charts and tables scroll
+   to, carrying that turn's price so the words and the money read together. */
+.turndivider {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-strong);
+  font-size: 12px;
+  scroll-margin-top: 12px;
+}
+/* "read in transcript" affordance under a turn header — outside the expand
+   button, since a nested button would be invalid and swallow the click. */
+.turnjump {
+  margin: 0 0 8px 18px;
+  font-size: 12px;
+}
 /* Per-call context growth beside an API call ("+47.0k ctx"). `.big` marks a
    call carrying a large share of everything that entered the context. */
 .ctxgrowth {

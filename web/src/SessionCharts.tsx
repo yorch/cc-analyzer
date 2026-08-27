@@ -59,14 +59,18 @@ import {
  * tool activity, model mix, and subagent bursts. Series come from core
  * `chart-series.ts` so these numbers match the TUI charts exactly.
  *
- * `onGoToTurn` (when given) lets a chart hand a turn number back to the page —
- * the subagent-burst table uses it to open the Turns tab at that turn. */
+ * `onGoToTurn` / `onGoToTranscript` (when given) let a chart hand a turn number
+ * back to the page — the subagent-burst table opens the Turns tab at that turn,
+ * and the per-turn bars offer both destinations for the peak turn, so a chart
+ * is a step in the trail rather than the end of it. */
 export function SessionCharts({
   a,
   onGoToTurn,
+  onGoToTranscript,
 }: {
   a: SessionAnalysis;
   onGoToTurn?: (turnIndex: number) => void;
+  onGoToTranscript?: (turnIndex: number) => void;
 }) {
   const ctx = useMemo(() => buildContextSeries(a), [a]);
   const cache = useMemo(() => buildCacheSeries(ctx), [ctx]);
@@ -116,7 +120,7 @@ export function SessionCharts({
       </section>
 
       <section className="trend-panel">
-        <TurnBars turns={turns} />
+        <TurnBars turns={turns} onGoToTurn={onGoToTurn} onGoToTranscript={onGoToTranscript} />
       </section>
 
       {hasKinds && (
@@ -557,6 +561,49 @@ const COST_SEGS = [
  * when the bars are already ranked, so the curve rides on the order rather
  * than being drawn unconditionally over chronological bars.
  */
+/** The peak turn's number, as links out of the chart: into the Turns tab and
+ *  into the transcript at that turn. Without the second one, a chart that just
+ *  identified the expensive turn leaves the reader to find its words by hand. */
+function PeakTurnLinks({
+  turnIndex,
+  onGoToTurn,
+  onGoToTranscript,
+}: {
+  turnIndex: number;
+  onGoToTurn?: (turnIndex: number) => void;
+  onGoToTranscript?: (turnIndex: number) => void;
+}) {
+  return (
+    <>
+      {onGoToTurn ? (
+        <button
+          type="button"
+          className="row-button"
+          title={`Open turn #${turnIndex + 1} in the Turns tab`}
+          onClick={() => onGoToTurn(turnIndex)}
+        >
+          turn #{turnIndex + 1}
+        </button>
+      ) : (
+        <>turn #{turnIndex + 1}</>
+      )}
+      {onGoToTranscript && (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="row-button"
+            title={`Read turn #${turnIndex + 1} in the transcript`}
+            onClick={() => onGoToTranscript(turnIndex)}
+          >
+            read
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
 type TurnOrder = "turn" | "rank";
 
 /** Turns summed into the ranked chart's "top N = X%" headline. Five is small
@@ -564,7 +611,15 @@ type TurnOrder = "turn" | "rank";
  *  the Summary tab's "Costliest turns" block so the two agree on screen. */
 const PARETO_HEAD = 5;
 
-function TurnBars({ turns }: { turns: TurnPoint[] }) {
+function TurnBars({
+  turns,
+  onGoToTurn,
+  onGoToTranscript,
+}: {
+  turns: TurnPoint[];
+  onGoToTurn?: (turnIndex: number) => void;
+  onGoToTranscript?: (turnIndex: number) => void;
+}) {
   const metrics = ["cost", "tokens", "calls", "depth", "time"] as const;
   const orders = ["turn", "rank"] as const;
   const [metric, setMetric] = useHashParam<TurnMetric>("turnMetric", "cost", metrics);
@@ -606,8 +661,13 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
         </span>
       </div>
       <p className="muted">
-        peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(ordered[peakIdx]?.index ?? 0) + 1} ·{" "}
-        {ordered[peakIdx]?.prompt.slice(0, 60) || "no text"})
+        peak {fmtTurn(metric, values[peakIdx] ?? 0)} (
+        <PeakTurnLinks
+          turnIndex={ordered[peakIdx]?.index ?? 0}
+          onGoToTurn={onGoToTurn}
+          onGoToTranscript={onGoToTranscript}
+        />{" "}
+        · {ordered[peakIdx]?.prompt.slice(0, 60) || "no text"})
         {order === "rank" && n > 0
           ? ` · top ${Math.min(PARETO_HEAD, n)} = ${pct(cum[Math.min(PARETO_HEAD, n) - 1] ?? 0)} of ${metric}`
           : ""}

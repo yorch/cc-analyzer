@@ -215,6 +215,37 @@ describe("SessionDetailScreen (smoke)", () => {
     expect(lastFrame() ?? "").toContain("▾"); // now expanded
     unmount();
   });
+
+  test("t opens the transcript at the selected turn, with priced turn dividers", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    await settleInput();
+    stdin.write("G"); // last turn
+    await waitForFrame(lastFrame, "Bash");
+    stdin.write("t"); // read THAT turn, not the top of the transcript
+    await waitForFrame(lastFrame, "esc turns");
+    // Every turn boundary in the words carries that turn's price and share.
+    expect(lastFrame() ?? "").toMatch(/── turn #1 · \$[\d.]+ · \d+% of session/);
+    expect(lastFrame() ?? "").toMatch(/── turn #2 · \$[\d.]+ · \d+% of session/);
+    // The cursor landed on turn 2's prompt, not at the top: expanding the item
+    // under it opens *that* prompt while turn 1's stays collapsed. (This
+    // fixture's transcript fits one page, so scroll position proves nothing.)
+    stdin.write("\r");
+    await waitForFrame(lastFrame, "▾ You");
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("▾ You");
+    expect(frame).toContain("▸ You Add a hello function");
+    unmount();
+  });
 });
 
 describe("SessionDetailScreen charts mode", () => {

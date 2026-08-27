@@ -112,6 +112,18 @@ const GROWTH_ENTRIES_SHOWN = 2;
 export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [mode, setMode] = useState<Mode>("turns");
+  // The turns pane's cursor, lifted to the screen so `t` can open the
+  // transcript AT that turn rather than at the top — the TUI half of the web's
+  // charts/turns → transcript trail. The nonce makes a repeat request a new
+  // event, exactly as the web focus protocol does.
+  const [selectedTurn, setSelectedTurn] = useState(0);
+  const [transcriptFocus, setTranscriptFocus] = useState<{ turn: number; nonce: number } | null>(
+    null,
+  );
+  const openTranscriptAt = (turn: number) => {
+    setTranscriptFocus((prev) => ({ turn, nonce: (prev?.nonce ?? 0) + 1 }));
+    setMode("transcript");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -132,14 +144,14 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
   // esc itself (steps→turns→close for turns mode; back-to-turns for the others).
   useInput(
     (input, key) => {
-      if (input === "t") return setMode("transcript");
+      if (input === "t") return openTranscriptAt(selectedTurn);
       if (input === "s") return setMode("summary");
       if (input === "c") return setMode("charts");
       if (input === "a") return setMode("claude");
       if (input === "e" || input === "6") return setMode("export");
       if (input === "u" || input === "1") return setMode("turns");
       if (input === "2") return setMode("charts");
-      if (input === "3") return setMode("transcript");
+      if (input === "3") return openTranscriptAt(selectedTurn);
       if (input === "4") return setMode("summary");
       if (input === "5") return setMode("claude");
       if (key.escape && mode !== "turns") return setMode("turns");
@@ -173,10 +185,23 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       </Box>
       <Box marginTop={1} flexGrow={1} flexDirection="column" overflow="hidden">
         {mode === "turns" && (
-          <TurnsPane a={analysis} columns={columns} isActive={isActive} onBack={onBack} />
+          <TurnsPane
+            a={analysis}
+            columns={columns}
+            isActive={isActive}
+            onBack={onBack}
+            onSelectTurn={setSelectedTurn}
+          />
         )}
         {mode === "charts" && <ChartsView a={analysis} columns={columns} rows={rows} />}
-        {mode === "transcript" && <TranscriptView items={data.transcript} isActive={isActive} />}
+        {mode === "transcript" && (
+          <TranscriptView
+            items={data.transcript}
+            isActive={isActive}
+            a={analysis}
+            focus={transcriptFocus}
+          />
+        )}
         {mode === "summary" && <SummaryView a={analysis} whatIf={whatIf} />}
         {mode === "claude" && (
           <ClaudeView
@@ -204,7 +229,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · o/O sort · g/G jump · c charts · t transcript · s summary · a claude · e export · esc back"
+            ? "↑↓ turn · →/tab steps · o/O sort · g/G jump · c charts · t read turn · s summary · a claude · e export · esc back"
             : mode === "claude"
               ? "r run · m model · ↑↓ scroll · esc turns"
               : mode === "export"
@@ -295,11 +320,16 @@ function TurnsPane({
   columns,
   isActive,
   onBack,
+  onSelectTurn,
 }: {
   a: SessionAnalysis;
   columns: number;
   isActive: boolean;
   onBack: () => void;
+  /** Reports the highlighted turn's index so the screen can open other modes
+   *  at the same turn. Sorting reorders rows, so this is the turn's own index,
+   *  never its position in the list. */
+  onSelectTurn?: (turnIndex: number) => void;
 }) {
   const all = useMemo(() => turnRows(a), [a]);
   // Ascending by default so the list opens in session order; `o` cycles the
@@ -319,6 +349,12 @@ function TurnsPane({
   const activeTurn = Math.min(turnSel, Math.max(0, rows.length - 1));
   const turn = rows[activeTurn];
   const steps = turn?.steps ?? [];
+  // `selectTurn` covers every move, but the pane's opening row (and the row
+  // under the cursor after a re-sort) never passes through it.
+  const selectedIndex = turn?.index;
+  useEffect(() => {
+    if (selectedIndex !== undefined) onSelectTurn?.(selectedIndex);
+  }, [selectedIndex, onSelectTurn]);
 
   const selectTurn = (next: number) => {
     const n = Math.max(0, Math.min(next, rows.length - 1));
@@ -327,6 +363,8 @@ function TurnsPane({
     setStepSel(0);
     setStepOff(0);
     setExpanded(new Set());
+    const row = rows[n];
+    if (row) onSelectTurn?.(row.index);
   };
 
   // The steps pane scrolls against its OWN (reduced) height, not the master
@@ -825,18 +863,55 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   );
 }
 
-function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive: boolean }) {
+function TranscriptView({
+  items,
+  isActive,
+  a,
+  focus,
+}: {
+  items: TranscriptItem[];
+  isActive: boolean;
+  a: SessionAnalysis;
+  /** Open at this turn (see `openTranscriptAt`). The nonce re-fires the jump
+   *  when the same turn is requested twice. */
+  focus?: { turn: number; nonce: number } | null;
+}) {
   const [cursor, setCursor] = useState(0);
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const activeCursor = Math.min(cursor, Math.max(0, items.length - 1));
   const pageSize = usePageSize(11);
+  // `TranscriptItem.turnIndex` is what lets the reader's position in the words
+  // carry a price tag; the first item of each turn is where the divider goes
+  // and where a focus request lands.
+  const costByTurn = useMemo(() => new Map(a.turns.map((t) => [t.index, t.cost.total])), [a]);
+  const sessionCost = a.totals.cost.total;
+  const turnStarts = useMemo(() => {
+    const starts = new Map<number, number>();
+    items.forEach((item, i) => {
+      if (!starts.has(item.turnIndex)) starts.set(item.turnIndex, i);
+    });
+    return starts;
+  }, [items]);
 
   const select = (next: number) => {
     const n = Math.max(0, Math.min(next, items.length - 1));
     setCursor(n);
     setOffset(scrollOffset(n, offset, pageSize));
   };
+
+  // Depends on the whole `focus` object, not its fields: the nonce inside it is
+  // what makes asking for the same turn twice jump twice (the web session view
+  // uses the identical protocol).
+  useEffect(() => {
+    if (!focus) return;
+    const start = turnStarts.get(focus.turn);
+    if (start === undefined) return;
+    setCursor(start);
+    // Put the turn's first item at the top of the pane, not mid-scroll: the
+    // reader asked to start reading here.
+    setOffset(Math.max(0, Math.min(start, Math.max(0, items.length - pageSize))));
+  }, [focus, turnStarts, items.length, pageSize]);
 
   useInput(
     (input, key) => {
@@ -857,12 +932,23 @@ function TranscriptView({ items, isActive }: { items: TranscriptItem[]; isActive
   return (
     <Box flexDirection="column">
       {visible.map((item, i) => {
-        const selected = offset + i === activeCursor;
+        const position = offset + i;
+        const selected = position === activeCursor;
         const isOpen = expanded.has(item.index);
         const chevron = item.body ? (isOpen ? "▾" : "▸") : " ";
         const preview = item.body.split("\n")[0] ?? "";
+        const startsTurn = turnStarts.get(item.turnIndex) === position;
+        const turnCost = costByTurn.get(item.turnIndex);
         return (
           <Box key={item.index} flexDirection="column">
+            {startsTurn ? (
+              <Text color={role.muted}>
+                ── turn #{item.turnIndex + 1}
+                {turnCost !== undefined
+                  ? ` · ${formatUSD(turnCost)} · ${pct(shareOf(turnCost, sessionCost))} of session`
+                  : ""}
+              </Text>
+            ) : null}
             <Text bold {...(selected ? selection(true) : { color: KIND_COLOR[item.kind] })}>
               {chevron} {item.label}
               {item.isError ? " ✗" : ""}
