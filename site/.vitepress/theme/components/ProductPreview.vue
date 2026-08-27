@@ -9,8 +9,8 @@
         the local binary.
       </p>
       <p class="cc-preview__note">
-        Preview data is synthetic. Your own prompts and transcripts never leave
-        your machine.
+        Preview data is synthetic. Normal analysis stays local; optional Claude
+        handoff processing is described in the privacy guide.
       </p>
     </div>
     <figure class="cc-preview__frame">

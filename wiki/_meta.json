@@ -1,10 +1,10 @@
 {
   "repo_url": "https://github.com/yorch/cc-analyzer",
-  "commit_sha": "51ccd4e",
-  "indexed_at": "2026-07-23T11:41:15-04:00",
+  "commit_sha": "51ce1a4",
+  "indexed_at": "2026-08-26T00:00:00-04:00",
   "primary_language": "TypeScript",
   "framework": "Bun runtime; Ink (TUI), Hono (web API), React 19 + Vite (SPA), VitePress (docs site), Zod, Biome",
-  "version": "0.6.0",
+  "version": "0.20.0",
   "test_runner": "bun test",
   "subsystems": [
     { "slug": "core", "name": "Core Analysis Engine", "paths": ["src/core"], "has_tests": true },
@@ -30,6 +30,7 @@
     { "slug": "7-analytics-and-insights", "type": "category" },
     { "slug": "8-updates-and-distribution", "type": "category" },
     { "slug": "9-docs-site", "type": "category" },
+    { "slug": "10-recipes", "type": "category" },
     { "slug": "README", "type": "overview" },
     { "slug": "glossary", "type": "glossary" }
   ]

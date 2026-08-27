@@ -48,7 +48,8 @@ Two things still make a *portfolio* comparison differ, by design:
 Local JSONL is also not a bill: other machines, claude.ai, and non-CLI API use
 never appear in it.
 
-The tool is **read-only**: it never writes to `~/.claude`. Its own state
+During ordinary indexing and analysis the tool is **read-only** over Claude's
+source transcripts and configuration. Its own state
 (pricing cache, and later the session index) lives under `~/.config/cc-analyzer/`.
 
 **Cost basis.** Every dollar figure is always computed the same way — tokens ×
@@ -234,7 +235,7 @@ cc-analyzer export --session <id> --format md --redact --out ./share
 curl "http://localhost:4317/api/export?format=json,csv&project=<id>&redact=1" -o export.zip
 ```
 
-CSV is `sessions.csv` (one row per session) + `turns.csv` (one row per turn, prompt redacted when `--redact`) + `models.csv` (one row per model per session). Parquet is deferred — CSV covers the analytics use-case for now. See `cc-analyzer export --help` and the web Dashboard/Project/Session **Export** panels.
+CSV is `sessions.csv` (one row per session) + `turns.csv` (one row per turn, prompt redacted when `--redact`) + `models.csv` (one row per model per session). Parquet is deferred — CSV covers the analytics use-case for now. See `cc-analyzer help` for export flags and the web Dashboard/Project/Session **Export** panels.
 
 ### What the analysis reports
 
@@ -290,11 +291,12 @@ transcript.
 - **TUI**: press `a` on a session's detail screen (`r` to run, `m` to switch
   model).
 
-It runs `claude -p` headless, pointed at the session file **read-only**
-(`--allowedTools Read`) — it never `--resume`s the real session, so it doesn't
-write to `~/.claude`. It uses your normal Claude Code login (no API key needed),
-and each run is a real, billable Claude Code session, so it only starts when you
-ask. Default model is `sonnet`; override per run, or set a default with
+It runs `claude -p` headless, pointed at the session file with the `Read` tool
+only — it never `--resume`s the reviewed session. Because this starts a normal
+Claude Code process, session content may be sent to the model provider and your
+normal hooks/configuration may run. It uses your normal Claude Code login (no API
+key needed), and each run is a real, billable Claude Code session, so it only
+starts when you ask. Default model is `sonnet`; override per run, or set a default with
 `cc-analyzer analyze … --model` / the web picker. Requires the `claude` CLI on
 your `PATH`.
 
@@ -417,7 +419,9 @@ are used. It is designed to respect the tool's read-only, privacy-first nature:
   URL is stripped before anything is sent.
 - **Where:** the CLI/TUI send server-side events; the local web app bundles the
   Plausible tracker and the docs site loads its cookieless script. Telemetry
-  state lives only in `~/.config/cc-analyzer/` — **never** in `~/.claude`.
+  state lives in the cc-analyzer state directory — by default
+  `~/.config/cc-analyzer/`, or `$XDG_CONFIG_HOME/cc-analyzer` /
+  `CC_ANALYZER_STATE_DIR` — never in Claude's session directory.
 - **Never in your way.** A CLI command never waits on the network to report
   itself: it hands the event to a short-lived background copy of `cc-analyzer`
   and exits immediately. That is the second `cc-analyzer` process you may see
@@ -696,7 +700,7 @@ The per-session view offers:
   categories; interrupted/correction/thrash turns carry warning markers), plus
   **tool-activity** bars, an in-session **model mix**, and a **subagent bursts**
   table attributing sidechain spend to the specific agents that ran (typed
-  best-effort from their spawn prompts).
+  best-effort from their spawn prompts when metadata is unavailable).
 - **Summary** — groups spend/tokens, execution, and environment details, then
   explainable context and cost diagnostics with suggested next actions,
   **cost-per-outcome** ratios, a session-scoped **what-if repricing** summary, and
@@ -749,7 +753,7 @@ The release workflow then attaches the five platform binaries and `SHA256SUMS` t
 - ~~SQLite index + portfolio analytics~~ ✓
 - ~~Interactive TUI (Ink)~~ ✓
 - ~~Local web app (Hono + React SPA)~~ ✓
-- Ideas: live-follow of active sessions; diff/compare two sessions; export reports.
+- Ideas: live-follow of active sessions; diff/compare two sessions.
 
 ## License
 
