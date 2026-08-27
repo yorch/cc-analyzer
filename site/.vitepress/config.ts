@@ -44,9 +44,11 @@ export default defineConfig({
     ["meta", { property: "og:site_name", content: "cc-analyzer" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:image", content: `${siteUrl}/screenshots/dashboard.webp` }],
+    ["meta", { property: "og:image:alt", content: "cc-analyzer web dashboard with portfolio totals and project activity" }],
     ["meta", { property: "og:image:width", content: "1600" }],
     ["meta", { property: "og:image:height", content: "2327" }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:image:alt", content: "cc-analyzer web dashboard with portfolio totals and project activity" }],
     // Local loader checks browser DNT and Plausible's localStorage opt-out before
     // requesting the self-hosted, cookieless analytics script.
     ["script", { defer: "", src: "/analytics.js" }],

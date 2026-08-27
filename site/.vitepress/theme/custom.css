@@ -33,7 +33,8 @@
   --cc-amber-dim: #d7a24a; /* links */
   --cc-ink: #e7d6ad; /* body copy — warm parchment amber */
   --cc-ink-2: #b09a6d; /* secondary text */
-  --cc-ink-3: #7c6f4f; /* muted / comments */
+  /* Muted text remains readable on the near-black surface (AA for normal text). */
+  --cc-ink-3: #8f805b; /* muted / comments */
   --cc-green: #74d68a; /* status "ok" ticks, used sparingly */
   --cc-red: #ff6b5e;
 
@@ -56,7 +57,8 @@
   --cc-amber-dim: #8a5410;
   --cc-ink: #3a2c14;
   --cc-ink-2: #6a5730;
-  --cc-ink-3: #927a49;
+  /* Muted text remains readable on the cream surface (AA for normal text). */
+  --cc-ink-3: #7a6234;
   --cc-green: #3f7d43;
   --cc-red: #b23a2c;
 
