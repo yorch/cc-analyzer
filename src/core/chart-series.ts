@@ -53,6 +53,33 @@ export function dedupeCompactions(compactions: Compaction[], seen: Set<string>):
 export const pctOfLimit = (tokens: number, limit: number): number =>
   Math.round((tokens / limit) * 100);
 
+/**
+ * One part's share of a session total, as a 0..1 fraction — the ONE guarded
+ * division behind every "18% of session" label. A $0 session is not a defect
+ * (a cached-out run, an unpriced model, a session that only read), and every
+ * one of these surfaces would otherwise print `NaN%`, so an empty total reads
+ * as a 0 share rather than as an error.
+ */
+export const shareOf = (value: number, total: number): number => (total > 0 ? value / total : 0);
+
+/**
+ * Running share of `total` down a list of values — the cumulative column that
+ * lets "these 5 turns are 61% of the spend" be read straight off a ranked
+ * table, and the Pareto curve over a cost-ranked bar chart.
+ *
+ * The reading is only meaningful when the values are already in the order the
+ * reader sees them (descending, for a Pareto), which is the caller's business:
+ * this helper deliberately does not sort, because the render site owns both
+ * the ordering and the decision to show a cumulative column at all.
+ */
+export function cumulativeShares(values: number[], total: number): number[] {
+  let running = 0;
+  return values.map((value) => {
+    running += value;
+    return shareOf(running, total);
+  });
+}
+
 /** Split a session's compaction records the one canonical way. */
 export function summarizeCompactions(compactions: Compaction[]): CompactionBreakdown {
   const own: Compaction[] = [];

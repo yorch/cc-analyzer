@@ -11,6 +11,7 @@ import {
   type CacheSeries,
   type Compaction,
   type ContextSeries,
+  cumulativeShares,
   modelMixRows,
   pct,
   pctOfLimit,
@@ -18,6 +19,7 @@ import {
   type SessionAnalysis,
   type SessionModelRow,
   type SidechainBurst,
+  shareOf,
   summarizeCompactions,
   type TurnPoint,
   turnFlags,
@@ -546,35 +548,68 @@ const COST_SEGS = [
   { cls: "tb-read", key: "costCacheRead", label: "cache read", color: "var(--data-blue)" },
 ] as const;
 
+/**
+ * Bar order. `turn` is the session's own narrative; `rank` sorts descending by
+ * the active metric, which is what makes the cumulative-share overlay a real
+ * **Pareto** curve rather than a cumulative burn line wearing a share's label.
+ * A running share is only a "the top few turns are most of the spend" reading
+ * when the bars are already ranked, so the curve rides on the order rather
+ * than being drawn unconditionally over chronological bars.
+ */
+type TurnOrder = "turn" | "rank";
+
+/** Turns summed into the ranked chart's "top N = X%" headline. Five is small
+ *  enough that the claim is still surprising when it is true, and it matches
+ *  the Summary tab's "Costliest turns" block so the two agree on screen. */
+const PARETO_HEAD = 5;
+
 function TurnBars({ turns }: { turns: TurnPoint[] }) {
   const metrics = ["cost", "tokens", "calls", "depth", "time"] as const;
+  const orders = ["turn", "rank"] as const;
   const [metric, setMetric] = useHashParam<TurnMetric>("turnMetric", "cost", metrics);
+  const [order, setOrder] = useHashParam<TurnOrder>("turnOrder", "turn", orders);
   const n = turns.length;
   const H = 160;
-  const values = turns.map((t) => turnValue(t, metric));
+  const ordered = useMemo(
+    () =>
+      order === "rank"
+        ? [...turns].sort((a, b) => turnValue(b, metric) - turnValue(a, metric))
+        : turns,
+    [turns, order, metric],
+  );
+  const values = ordered.map((t) => turnValue(t, metric));
   const max = Math.max(...values, 1e-9);
   const peakIdx = values.reduce((best, v, i) => (v > (values[best] ?? -1) ? i : best), 0);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const flagged = turns.filter((t) => turnFlags(t).length > 0).length;
+  // The Pareto overlay runs on its own 0–100% scale, independent of the bars'
+  // value axis; `shareOf` keeps a $0 (or 0-call) session at 0% instead of NaN%.
+  const metricTotal = values.reduce((sum, v) => sum + v, 0);
+  const cum = cumulativeShares(values, metricTotal);
+  const yShare = (share: number) => H - CHART_PAD - share * (H - CHART_PAD * 2);
   // The mark is the hit target on a bar chart: snap to the slot under the
   // pointer and anchor the tooltip at that bar's center (no crosshair).
   const xCenter = (i: number) => CHART_PAD + i * slot + slot / 2;
   const { hover, pinned, bind } = usePointerIndex(n, barLocate(n, slot));
-  const active = activeAt(hover, turns, n, xCenter);
+  const active = activeAt(hover, ordered, n, xCenter);
   return (
     <>
       <div className="trend-head">
         <h2>Per turn</h2>
         <span className="seg-group">
           metric{" "}
-          <Seg label="Turn bar metric" options={metrics} value={metric} onChange={setMetric} />
+          <Seg label="Turn bar metric" options={metrics} value={metric} onChange={setMetric} />{" "}
+          order <Seg label="Turn bar order" options={orders} value={order} onChange={setOrder} />
         </span>
       </div>
       <p className="muted">
-        peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(turns[peakIdx]?.index ?? 0) + 1} ·{" "}
-        {turns[peakIdx]?.prompt.slice(0, 60) || "no text"})
+        peak {fmtTurn(metric, values[peakIdx] ?? 0)} (turn #{(ordered[peakIdx]?.index ?? 0) + 1} ·{" "}
+        {ordered[peakIdx]?.prompt.slice(0, 60) || "no text"})
+        {order === "rank" && n > 0
+          ? ` · top ${Math.min(PARETO_HEAD, n)} = ${pct(cum[Math.min(PARETO_HEAD, n) - 1] ?? 0)} of ${metric}`
+          : ""}
       </p>
       <div className="chart-wrap">
         <svg
@@ -589,7 +624,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
           {...bind}
         >
           <title>Per-turn {metric}</title>
-          {turns.map((t, i) => {
+          {ordered.map((t, i) => {
             const v = values[i] ?? 0;
             const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
             const bx = CHART_PAD + i * slot + gap / 2;
@@ -635,11 +670,26 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
               </g>
             );
           })}
+          {order === "rank" && n > 1 && (
+            <path className="pareto-line" d={linePath(cum, xCenter, yShare)} />
+          )}
           <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
         </svg>
         {active && (
           <ChartTip x={active.x} pinned={pinned}>
-            <TipHead>{`turn #${active.p.index + 1}`}</TipHead>
+            <TipHead>
+              {order === "rank"
+                ? `turn #${active.p.index + 1} · rank ${(hover?.i ?? 0) + 1}`
+                : `turn #${active.p.index + 1}`}
+            </TipHead>
+            {order === "rank" ? (
+              <TipRow
+                label="cumulative"
+                value={pct(cum[hover?.i ?? 0] ?? 0)}
+                color="var(--data-clay)"
+              />
+            ) : null}
+            <TipRow label="share" value={pct(shareOf(values[hover?.i ?? 0] ?? 0, metricTotal))} />
             <TipRow label="cost" value={usd(active.p.cost)} color="var(--signal)" />
             <TipRow label="tokens" value={count(active.p.ioTokens + active.p.cacheTokens)} />
             <TipRow label="calls" value={`${active.p.apiCalls} (${active.p.mainApiCalls} main)`} />
@@ -672,6 +722,9 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
       <div className="legend">
         {metric === "cost" &&
           COST_SEGS.map((s) => <LegendSwatch key={s.cls} cls={s.cls} label={s.label} />)}
+        {order === "rank" && n > 1 && (
+          <LegendLine cls="pareto-line" label="cumulative share (Pareto, 0–100%)" />
+        )}
         {flagged > 0 && (
           <LegendSwatch
             cls="turn-signal"
@@ -682,7 +735,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
       <ChartData
         labelHeading="Turn"
         valueHeading={metric}
-        labels={turns.map((t) => `#${t.index + 1}`)}
+        labels={ordered.map((t) => `#${t.index + 1}`)}
         values={values}
         format={(v) => fmtTurn(metric, v)}
       />

@@ -6,11 +6,13 @@ import {
   buildContextSeries,
   buildGapMarkers,
   buildTurnSeries,
+  cumulativeShares,
   dedupeCompactions,
   isOwnCompaction,
   modelMixRows,
   pctOfLimit,
   projectHeadroom,
+  shareOf,
   summarizeCompactions,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
@@ -408,5 +410,39 @@ describe("modelMixRows", () => {
     expect(rows.map((r) => r.model)).toEqual(["claude-opus-4-7", "claude-sonnet-4-5"]);
     expect(rows.reduce((s, r) => s + r.share, 0)).toBeCloseTo(1, 10);
     expect(rows[0]?.apiCalls).toBe(1);
+  });
+});
+
+describe("shareOf / cumulativeShares", () => {
+  test("share is the plain fraction of the total", () => {
+    expect(shareOf(1, 4)).toBe(0.25);
+    expect(shareOf(4, 4)).toBe(1);
+  });
+
+  test("a zero total reads as a 0 share, never NaN", () => {
+    // A $0 session is ordinary (fully cached, unpriced model, read-only run);
+    // every share label on these surfaces divides by a number the user can
+    // legitimately have driven to zero.
+    expect(shareOf(0, 0)).toBe(0);
+    expect(Number.isNaN(shareOf(5, 0))).toBe(false);
+    expect(cumulativeShares([0, 0, 0], 0)).toEqual([0, 0, 0]);
+  });
+
+  test("cumulative shares accumulate in the order given and end at 1", () => {
+    const cum = cumulativeShares([5, 3, 2], 10);
+    expect(cum).toEqual([0.5, 0.8, 1]);
+  });
+
+  test("cumulative shares do not sort — the caller owns the ordering", () => {
+    // Same values, session order: the running total is a burn curve, which is
+    // exactly why render sites only show it over ranked rows.
+    expect(cumulativeShares([2, 3, 5], 10)).toEqual([0.2, 0.5, 1]);
+  });
+
+  test("a truncated ranked list stops short of 1", () => {
+    // The CLI's top-40 table and the Summary's top-5 block both accumulate a
+    // slice, so the last cumulative cell is "how much of the session these
+    // rows are" — not 100%.
+    expect(cumulativeShares([5, 3], 10)).toEqual([0.5, 0.8]);
   });
 });

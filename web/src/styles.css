@@ -785,6 +785,14 @@ th.num {
 .turnbar:hover {
   opacity: 1;
 }
+/* cumulative-share (Pareto) overlay on the ranked per-turn bars — its own
+   0-100% scale, so it is drawn in a distinct hue from the bars it crosses */
+.pareto-line {
+  fill: none;
+  stroke: var(--data-clay);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
 /* idle-gap marker on the cumulative-cost chart (neutral, unlike the red
    compaction marker) */
 .gap-marker {

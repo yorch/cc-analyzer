@@ -15,6 +15,12 @@ export interface Sort<T> {
   reverse: () => void;
   /** e.g. "cost ↓" for the header indicator. */
   label: string;
+  /** The active field's `key`, and its direction (1 asc / -1 desc). Exposed so
+   * a screen can react to *which* order it is in — e.g. a cumulative-share
+   * column reads as a Pareto only while the list is ranked descending by the
+   * column it accumulates. Parsing `label` for that would be a string trap. */
+  key: string;
+  dir: 1 | -1;
 }
 
 function compare(a: number | string, b: number | string): number {
@@ -42,5 +48,7 @@ export function useSort<T>(fields: SortField<T>[], initialDir: 1 | -1 = -1): Sor
     cycle: () => setIdx((i) => (i + 1) % fields.length),
     reverse: () => setDir((d) => (d === 1 ? -1 : 1)),
     label: `${field.label} ${dir === -1 ? "↓" : "↑"}`,
+    key: field.key,
+    dir,
   };
 }

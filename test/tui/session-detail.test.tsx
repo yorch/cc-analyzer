@@ -145,6 +145,29 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 
+  test("turns carry their share of the session, and ranking summarises the top", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    // The detail header states the selected turn's share outright.
+    expect(lastFrame() ?? "").toMatch(/turn #1 · \d+ calls · \$[\d.]+ · \d+% of session/);
+    await settleInput();
+    stdin.write("o"); // cycle: turn -> cost
+    await waitForFrame(lastFrame, "cost \u2191");
+    stdin.write("O"); // descending — now the running share is a Pareto read
+    await waitForFrame(lastFrame, (f) => /top \d+ = \d+%/.test(f));
+    expect(lastFrame() ?? "").toMatch(/top \d+ = \d+%/);
+    unmount();
+  });
+
   test("transcript mode: items collapse and expand", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen

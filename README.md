@@ -704,7 +704,8 @@ The per-session view offers:
   status/hint like `✓ 71 lines` or `✗ error…`), each step click-to-expand for its
   full input and result. The list is **sortable** by turn number, cost, tokens,
   calls, or wall time, so the expensive turn is one click away instead of buried
-  at #480. The color-coded **transcript** reader is windowed
+  at #480, and every turn states its **share of the session** (`18% of
+  session`). The color-coded **transcript** reader is windowed
   ("show more") so very large sessions stay responsive.
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom
@@ -712,14 +713,16 @@ The per-session view offers:
   hit rate against a fixed 0–100% y-axis, cold calls), cumulative cost with
   **idle-gap** markers, per-turn bars toggling cost/tokens/calls/depth/time (the
   cost metric stacks the four token categories; interrupted/correction/thrash
-  turns carry warning markers), plus **tool-activity** bars, an in-session
+  turns carry warning markers) and switchable between session order and a
+  **cost-ranked Pareto** view with a cumulative-share curve, plus
+  **tool-activity** bars, an in-session
   **model mix**, and a **subagent bursts** table attributing sidechain spend to
   the specific agents that ran (typed best-effort from their spawn prompts when
   metadata is unavailable).
 - **Summary** — groups spend/tokens, execution, and environment details, then
   explainable context and cost diagnostics with suggested next actions,
-  **cost-per-outcome** ratios, a **costliest turns** block that jumps straight
-  into the Turns tab, a session-scoped **what-if repricing** summary, and
+  **cost-per-outcome** ratios, a **costliest turns** block with share and
+  cumulative-share columns that jumps straight into the Turns tab, a session-scoped **what-if repricing** summary, and
   a **cost rank** card placing the session's spend among its project's (and the
   portfolio's) sessions.
 

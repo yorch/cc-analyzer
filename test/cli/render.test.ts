@@ -215,6 +215,35 @@ describe("renderSessionSummary · turns table", () => {
     expect(table.indexOf("prompt number 47")).toBeLessThan(table.indexOf("prompt number 0"));
   });
 
+  test("carries a per-turn share, and a cumulative share only when ranked", () => {
+    const ranked = renderSessionSummary(sessionWithTurns(60, 47));
+    expect(ranked).toContain("share");
+    expect(ranked).toContain("cum");
+    const plain = renderSessionSummary(sessionWithTurns(5, 3));
+    expect(plain).toContain("share");
+    // A running total down a chronological list is a burn curve, not a share.
+    expect(plain).not.toContain("cum");
+  });
+
+  test("a $0 session prints 0% shares rather than NaN%", () => {
+    // No pricing table entry for the fixture model => every turn costs $0.
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "hello"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          model: "some-unpriceable-model",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      ],
+      {},
+    );
+    const out = renderSessionSummary(a);
+    expect(out).not.toContain("NaN");
+    expect(out).toContain("0%");
+  });
+
   test("keeps session order (and the plain heading) when everything fits", () => {
     const out = renderSessionSummary(sessionWithTurns(5, 3));
     expect(out).toContain("▸ Turns");

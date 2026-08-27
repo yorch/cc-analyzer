@@ -5,16 +5,19 @@ import {
   buildSessionDiagnostics,
   burstAttributionNote,
   type CostRankCohort,
+  cumulativeShares,
   formatSignedUSD,
   groupSidechainBursts,
   MIN_RANK_COHORT,
   OUTCOME_CAVEAT,
   outcomeRows,
+  pct,
   type SessionAnalysis,
   type SessionResponse,
   type SidechainBurst,
   SKILL_COST_CAVEAT,
   sessionOutcomes,
+  shareOf,
   type TranscriptItem,
   type Turn,
   type TurnStep,
@@ -387,6 +390,17 @@ function CostliestTurns({
     () => [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, COSTLIEST_TURNS),
     [a],
   );
+  const sessionCost = a.totals.cost.total;
+  // Rows are already cost-descending, which is what makes the running share a
+  // Pareto reading ("the top 3 are 61% of the spend") rather than a burn curve.
+  const cum = useMemo(
+    () =>
+      cumulativeShares(
+        rows.map((t) => t.cost.total),
+        sessionCost,
+      ),
+    [rows, sessionCost],
+  );
   if (rows.length === 0 || (rows[0]?.cost.total ?? 0) <= 0) return null;
   return (
     <section className="summary-group" style={{ marginTop: 12 }}>
@@ -397,12 +411,14 @@ function CostliestTurns({
             <tr>
               <th className="num">#</th>
               <th className="num">Cost</th>
+              <th className="num">Share</th>
+              <th className="num">Cumulative</th>
               <th className="num">Calls</th>
               <th>Prompt</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((t) => (
+            {rows.map((t, i) => (
               <tr key={t.index}>
                 <td className="num">
                   <button
@@ -415,6 +431,8 @@ function CostliestTurns({
                   </button>
                 </td>
                 <td className="num">{usd(t.cost.total)}</td>
+                <td className="num">{pct(shareOf(t.cost.total, sessionCost))}</td>
+                <td className="num">{pct(cum[i] ?? 0)}</td>
                 <td className="num">{t.apiCalls.length}</td>
                 <td className="muted">{t.prompt.slice(0, 80) || "(no text)"}</td>
               </tr>
@@ -872,6 +890,7 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
   // direction, exactly as `SortTh` does for the tabled views.
   const sort = useSort(a.turns, TURN_ACCESSORS, "index", "asc");
   const rows = sort.sorted;
+  const sessionCost = a.totals.cost.total;
   // A requested turn widens the window before the scroll runs, so the anchor
   // exists by the time the effect below looks for it. Its POSITION, not its
   // number: under a cost sort turn #480 can be the first row.
@@ -921,6 +940,7 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
             >
               <span className="muted">{expanded ? "▾" : "▸"}</span>{" "}
               <span className="num">#{t.index + 1}</span> · {usd(t.cost.total)} ·{" "}
+              <span className="muted">{pct(shareOf(t.cost.total, sessionCost))} of session</span> ·{" "}
               <span className="muted">{tokensOf(t.tokens)}</span> · {t.apiCalls.length} calls ·{" "}
               <span className="muted">
                 {Object.entries(t.toolCounts)

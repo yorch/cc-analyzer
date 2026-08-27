@@ -1,5 +1,11 @@
 import type { SessionAnalysis } from "../core/analyze.ts";
-import { buildTurnSeries, burstAttributionNote, turnFlags } from "../core/chart-series.ts";
+import {
+  buildTurnSeries,
+  burstAttributionNote,
+  cumulativeShares,
+  shareOf,
+  turnFlags,
+} from "../core/chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
 import {
   digestSummaryRows,
@@ -400,18 +406,37 @@ export function renderSessionSummary(
   const shownTurns = ranked
     ? [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, TURNS_ROW_CAP)
     : a.turns;
+  // Share of the session's own spend, guarded by the shared `shareOf` — a $0
+  // session prints 0%, never NaN%. `cum` only rides along on the ranked table,
+  // where a running total answers "how much of this session is these N turns";
+  // down a chronological list it would be a burn curve wearing a share's label.
+  const sessionCost = a.totals.cost.total;
+  const cum = ranked
+    ? cumulativeShares(
+        shownTurns.map((t) => t.cost.total),
+        sessionCost,
+      )
+    : [];
   lines.push(
     table(
-      ["#", "cost", "calls", "tools", "flags", "prompt"],
-      shownTurns.map((t) => [
+      ranked
+        ? ["#", "cost", "share", "cum", "calls", "tools", "flags", "prompt"]
+        : ["#", "cost", "share", "calls", "tools", "flags", "prompt"],
+      shownTurns.map((t, i) => [
         String(t.index + 1),
         formatUSD(t.cost.total),
+        pct(shareOf(t.cost.total, sessionCost)),
+        ...(ranked ? [pct(cum[i] ?? 0)] : []),
         String(t.apiCalls.length),
         String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0)),
         flagsByTurn.get(t.index) ?? "",
-        truncate(t.prompt || "(no text)", 60),
+        truncate(t.prompt || "(no text)", ranked ? 44 : 60),
       ]),
-      { align: ["right", "right", "right", "right", "left", "left"] },
+      {
+        align: ranked
+          ? ["right", "right", "right", "right", "right", "right", "left", "left"]
+          : ["right", "right", "right", "right", "right", "left", "left"],
+      },
     ),
   );
   if (ranked) {

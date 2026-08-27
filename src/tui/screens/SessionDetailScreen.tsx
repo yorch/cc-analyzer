@@ -22,6 +22,7 @@ import {
   modelMixRows,
   pctOfLimit,
   projectHeadroom,
+  shareOf,
   summarizeCompactions,
   turnFlags,
 } from "../../core/chart-series.ts";
@@ -93,6 +94,11 @@ interface Loaded {
  *  is fixed-height and does not scroll, so this is a clipping guard, not a
  *  style choice — the caveats below the table must stay visible. */
 const BURST_ROWS_SHOWN = 5;
+
+/** How many top turns the ranked turns header sums into its "top N = X%" read.
+ *  Five is the smallest count that reliably says something about a real
+ *  session and still fits beside the sort indicator on a narrow terminal. */
+const PARETO_ROWS = 5;
 
 export function SessionDetailScreen({ session, pricing, isActive, columns, rows, onBack }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
@@ -277,6 +283,7 @@ function TurnsPane({
   // key and `O` flips the direction (tab is already the turns↔steps toggle).
   const sort = useSort(TURN_SORT_FIELDS, 1);
   const rows = sort.sorted(all);
+  const sessionCost = a.totals.cost.total;
   const [pane, setPane] = useState<"turns" | "steps">("turns");
   const [turnSel, setTurnSel] = useState(0);
   const [turnOff, setTurnOff] = useState(0);
@@ -339,17 +346,30 @@ function TurnsPane({
     { isActive },
   );
 
-  const promptW = wide ? Math.max(8, masterWidth(columns) - 18) : 40;
+  const promptW = wide ? Math.max(8, masterWidth(columns) - 26) : 34;
+  // A running share reads as a Pareto only while the list is ranked descending
+  // by the very column it accumulates; in session order it would just be a
+  // burn curve wearing a share's label, so the line appears only in that order.
+  const ranked = sort.key === "cost" && sort.dir === -1;
+  const paretoRows = Math.min(PARETO_ROWS, rows.length);
+  const paretoShare = ranked
+    ? shareOf(
+        rows.slice(0, paretoRows).reduce((sum, r) => sum + r.cost, 0),
+        sessionCost,
+      )
+    : 0;
   const master = (
     <Box flexDirection="column">
       <Text color={role.muted}>
         turns · {rows.length} · {sort.label}
+        {ranked && paretoRows > 0 ? ` · top ${paretoRows} = ${pct(paretoShare)}` : ""}
       </Text>
       {rows.slice(turnOff, turnOff + pageSize).map((r, i) => {
         const sel = turnOff + i === activeTurn;
         return (
           <Text key={r.index} {...selection(sel && pane === "turns")}>
             {sel && pane === "turns" ? "❯" : " "} #{r.index + 1} {formatUSD(r.cost).padStart(8)}{" "}
+            {pct(shareOf(r.cost, sessionCost)).padStart(4)}{" "}
             {truncate(r.prompt || "(no text)", promptW)}
           </Text>
         );
@@ -361,7 +381,8 @@ function TurnsPane({
   const detail = (
     <Box flexDirection="column">
       <Text color={role.heading}>
-        turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)}
+        turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)} ·{" "}
+        {pct(shareOf(turn?.cost ?? 0, sessionCost))} of session
       </Text>
       {steps.length === 0 ? (
         <Text color={role.muted}>(no steps)</Text>
