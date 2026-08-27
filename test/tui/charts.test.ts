@@ -3,6 +3,7 @@ import type { DayRow, HeatCell } from "../../src/core/stats.ts";
 import {
   brailleChart,
   bucketSeries,
+  calendarGrid,
   heatGrid,
   markerRow,
   metricValue,
@@ -71,6 +72,14 @@ describe("brailleChart", () => {
   test("all-zero values render blank braille", () => {
     expect(brailleChart([0, 0, 0, 0], 3, 1)).toEqual(["⠀⠀⠀"]);
   });
+
+  test("a NaN point doesn't blank the whole chart — the finite points still render", () => {
+    // Math.max(..., NaN) is NaN, so an unguarded scale computation would blank
+    // every column, not just the bad one.
+    const withNaN = brailleChart([9, 9, Number.NaN, 9], 4, 1);
+    expect(withNaN).toEqual(["⣿⣿⠀⣿"]); // the NaN column floors like a zero
+    expect(withNaN[0]?.length).toBe(4);
+  });
 });
 
 describe("sparkline", () => {
@@ -87,6 +96,40 @@ describe("sparkline", () => {
 
   test("downsamples by summing into at most `width` buckets", () => {
     expect([...sparkline([1, 1, 1, 1, 1, 1], 3)]).toHaveLength(3);
+  });
+
+  test("a NaN in the series shrinks no bucket sum — length still matches the budget", () => {
+    // Before the fix, `SPARK[NaN]` was undefined and join() silently dropped
+    // it, so the returned string was SHORTER than min(width, values.length).
+    const s = sparkline([5, 10, Number.NaN, 8, 12], 10);
+    expect([...s]).toHaveLength(5);
+  });
+
+  test("an explicit ceiling replaces the series max as the scale denominator", () => {
+    // Half of the ceiling should land roughly mid-ramp, not at the top the
+    // series' own (smaller) max would have produced.
+    const s = sparkline([5], 1, 10);
+    expect(s).not.toBe("█");
+  });
+
+  test("two series scaled to the same ceiling are comparable", () => {
+    // Same absolute value in both series must produce the same glyph when
+    // scaled against a shared ceiling — that's the whole point of stacking.
+    const a = sparkline([5], 1, 20);
+    const b = sparkline([5, 5], 2, 20);
+    expect(b).toBe(a + a);
+  });
+
+  test("values above the ceiling clamp to the top glyph", () => {
+    expect(sparkline([50], 1, 10)).toBe("█");
+  });
+});
+
+describe("calendarGrid", () => {
+  test("a NaN cost keeps every row's length — it floors instead of dropping a char", () => {
+    const daily = [day("2026-07-06", Number.NaN), day("2026-07-07", 4)];
+    const { rows } = calendarGrid(daily, "cost", 2);
+    for (const row of rows) expect([...row]).toHaveLength(2);
   });
 });
 
@@ -123,6 +166,16 @@ describe("heatGrid", () => {
     expect(rows[0]?.[0]).toBe(" "); // empty hour → space
     expect(rows[6]).toBe(" ".repeat(24)); // Sunday empty
   });
+
+  test("a NaN cell keeps every row 24 chars — it floors instead of dropping a char", () => {
+    const cells: HeatCell[] = [
+      { weekday: 1, hour: 9, sessions: Number.NaN, cost: 2 },
+      { weekday: 1, hour: 10, sessions: 5, cost: 2 },
+    ];
+    const { rows } = heatGrid(cells, "sessions");
+    for (const row of rows) expect([...row]).toHaveLength(24);
+    expect(rows[0]?.[9]).toBe(" "); // the NaN cell floors like an empty one
+  });
 });
 
 describe("markerRow", () => {
@@ -142,6 +195,36 @@ describe("markerRow", () => {
     // pos === seriesLen means "after the last call" — still rendered.
     expect(markerRow([4], 4, 4)).toBe("   ▼");
     expect(markerRow([99], 4, 4)).toBe("   ▼");
+  });
+});
+
+describe("brailleChart · bucket aggregation", () => {
+  // A rate series' signal is its dips, and max bucketing erases them: the best
+  // call in a downsampled column is ~100% however bad its neighbours were, so
+  // a real 98% cache-hit series painted a solid block at every chart height.
+  const rate = Array.from({ length: 200 }, (_, i) => (i === 100 ? 4 : 98));
+
+  test("max bucketing hides a dip in a high, flat rate series", () => {
+    const rows = brailleChart(rate, 40, 4, 100);
+    expect(new Set(rows.join(""))).toEqual(new Set(["\u28ff"]));
+  });
+
+  test("min bucketing keeps the dip, which is the whole signal", () => {
+    const rows = brailleChart(rate, 40, 4, 100, "min");
+    expect(rows.join("")).toContain("\u28ff");
+    // The dip's column is not full, so the notch is visible.
+    expect(new Set(rows.join("")).size).toBeGreaterThan(1);
+  });
+
+  test("max stays the default, so quantity charts keep their spikes", () => {
+    const spiky = [1, 1, 9, 1, 1, 1, 1, 1];
+    expect(brailleChart(spiky, 4, 2)).toEqual(brailleChart(spiky, 4, 2, undefined, "max"));
+  });
+
+  test("an all-non-finite column floors instead of rendering Infinity", () => {
+    const rows = brailleChart([Number.NaN, Number.NaN], 2, 2, 100, "min");
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.length === 2)).toBe(true);
   });
 });
 

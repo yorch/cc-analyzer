@@ -274,7 +274,7 @@ describe("ProjectsView multi-root labels and enriched preview", () => {
 });
 
 describe("TrendsView heatmap axis alignment", () => {
-  test("hour ticks land on their grid column, and 23h right-aligns instead of overhanging", async () => {
+  test("hour ticks land on their grid column with no overlap between adjacent labels", async () => {
     const heatDb = openDb(":memory:");
     insertSession(heatDb, {
       path: "/h/1.jsonl",
@@ -289,11 +289,14 @@ describe("TrendsView heatmap axis alignment", () => {
     await waitForFrame(lastFrame, "Mon");
     const frame = lastFrame() ?? "";
     // The grid row is 4 weekday-label chars ("Mon ") + 24 one-char hour cells
-    // = 28 columns; each tick sits at column `4 + hour`, and "23h" — which
-    // would run past column 28 there — right-aligns to end at the last
-    // column instead. This is a pinning test on the exact 28-char axis.
-    const axisLine = "    0h    6h    12h   18h23h";
-    expect(axisLine).toHaveLength(28);
+    // = 28 columns; each tick sits at column `4 + hour`. The trailing "23h"
+    // tick was dropped rather than right-aligned into the same 28 columns,
+    // since that butted it directly against "18h" with no separating space
+    // ("18h23h"). Trailing whitespace is stripped from the rendered frame, so
+    // this pins the axis up to its last non-blank column (25 chars: "18h" ends
+    // at column 25 of the 28-char row).
+    const axisLine = "    0h    6h    12h   18h";
+    expect(axisLine).toHaveLength(25);
     expect(frame).toContain(axisLine);
     unmount();
     heatDb.close();

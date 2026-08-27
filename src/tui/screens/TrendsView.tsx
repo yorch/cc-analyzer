@@ -3,7 +3,12 @@ import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import { activityHeatmap, type ModelDayRow, modelMixByDay, spendByDay } from "../../core/stats.ts";
-import { INDEXED_COST_CAVEAT, weeklySeries } from "../../core/stats-types.ts";
+import {
+  type DayRange,
+  fitGranularity,
+  INDEXED_COST_CAVEAT,
+  weeklySeries,
+} from "../../core/stats-types.ts";
 import {
   type BurnMetric,
   brailleChart,
@@ -25,9 +30,12 @@ const GRANULARITIES: Granularity[] = ["day", "week", "month"];
 
 // The heatmap grid row is a 4-char weekday label ("Mon ") followed by 24
 // one-char hour cells (heatGrid), 28 columns total. Ticks are placed at
-// column `4 + hour` so they land over their cell; "23h" would run 3 columns
-// past the 28-char row at that position, so it right-aligns to the last
-// column instead (still readable as "the row's final hour").
+// column `4 + hour` so they land over their cell. A trailing "23h" tick was
+// tried and dropped: at 3 chars wide it would need to start at column 25 to
+// fit inside the 28-char row, which butts it directly against "18h" (ending
+// at column 24) with no separating space — "18h    " reads as a clean final
+// stretch of the row, and the last hour is still legible as "wherever the
+// row ends."
 const HEATMAP_AXIS_PREFIX = 4;
 const HEATMAP_AXIS_HOURS = 24;
 const HEATMAP_TICKS: { hour: number; label: string }[] = [
@@ -35,7 +43,6 @@ const HEATMAP_TICKS: { hour: number; label: string }[] = [
   { hour: 6, label: "6h" },
   { hour: 12, label: "12h" },
   { hour: 18, label: "18h" },
-  { hour: 23, label: "23h" },
 ];
 
 function buildHeatmapAxis(): string {
@@ -50,6 +57,18 @@ function buildHeatmapAxis(): string {
 
 /** Built once at module load — the axis has no runtime inputs. */
 const HEATMAP_HOUR_AXIS = buildHeatmapAxis();
+
+/**
+ * Width available to the burn chart's plot, before its y-axis gutter is
+ * carved out of it. Shared between the granularity default (computed here,
+ * at the `TrendsView` level, where `g` cycles) and `BurnPanel`'s own layout,
+ * so the two can't disagree about how much room the plot has — `fitGranularity`
+ * only approximates bucket counts from a slot count in the first place, so a
+ * second, drifting estimate would compound that.
+ */
+function burnPlotWidth(columns: number): number {
+  return Math.max(12, columns - 18);
+}
 
 interface Props {
   db: Database;
@@ -71,7 +90,15 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
 
   const [panel, setPanel] = useState<Panel>("burn");
   const [burnMetric, setBurnMetric] = useState<BurnMetric>("cost");
-  const [granularity, setGranularity] = useState<Granularity>("day");
+  // `undefined` means "no manual choice yet" — the displayed granularity
+  // defaults to whatever fits the plot's width, so a long portfolio opens
+  // readable instead of opening as 13 months of daily moiré. Once `g` is
+  // pressed the override wins permanently (it must not be recomputed away
+  // on a resize), so it's tracked separately from the derived default.
+  const [granularityOverride, setGranularityOverride] = useState<Granularity | undefined>(
+    undefined,
+  );
+  const granularity = granularityOverride ?? fitGranularity(daily.length, burnPlotWidth(columns));
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("sessions");
   const [calMetric, setCalMetric] = useState<HeatMetric>("cost");
 
@@ -95,7 +122,13 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
         return;
       }
       if (input === "g" && panel === "burn") {
-        setGranularity((gr) => GRANULARITIES[(GRANULARITIES.indexOf(gr) + 1) % 3] as Granularity);
+        // Cycle from whatever is CURRENTLY displayed (the override once set,
+        // else the density-fit default), not from a fixed starting point —
+        // otherwise the first press could jump backwards past what's on screen.
+        setGranularityOverride((prev) => {
+          const current = prev ?? fitGranularity(daily.length, burnPlotWidth(columns));
+          return GRANULARITIES[(GRANULARITIES.indexOf(current) + 1) % 3] as Granularity;
+        });
       }
     },
     { isActive },
@@ -138,28 +171,44 @@ export function TrendsView({ db, columns, rows, isActive, onBack }: Props) {
  * rest already folded into "other" by `modelMixByDay`) with a weekly-bucketed
  * sparkline — the terminal-friendly reading of the web Trends model-mix bands,
  * fed by the same fold so the totals cannot disagree.
+ *
+ * Rows stacked one above another are read as sharing an x-axis and a scale,
+ * so both must actually be shared: every row's sparkline covers the same
+ * union week span (`weeklySeries`'s `span`) and is scaled against the same
+ * `ceiling` (the max weekly value across ALL models). Without them, a model
+ * used for 12 weeks and one adopted 7 months ago both fill their row edge to
+ * edge, in the same column — read as concurrent when they are not, and with
+ * a `█` in one row meaning a different dollar amount than a `█` in the next.
  */
 function ModelsPanel({ mix, columns }: { mix: ModelDayRow[]; columns: number }) {
-  const ranked = useMemo(() => {
+  const { rows, ceiling, span } = useMemo(() => {
     const byModel = new Map<string, { total: number; daily: { day: string; count: number }[] }>();
+    let minDay: string | undefined;
+    let maxDay: string | undefined;
     for (const r of mix) {
       const m = byModel.get(r.model) ?? { total: 0, daily: [] };
       m.total += r.cost;
       m.daily.push({ day: r.day, count: r.cost });
       byModel.set(r.model, m);
+      if (minDay === undefined || r.day < minDay) minDay = r.day;
+      if (maxDay === undefined || r.day > maxDay) maxDay = r.day;
     }
-    return [...byModel.entries()]
-      .map(([model, m]) => ({ model, total: m.total, weekly: weeklySeries(m.daily) }))
+    const unionSpan: DayRange | undefined =
+      minDay !== undefined && maxDay !== undefined ? { start: minDay, end: maxDay } : undefined;
+    const rankedRows = [...byModel.entries()]
+      .map(([model, m]) => ({ model, total: m.total, weekly: weeklySeries(m.daily, unionSpan) }))
       .sort((a, b) => b.total - a.total);
+    const sharedCeiling = rankedRows.reduce((mx, r) => Math.max(mx, ...r.weekly, 0), 0);
+    return { rows: rankedRows, ceiling: sharedCeiling, span: unionSpan };
   }, [mix]);
-  if (ranked.length === 0) {
+  if (rows.length === 0) {
     return <Text color={role.muted}>No dated sessions in the index.</Text>;
   }
-  const grand = ranked.reduce((s, m) => s + m.total, 0);
+  const grand = rows.reduce((s, m) => s + m.total, 0);
   const nameW = Math.max(
     8,
     Math.min(
-      ranked.reduce((w, m) => Math.max(w, m.model.length), 0),
+      rows.reduce((w, m) => Math.max(w, m.model.length), 0),
       Math.max(8, Math.floor(columns / 3)),
     ),
   );
@@ -169,11 +218,16 @@ function ModelsPanel({ mix, columns }: { mix: ModelDayRow[]; columns: number }) 
       <Text color={role.muted}>
         models · <Text color={role.accent}>weekly spend</Text> per model, ranked by total
       </Text>
+      {span && (
+        <Text color={role.muted}>
+          {span.start} → {span.end} · one shared scale
+        </Text>
+      )}
       <Box marginTop={1} flexDirection="column">
-        {ranked.map((m) => (
+        {rows.map((m) => (
           <Text key={m.model}>
             <Text color={role.body}>{truncate(m.model, nameW).padEnd(nameW)} </Text>
-            <Text color={palette.amber}>{sparkline(m.weekly, sparkW).padEnd(sparkW)}</Text>
+            <Text color={palette.amber}>{sparkline(m.weekly, sparkW, ceiling).padEnd(sparkW)}</Text>
             <Text color={role.cost}>{formatUSD(m.total).padStart(10)}</Text>
             <Text color={role.muted}>
               {" "}
@@ -209,9 +263,25 @@ function BurnPanel({
   const peak = values[peakIdx] ?? 0;
   const avg = values.length ? total / values.length : 0;
 
-  const width = Math.max(12, columns - 18);
-  const height = Math.max(3, rows - 12);
+  // 13, not 12: the panel's chrome is one row taller than the old constant
+  // assumed, so the whole app overflowed the terminal by a row and scrolled the
+  // topmost chart row away. That was invisible while the top row was blank
+  // braille, and stopped being invisible the moment it started carrying the
+  // y-axis max label — the one label most worth reading.
+  const height = Math.max(3, rows - 13);
+  // A left gutter of 3 right-aligned labels (scale max / midpoint / 0 baseline)
+  // so a value can be read off the plot instead of only off the peak/avg text
+  // above it — mirrors the web chart's YAxis. `peak` IS the plot's own scale
+  // max (brailleChart takes the values' own max with no ceiling here), so no
+  // second computation can disagree with what's actually drawn. Sized to the
+  // labels themselves, then carved out of the plot's width so the chart still
+  // fits `columns`.
+  const yLabels = [fmt(metric, peak), fmt(metric, peak / 2), fmt(metric, 0)];
+  const gutterW = Math.max(...yLabels.map((l) => l.length));
+  const width = Math.max(12, burnPlotWidth(columns) - gutterW - 1);
   const chart = brailleChart(values, width, height);
+  const midRow = Math.floor(height / 2);
+  const bottomRow = height - 1;
 
   if (series.length === 0) {
     return <Text color={role.muted}>No dated sessions in the index.</Text>;
@@ -233,14 +303,20 @@ function BurnPanel({
         <Text color={role.muted}>/{granularity} avg</Text>
       </Text>
       <Box marginTop={1} flexDirection="column">
-        {chart.map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-order chart rows
-          <Text key={i} color={palette.amberDim}>
-            {line}
-          </Text>
-        ))}
+        {chart.map((line, i) => {
+          const label =
+            i === 0 ? yLabels[0] : i === bottomRow ? yLabels[2] : i === midRow ? yLabels[1] : "";
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed-order chart rows
+            <Text key={i}>
+              <Text color={role.muted}>{(label ?? "").padStart(gutterW)} </Text>
+              <Text color={palette.amberDim}>{line}</Text>
+            </Text>
+          );
+        })}
       </Box>
       <Text color={role.muted}>
+        {" ".repeat(gutterW + 1)}
         {series[0]?.label}{" "}
         {"─".repeat(
           Math.max(

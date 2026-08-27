@@ -63,20 +63,6 @@ export function gutter(selected: boolean): string {
   return selected ? "❯ " : "  ";
 }
 
-const SPARK = "▁▂▃▄▅▆▇█";
-const SPARK_FLOOR = SPARK[0] ?? " ";
-
-/** One-char-per-value block sparkline; "" for no data. */
-export function sparkline(values: number[]): string {
-  if (values.length === 0) return "";
-  const max = Math.max(...values);
-  if (max <= 0) return SPARK_FLOOR.repeat(values.length);
-  const last = SPARK.length - 1;
-  return values
-    .map((v) => SPARK[Math.round((Math.max(0, v) / max) * last)] ?? SPARK_FLOOR)
-    .join("");
-}
-
 /** Proportional block bar, up to `width` cells wide. */
 export function bar(value: number, max: number, width = 16): string {
   if (max <= 0) return "";
