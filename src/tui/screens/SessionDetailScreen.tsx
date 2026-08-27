@@ -450,6 +450,15 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
   return next;
 }
 
+// The cache-hit chart's own row budget (`ChartsView` below): 4 rows × 4
+// dot-rows/row = 16 levels across the 0–100% range, enough to show real
+// variation instead of collapsing to a solid glyph above ~87.5% — the failure
+// mode of the old fixed height-1 row (only 4 levels total). It competes with
+// the context-window chart for the same space, so it only renders when the
+// budget leaves the context chart at least its own floor.
+const CACHE_CHART_ROWS = 4;
+const MIN_CONTEXT_CHART_ROWS = 3;
+
 /** Session charts: context-window sawtooth (▼ = compaction), cache hit rate,
  * cost per call, and per-turn cost — series shared with the web charts via
  * chart-series.ts. */
@@ -540,21 +549,12 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
     ctx.points.length,
     width,
   );
-  // A rate series must not be bucket-SUMMED (sparkline's downsampling — right
-  // for cost, wrong for percentages): a one-row braille chart buckets by MAX
-  // and takes 100 as its fixed ceiling, so a flat 90% renders flat.
-  const cacheRow = brailleChart(
-    cache.points.map((p) => p.hitPct),
-    width,
-    1,
-    100,
-  )[0];
 
-  // Every line of this view EXCEPT the braille chart, as arrays — the chart's
-  // height is derived from their actual lengths, so a newly added or toggled
-  // line shrinks the chart instead of overrunning the terminal and corrupting
-  // the Ink frame. Only the screen chrome outside this component (title,
-  // vitals band, tab row, margins, footer) remains a constant.
+  // Every line of this view EXCEPT the braille charts, as arrays — their
+  // height is derived from these arrays' actual lengths, so a newly added or
+  // toggled line shrinks a chart instead of overrunning the terminal and
+  // corrupting the Ink frame. Only the screen chrome outside this component
+  // (title, vitals band, tab row, margins, footer) remains a constant.
   const aboveChart = [
     <Text key="head" color={role.muted} wrap="truncate-end">
       context window · peak <Text color={role.accent}>{formatCount(ctx.peakTokens)} tokens</Text>
@@ -572,32 +572,28 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
         ]
       : []),
   ];
-  const belowChart = [
+  const axisLine = (
     <Text key="axis" color={role.muted}>
       call 1 {"─".repeat(Math.max(0, width - 13 - String(ctx.points.length).length))} call{" "}
       {ctx.points.length}
-    </Text>,
-    <Text key="cache-head" color={role.muted}>
-      cache hit {cache.hitPct}% · {cache.coldCalls} cold call{cache.coldCalls === 1 ? "" : "s"}
-    </Text>,
-    <Text key="cache-row" color={palette.blue}>
-      {cacheRow}
-    </Text>,
-    ...(showModels
-      ? [
-          <Text key="models" color={role.muted} wrap="truncate-end">
-            models: {modelsLabel}
-          </Text>,
-        ]
-      : []),
-    ...(showSubagents
-      ? [
-          <Text key="subagents" color={role.muted} wrap="truncate-end">
-            subagents: {subagentsLabel}
-            {subagentsMore}
-          </Text>,
-        ]
-      : []),
+    </Text>
+  );
+  const modelsLines = showModels
+    ? [
+        <Text key="models" color={role.muted} wrap="truncate-end">
+          models: {modelsLabel}
+        </Text>,
+      ]
+    : [];
+  const subagentsLines = showSubagents
+    ? [
+        <Text key="subagents" color={role.muted} wrap="truncate-end">
+          subagents: {subagentsLabel}
+          {subagentsMore}
+        </Text>,
+      ]
+    : [];
+  const restLines = [
     <Text key="blank"> </Text>,
     <Text key="burn-head" color={role.muted} wrap="truncate-end">
       cost per call{burn.length > width ? " (bucketed)" : ""} ·{" "}
@@ -645,10 +641,61 @@ function ChartsView({ a, columns, rows }: { a: SessionAnalysis; columns: number;
   // tab row + margins, footer) — the one number left to keep in step with
   // SessionDetailScreen's frame, everything else is counted from the arrays.
   const SCREEN_CHROME_ROWS = 13;
-  const chartH = Math.max(3, rows - SCREEN_CHROME_ROWS - aboveChart.length - belowChart.length);
+  // What's left for the two braille charts to split, BEFORE deciding whether
+  // the cache chart fits — every other line is fixed (axis + cache-head
+  // always render; the rest are the conditional blocks above).
+  const fixedBelowRows =
+    1 /* axis */ +
+    1 /* cache-head */ +
+    modelsLines.length +
+    subagentsLines.length +
+    restLines.length;
+  const available = Math.max(0, rows - SCREEN_CHROME_ROWS - aboveChart.length - fixedBelowRows);
+  // A chart that cannot vary is worse than no chart: give the cache row real
+  // height when the budget allows, and drop it entirely otherwise rather than
+  // rendering the old always-solid height-1 version — the "cache hit N% · M
+  // cold calls" text below already carries the number.
+  const showCacheChart = available - CACHE_CHART_ROWS >= MIN_CONTEXT_CHART_ROWS;
+  const chartH = Math.max(
+    MIN_CONTEXT_CHART_ROWS,
+    available - (showCacheChart ? CACHE_CHART_ROWS : 0),
+  );
   // Ceiling at the window limit (like the web chart): the empty rows above
   // the sawtooth are the headroom signal.
   const chart = brailleChart(values, width, chartH, ctx.contextLimit);
+  // A rate series needs a fixed 100 ceiling (so a flat 90% renders flat rather
+  // than filling the chart) AND "min" bucketing. Height alone does not rescue
+  // this chart: hit rates cluster in the 90s, so the *best* call in a
+  // downsampled column is ~100% however bad its neighbours were, and max
+  // bucketing paints a solid block at any height. The dips are the whole
+  // signal here — a column shows its worst call, so a cache miss survives
+  // downsampling the way a spend spike does on the charts above.
+  const cacheChartRows = showCacheChart
+    ? brailleChart(
+        cache.points.map((p) => p.hitPct),
+        width,
+        CACHE_CHART_ROWS,
+        100,
+        "min",
+      )
+    : [];
+
+  const belowChart = [
+    axisLine,
+    <Text key="cache-head" color={role.muted}>
+      cache hit {cache.hitPct}% · {cache.coldCalls} cold call{cache.coldCalls === 1 ? "" : "s"}
+      {showCacheChart ? " (y: 0–100%, worst call per column)" : ""}
+    </Text>,
+    ...cacheChartRows.map((line, i) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: fixed-order chart rows
+      <Text key={`cache-row-${i}`} color={palette.blue}>
+        {line}
+      </Text>
+    )),
+    ...modelsLines,
+    ...subagentsLines,
+    ...restLines,
+  ];
 
   return (
     <Box flexDirection="column">

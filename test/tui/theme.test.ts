@@ -1,25 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bar, gutter, palette, selection, sparkline } from "../../src/tui/theme.ts";
-
-describe("sparkline", () => {
-  test("empty input", () => {
-    expect(sparkline([])).toBe("");
-  });
-
-  test("one char per value", () => {
-    expect(sparkline([1, 2, 3, 4]).length).toBe(4);
-  });
-
-  test("max value maps to the tallest block, min to the shortest", () => {
-    const s = sparkline([0, 10]);
-    expect(s[0]).toBe("▁");
-    expect(s[1]).toBe("█");
-  });
-
-  test("all-zero is flat, not blank", () => {
-    expect(sparkline([0, 0, 0])).toBe("▁▁▁");
-  });
-});
+import { bar, gutter, palette, selection } from "../../src/tui/theme.ts";
 
 describe("bar", () => {
   test("full when value equals max", () => {

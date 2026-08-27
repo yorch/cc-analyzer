@@ -62,6 +62,11 @@ export function formatSignedUSD(n: number): string {
  * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
 export const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
+/** Hours before the day band takes over. Below it, "36h 10m" is still the
+ * reading a person wants; above it, hour counts stop being countable — a
+ * portfolio's total time with Claude is five digits of hours and one of days. */
+const DAY_BAND_HOURS = 48;
+
 function durationOf(ms: number | undefined, seconds: boolean): string {
   if (ms === undefined || Number.isNaN(ms)) return "-";
   const sign = ms < 0 ? "-" : "";
@@ -69,13 +74,19 @@ function durationOf(ms: number | undefined, seconds: boolean): string {
   if (s < 60) return `${sign}${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return seconds ? `${sign}${m}m ${s % 60}s` : `${sign}${m}m`;
-  return `${sign}${Math.floor(m / 60)}h ${m % 60}m`;
+  const h = Math.floor(m / 60);
+  if (h < DAY_BAND_HOURS) return `${sign}${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return seconds ? `${sign}${d}d ${h % 24}h` : `${sign}${d}d`;
 }
 
-/** Duration with the leftover seconds in the minutes band ("3m 20s") — the
- * terminal form, where the extra precision is worth the width. */
+/** Duration with the leftover unit carried in every band ("3m 20s", "18d 1h")
+ * — the terminal form, where the extra precision is worth the width. */
 export const formatDuration = (ms: number | undefined): string => durationOf(ms, true);
 
-/** Duration rounded to whole minutes ("3m") — the compact form the digest and
- * the web cards use, where the column is a glance, not a measurement. */
+/** Duration rounded to its leading unit ("3m", "18d") — the compact form the
+ * digest and the web cards use, where the column is a glance, not a
+ * measurement. `web/src/format.ts`'s `duration()` is this function: the SPA
+ * grew a private copy to get the day band, and the copies then disagreed
+ * (a portfolio read "1657d" in the browser and "39770h 1m" in the TUI). */
 export const formatCompactDuration = (ms: number | undefined): string => durationOf(ms, false);

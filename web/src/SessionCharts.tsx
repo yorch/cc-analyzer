@@ -248,7 +248,6 @@ function ContextChart({
           {...bind}
         >
           <title>Context-window tokens per call</title>
-          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
           <path className="burn-area" d={areaPath(line, x, n, H)} />
           <path className="burn-line" d={line} />
           {contextLimit && (
@@ -290,6 +289,7 @@ function ContextChart({
                 r={3.5}
               />
             ))}
+          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
           {active && (
             <>
               <Crosshair x={active.x} bottom={H - CHART_PAD} />
@@ -378,6 +378,7 @@ function CacheChart({ cache, cursor }: { cache: CacheSeries; cursor?: HoverContr
                 r={3.5}
               />
             ))}
+          <YAxis max={100} y={y} format={(v) => `${Math.round(v)}%`} />
           {active && (
             <>
               <Crosshair x={active.x} bottom={H - CHART_PAD} />
@@ -395,7 +396,7 @@ function CacheChart({ cache, cursor }: { cache: CacheSeries; cursor?: HoverContr
         )}
       </div>
       <div className="axis">
-        <span>call 1 (y: 0–100%)</span>
+        <span>call 1</span>
         <span>call {n}</span>
       </div>
       <ChartData
@@ -453,7 +454,6 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
           {...bind}
         >
           <title>Cumulative session cost</title>
-          <YAxis max={max} y={y} format={usd} />
           {gaps.map((g) => (
             <line
               key={g.pos}
@@ -479,6 +479,7 @@ function BurnChart({ points, gaps }: { points: BurnPoint[]; gaps: BurnGap[] }) {
                 r={3.5}
               />
             ))}
+          <YAxis max={max} y={y} format={usd} />
           {active && (
             <>
               <Crosshair x={active.x} bottom={H - CHART_PAD} pinned={pinned} />
@@ -588,7 +589,6 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
           {...bind}
         >
           <title>Per-turn {metric}</title>
-          <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
           {turns.map((t, i) => {
             const v = values[i] ?? 0;
             const h = v > 0 ? Math.max((v / max) * (H - CHART_PAD * 2), 1.5) : 0;
@@ -635,6 +635,7 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
               </g>
             );
           })}
+          <YAxis max={max} y={y} format={(v) => fmtTurn(metric, v)} />
         </svg>
         {active && (
           <ChartTip x={active.x} pinned={pinned}>
@@ -743,7 +744,6 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
           {...bind}
         >
           <title>Per-turn tool activity</title>
-          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
           {turns.map((t, i) => {
             const groups = perTurn[i] ?? [];
             const total = totals[i] ?? 0;
@@ -774,6 +774,7 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
               </g>
             );
           })}
+          <YAxis max={max} y={y} format={(v) => count(Math.round(v))} />
         </svg>
         {active && htotal > 0 && (
           <ChartTip x={active.x} pinned={pinned}>

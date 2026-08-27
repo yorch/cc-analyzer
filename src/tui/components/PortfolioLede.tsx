@@ -10,7 +10,13 @@ import type {
   StreakSummary,
 } from "../../core/stats.ts";
 import { INDEXED_COST_CAVEAT } from "../../core/stats-types.ts";
-import { palette, role, sparkline } from "../theme.ts";
+import { sparkline } from "../charts.ts";
+import { palette, role } from "../theme.ts";
+
+// theme.ts's old sparkline emitted one char per month with no downsampling —
+// fine for a normal portfolio, but months only grow, so it would eventually
+// wrap the lede line. Bound it like every other sparkline caller.
+const LEDE_SPARK_WIDTH = 24;
 
 /** The full-width portfolio band under the title bar: big total + a months
  * spend sparkline, plus the time/percentile/streak vitals. Rendered in the
@@ -38,7 +44,11 @@ export function PortfolioLede({
   const range =
     summary.firstDay && summary.lastDay ? `${summary.firstDay} → ${summary.lastDay}` : "—";
   const est = (summary.estimatedShare * 100).toFixed(0);
-  const spark = sparkline(months.map((m) => m.cost)); // ascending by month → L=old, R=new
+  // ascending by month → L=old, R=new
+  const spark = sparkline(
+    months.map((m) => m.cost),
+    LEDE_SPARK_WIDTH,
+  );
 
   return (
     <Box flexDirection="column">

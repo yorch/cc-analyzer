@@ -97,6 +97,42 @@ export function bucketSeries(daily: DayRow[], granularity: Granularity): SeriesP
   return out;
 }
 
+/**
+ * Horizontal room one plotted point needs to read as a point rather than as
+ * ink. Sized to the mark, not guessed: the line charts draw an `r={3.5}` dot
+ * per point, so anything under ~7px overlaps its neighbours and the series
+ * becomes a texture. 8 gives the dot its diameter plus a hairline of gap.
+ *
+ * This is the browser's number. The TUI passes terminal columns straight in as
+ * slots (one cell per point), since a braille column IS the mark there —
+ * `fitGranularity` takes a slot count precisely so each frontend converts its
+ * own medium.
+ *
+ * A smaller value looks defensible and is not: at 3px this constant admitted
+ * 265 daily points into a 795px chart — exactly 3.0px each, a hair under the
+ * fit threshold, and every dot overlapping the next two.
+ */
+export const MIN_PX_PER_POINT = 8;
+
+/**
+ * The finest granularity whose bucket count still fits `slots` — the one
+ * density policy both frontends apply before charting a daily series, so a
+ * 13-month portfolio opens readable instead of opening as moiré.
+ *
+ * Bucket counts are approximated by dividing the day span (7 for weeks, 30.44
+ * for months) rather than by actually bucketing: this picks a granularity, it
+ * does not measure one, and a partial bucket either side cannot change the
+ * answer by enough to matter. Callers keep their manual override — the fit is
+ * the *default*, not a ceiling, and someone deliberately asking for daily
+ * detail on a long range should get it.
+ */
+export function fitGranularity(dayCount: number, slots: number): Granularity {
+  if (slots <= 0) return "month";
+  if (dayCount <= slots) return "day";
+  if (dayCount / 7 <= slots) return "week";
+  return "month";
+}
+
 export function metricValue(p: SeriesPoint, metric: BurnMetric): number {
   if (metric === "cost") return p.cost;
   if (metric === "sessions") return p.sessions;
@@ -107,14 +143,20 @@ export function metricValue(p: SeriesPoint, metric: BurnMetric): number {
  * Dense weekly totals across a daily series' active span (gap weeks count as
  * 0), oldest first — the series behind the adoption sparklines. Each bucket is
  * an ISO week (Monday-anchored, via `weekOf`).
+ *
+ * Pass `span` to pad the series to a range wider than the data's own, which is
+ * what makes several series *comparable*: rows drawn one above another are read
+ * as sharing an x-axis, so a per-series span silently aligns week 1 of a model
+ * used since spring with week 1 of one adopted last month. A caller stacking
+ * rows must pass the union span (and one shared ceiling) or the stack lies.
  */
-export function weeklySeries(daily: { day: string; count: number }[]): number[] {
-  if (daily.length === 0) return [];
+export function weeklySeries(daily: { day: string; count: number }[], span?: DayRange): number[] {
+  if (daily.length === 0 && span === undefined) return [];
   const byWeek = new Map<string, number>();
   for (const d of daily) byWeek.set(weekOf(d.day), (byWeek.get(weekOf(d.day)) ?? 0) + d.count);
   const keys = [...byWeek.keys()].sort();
-  const first = keys[0];
-  const last = keys[keys.length - 1];
+  const first = span ? weekOf(span.start) : keys[0];
+  const last = span ? weekOf(span.end) : keys[keys.length - 1];
   if (first === undefined || last === undefined) return [];
   const out: number[] = [];
   const cur = new Date(`${first}T00:00:00Z`);

@@ -497,6 +497,34 @@ cache-efficiency line (verdict/ratio/waste) and a project-scoped findings
 line, joined from App-level maps (see the portfolio-insights note) — TUI
 presentation components never touch the database.
 
+**Chart density is a shared policy, and a chart's bucketing must match where
+its signal lives.** Two rules, both learned the hard way.
+
+*Fit the bucketing to the space.* `fitGranularity(dayCount, slots)` in
+`stats-types.ts` picks the finest day/week/month bucketing whose bucket count
+still fits `slots`, and both frontends use it for a burn chart's **default**
+(never its ceiling — an explicit choice always wins). Each converts its own
+medium into slots: the TUI passes terminal columns straight in (a braille
+column IS the mark), the web divides its **measured** width by
+`MIN_PX_PER_POINT`. The web side must measure (`useRenderedWidth`, a
+`ResizeObserver` in `trend-charts.tsx`) rather than divide `CHART_W`: viewBox
+units are not pixels, every chart is `width: 100%`, and sizing off the viewBox
+under-buckets worst on the narrowest screens. It also cannot ride in as
+`useHashParam`'s fallback, which is captured once by `useState(read)` — the URL
+carries an explicit `"auto"` instead, and the fit is derived on every render.
+`MIN_PX_PER_POINT` is 8 because the line charts draw an `r={3.5}` dot per
+point; a smaller value looks defensible and is not, since at 3 it admitted 265
+daily points into a 795px chart with every dot overlapping the next two.
+
+*Bucket by where the signal lives.* `brailleChart`'s `bucket` parameter is
+`"max"` by default, which is right for a quantity — a spend spike must survive
+downsampling. It is exactly wrong for a **rate**, where the DIPS are the
+signal: the best call in a downsampled column is ~100% however bad its
+neighbours were, so a 98% cache-hit series painted a solid block at *every*
+chart height. Height was never the fix; `"min"` is, and the render site says
+so on screen ("worst call per column") rather than leaving the aggregation
+implied.
+
 **Cost is derived, not stored.** Sessions record token counts but no cost.
 `pricing.ts` computes cost as tokens × per-model rates, pricing the four token
 categories separately: input, output, cache-write (5m and 1h TTL), and cache-read.
@@ -925,14 +953,21 @@ interrupted.
 - Imports use **explicit `.ts`/`.tsx` extensions** (`allowImportingTsExtensions`).
 - **One formatter family**: money, counts, and durations are formatted by the
   bun-free `src/core/format-shared.ts` — `formatUSD`, `formatCount` (plus
-  `formatSignedCount` for deltas), `formatDuration` (terminal, with seconds) and
-  `formatCompactDuration` (whole minutes, for the digest and the web cards).
+  `formatSignedCount` for deltas), `formatDuration` (terminal, carrying the
+  leftover unit in every band: `3m 20s`, `18d 1h`) and `formatCompactDuration`
+  (the leading unit only: `3m`, `18d` — the digest and the web cards).
   `src/cli/format.ts` re-exports them so terminal call sites keep one import
   source; `digest.ts` and the SPA's digest card import them directly, so a number
   reads the same in the terminal report, the copied markdown, and the browser.
   `web/src/format.ts` keeps the SPA's locale-aware `Intl` helpers for everything
-  else. Never re-implement one locally: the copies drifted before (one printed
-  `1000.0k` where the other printed `1.0M`).
+  else — but its `duration()` is now literally `formatCompactDuration`, not a
+  sibling implementation. Never re-implement one locally: the copies drifted
+  twice. Once on counts (one printed `1000.0k` where the other printed `1.0M`),
+  and once on durations — the SPA's private copy grew a **day band** the shared
+  formatter lacked, so one portfolio read `1657d` in the browser and
+  `39770h 1m` in the TUI. The day band lives in `durationOf` now
+  (`DAY_BAND_HOURS`, 48): below it, `36h 10m` is still the reading a person
+  wants; above it, hour counts stop being countable.
 - Formatting/linting is **Biome** (`biome.json`): 2-space indent, width 100, double
   quotes, semicolons, trailing commas. Biome excludes `web/dist` and the placeholder
   `src/web/spa.ts`.

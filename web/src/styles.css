@@ -745,6 +745,13 @@ th.num {
   font-family: var(--font-mono);
   font-size: 10px;
 }
+/* Every series' first point sits at exactly x = pad, which is where the y-axis
+   labels are drawn — so the line, area or dots painted over the label and made
+   it unreadable at the left edge. The charts now render YAxis after their
+   marks, and this backdrop is what makes that ordering actually legible. */
+.y-tick-bg {
+  fill: var(--panel);
+}
 .burn-area {
   fill: var(--signal);
   opacity: 0.16;
@@ -1757,11 +1764,27 @@ p.muted {
   margin-top: 8px;
 }
 .scatter .dot {
-  cursor: pointer;
   transition: opacity 0.15s;
 }
-.scatter .dot:hover {
+/* Only linked dots open a session, so only they get the pointer cursor — the
+   fill/hollow split below is the same distinction made visible without a
+   hover. */
+.scatter a {
+  cursor: pointer;
+}
+.scatter a .dot:hover {
   opacity: 1;
+}
+.scatter .dot.unlinked {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  opacity: 0.55;
+}
+.scatter .dot.unlinked.active {
+  stroke: var(--ink);
+  stroke-width: 2;
+  opacity: 0.9;
 }
 
 /* ---------------------------------------------------- chart hover layer */
