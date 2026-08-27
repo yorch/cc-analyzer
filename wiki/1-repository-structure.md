@@ -88,7 +88,7 @@ Sources: `scripts/compile-with-spa.ts`, `.gitignore`, `CLAUDE.md`
 
 ### Continuous integration and release workflows
 
-Three GitHub Actions workflows drive the repository. [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/ci.yml) runs on every push to `main` and every pull request across an `ubuntu-latest` and `macos-latest` matrix, pinning Bun to `1.3.14` and running lint, both typechecks, tests, and a full build in sequence ([.github/workflows/ci.yml#L15-L45](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/ci.yml#L15-L45)). [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml) fires on `v*` tags: it verifies the tag matches `package.json`'s version, cross-compiles five binaries (Linux x64/arm64, macOS x64/arm64, Windows x64), generates a `SHA256SUMS` manifest, signs a build-provenance attestation via OpenID Connect (OIDC), and publishes a GitHub release ([.github/workflows/release.yml#L1-L85](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml#L1-L85)). [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/deploy-site.yml) rebuilds and deploys the VitePress site to GitHub Pages when `site/**`, `wiki/**`, or the workflow file itself changes on `main` ([.github/workflows/deploy-site.yml#L3-L46](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/deploy-site.yml#L3-L46)).
+Three GitHub Actions workflows drive the repository. [.github/workflows/ci.yml](https://github.com/yorch/cc-analyzer/blob/main/.github/workflows/ci.yml) runs on every push to `main` and every pull request across an `ubuntu-latest` and `macos-latest` matrix, pinning Bun to `1.3.14` and running lint, both typechecks, tests, and a full build in sequence. Pull requests that change the root package must carry a non-empty Changeset; the generated `changeset-release/*` version PR is the deliberate exception. [.github/workflows/release.yml](https://github.com/yorch/cc-analyzer/blob/main/.github/workflows/release.yml) fires on pushes to `main`: Changesets first opens or updates the reviewed `chore: version packages` PR, and merging that PR re-runs the gates, cross-compiles five binaries (Linux x64/arm64, macOS x64/arm64, Windows x64), generates a `SHA256SUMS` manifest, signs a build-provenance attestation via OpenID Connect (OIDC), and creates one `vX.Y.Z` GitHub release. [.github/workflows/deploy-site.yml](https://github.com/yorch/cc-analyzer/blob/main/.github/workflows/deploy-site.yml) rebuilds and deploys the VitePress site to GitHub Pages when `site/**`, `wiki/**`, or the workflow file itself changes on `main`.
 
 Sources: [.github/workflows/ci.yml:L1-L45](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/ci.yml#L1-L45) [.github/workflows/release.yml:L1-L85](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml#L1-L85) [.github/workflows/deploy-site.yml:L1-L55](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/deploy-site.yml#L1-L55)
 
@@ -97,21 +97,22 @@ Sources: [.github/workflows/ci.yml:L1-L45](https://github.com/yorch/cc-analyzer/
 ```mermaid
 sequenceDiagram
     participant Dev as Developer
-    participant Tag as v* tag
+    participant VersionPR as Version PR
     participant Release as release.yml
     participant GH as GitHub Release
 
-    Dev->>Tag: git push origin vX.Y.Z
-    Tag->>Release: trigger workflow
-    Release->>Release: verify tag == package.json version
-    Release->>Release: bun run build:web
+    Dev->>Release: merge Changeset-bearing PR to main
+    Release->>VersionPR: open/update chore: version packages
+    Dev->>VersionPR: review and merge version PR
+    VersionPR->>Release: trigger workflow
+    Release->>Release: re-run verify
     Release->>Release: compile 5 platform binaries
     Release->>Release: generate SHA256SUMS
     Release->>Release: attest build provenance (OIDC)
     Release->>GH: gh release create + upload assets
 ```
 
-The release pipeline is gated by a version-consistency check: the compiled binary embeds `package.json`'s version, so a tag on a commit with a stale version would ship binaries reporting the wrong number, and the workflow fails fast when `v$(jq -r .version package.json)` does not equal the tag ([.github/workflows/release.yml#L25-L36](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml#L25-L36)). After compiling, the workflow generates checksums inside `dist/` so manifest entries are basenames, then attaches every binary plus `SHA256SUMS` to an auto-noted GitHub release ([.github/workflows/release.yml#L64-L85](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml#L64-L85)).
+The release pipeline is gated by a reviewed version PR: the compiled binary embeds `package.json`'s version, and the workflow creates the `vX.Y.Z` tag only after the version PR has landed and the release build succeeds. After compiling, it generates checksums inside `dist/` so manifest entries are basenames, then attaches every binary plus `SHA256SUMS` to an auto-noted GitHub release. An existing release is accepted only when its tag resolves to the publishing commit and its asset set is complete.
 
 Sources: [.github/workflows/release.yml:L25-L85](https://github.com/yorch/cc-analyzer/blob/51ce1a4/.github/workflows/release.yml#L25-L85) [CLAUDE.md:L255-L262](https://github.com/yorch/cc-analyzer/blob/51ce1a4/CLAUDE.md#L255-L262)
 

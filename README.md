@@ -751,29 +751,27 @@ embeds it in a disposable source copy while compiling, leaving tracked source un
 ### Releases (CI)
 
 Every push and PR runs lint, typechecks, tests, and a build via GitHub Actions
-(`.github/workflows/ci.yml`), across a macOS + Ubuntu matrix. Pushing a `v*` tag
-triggers `.github/workflows/release.yml`, which cross-compiles binaries for
-Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a `SHA256SUMS`
-manifest, signs a build-provenance attestation for each binary, and publishes a
-GitHub release with auto-generated notes.
+(`.github/workflows/ci.yml`), across a macOS + Ubuntu matrix. User-visible changes
+also need a [Changeset](https://github.com/changesets/changesets): run `bun run
+changeset`, select `cc-analyzer`, choose the semver bump, and commit the generated
+`.changeset/*.md` file. CI rejects a changed package with no non-empty Changeset.
 
-**To cut a release** — the compiled binary embeds `package.json`'s version, so the
-bump must land on `main` before the tag. The steps below are the reference; for a
-guided, gated run, agents can invoke the `cut-release` skill
-(`.claude/skills/cut-release/`).
+**Releases are PR-driven.** Merging Changesets to `main` makes
+`.github/workflows/release.yml` open or update a `chore: version packages` PR. It
+contains the version bump and generated changelog, so its merge is the human approval
+of the release number. Merging that PR re-runs every quality gate, cross-compiles
+binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64), generates a
+`SHA256SUMS` manifest, signs a build-provenance attestation for each binary, and
+creates the one `vX.Y.Z` GitHub Release. Do not create or push release tags manually.
 
-1. Bump `package.json` `version` to the new `X.Y.Z` in a `chore(release): prepare
-   vX.Y.Z` pull request, and merge it.
-2. Tag the merge commit and push the tag (this is what builds and publishes the
-   release):
+A completed release's immutable tag must resolve to the publishing commit and it must
+contain exactly those five assets plus the manifest; a rerun validates that contract
+and exits without republishing. For a guided, gated run, agents can invoke the
+`cut-release` skill (`.claude/skills/cut-release/`).
 
-   ```bash
-   git checkout main && git pull
-   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
-   ```
-
-The release workflow then attaches the five platform binaries and `SHA256SUMS` to the
-`vX.Y.Z` release.
+Protect `main` with required pull requests and reviewers. The workflow also refuses to
+publish unless the commit is associated with a merged `changeset-release/*` version PR,
+so a direct version push cannot bypass the approval step.
 
 ## Roadmap
 

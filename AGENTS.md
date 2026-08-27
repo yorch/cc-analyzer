@@ -1035,31 +1035,27 @@ interrupted.
 ## Release
 
 CI (`.github/workflows/ci.yml`) runs lint, both typechecks, tests, and a full build on
-every push/PR. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which
-cross-compiles binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64),
-generates a `SHA256SUMS` manifest, signs a build-provenance attestation for each
-binary (`actions/attest-build-provenance`, needing `id-token`/`attestations` write),
-and publishes a GitHub release with auto-generated notes.
+every push/PR. A pull request that changes this publishable root package must also
+carry a non-empty Changeset (`bun run changeset`); CI compares it to the base branch
+and rejects missing release metadata. The generated `changeset-release/*` version PR
+is exempt because it consumes those files.
+
+**Releases are Changeset-driven and PR-gated.** Merging Changesets to `main` triggers
+`.github/workflows/release.yml`, which opens or updates `chore: version packages` with
+the package version and generated changelog. Merging that PR is the human approval of
+the version. Only then does the same workflow re-run the complete quality gate,
+cross-compile binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64),
+generate and validate a `SHA256SUMS` manifest, sign a build-provenance attestation for
+each binary (`actions/attest-build-provenance`, needing `id-token`/`attestations`
+write), and create one `vX.Y.Z` GitHub release with auto-generated notes. Never push
+a release tag manually. Release jobs are serialized and idempotent: an existing
+release's tag must resolve to the publishing commit and it must contain the five
+expected binaries plus `SHA256SUMS`, or the workflow fails without replacing public
+assets. Protect `main` with required pull requests and reviewers; the workflow also
+refuses to publish unless the commit is associated with a merged `changeset-release/*`
+version PR, preventing a direct version push from bypassing approval.
 
 **Cutting a release.** Invoke the `cut-release` skill (`.claude/skills/cut-release/`)
-for the guided, gated procedure. The steps below are the reference. The compiled
-binary embeds `package.json`'s version (via `version.ts`, bundled by
-`bun --compile`), so the version bump must land on `main` *before* the tag — tag a
-commit whose `package.json` still says the old version and the release binaries
-report the wrong version. `release.yml` guards this before it builds anything: a
-`Verify tag matches package.json version` step exits 1 when `v<package.json
-version>` differs from the tag, so a mis-ordered tag fails the workflow instead
-of publishing mislabelled binaries.
-
-1. Make sure `main` is green.
-2. Bump `package.json` `version` to `X.Y.Z` in a `chore(release): prepare vX.Y.Z` PR and
-   merge it.
-3. Tag that merge commit and push the tag — this is what triggers the release workflow:
-
-   ```bash
-   git checkout main && git pull
-   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
-   ```
-
-4. Verify: `release.yml` attaches the five binaries + `SHA256SUMS` to the `vX.Y.Z`
-   GitHub release, and `cc-analyzer --version` reports `X.Y.Z`.
+for the guided, gated procedure: create/merge the Changeset-bearing PR, then review
+and merge the generated version PR. The compiled binary embeds the version produced by
+that version PR; GitHub Actions creates its tag only after the release build succeeds.

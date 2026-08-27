@@ -18,9 +18,12 @@
     "check": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p web/tsconfig.json",
+    "verify": "bun run lint && bun run typecheck && bun run typecheck:web && bun test && bun run build",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "build": "bun run build:web && bun run scripts/compile-with-spa.ts -- --compile --outfile dist/cc-analyzer src/cli/index.ts"
+    "build": "bun run build:web && bun run scripts/compile-with-spa.ts -- --compile --outfile dist/cc-analyzer src/cli/index.ts",
+    "changeset": "changeset",
+    "version-packages": "changeset version && bun install"
   },
   "dependencies": {
     "@plausible-analytics/tracker": "0.4.6",
@@ -31,6 +34,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "1.0.0",
+    "@changesets/cli": "3.0.1",
     "@biomejs/biome": "2.5.9",
     "@fontsource-variable/fraunces": "5.3.0",
     "@fontsource/ibm-plex-mono": "5.3.0",
