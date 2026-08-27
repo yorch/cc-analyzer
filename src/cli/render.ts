@@ -134,7 +134,13 @@ function humanEntries(rec: Record<string, number>, limit = Number.POSITIVE_INFIN
 }
 
 /** Turns tables render at most this many rows; a session with more prints a
- *  truncation note and points at `--json` for the rest. */
+ *  truncation note and points at `--json` for the rest.
+ *
+ *  The rows are the costliest ones, not the first ones. A chronological cut
+ *  answers "how did this session open", which is the one question a truncated
+ *  turns table is never asked — and on a 400-turn session it reliably hid the
+ *  turn the reader came for. Rows stay in cost order and carry their real turn
+ *  number, so the ordering is visible rather than implied. */
 const TURNS_ROW_CAP = 40;
 
 /** Render a full single-session analysis as a text report. */
@@ -381,13 +387,19 @@ export function renderSessionSummary(
     lines.push(...factLines);
   }
 
-  lines.push(`\n${section("Turns", options)}`);
+  const ranked = a.turns.length > TURNS_ROW_CAP;
+  lines.push(`\n${section(ranked ? `Turns · top ${TURNS_ROW_CAP} by cost` : "Turns", options)}`);
   // `turnFlags()` is the one "is this turn worth flagging" predicate both
   // frontends render (interrupted / correction / retries / test failures /
   // redundant reads / tool errors); join by turn index rather than array
   // position since detail mode is the only mode this renderer ever sees.
   const flagsByTurn = new Map(buildTurnSeries(a).map((t) => [t.index, turnFlags(t).join(" · ")]));
-  const shownTurns = a.turns.slice(0, TURNS_ROW_CAP);
+  // Ranked only when the cap actually bites: a session that fits prints its
+  // whole narrative in order, which is the more useful reading of a short
+  // session and keeps `#` monotonic wherever it can be.
+  const shownTurns = ranked
+    ? [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, TURNS_ROW_CAP)
+    : a.turns;
   lines.push(
     table(
       ["#", "cost", "calls", "tools", "flags", "prompt"],
@@ -402,10 +414,11 @@ export function renderSessionSummary(
       { align: ["right", "right", "right", "right", "left", "left"] },
     ),
   );
-  if (a.turns.length > TURNS_ROW_CAP) {
+  if (ranked) {
     lines.push(
       muted(
-        `… ${a.turns.length - TURNS_ROW_CAP} more turns — use --json for the full list.`,
+        `Ranked by cost, not session order — ${a.turns.length - TURNS_ROW_CAP} cheaper turns ` +
+          "not shown; use --json for the full timeline.",
         options,
       ),
     );

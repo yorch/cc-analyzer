@@ -10,7 +10,7 @@ import {
   whatIfRepricing,
 } from "../../src/core/stats.ts";
 import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
-import { clock } from "../helpers/events.ts";
+import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
 
@@ -178,5 +178,49 @@ describe("renderStats · skills", () => {
     db.close();
 
     expect(out).toContain(INDEXED_COST_CAVEAT);
+  });
+});
+
+/**
+ * A session of `turns` prompts, one assistant call each. Turn `costliest`
+ * (0-based) is given a far larger prompt so it dominates the session's spend
+ * from deep inside the timeline — the case a chronological truncation hides.
+ */
+function sessionWithTurns(turns: number, costliest: number): SessionAnalysis {
+  const events: Events = [];
+  for (let i = 0; i < turns; i++) {
+    events.push(promptEvent(`u${i}`, at(i * 2), `prompt number ${i}`));
+    events.push(
+      assistantEvent({
+        uuid: `a${i}`,
+        timestamp: at(i * 2 + 1),
+        usage: { input_tokens: i === costliest ? 100_000 : 10, output_tokens: 5 },
+      }),
+    );
+  }
+  return analyzeSession(events, pricing);
+}
+
+describe("renderSessionSummary · turns table", () => {
+  test("ranks by cost and says so once the row cap bites", () => {
+    // 60 turns > the 40-row cap, with the expensive one at #48 — well past
+    // where a first-40 slice would have stopped.
+    const out = renderSessionSummary(sessionWithTurns(60, 47));
+    expect(out).toContain("Turns · top 40 by cost");
+    expect(out).toContain("Ranked by cost, not session order");
+    expect(out).toContain("20 cheaper turns not shown");
+    // The costliest turn is present and leads the table.
+    expect(out).toContain("prompt number 47");
+    const table = out.slice(out.indexOf("Turns · top 40 by cost"));
+    expect(table.indexOf("prompt number 47")).toBeLessThan(table.indexOf("prompt number 0"));
+  });
+
+  test("keeps session order (and the plain heading) when everything fits", () => {
+    const out = renderSessionSummary(sessionWithTurns(5, 3));
+    expect(out).toContain("▸ Turns");
+    expect(out).not.toContain("top 40 by cost");
+    expect(out).not.toContain("Ranked by cost");
+    const table = out.slice(out.indexOf("▸ Turns"));
+    expect(table.indexOf("prompt number 0")).toBeLessThan(table.indexOf("prompt number 3"));
   });
 });

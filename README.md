@@ -702,7 +702,9 @@ The per-session view offers:
 - **Turns** — expands each turn into a **step timeline** (assistant narration,
   thinking markers, and tool operations with a one-line summary and a result
   status/hint like `✓ 71 lines` or `✗ error…`), each step click-to-expand for its
-  full input and result. The color-coded **transcript** reader is windowed
+  full input and result. The list is **sortable** by turn number, cost, tokens,
+  calls, or wall time, so the expensive turn is one click away instead of buried
+  at #480. The color-coded **transcript** reader is windowed
   ("show more") so very large sessions stay responsive.
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom
@@ -716,7 +718,8 @@ The per-session view offers:
   metadata is unavailable).
 - **Summary** — groups spend/tokens, execution, and environment details, then
   explainable context and cost diagnostics with suggested next actions,
-  **cost-per-outcome** ratios, a session-scoped **what-if repricing** summary, and
+  **cost-per-outcome** ratios, a **costliest turns** block that jumps straight
+  into the Turns tab, a session-scoped **what-if repricing** summary, and
   a **cost rank** card placing the session's spend among its project's (and the
   portfolio's) sessions.
 

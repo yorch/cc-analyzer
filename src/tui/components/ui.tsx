@@ -89,6 +89,7 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
       ["1 / 2 / 3 / 4 / 5", "turns / charts / transcript / summary / claude"],
       ["u / c / t / s / a", "turns / charts / transcript / summary / claude"],
       ["→ / tab", "focus steps (turns mode)"],
+      ["o / O", "cycle turn sort / flip direction (turns mode)"],
       ["r / m", "run / switch model (claude mode)"],
       ["↑/↓ · j/k", "move"],
       ["↵ / space", "expand row"],

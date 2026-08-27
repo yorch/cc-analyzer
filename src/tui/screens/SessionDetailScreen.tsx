@@ -65,6 +65,7 @@ import { scrollOffset } from "../scroll.ts";
 import { masterWidth } from "../shell/MasterDetail.tsx";
 import { KIND_COLOR, palette, role, STEP_COLOR, STEP_ICON, selection } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
+import { type SortField, useSort } from "../useSort.ts";
 import { layoutMode } from "../useTermSize.ts";
 
 interface Props {
@@ -188,7 +189,7 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       <Box marginTop={1}>
         <Text color={role.muted}>
           {mode === "turns"
-            ? "↑↓ turn · →/tab steps · g/G jump · c charts · t transcript · s summary · a claude · e export · esc back"
+            ? "↑↓ turn · →/tab steps · o/O sort · g/G jump · c charts · t transcript · s summary · a claude · e export · esc back"
             : mode === "claude"
               ? "r run · m model · ↑↓ scroll · esc turns"
               : mode === "export"
@@ -226,19 +227,37 @@ interface TurnRow {
   index: number;
   cost: number;
   calls: number;
+  tokens: number;
+  wallMs: number;
   prompt: string;
   steps: TurnStep[];
 }
 
 function turnRows(a: SessionAnalysis): TurnRow[] {
-  return a.turns.map((t) => ({
-    index: t.index,
-    cost: t.cost.total,
-    calls: t.apiCalls.length,
-    prompt: t.prompt,
-    steps: t.apiCalls.flatMap((c) => c.steps),
-  }));
+  return a.turns.map((t) => {
+    const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
+    const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
+    return {
+      index: t.index,
+      cost: t.cost.total,
+      calls: t.apiCalls.length,
+      tokens: ioTokens(t.tokens) + cacheTokens(t.tokens),
+      wallMs: Number.isNaN(start) || Number.isNaN(end) ? 0 : end - start,
+      prompt: t.prompt,
+      steps: t.apiCalls.flatMap((c) => c.steps),
+    };
+  });
 }
+
+/** Sort keys for the turns list. `index` leads because a session is a
+ *  narrative — ranking by cost is the added lens, one `o` away. */
+const TURN_SORT_FIELDS: SortField<TurnRow>[] = [
+  { key: "index", label: "turn", value: (t) => t.index },
+  { key: "cost", label: "cost", value: (t) => t.cost },
+  { key: "tokens", label: "tokens", value: (t) => t.tokens },
+  { key: "calls", label: "calls", value: (t) => t.calls },
+  { key: "time", label: "time", value: (t) => t.wallMs },
+];
 
 /** Turns list (master) → selected turn's steps (detail), with a turns↔steps
  * focus toggle mirroring the app shell's rail↔body model. */
@@ -253,7 +272,11 @@ function TurnsPane({
   isActive: boolean;
   onBack: () => void;
 }) {
-  const rows = useMemo(() => turnRows(a), [a]);
+  const all = useMemo(() => turnRows(a), [a]);
+  // Ascending by default so the list opens in session order; `o` cycles the
+  // key and `O` flips the direction (tab is already the turns↔steps toggle).
+  const sort = useSort(TURN_SORT_FIELDS, 1);
+  const rows = sort.sorted(all);
   const [pane, setPane] = useState<"turns" | "steps">("turns");
   const [turnSel, setTurnSel] = useState(0);
   const [turnOff, setTurnOff] = useState(0);
@@ -289,6 +312,16 @@ function TurnsPane({
         if (key.upArrow || input === "k") return selectTurn(activeTurn - 1);
         if (input === "g") return selectTurn(0);
         if (input === "G") return selectTurn(rows.length - 1);
+        // Re-ordering moves rows under the cursor, so both keys reset the
+        // selection to the top rather than leaving it on an arbitrary turn.
+        if (input === "o") {
+          sort.cycle();
+          return selectTurn(0);
+        }
+        if (input === "O") {
+          sort.reverse();
+          return selectTurn(0);
+        }
         if ((key.rightArrow || key.tab || key.return) && steps.length > 0) return setPane("steps");
         if (key.escape) return onBack();
         return;
@@ -309,7 +342,9 @@ function TurnsPane({
   const promptW = wide ? Math.max(8, masterWidth(columns) - 18) : 40;
   const master = (
     <Box flexDirection="column">
-      <Text color={role.muted}>turns · {rows.length}</Text>
+      <Text color={role.muted}>
+        turns · {rows.length} · {sort.label}
+      </Text>
       {rows.slice(turnOff, turnOff + pageSize).map((r, i) => {
         const sel = turnOff + i === activeTurn;
         return (

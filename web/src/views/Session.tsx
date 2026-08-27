@@ -25,12 +25,14 @@ import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { ExportPanel } from "../ExportPanel.tsx";
-import { count, duration, tokensOf, usd } from "../format.ts";
+import { cacheOf, count, duration, ioOf, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
+import { Seg } from "../Seg.tsx";
 import { SessionCharts } from "../SessionCharts.tsx";
 import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { useProjects } from "../useProjects.ts";
+import { type Accessors, useSort } from "../useSort.ts";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript" | "claude";
 const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript", "claude"] as const;
@@ -173,7 +175,7 @@ export function Session({ id }: { id: string }) {
       </div>
 
       <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
-        {tab === "summary" && <Summary a={a} />}
+        {tab === "summary" && <Summary a={a} onGoToTurn={goToTurn} />}
         {tab === "charts" && <SessionCharts a={a} onGoToTurn={goToTurn} />}
         {tab === "timeline" && <Timeline a={a} />}
         {tab === "turns" && <Turns a={a} focus={focus} />}
@@ -364,7 +366,67 @@ function pickRankCohort(
   return undefined;
 }
 
-function Summary({ a }: { a: SessionResponse }) {
+/** Rows in the Summary tab's "Costliest turns" block. Enough to answer "where
+ *  did the money go" at a glance without turning the summary into a second
+ *  Turns tab — the link into Turns is there for the rest. */
+const COSTLIEST_TURNS = 5;
+
+/**
+ * The few turns that dominate the session's spend, as an entry point rather
+ * than a report: every row jumps into the Turns tab at that turn. Ordered by
+ * cost, so a session whose expensive turn sits at #480 still leads with it.
+ */
+function CostliestTurns({
+  a,
+  onGoToTurn,
+}: {
+  a: SessionAnalysis;
+  onGoToTurn: (turnIndex: number) => void;
+}) {
+  const rows = useMemo(
+    () => [...a.turns].sort((x, y) => y.cost.total - x.cost.total).slice(0, COSTLIEST_TURNS),
+    [a],
+  );
+  if (rows.length === 0 || (rows[0]?.cost.total ?? 0) <= 0) return null;
+  return (
+    <section className="summary-group" style={{ marginTop: 12 }}>
+      <h2>Costliest turns</h2>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th className="num">Cost</th>
+              <th className="num">Calls</th>
+              <th>Prompt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.index}>
+                <td className="num">
+                  <button
+                    type="button"
+                    className="row-button"
+                    title={`Open turn #${t.index + 1} in the Turns tab`}
+                    onClick={() => onGoToTurn(t.index)}
+                  >
+                    #{t.index + 1}
+                  </button>
+                </td>
+                <td className="num">{usd(t.cost.total)}</td>
+                <td className="num">{t.apiCalls.length}</td>
+                <td className="muted">{t.prompt.slice(0, 80) || "(no text)"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function Summary({ a, onGoToTurn }: { a: SessionResponse; onGoToTurn: (i: number) => void }) {
   const c = a.totals.cost;
   const t = a.totals.tokens;
   const diagnostics = useMemo(() => buildSessionDiagnostics(a), [a]);
@@ -441,6 +503,7 @@ function Summary({ a }: { a: SessionResponse }) {
         )}
       </div>
       {outcomes.length > 0 && <p className="muted">{OUTCOME_CAVEAT}</p>}
+      <CostliestTurns a={a} onGoToTurn={onGoToTurn} />
       <Subagents bursts={a.sidechainBursts} />
       {whatIf?.summary.bestModel && (
         <section className="summary-group" style={{ marginTop: 12 }}>
@@ -785,11 +848,35 @@ function useWindowed(total: number, step: number, atLeast = 0): { limit: number;
   return { limit, more };
 }
 
+/** Wall-clock span of a turn, when both ends are timestamped. */
+function turnWallMs(t: Turn): number | undefined {
+  const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
+  const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
+  return Number.isNaN(start) || Number.isNaN(end) ? undefined : end - start;
+}
+
+const TURN_SORT_KEYS = ["index", "cost", "tokens", "calls", "time"] as const;
+
+const TURN_ACCESSORS: Accessors<Turn> = {
+  index: (t) => t.index,
+  cost: (t) => t.cost.total,
+  tokens: (t) => ioOf(t.tokens) + cacheOf(t.tokens),
+  calls: (t) => t.apiCalls.length,
+  time: (t) => turnWallMs(t) ?? 0,
+};
+
 function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
+  // Index-ascending by default: a session is a narrative, and ranking is an
+  // added lens rather than a replacement. Clicking the active key flips the
+  // direction, exactly as `SortTh` does for the tabled views.
+  const sort = useSort(a.turns, TURN_ACCESSORS, "index", "asc");
+  const rows = sort.sorted;
   // A requested turn widens the window before the scroll runs, so the anchor
-  // exists by the time the effect below looks for it.
-  const { limit, more } = useWindowed(a.turns.length, TURNS_WINDOW, focus ? focus.turn + 1 : 0);
+  // exists by the time the effect below looks for it. Its POSITION, not its
+  // number: under a cost sort turn #480 can be the first row.
+  const focusPos = focus ? rows.findIndex((t) => t.index === focus.turn) : -1;
+  const { limit, more } = useWindowed(rows.length, TURNS_WINDOW, focusPos + 1);
   useEffect(() => {
     if (!focus) return;
     document.getElementById(turnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
@@ -804,7 +891,25 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
 
   return (
     <div>
-      {a.turns.slice(0, limit).map((t) => {
+      <div className="trend-head">
+        <span className="seg-group">
+          sort{" "}
+          <Seg
+            label="Turn sort key"
+            options={TURN_SORT_KEYS}
+            value={sort.key as (typeof TURN_SORT_KEYS)[number]}
+            onChange={sort.toggle}
+          />{" "}
+          <span className="muted" aria-hidden="true">
+            {sort.dir === "asc" ? "▲" : "▼"}
+          </span>
+          <span className="sr-only">
+            sorted by {sort.key}, {sort.dir === "asc" ? "ascending" : "descending"}; activate the
+            active key again to reverse
+          </span>
+        </span>
+      </div>
+      {rows.slice(0, limit).map((t) => {
         const expanded = open.has(t.index);
         return (
           <div className="item" id={turnAnchorId(t.index)} key={t.index}>

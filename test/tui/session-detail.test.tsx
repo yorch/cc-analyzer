@@ -122,6 +122,29 @@ describe("SessionDetailScreen (smoke)", () => {
     unmount();
   });
 
+  test("o cycles the turn sort key and O flips its direction", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <SessionDetailScreen
+        session={session}
+        pricing={pricing}
+        isActive
+        columns={120}
+        rows={40}
+        onBack={() => {}}
+      />,
+    );
+    await waitForFrame(lastFrame, "turn #1"); // loaded
+    // The list opens in session order, ascending — a session is a narrative.
+    expect(lastFrame() ?? "").toContain("turn \u2191");
+    await settleInput();
+    stdin.write("o"); // cycle: turn -> cost
+    await waitForFrame(lastFrame, "cost \u2191");
+    stdin.write("O"); // flip to descending: the costliest turn leads
+    await waitForFrame(lastFrame, "cost \u2193");
+    expect(lastFrame() ?? "").toContain("cost \u2193");
+    unmount();
+  });
+
   test("transcript mode: items collapse and expand", async () => {
     const { stdin, lastFrame, unmount } = render(
       <SessionDetailScreen

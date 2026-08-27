@@ -26,10 +26,14 @@ function compare(a: number | string, b: number | string): number {
  * Client-side sort state for a list: cycle through `fields` (Tab) and flip the
  * direction (shift-Tab). The parent applies `sorted()` to its items before
  * handing them to FilterableList.
+ *
+ * `initialDir` defaults to descending, which is what a ranked list wants
+ * (cost/recent/tokens). A list whose first field is an ordinal — a session's
+ * turns, read as a narrative — passes 1 so it opens in its natural order.
  */
-export function useSort<T>(fields: SortField<T>[]): Sort<T> {
+export function useSort<T>(fields: SortField<T>[], initialDir: 1 | -1 = -1): Sort<T> {
   const [idx, setIdx] = useState(0);
-  const [dir, setDir] = useState<1 | -1>(-1); // descending default (cost/recent/tokens)
+  const [dir, setDir] = useState<1 | -1>(initialDir);
   const field = fields[idx] ?? fields[0];
   if (!field) throw new Error("useSort requires at least one field");
 
