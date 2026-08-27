@@ -244,6 +244,25 @@ describe("renderSessionSummary · turns table", () => {
     expect(out).toContain("0%");
   });
 
+  test("names why a turn was expensive, with the shape legend under the table", () => {
+    // One turn whose cost is almost all cache writes: the prefix kept changing.
+    const a = analyzeSession(
+      [
+        promptEvent("u0", at(0), "rewrite the config"),
+        assistantEvent({
+          uuid: "a0",
+          timestamp: at(1),
+          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 200_000 },
+        }),
+      ],
+      pricing,
+    );
+    const out = renderSessionSummary(a);
+    expect(out).toContain("shape");
+    expect(out).toContain("cache churn");
+    expect(out).toContain("the cache was rewritten 1 time");
+  });
+
   test("keeps session order (and the plain heading) when everything fits", () => {
     const out = renderSessionSummary(sessionWithTurns(5, 3));
     expect(out).toContain("▸ Turns");

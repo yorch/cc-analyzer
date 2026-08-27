@@ -3,6 +3,7 @@ import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
   buildSessionDiagnostics,
+  buildTurnSeries,
   burstAttributionNote,
   type CostRankCohort,
   cumulativeShares,
@@ -22,6 +23,7 @@ import {
   type Turn,
   type TurnStep,
   topEntries,
+  turnCostShape,
   WHATIF_CAVEAT,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
@@ -891,6 +893,12 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
   const sort = useSort(a.turns, TURN_ACCESSORS, "index", "asc");
   const rows = sort.sorted;
   const sessionCost = a.totals.cost.total;
+  // `turnCostShape` is a pure function of the shared `TurnPoint`, so it is
+  // derived from the same series the charts use and joined by turn index.
+  const shapes = useMemo(
+    () => new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)])),
+    [a],
+  );
   // A requested turn widens the window before the scroll runs, so the anchor
   // exists by the time the effect below looks for it. Its POSITION, not its
   // number: under a cost sort turn #480 can be the first row.
@@ -942,6 +950,14 @@ function Turns({ a, focus }: { a: SessionAnalysis; focus?: TurnFocus | null }) {
               <span className="num">#{t.index + 1}</span> · {usd(t.cost.total)} ·{" "}
               <span className="muted">{pct(shareOf(t.cost.total, sessionCost))} of session</span> ·{" "}
               <span className="muted">{tokensOf(t.tokens)}</span> · {t.apiCalls.length} calls ·{" "}
+              {shapes.get(t.index) ? (
+                <>
+                  <span className="turnshape" title={shapes.get(t.index)?.detail}>
+                    {shapes.get(t.index)?.label}
+                  </span>{" "}
+                  ·{" "}
+                </>
+              ) : null}
               <span className="muted">
                 {Object.entries(t.toolCounts)
                   .map(([n, c]) => `${n}:${c}`)

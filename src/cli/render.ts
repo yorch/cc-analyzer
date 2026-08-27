@@ -4,6 +4,7 @@ import {
   burstAttributionNote,
   cumulativeShares,
   shareOf,
+  turnCostShape,
   turnFlags,
 } from "../core/chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "../core/cost-framing.ts";
@@ -399,7 +400,11 @@ export function renderSessionSummary(
   // frontends render (interrupted / correction / retries / test failures /
   // redundant reads / tool errors); join by turn index rather than array
   // position since detail mode is the only mode this renderer ever sees.
-  const flagsByTurn = new Map(buildTurnSeries(a).map((t) => [t.index, turnFlags(t).join(" · ")]));
+  // Both per-turn predicates come off the SAME series: `turnFlags` (what went
+  // wrong in this turn) and `turnCostShape` (what the turn's cost is made of).
+  const points = buildTurnSeries(a);
+  const flagsByTurn = new Map(points.map((t) => [t.index, turnFlags(t).join(" · ")]));
+  const shapeByTurn = new Map(points.map((t) => [t.index, turnCostShape(t)]));
   // Ranked only when the cap actually bites: a session that fits prints its
   // whole narrative in order, which is the more useful reading of a short
   // session and keeps `#` monotonic wherever it can be.
@@ -420,8 +425,8 @@ export function renderSessionSummary(
   lines.push(
     table(
       ranked
-        ? ["#", "cost", "share", "cum", "calls", "tools", "flags", "prompt"]
-        : ["#", "cost", "share", "calls", "tools", "flags", "prompt"],
+        ? ["#", "cost", "share", "cum", "calls", "tools", "shape", "flags", "prompt"]
+        : ["#", "cost", "share", "calls", "tools", "shape", "flags", "prompt"],
       shownTurns.map((t, i) => [
         String(t.index + 1),
         formatUSD(t.cost.total),
@@ -429,16 +434,36 @@ export function renderSessionSummary(
         ...(ranked ? [pct(cum[i] ?? 0)] : []),
         String(t.apiCalls.length),
         String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0)),
+        shapeByTurn.get(t.index)?.label ?? "",
         flagsByTurn.get(t.index) ?? "",
-        truncate(t.prompt || "(no text)", ranked ? 44 : 60),
+        truncate(t.prompt || "(no text)", ranked ? 34 : 48),
       ]),
       {
         align: ranked
-          ? ["right", "right", "right", "right", "right", "right", "left", "left"]
-          : ["right", "right", "right", "right", "right", "left", "left"],
+          ? ["right", "right", "right", "right", "right", "right", "left", "left", "left"]
+          : ["right", "right", "right", "right", "right", "left", "left", "left"],
       },
     ),
   );
+  // The `shape` column is a two-word label; this legend is where its detail
+  // sentence lives in a fixed-width table. Printed only when some turn on
+  // screen actually carries a shape — most sessions have a few, not all.
+  const shapesShown = new Map(
+    shownTurns
+      .map((t) => shapeByTurn.get(t.index))
+      .filter((shape): shape is NonNullable<typeof shape> => shape !== undefined)
+      .map((shape) => [shape.kind, shape]),
+  );
+  if (shapesShown.size > 0) {
+    lines.push(
+      muted(
+        `Shape — why the turn cost what it did: ${[...shapesShown.values()]
+          .map((shape) => `${shape.label} = ${shape.detail.split(" — ")[1] ?? shape.detail}`)
+          .join(" · ")}.`,
+        options,
+      ),
+    );
+  }
   if (ranked) {
     lines.push(
       muted(

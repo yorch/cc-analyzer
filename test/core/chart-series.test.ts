@@ -14,6 +14,8 @@ import {
   projectHeadroom,
   shareOf,
   summarizeCompactions,
+  type TurnPoint,
+  turnCostShape,
 } from "../../src/core/chart-series.ts";
 import type { SessionEvent } from "../../src/core/events.ts";
 import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
@@ -444,5 +446,104 @@ describe("shareOf / cumulativeShares", () => {
     // slice, so the last cumulative cell is "how much of the session these
     // rows are" — not 100%.
     expect(cumulativeShares([5, 3], 10)).toEqual([0.5, 0.8]);
+  });
+});
+
+/** A TurnPoint with every field at a neutral zero; each test sets only the
+ *  fields its rule actually reads, which is the point of the classifier being
+ *  a pure function of this shape. */
+const point = (over: Partial<TurnPoint>): TurnPoint => ({
+  index: 0,
+  cost: 0,
+  costInput: 0,
+  costOutput: 0,
+  costCacheWrite: 0,
+  costCacheRead: 0,
+  costSidechain: 0,
+  ioTokens: 0,
+  cacheTokens: 0,
+  apiCalls: 0,
+  cacheWriteCalls: 0,
+  mainApiCalls: 0,
+  kindCounts: {},
+  toolErrors: 0,
+  interrupted: false,
+  correction: false,
+  retries: 0,
+  testFailures: 0,
+  redundantReads: 0,
+  prompt: "",
+  ...over,
+});
+
+describe("turnCostShape", () => {
+  test("a $0 turn has no shape (and never divides by zero)", () => {
+    expect(turnCostShape(point({ cost: 0, costOutput: 0 }))).toBeUndefined();
+  });
+
+  test("names a subagent burst above the sidechain-share threshold", () => {
+    expect(turnCostShape(point({ cost: 10, costSidechain: 6 }))?.kind).toBe("subagent");
+    // A bare majority is not a shape: the main chain did comparable work.
+    expect(turnCostShape(point({ cost: 10, costSidechain: 5.5 }))?.kind).not.toBe("subagent");
+  });
+
+  test("a subagent burst wins over its own cache-heavy composition", () => {
+    // A burst's cost is cache-dominated too; the more specific rule must win,
+    // or every subagent turn would read as generic cache churn.
+    const shape = turnCostShape(
+      point({ cost: 10, costSidechain: 7, costCacheWrite: 6, costCacheRead: 3 }),
+    );
+    expect(shape?.kind).toBe("subagent");
+  });
+
+  test("cache-write dominance is context churn, and counts the rewrites", () => {
+    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 6, cacheWriteCalls: 7 }));
+    expect(shape?.kind).toBe("cache-churn");
+    expect(shape?.detail).toContain("the cache was rewritten 7 times");
+  });
+
+  test("a single rewrite reads in the singular", () => {
+    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 9, cacheWriteCalls: 1 }));
+    expect(shape?.detail).toContain("rewritten 1 time in this turn");
+  });
+
+  test("output dominance is a long generation", () => {
+    expect(turnCostShape(point({ cost: 10, costOutput: 4 }))?.kind).toBe("generation");
+    expect(turnCostShape(point({ cost: 10, costOutput: 3 }))?.kind).not.toBe("generation");
+  });
+
+  test("cache-read dominance is a shape only with many round trips", () => {
+    // The healthy shape on its own says nothing; it is the repetition over one
+    // big context that makes it worth naming.
+    expect(turnCostShape(point({ cost: 10, costCacheRead: 8, apiCalls: 2 }))).toBeUndefined();
+    const shape = turnCostShape(point({ cost: 10, costCacheRead: 8, apiCalls: 9 }));
+    expect(shape?.kind).toBe("long-context");
+    expect(shape?.detail).toContain("9 calls");
+  });
+
+  test("no dominant component yields no shape rather than a 'mixed' bucket", () => {
+    const even = point({
+      cost: 10,
+      costInput: 2.5,
+      costOutput: 2.5,
+      costCacheWrite: 2.5,
+      costCacheRead: 2.5,
+      apiCalls: 12,
+    });
+    expect(turnCostShape(even)).toBeUndefined();
+  });
+});
+
+describe("buildTurnSeries · cost composition", () => {
+  test("splits sidechain cost out of the turn and counts cache writes", () => {
+    const series = buildTurnSeries(analysis);
+    const first = series[0];
+    // Call `b` in the shared fixture runs on a sidechain inside turn 1.
+    expect(first?.costSidechain).toBeGreaterThan(0);
+    expect(first?.costSidechain).toBeLessThan(first?.cost ?? 0);
+    // No call in turn 1 writes to cache; turn 2's single call does.
+    expect(first?.cacheWriteCalls).toBe(0);
+    expect(series[1]?.cacheWriteCalls).toBe(1);
+    expect(series[1]?.costSidechain).toBe(0);
   });
 });

@@ -22,6 +22,7 @@ import {
   shareOf,
   summarizeCompactions,
   type TurnPoint,
+  turnCostShape,
   turnFlags,
 } from "./api.ts";
 import {
@@ -706,6 +707,9 @@ function TurnBars({ turns }: { turns: TurnPoint[] }) {
                   />
                 ))
               : null}
+            {turnCostShape(active.p) ? (
+              <div className="tip-note">{turnCostShape(active.p)?.detail}</div>
+            ) : null}
             {turnFlags(active.p).length > 0 ? (
               <div className="tip-note">⚠ {turnFlags(active.p).join(" · ")}</div>
             ) : null}

@@ -218,7 +218,27 @@ per-turn signal flags below). `turnFlags()` is the ONE "is this turn worth
 flagging" predicate (interrupted / correction / retries / test failures /
 redundant reads / tool errors) — the web tooltips and marks and the TUI ▲ row
 both render exactly its output; the web timeline's red lanes are deliberately
-the narrower user-intervention subset (interrupted/correction only). The
+the narrower user-intervention subset (interrupted/correction only).
+`turnCostShape()` is its cost-composition sibling and follows the same
+one-predicate/many-render-sites rule: a pure function of `TurnPoint` naming
+**why** a turn was expensive — `subagent` (≥60% of the turn's cost ran on
+sidechains — a clear majority, not a bare one, since the four token categories
+already split the bill four ways), `cache-churn` (≥50% cache write: a healthy
+turn writes the prefix once and reads it back, so a write-dominated bill means
+the prefix kept changing, and the message counts the actual rewrites),
+`generation` (≥35% output: output is the priciest category per token but
+normally a thin slice), and `long-context` (≥50% cache read **and** ≥6 calls —
+cache-read dominance alone is the healthy shape and says nothing; it is the
+repetition over one big context that costs). Rules are checked
+most-specific-first, so a subagent burst is named as one rather than as the
+cache churn it also is, and a turn with no dominant component returns
+`undefined` rather than a "mixed" bucket — inventing a label for the ordinary
+majority would bury the turns that have something to say. Its two inputs are
+the `TurnPoint` fields `costSidechain` (the same bill split by *who* spent it
+rather than by token type) and `cacheWriteCalls`. Render sites: web Turns rows
+and the per-turn bar tooltip, the CLI turns-table `shape` column (with a legend
+line carrying the evidence sentences a fixed-width column cannot), and the TUI
+turns detail pane. The
 analyzer also groups sidechain calls into
 **`SessionAnalysis.sidechainBursts`** — one entry per chain, so "which subagent
 burst cost $3" is answerable. How a burst is *named* depends on which of the

@@ -13,6 +13,7 @@ import {
   buildBurnSeries,
   buildCacheSeries,
   buildContextSeries,
+  buildTurnSeries,
   burstAttributionNote,
   groupSidechainBursts,
   modelMixRows,
@@ -490,6 +491,10 @@ export function buildSessionMarkdown(
       "Flags: interrupted · correction prompt · retries · failing tests · redundant reads · tool errors.";
     out.push(`_${flagsNote}_`);
     out.push("");
+    // One shared derivation of the per-turn signal point, joined by turn index
+    // — the literal that used to be spelled out here drifted the moment
+    // `TurnPoint` grew a field, and `buildTurnSeries` is that literal's owner.
+    const turnPoints = new Map(buildTurnSeries(a).map((p) => [p.index, p]));
     const turnHeaders = ["#", "Cost", "Calls", "Tools", "Flags", "Prompt"];
     const turnAlign: ("left" | "right")[] = ["right", "right", "right", "right", "left", "left"];
     const TURNS_SAMPLE_CAP = 300;
@@ -502,28 +507,8 @@ export function buildSessionMarkdown(
         turnAlign,
         sampledTurns.map((t) => {
           const toolN = String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0));
-          const flags = turnFlags({
-            index: t.index,
-            cost: t.cost.total,
-            costInput: t.cost.input,
-            costOutput: t.cost.output,
-            costCacheWrite: t.cost.cacheWrite,
-            costCacheRead: t.cost.cacheRead,
-            ioTokens: t.tokens.inputTokens + t.tokens.outputTokens,
-            cacheTokens:
-              t.tokens.cacheReadTokens + t.tokens.cacheWrite5mTokens + t.tokens.cacheWrite1hTokens,
-            apiCalls: t.apiCalls.length,
-            mainApiCalls: t.mainApiCalls,
-            kindCounts: t.toolCounts,
-            toolErrors: t.apiCalls.flatMap((c) => c.steps).filter((s) => s.status === "error")
-              .length,
-            interrupted: t.interrupted === true,
-            correction: t.correction === true,
-            retries: t.retries,
-            testFailures: t.testFailures,
-            redundantReads: t.redundantReads,
-            prompt: t.prompt,
-          }).join(" · ");
+          const point = turnPoints.get(t.index);
+          const flags = point ? turnFlags(point).join(" · ") : "";
           const prompt = redact ? "[redacted]" : mdEscape(t.prompt.slice(0, 120)) || "(no text)";
           return [
             String(t.index + 1),

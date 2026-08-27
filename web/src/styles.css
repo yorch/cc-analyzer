@@ -1223,6 +1223,13 @@ p.muted {
   color: var(--faint);
   font-size: 11px;
 }
+/* Cost-shape badge on a turn header: why the turn cost what it did. Dotted
+   underline because the full evidence sentence lives in its title tooltip. */
+.turnshape {
+  color: var(--data-clay);
+  border-bottom: 1px dotted var(--data-clay);
+  cursor: help;
+}
 .ok {
   color: var(--teal);
 }

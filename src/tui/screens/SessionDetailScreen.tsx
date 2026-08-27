@@ -24,6 +24,8 @@ import {
   projectHeadroom,
   shareOf,
   summarizeCompactions,
+  type TurnCostShape,
+  turnCostShape,
   turnFlags,
 } from "../../core/chart-series.ts";
 import {
@@ -237,9 +239,12 @@ interface TurnRow {
   wallMs: number;
   prompt: string;
   steps: TurnStep[];
+  /** What this turn's cost is made of, from the shared `turnCostShape`. */
+  shape: TurnCostShape | undefined;
 }
 
 function turnRows(a: SessionAnalysis): TurnRow[] {
+  const shapes = new Map(buildTurnSeries(a).map((p) => [p.index, turnCostShape(p)]));
   return a.turns.map((t) => {
     const start = t.startTime ? Date.parse(t.startTime) : Number.NaN;
     const end = t.endTime ? Date.parse(t.endTime) : Number.NaN;
@@ -251,6 +256,7 @@ function turnRows(a: SessionAnalysis): TurnRow[] {
       wallMs: Number.isNaN(start) || Number.isNaN(end) ? 0 : end - start,
       prompt: t.prompt,
       steps: t.apiCalls.flatMap((c) => c.steps),
+      shape: shapes.get(t.index),
     };
   });
 }
@@ -384,6 +390,14 @@ function TurnsPane({
         turn #{(turn?.index ?? 0) + 1} · {turn?.calls ?? 0} calls · {formatUSD(turn?.cost ?? 0)} ·{" "}
         {pct(shareOf(turn?.cost ?? 0, sessionCost))} of session
       </Text>
+      {turn?.shape ? (
+        // The detail pane, not the master list: the shape's value is its
+        // evidence sentence, and the narrow master column has no room for it
+        // without eating the prompt preview that makes a turn recognisable.
+        <Text color={role.muted} wrap="truncate-end">
+          shape: {turn.shape.detail}
+        </Text>
+      ) : null}
       {steps.length === 0 ? (
         <Text color={role.muted}>(no steps)</Text>
       ) : (

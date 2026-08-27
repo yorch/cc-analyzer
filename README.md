@@ -705,7 +705,8 @@ The per-session view offers:
   full input and result. The list is **sortable** by turn number, cost, tokens,
   calls, or wall time, so the expensive turn is one click away instead of buried
   at #480, and every turn states its **share of the session** (`18% of
-  session`). The color-coded **transcript** reader is windowed
+  session`) plus a **cost shape** naming why it was expensive — subagent burst,
+  cache churn, long generation, or a long context read many times over. The color-coded **transcript** reader is windowed
   ("show more") so very large sessions stay responsive.
 - **Charts** — context-window fill per API call (compaction markers annotated
   with the tokens each reclaimed, a dashed window-limit line, and a headroom
