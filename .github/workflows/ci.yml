@@ -21,6 +21,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Changesets compares a pull request to its base branch.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -43,3 +46,10 @@ jobs:
 
       - name: Build (SPA embed + single binary)
         run: bun run build
+
+      # The version PR consumes changesets, so it intentionally has none.
+      - name: Changeset present
+        if: >-
+          github.event_name == 'pull_request' &&
+          !startsWith(github.head_ref, 'changeset-release/')
+        run: bun run changeset status --since=origin/${{ github.base_ref }}
