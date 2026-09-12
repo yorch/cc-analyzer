@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Fix empty portfolios, stale indexes, missing sessions, TUI startup issues, and export or Claude-handoff failures.
+description: Fix empty portfolios, stale indexes, missing sessions, TUI startup issues, cost gaps against /cost, and export or Claude-handoff failures.
 ---
 
 # Troubleshooting
@@ -39,6 +39,24 @@ Index-backed views read the cache. Run `cc-analyzer index`; for the web app use
 The optional handoff needs a local `claude` executable on `PATH` (or Claude
 Code's local installation). Without it, ordinary parsing and analysis still
 work.
+
+## A session's cost is lower than my statusline or `/cost`
+
+Expected, and not a bug. Claude Code's `total_cost_usd` also covers model calls
+it never writes into the transcript: session titling, away recaps, compaction,
+auto mode, subagent naming, tool-result summaries, hook prompts, and retried
+stream attempts. cc-analyzer can only price what the transcript records, so a
+session's cost is a floor for what the conversation itself cost.
+
+On long, hook-heavy, auto-mode sessions the gap has measured 7-9%. It is
+smaller on short sessions, and it scales with prompt, tool and hook count
+rather than with token volume, so no fixed correction factor would be right.
+Nothing on disk records the difference, so no setting or reindex recovers it.
+
+If the gap looks far larger than that, it is worth checking. The
+[Cost & Pricing reference](/docs/2-2-cost-and-pricing) lists the checks that
+rule out a pricing or token-counting cause, including how to read Claude Code's
+own rate table out of its binary.
 
 ## Export or parsing problems
 
