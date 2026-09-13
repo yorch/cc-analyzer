@@ -27,23 +27,33 @@ Claude Code, so its numbers stay comparable with `claude /usage`.
 
 ### Comparing against `claude /usage`
 
-A single session's numbers should match Claude Code's own accounting. This has
-been verified by running a session with `--output-format stream-json` and
-diffing its terminal `result` event (Claude Code's own `total_cost_usd` and
-`usage`) against what cc-analyzer computes from the same session's files —
-exact to the token, and to the cent, both for a plain session and for one that
-spawns a subagent.
+For a short, controlled session the numbers match exactly. This has been
+verified by running one with `--output-format stream-json` and diffing its
+terminal `result` event (Claude Code's own `total_cost_usd` and `usage`)
+against what cc-analyzer computes from the same session's files — exact to the
+token, and to the cent, both for a plain session and for one that spawns a
+subagent.
 
-Two things still make a *portfolio* comparison differ, by design:
+That equality does not survive a long, real session. **cc-analyzer always reads
+lower, and a session's cost is best treated as a floor:**
 
+- **Claude Code bills work it never writes to the transcript.** Session
+  titling, away recaps, compaction, auto mode, subagent naming, tool-result
+  summaries and hook prompts are all real, billed API calls charged to the
+  session, each tagged internally with its own query source — and not one of
+  them produces an assistant event in the JSONL. Credited stream retries
+  disappear the same way. Measured against Claude Code's own `total_cost_usd`
+  on two long sessions: $736.97 vs $790.87, and $416.58 vs $450.97, so
+  cc-analyzer read 7-9% low. Nothing on disk records the difference, so no
+  amount of parsing recovers it. Read a session's cost as what the conversation
+  itself cost, excluding Claude Code's own overhead. The
+  [Cost & Pricing reference](https://cc-analyzer.brnby.com/docs/2-2-cost-and-pricing)
+  documents the mechanism, and the checks that rule out a pricing or
+  token-counting cause.
 - **`/usage` counts the CLI process, cc-analyzer counts a session.** Its
   "Session" panel accumulates over the running `claude` process, which can span
   more than the one session file you are looking at. Its wall-clock duration is
   also measured to *now*, while cc-analyzer measures last-event-minus-first.
-- **Some usage is never written to the transcript.** Background work — session
-  titling in particular — is recorded as events carrying no `usage` field at
-  all, so it exists only in Claude Code's internal accounting. cc-analyzer
-  cannot see it, and no amount of parsing will recover it.
 
 Local JSONL is also not a bill: other machines, claude.ai, and non-CLI API use
 never appear in it.

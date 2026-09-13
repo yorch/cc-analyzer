@@ -614,6 +614,29 @@ standing entry is `claude-sonnet-5`, which LiteLLM publishes at its
 introductory rate (in effect through 2026-08-31) while Claude Code bills the
 standard $3/$15 — a clean 1.5× across all four categories, verified against
 Claude Code's own `total_cost_usd` on a controlled single-prompt session.
+
+**A session's transcript cost is a floor, and the gap to `total_cost_usd` is not
+ours to close.** On long real sessions Claude Code's own figure runs 7-9% higher
+(measured: $790.87 vs $736.97, $450.97 vs $416.58). It is **not** a rate
+difference — Claude Code's embedded catalog prices `claude-opus-5` at
+`tier_5_25` (5 / 25 / 6.25 / 10 / 0.5), byte-identical to LiteLLM's, readable
+with `strings` over `~/.local/share/claude/versions/<v>`. It is **not** a
+long-context tier: that catalog carries **no** >200K premium even for models
+marked `native_1m`, so `effectivePricing()` correctly never fires for Opus 5,
+and synthesizing one would have added $646 where $54 was missing. And it is
+**not** a token-count difference — de-duping by bare `message.id` across the
+session tree reproduces the indexed tokens and cost exactly, and
+`usage.iterations[]` sums to the top-level usage. The cause is that Claude Code
+charges 33 internal `querySource`s (session titling, `away_summary`, `compact`,
+`tool_use_summary_generation`, `auto_mode*`, `agent_*`, `hook_prompt`, …) plus
+credited stream retries to the session ledger, and **none of them write an
+assistant event** — the proof is that transcripts of sessions with hundreds of
+generated titles contain zero Haiku calls. The data is not in `~/.claude`, so
+never add a correction factor or a fudge multiplier; the overhead scales with
+prompt/tool/hook count rather than tokens, so no single factor would be right
+anyway. Full write-up, including the re-verification commands, in
+`wiki/2.2-cost-and-pricing.md` (mirrored at `site/docs/2-2-cost-and-pricing.md`).
+
 A dollar figure is always computed the same way regardless of
 how the user pays — `computeCost()` has no notion of billing plan. `cost-framing.ts`
 (bun-free, imported by the SPA) is the display-only layer on top: the `CostBasis`
