@@ -1,6 +1,7 @@
 ---
 layout: page
-title: cc-analyzer — analyze your Claude Code sessions
+title: cc-analyzer — Claude Code session cost & token analyzer
+titleTemplate: false
 pageClass: cc-landing
 ---
 

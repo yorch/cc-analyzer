@@ -36,7 +36,7 @@ const boot: { t: string; cls?: string }[] = [
       <!-- Left: wordmark, tagline, CTAs -->
       <div class="cc-hero__intro">
         <p class="cc-hero__eyebrow">// read-only · local · single binary</p>
-        <h1 class="cc-hero__mark">cc&#8209;analyzer<span class="cc-caret">_</span></h1>
+        <h1 class="cc-hero__mark">cc&#8209;analyzer<span class="cc-caret">_</span><span class="sr-only"> — Claude Code session analyzer</span></h1>
         <p class="cc-hero__tag">
           Point it at the JSONL transcripts already sitting in
           <code>~/.claude</code> and it reconstructs the ledger your Claude Code
