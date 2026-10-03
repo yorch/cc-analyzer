@@ -111,7 +111,7 @@ const softwareApplicationSchema = {
     "Read-only CLI to browse and analyze Claude Code sessions: cost, tokens, tools, skills, models, and per-turn breakdowns.",
   url: siteUrl,
   downloadUrl: "https://github.com/yorch/cc-analyzer/releases/latest",
-  codeRepository: "https://github.com/yorch/cc-analyzer",
+  sameAs: ["https://github.com/yorch/cc-analyzer"],
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
