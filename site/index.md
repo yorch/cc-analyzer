@@ -5,6 +5,8 @@ titleTemplate: false
 pageClass: cc-landing
 ---
 
+<main id="cc-main">
+
 <TerminalHero />
 
 <TerminalModules />
@@ -26,3 +28,5 @@ pageClass: cc-landing
     <a class="cc-btn cc-btn--ghost" href="https://github.com/yorch/cc-analyzer" target="_blank" rel="noreferrer">GitHub</a>
   </div>
 </section>
+
+</main>

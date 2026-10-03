@@ -212,6 +212,13 @@ export default defineConfig({
     },
   },
 
+  // VitePress preloads Inter's latin roman face for every page, but the theme
+  // overrides both font-family tokens with IBM Plex Mono, so that 67 KB file is
+  // never used and only competes with the render-blocking CSS on slow links.
+  transformHtml(code) {
+    return code.replace(/<link rel="preload" href="[^"]*inter-roman-latin[^"]*" as="font"[^>]*>\s*/, "");
+  },
+
   transformPageData(pageData) {
     const title = pageTitles[pageData.relativePath];
     if (title) pageData.title = title;

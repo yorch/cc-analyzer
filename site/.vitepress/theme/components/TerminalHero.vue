@@ -310,7 +310,7 @@ const boot: { t: string; cls?: string }[] = [
 }
 .cc-line.cmd { color: var(--cc-amber-hi); }
 .cc-line.dim { color: var(--cc-ink-3); }
-.cc-line.rule { color: var(--cc-line-strong); }
+.cc-line.rule { color: var(--cc-ink-3); }
 .cc-line.row { color: var(--cc-ink); }
 .cc-line.ok { color: var(--cc-green); }
 .cc-prompt { color: var(--cc-amber); }
