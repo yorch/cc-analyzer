@@ -1,5 +1,25 @@
 # cc-analyzer
 
+## 0.24.0
+
+### Minor Changes
+
+- [#131](https://github.com/yorch/cc-analyzer/pull/131) [`0430f37`](https://github.com/yorch/cc-analyzer/commit/0430f37e19ae3321f5e63e95ee1d670b8bbc49f0) Thanks [@yorch](https://github.com/yorch)! - Add `fable` to the one-click model choices for "Analyze with Claude Code" in the TUI and web dashboard, and document index schema versions v17 through v20 in the wiki.
+
+### Patch Changes
+
+- [#124](https://github.com/yorch/cc-analyzer/pull/124) [`c20a206`](https://github.com/yorch/cc-analyzer/commit/c20a2062ada249f51481121809f52ba0cc1c35c1) Thanks [@yorch](https://github.com/yorch)! - Document the contributor workflow for AI agents in AGENTS.md: work in a git worktree, commit in logical groups, and use Conventional Commits.
+
+- [#129](https://github.com/yorch/cc-analyzer/pull/129) [`a459771`](https://github.com/yorch/cc-analyzer/commit/a459771a61279c2ba18af94b21a1cdc1d8d3e716) Thanks [@yorch](https://github.com/yorch)! - Improve landing-page accessibility and load: add a `<main>` landmark, raise the contrast of the terminal mock's rule lines in both themes, and stop preloading the unused Inter font.
+
+- [#130](https://github.com/yorch/cc-analyzer/pull/130) [`695e542`](https://github.com/yorch/cc-analyzer/commit/695e54232143a9658c7ffa08bd8f1090778e909f) Thanks [@yorch](https://github.com/yorch)! - Speed up the landing page's first paint: inline its critical CSS at build time and load the rest of the stylesheet without blocking rendering.
+
+- [#127](https://github.com/yorch/cc-analyzer/pull/127) [`2305caa`](https://github.com/yorch/cc-analyzer/commit/2305caadc0715ff4feb8e5623e4316989c2bc254) Thanks [@yorch](https://github.com/yorch)! - Improve SEO across the docs site: unique, length-appropriate meta descriptions and keyword-bearing titles on every docs, guide, and install page, `TechArticle` + `BreadcrumbList` structured data, sitemap `lastmod` for every page, a `Content-Signal` preference in `robots.txt`, an `llms.txt` page index, and short intros on the Workflows and Troubleshooting guides.
+
+- [#126](https://github.com/yorch/cc-analyzer/pull/126) [`27d9bb4`](https://github.com/yorch/cc-analyzer/commit/27d9bb43402f9ec9f8d3735b2fb2b829dd2b6ba9) Thanks [@yorch](https://github.com/yorch)! - Improve landing-page SEO on the docs site: a dedicated 1200×630 social card image, `SoftwareApplication` structured data, `robots.txt` advertising the sitemap, a keyword-bearing page title, and a descriptive (screen-reader) H1 suffix.
+
+- [#128](https://github.com/yorch/cc-analyzer/pull/128) [`ebe3ec1`](https://github.com/yorch/cc-analyzer/commit/ebe3ec18b914eaf73f293db0a78cfec76ad3fd98) Thanks [@yorch](https://github.com/yorch)! - Fix the landing page's `SoftwareApplication` JSON-LD: replace the unrecognized `codeRepository` property with `sameAs` so the schema validator reports no warnings.
+
 ## 0.23.1
 
 ### Patch Changes
