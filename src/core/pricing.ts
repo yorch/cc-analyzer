@@ -43,7 +43,7 @@ export type PricingTable = Record<string, ModelPricing>;
  * the source wins. A correction that fired unconditionally would pin a rate
  * that outlived its own reason and nobody would notice.
  */
-interface PriceCorrection {
+export interface PriceCorrection {
   model: string;
   reason: string;
   when: Pick<TokenRates, "inputCostPerToken" | "outputCostPerToken">;
@@ -57,25 +57,17 @@ interface PriceCorrection {
  * published list price and the rate Claude Code actually bills disagree, it
  * follows Claude Code — otherwise every comparison a user makes is off by the
  * spread, with nothing on screen to explain it.
+ *
+ * Currently **empty**. The one entry (`claude-sonnet-5`, forced to $3/$15 while
+ * LiteLLM published the $2/$10 introductory rate) was removed on 2026-10-03:
+ * Claude Code 2.1.288's embedded catalog and a controlled `claude -p` probe
+ * (4 tokens in/out, 14,130 1h cache writes, 10,332 cache reads) both show
+ * $2/$10 is what Claude Code now bills — the source and the bill have
+ * converged, so keeping the entry could only overstate Sonnet 5 by 1.5x. The
+ * mechanism stays: a future divergence is one entry here, and the `when` guard
+ * still makes any entry expire on its own.
  */
-export const PRICE_CORRECTIONS: readonly PriceCorrection[] = [
-  {
-    model: "claude-sonnet-5",
-    // LiteLLM (and cc-analyzer's bundled snapshot) publish Sonnet 5's
-    // introductory rate, in effect through 2026-08-31. Claude Code bills the
-    // standard $3/$15 — a clean 1.5x across all four token categories — so an
-    // uncorrected table understates every Sonnet 5 session by a third.
-    reason: "LiteLLM publishes the introductory rate; Claude Code bills standard",
-    when: { inputCostPerToken: 0.000002, outputCostPerToken: 0.00001 },
-    use: {
-      inputCostPerToken: 0.000003,
-      outputCostPerToken: 0.000015,
-      cacheWrite5mCostPerToken: 0.00000375,
-      cacheWrite1hCostPerToken: 0.000006,
-      cacheReadCostPerToken: 0.0000003,
-    },
-  },
-];
+export const PRICE_CORRECTIONS: readonly PriceCorrection[] = [];
 
 /** Does this entry still carry the exact rates a correction was written for? */
 function matches(entry: ModelPricing, when: PriceCorrection["when"]): boolean {
@@ -86,15 +78,21 @@ function matches(entry: ModelPricing, when: PriceCorrection["when"]): boolean {
 }
 
 /**
- * Apply `PRICE_CORRECTIONS` to a freshly-loaded table.
+ * Apply price corrections to a freshly-loaded table.
+ *
+ * Defaults to `PRICE_CORRECTIONS` — the list the load path uses — and takes an
+ * explicit list so the mechanism stays testable while the live list is empty.
  *
  * Pure and idempotent — a corrected entry no longer matches its own `when`, so
  * re-running is a no-op. Everything the source knows that a correction doesn't
  * describe (`maxInputTokens`, a long-context tier) is preserved.
  */
-export function correctPricing(table: PricingTable): PricingTable {
+export function correctPricing(
+  table: PricingTable,
+  corrections: readonly PriceCorrection[] = PRICE_CORRECTIONS,
+): PricingTable {
   let corrected: PricingTable | undefined;
-  for (const c of PRICE_CORRECTIONS) {
+  for (const c of corrections) {
     const entry = table[c.model];
     if (!entry || !matches(entry, c.when)) continue;
     corrected ??= { ...table };

@@ -609,11 +609,17 @@ fired unconditionally would pin a rate that outlived its own reason and nobody
 would notice. `correctPricing()` runs at the single `loadPricing()` boundary
 every source path passes through (remote, cache, bundled alike) and *after* the
 cache write, so the cache stores what the source said and edits to the list take
-effect without invalidating anyone's cache; it is pure and idempotent. The
-standing entry is `claude-sonnet-5`, which LiteLLM publishes at its
-introductory rate (in effect through 2026-08-31) while Claude Code bills the
-standard $3/$15 — a clean 1.5× across all four categories, verified against
-Claude Code's own `total_cost_usd` on a controlled single-prompt session.
+effect without invalidating anyone's cache; it is pure and idempotent, and takes
+an optional corrections list so the mechanism stays covered while the live list
+is empty. That list is **currently empty**: its one entry (`claude-sonnet-5`,
+forced to $3/$15 while LiteLLM published the $2/$10 introductory rate) was
+removed on 2026-10-03, when Claude Code 2.1.288's embedded catalog
+(`tier_2_10`) and a controlled `claude -p` probe agreed on $2/$10 — the source
+and the bill had converged, so the correction could only overstate Sonnet 5 by
+1.5×. **Schema v20** forces the rebuild that recomputes the rows indexed under
+the forced rate. `bundled-pricing.json` is refreshed against live LiteLLM (every
+bare `anthropic`-provider `claude-*` entry, plus the historical ids LiteLLM has
+since dropped, so offline pricing of old sessions does not regress).
 
 **A session's transcript cost is a floor, and the gap to `total_cost_usd` is not
 ours to close.** On long real sessions Claude Code's own figure runs 7-9% higher
