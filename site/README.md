@@ -16,7 +16,7 @@ and the fixes already applied here.
 ```bash
 bun install        # once
 bun run docs:dev   # sync wiki -> dev server
-bun run docs:build # sync wiki -> build + verify every internal anchor
+bun run docs:build # sync wiki -> build -> inline landing critical CSS -> verify every internal anchor
 bun run docs:preview
 ```
 

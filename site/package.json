@@ -6,12 +6,14 @@
   "scripts": {
     "sync": "bun run scripts/sync-wiki.ts",
     "docs:dev": "bun run sync && vitepress dev",
-    "docs:build": "bun run sync && vitepress build && bun run check:anchors",
+    "docs:build": "bun run sync && vitepress build && bun run inline:critical-css && bun run check:anchors",
+    "inline:critical-css": "bun run scripts/inline-critical-css.ts",
     "check:anchors": "bun run scripts/check-anchors.ts",
     "docs:preview": "vitepress preview"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-mono": "5",
+    "beasties": "^0.5.4",
     "mermaid": "^11.17.0",
     "vitepress": "^1.6.4"
   }
