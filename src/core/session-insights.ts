@@ -19,7 +19,7 @@ import type { WhatIfRepricing, WhatIfRow } from "./stats-types.ts";
  * behind) LiteLLM degrades to whatever does resolve instead of inventing a
  * rate.
  */
-export const FALLBACK_WHATIF_MODELS = ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"];
+export const FALLBACK_WHATIF_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"];
 
 /** One model's actual usage, the input to the repricing fold. */
 export interface ModelMix {

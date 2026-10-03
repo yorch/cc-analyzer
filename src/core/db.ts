@@ -172,7 +172,14 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // `<id>.jsonl` was deleted. That subagent work is real spend with no row at
 // all under v18, and the incremental indexer only revisits files it already
 // knows about, so nothing short of a rebuild would ever find them.
-export const SCHEMA_VERSION = "19";
+// v20: the `claude-sonnet-5` price correction was removed (see
+// `PRICE_CORRECTIONS`). Claude Code 2.1.288 — its embedded catalog and a
+// controlled `claude -p` probe agreeing — now bills the $2/$10 rate LiteLLM
+// publishes, so v19 rows computed under the forced $3/$15 correction read 1.5x
+// high. Cost is computed at index time and stored, and the incremental indexer
+// skips unchanged files, so nothing short of a rebuild would fix them — the v18
+// rationale in reverse: that bump applied the forced rate, this one retires it.
+export const SCHEMA_VERSION = "20";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

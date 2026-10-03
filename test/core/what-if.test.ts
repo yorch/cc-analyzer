@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { openDb } from "../../src/core/db.ts";
 import type { PricingTable, TokenCounts } from "../../src/core/pricing.ts";
+import { bundledPricing } from "../../src/core/pricing-source.ts";
 import { FALLBACK_WHATIF_MODELS, sessionCostRank, whatIfRepricing } from "../../src/core/stats.ts";
 import { cheapPricing, flatPricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -165,6 +166,15 @@ describe("whatIfRepricing", () => {
     expect(summary.bestModel).toBeNull();
     expect(summary.bestDelta).toBe(0);
     db.close();
+  });
+
+  test("every fallback id exists in the bundled pricing snapshot", () => {
+    // The list is documented as the newest model of each family *present in the
+    // bundled snapshot*; a fallback the snapshot cannot resolve would silently
+    // shrink to nothing offline.
+    for (const model of FALLBACK_WHATIF_MODELS) {
+      expect(bundledPricing[model]).toBeDefined();
+    }
   });
 });
 
