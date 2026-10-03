@@ -1013,6 +1013,21 @@ runs `bun build --compile` against the copied entrypoint. Release binaries there
 embed the full UI without ever modifying tracked source, even if compilation is
 interrupted.
 
+## Working on changes
+
+- **Always work in a git worktree** for any new work (features, fixes, docs,
+  refactors), never directly on the main checkout, unless the user explicitly
+  says not to. Create the worktree on a fresh branch off `main` (for example
+  `git worktree add ../cc-analyzer-<topic> -b <type>/<topic> main`, or the
+  `EnterWorktree` tool) and do all edits, test runs, commits, and the PR from
+  there. Run `bun install` in a new worktree before testing.
+- **Commit in logical groups.** Each commit is one coherent, reviewable change
+  (for example the core change, its tests, and its docs as separate or paired
+  commits as makes sense) — not one catch-all commit and not a stream of
+  "wip" fixups. Every commit should leave lint, typechecks, and tests passing.
+- **Commit messages and PR titles use Conventional Commits** (see Conventions
+  below). Commit and PR conventions apply to every commit, not just the final one.
+
 ## Conventions
 
 - **Dual tsconfig**: root `tsconfig.json` targets Bun (`types: ["bun"]`, includes
