@@ -184,6 +184,9 @@ cc-analyzer doctor <id|path>         # check structural health and recoverabilit
 cc-analyzer doctor <id|path> --json  # emit the health report as JSON
 cc-analyzer index [--rebuild]        # build/refresh the portfolio index
 cc-analyzer index --check            # check for new/changed/deleted sessions
+cc-analyzer archive set <path>       # configure a local Git archive repository
+cc-analyzer archive run              # archive raw session trees and commit locally
+cc-analyzer archive index on|off     # opt into archiving during index refresh
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
 cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage
@@ -226,6 +229,34 @@ web app surface the same freshness status so an older cache is never silent.
 `index --check` also prints one line of **parse coverage** — the share of
 indexed lines this build of the parser fully understood — read from the index
 rows, so the no-parse guarantee holds.
+
+### Archiving sessions across computers
+
+Configure a dedicated local Git repository with `cc-analyzer archive set
+<path>`, then run `cc-analyzer archive run`. This copies raw parent and subagent
+transcripts from every configured Claude data directory into a machine-scoped
+archive and creates a local commit. Pushes are always manual. To make normal
+index refreshes snapshot and commit newly changed transcripts too, run
+`cc-analyzer archive index on`; turn that behavior off with `archive index off`.
+To sync across computers, add a private remote and push manually, for example:
+
+```bash
+git -C /path/to/cc-archive remote add origin <private-repository-url>
+git -C /path/to/cc-archive push -u origin HEAD
+```
+
+Clone that repository on another computer and run `cc-analyzer archive set
+<clone-path>` there. Archived sessions are included in the ordinary index and
+portfolio reports; enabling `archive index on` on each computer lets each one
+contribute its own sessions. The SQLite index remains local and is rebuilt
+independently on each machine.
+
+Archives contain raw, potentially sensitive prompts and tool output. Git does
+not encrypt them: use a private remote only if you are comfortable storing the
+transcripts there. Git history retains earlier versions even if a file is later
+updated or deleted; removing data from history requires separate Git history
+rewriting. Archive commands never push to a remote and never modify Claude's
+source files.
 
 `<id>` is a session uuid (searched across all projects) or a path to a `.jsonl`
 file. `<projectId>` is the encoded directory name shown by `projects`.

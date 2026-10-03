@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 
 import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
+import { archiveSessions, listArchiveRoots } from "../core/archive.ts";
 import {
   CLAUDE_NOT_FOUND_MESSAGE,
   isValidModel,
@@ -38,8 +39,12 @@ import { buildPortfolioDiagnostics } from "../core/portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import {
   getAnalysisModel,
+  getArchiveDuringIndex,
+  getArchivePath,
   getClaudeDirs,
   getCostBasis,
+  setArchiveDuringIndex,
+  setArchivePath,
   setClaudeDirs,
   setCostBasis,
 } from "../core/prefs.ts";
@@ -116,6 +121,8 @@ Usage:
                                        Check session health and recoverability
   cc-analyzer index [--rebuild|--check]
                                        Build, refresh, or check the session index
+  cc-analyzer archive [show|set <path>|run|index on|off]
+                                       Archive raw session trees in a local Git repo
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
   cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
@@ -243,6 +250,7 @@ function rootLines(): string[] {
 const noReadableRoot = (): boolean => !claudeRoots().some((r) => existsSync(projectsDirOf(r.path)));
 
 const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
+  archive: "session archive",
   flag: "--claude-dir",
   env: "CC_ANALYZER_CLAUDE_DIR",
   prefs: "cc-analyzer claude-dir",
@@ -250,8 +258,65 @@ const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
   default: "default",
 };
 
+async function cmdArchive(
+  action: string | undefined,
+  operand: string | undefined,
+): Promise<number> {
+  if (action === undefined || action === "show") {
+    console.log(`Archive repository: ${getArchivePath() ?? "(not configured)"}`);
+    console.log(`Archive during index: ${getArchiveDuringIndex() ? "on" : "off"}`);
+    console.log(
+      "Archived transcripts are raw, sensitive data; Git does not encrypt them. Push is manual.",
+    );
+    return 0;
+  }
+  if (action === "set") {
+    if (!operand) {
+      console.error("usage: cc-analyzer archive set <path>");
+      return 2;
+    }
+    const path = expandPath(operand);
+    setArchivePath(path);
+    console.log(
+      `Archive repository set to ${path}. Run \`cc-analyzer archive run\` to archive sessions.`,
+    );
+    return 0;
+  }
+  if (action === "index") {
+    if (operand !== "on" && operand !== "off") {
+      console.error("usage: cc-analyzer archive index <on|off>");
+      return 2;
+    }
+    setArchiveDuringIndex(operand === "on");
+    console.log(`Archiving during index is ${operand}.`);
+    return 0;
+  }
+  if (action === "run") {
+    try {
+      const result = await archiveSessions(claudeRoots());
+      console.log(`Archived ${result.copied} changed session(s); ${result.unchanged} unchanged.`);
+      console.log(
+        result.committed ? "Changes committed locally; push is manual." : "No changes to commit.",
+      );
+      return 0;
+    } catch (error) {
+      console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+  }
+  console.error("usage: cc-analyzer archive [show|set <path>|run|index on|off]");
+  return 2;
+}
+
+async function allSessionRoots() {
+  const liveRoots = claudeRoots();
+  if (liveRoots[0]?.source === "flag") return liveRoots;
+  return [...liveRoots, ...(await listArchiveRoots(undefined, liveRoots))];
+}
+
 async function cmdProjects(): Promise<number> {
-  const projects = await listProjects();
+  const roots = await allSessionRoots();
+  const projects = await listProjects(roots);
   if (projects.length === 0) {
     // Name the directories actually searched and why: the commonest cause of an
     // empty portfolio is a relocated Claude dir, and "~/.claude" would be a lie.
@@ -389,7 +454,7 @@ async function cmdSessions(projectId: string | undefined): Promise<number> {
   // Stored ids are root-qualified, but nobody should have to type a hash: a
   // bare encoded name resolves when only one root holds that project. When
   // several do, name them instead of silently picking one.
-  const found = await findProject(projectId);
+  const found = await findProject(projectId, await allSessionRoots());
   if (found.status === "ambiguous") {
     console.error(
       `error: '${projectId}' matches ${found.candidates.length} projects across your Claude ` +
@@ -426,7 +491,7 @@ async function resolveSessionSource(ref: string): Promise<SessionSource | undefi
   if (ref.endsWith(".jsonl") || ref.includes("/")) {
     return (await Bun.file(ref).exists()) ? await sessionSourceAt(ref) : undefined;
   }
-  const found = await findSessionById(ref);
+  const found = await findSessionById(ref, await allSessionRoots());
   return (
     found && {
       path: found.path,
@@ -743,7 +808,14 @@ function indexChangeSummary(status: { added: number; changed: number; deleted: n
 async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   const db = openDb();
   if (check) {
-    const status = await inspectIndexStatus(db);
+    let status: Awaited<ReturnType<typeof inspectIndexStatus>>;
+    try {
+      status = await inspectIndexStatus(db);
+    } catch (error) {
+      db.close();
+      console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
     // Coverage comes from the indexed rows (schema v11), so `--check` keeps its
     // no-parse guarantee: this is one SQL scan, no session file is reopened.
     const coverage = parseCoverage(db).summary;
@@ -764,15 +836,23 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   }
   const start = Date.now();
   let lastLogged = 0;
-  const result = await reindex(db, {
-    rebuild,
-    onProgress: (done, total) => {
-      if (done === total || done - lastLogged >= 200) {
-        lastLogged = done;
-        process.stderr.write(`\rindexing ${done}/${total}...`);
-      }
-    },
-  });
+  let result: Awaited<ReturnType<typeof reindex>>;
+  try {
+    result = await reindex(db, {
+      rebuild,
+      onProgress: (done, total) => {
+        if (done === total || done - lastLogged >= 200) {
+          lastLogged = done;
+          process.stderr.write(`\rindexing ${done}/${total}...`);
+        }
+      },
+    });
+  } catch (error) {
+    db.close();
+    process.stderr.write("\n");
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
   db.close();
   if (result.total > result.skipped) process.stderr.write("\n");
   const secs = ((Date.now() - start) / 1000).toFixed(1);
@@ -1268,6 +1348,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     }
     case "doctor":
       return cmdDoctor(positional[0], json);
+    case "archive":
+      return cmdArchive(positional[0], positional[1]);
     case "index":
       if (rest.includes("--rebuild") && rest.includes("--check")) {
         console.error("error: --rebuild and --check cannot be used together.");

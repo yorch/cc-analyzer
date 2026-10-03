@@ -20,7 +20,7 @@ import { PROJECT_ID_SEPARATOR } from "./project-labels.ts";
  */
 
 /** Where a resolved root came from — surfaced so an empty portfolio explains itself. */
-export type ClaudeRootSource = "flag" | "env" | "prefs" | "claude-code" | "default";
+export type ClaudeRootSource = "flag" | "env" | "prefs" | "claude-code" | "default" | "archive";
 
 export interface ClaudeRoot {
   /** Absolute path to a Claude Code data directory. */

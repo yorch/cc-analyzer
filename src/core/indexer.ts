@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
+import { archiveSessions, listArchiveRoots } from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
 import {
   listAllSessions,
@@ -11,6 +12,7 @@ import {
 } from "./discover.ts";
 import { LAST_SCAN_KEY } from "./index-status.ts";
 import { streamSessionTree } from "./parser.ts";
+import { getArchiveDuringIndex } from "./prefs.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
 
@@ -276,6 +278,8 @@ export interface ReindexOptions {
   onProgress?: (done: number, total: number) => void;
   /** Claude roots to scan. Defaults to the configured ones; injectable for tests. */
   roots?: ClaudeRoot[];
+  /** Archive current source sessions before indexing when enabled. */
+  archive?: boolean;
 }
 
 /**
@@ -289,7 +293,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
 
   // Resolve the configured roots once and pass them down: resolution reads the
   // filesystem, and the discovery helpers would otherwise repeat it per project.
-  const roots = opts.roots ?? claudeRoots();
+  const sourceRoots = opts.roots ?? claudeRoots();
+  if (opts.archive ?? getArchiveDuringIndex()) {
+    await archiveSessions(sourceRoots);
+  }
+  const roots = [...sourceRoots, ...(await listArchiveRoots(undefined, sourceRoots))];
   // A configured-but-unreadable root (unmounted volume, a synced folder
   // mid-setup) must not have its rows pruned — only a root the user actually
   // de-configured should lose its data.
