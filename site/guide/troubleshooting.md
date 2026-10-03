@@ -1,9 +1,13 @@
 ---
-title: Troubleshooting
-description: Fix empty portfolios, stale indexes, missing sessions, TUI startup issues, cost gaps against /cost, and export or Claude-handoff failures.
+title: "Troubleshooting Claude Code session analysis"
+description: "Fix empty portfolios, stale indexes, missing sessions, TUI startup issues, cost gaps against /cost, and export or Claude-handoff failures."
 ---
 
 # Troubleshooting
+
+Most problems come down to a stale index, the wrong Claude data directory, or a
+missing optional dependency. Find the symptom below; each fix is a short
+command. Everything here is read-only against your Claude data.
 
 ## The portfolio is empty or stale
 

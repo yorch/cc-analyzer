@@ -1,6 +1,6 @@
 ---
-title: Get started
-description: Install cc-analyzer, build your local index, and choose the best way to explore Claude Code sessions.
+title: "Get started analyzing Claude Code sessions"
+description: "Install cc-analyzer, build your local index, and choose the best way to explore Claude Code sessions: CLI, terminal UI, or web dashboard."
 ---
 
 # Get started
