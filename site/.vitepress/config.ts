@@ -19,6 +19,21 @@ const pageDescriptions: Record<string, string> = {
   "docs/glossary.md": "Definitions for cc-analyzer metrics, costs, events, and implementation terms.",
 };
 
+// Landing-page structured data (SoftwareApplication). Emitted only on "/".
+const softwareApplicationSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "cc-analyzer",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "macOS, Linux, Windows",
+  description:
+    "Read-only CLI to browse and analyze Claude Code sessions: cost, tokens, tools, skills, models, and per-turn breakdowns.",
+  url: siteUrl,
+  downloadUrl: "https://github.com/yorch/cc-analyzer/releases/latest",
+  codeRepository: "https://github.com/yorch/cc-analyzer",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
+
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   title: "cc-analyzer",
@@ -43,10 +58,10 @@ export default defineConfig({
     ["meta", { name: "darkreader-lock" }],
     ["meta", { property: "og:site_name", content: "cc-analyzer" }],
     ["meta", { property: "og:type", content: "website" }],
-    ["meta", { property: "og:image", content: `${siteUrl}/screenshots/dashboard.webp` }],
+    ["meta", { property: "og:image", content: `${siteUrl}/screenshots/og-dashboard.jpg` }],
     ["meta", { property: "og:image:alt", content: "cc-analyzer web dashboard with portfolio totals and project activity" }],
-    ["meta", { property: "og:image:width", content: "1600" }],
-    ["meta", { property: "og:image:height", content: "2327" }],
+    ["meta", { property: "og:image:width", content: "1200" }],
+    ["meta", { property: "og:image:height", content: "630" }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
     ["meta", { name: "twitter:image:alt", content: "cc-analyzer web dashboard with portfolio totals and project activity" }],
     // Local loader checks browser DNT and Plausible's localStorage opt-out before
@@ -72,6 +87,7 @@ export default defineConfig({
   },
 
   transformHead({ pageData, title, description }) {
+    const isHome = pageData.relativePath === "index.md";
     const route =
       pageData.relativePath === "index.md"
         ? "/"
@@ -79,6 +95,9 @@ export default defineConfig({
     const canonical = new URL(route, siteUrl).toString();
     const pageDescription = pageDescriptions[pageData.relativePath] ?? description;
     return [
+      ...(isHome
+        ? [["script", { type: "application/ld+json" }, JSON.stringify(softwareApplicationSchema)]]
+        : []),
       ["link", { rel: "canonical", href: canonical }],
       ["meta", { property: "og:title", content: title }],
       ["meta", { name: "description", content: pageDescription }],
