@@ -32,7 +32,7 @@ export const DEFAULT_ANALYSIS_MODEL = "sonnet";
 
 /** The model aliases offered as one-click choices; a full model id is also
  *  accepted (see `isValidModel`) and passed straight through to `--model`. */
-export const ANALYSIS_MODELS = ["sonnet", "opus", "haiku"] as const;
+export const ANALYSIS_MODELS = ["sonnet", "opus", "haiku", "fable"] as const;
 
 /** Guard a model string before it reaches `claude --model`. `Bun.spawn` takes
  *  an argv array (no shell), so this is defense in depth for the web route,

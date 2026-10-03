@@ -49,7 +49,7 @@ const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript", "c
 /** One-click model choices for "Analyze with Claude Code". Mirrors
  *  `ANALYSIS_MODELS` in `src/core/claude-handoff.ts` (bun-side, not importable
  *  here); a persisted custom default is added to this list at render time. */
-const MODEL_OPTIONS = ["sonnet", "opus", "haiku"];
+const MODEL_OPTIONS = ["sonnet", "opus", "haiku", "fable"];
 
 /** A turn the page was asked to reveal. The nonce makes a repeat request for
  *  the same turn a new event, so clicking the same anchor twice still scrolls. */
