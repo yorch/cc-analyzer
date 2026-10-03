@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_ANALYSIS_MODEL, isValidModel } from "./claude-handoff.ts";
 import type { CostBasis } from "./cost-framing.ts";
-import { prefsConfigPath } from "./paths.ts";
+import { archiveMachineIdPath, prefsConfigPath } from "./paths.ts";
 
 /**
  * Small, general cc-analyzer preferences — same persistence pattern as
@@ -16,6 +17,8 @@ interface PrefsConfig {
   costBasis?: CostBasis;
   claudeDirs?: string[];
   analysisModel?: string;
+  archivePath?: string;
+  archiveDuringIndex?: boolean;
   [key: string]: unknown;
 }
 
@@ -83,4 +86,52 @@ export function setClaudeDirs(dirs: string[]): void {
   if (dirs.length === 0) delete cfg.claudeDirs;
   else cfg.claudeDirs = dirs;
   writeConfig(cfg);
+}
+
+/** Configured local Git repository used for raw transcript backups. */
+export function getArchivePath(): string | undefined {
+  const path = readConfig().archivePath;
+  return typeof path === "string" && path.trim() ? path : undefined;
+}
+
+/** Set or clear the raw session archive repository path. */
+export function setArchivePath(path: string | undefined): void {
+  const cfg = { ...readConfig() };
+  if (path) cfg.archivePath = path;
+  else delete cfg.archivePath;
+  writeConfig(cfg);
+}
+
+/** Whether ordinary index refreshes also snapshot and commit current sessions. */
+export function getArchiveDuringIndex(): boolean {
+  return readConfig().archiveDuringIndex === true;
+}
+
+export function setArchiveDuringIndex(enabled: boolean): void {
+  const cfg = { ...readConfig() };
+  cfg.archiveDuringIndex = enabled;
+  writeConfig(cfg);
+}
+
+/** Stable per-installation identity so multiple computers get separate archive paths. */
+export function getArchiveMachineId(): string {
+  const path = archiveMachineIdPath();
+  try {
+    const existing = readFileSync(path, "utf8").trim();
+    if (/^[0-9a-f-]{36}$/.test(existing)) return existing;
+  } catch {
+    // Create lazily below.
+  }
+  const id = randomUUID();
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${id}\n`, { flag: "wx" });
+    return id;
+  } catch {
+    try {
+      return readFileSync(path, "utf8").trim();
+    } catch {
+      return id;
+    }
+  }
 }

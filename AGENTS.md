@@ -672,6 +672,8 @@ light/dark value in JS and the CSS needs no `prefers-color-scheme` query. The
 `"cc-theme"` storage key is duplicated as a literal in that inline script (it
 cannot import `THEME_STORAGE_KEY`) — keep the two in sync.
 
+**Raw transcript archives are opt-in and Git-backed.** `archive.ts` copies each configured source root's complete session trees into a dedicated repository under `machines/<machine-id>/roots/<source-root-slug>/projects/...`; machine IDs are generated once under cc-analyzer's state directory. It initializes Git only in the explicitly configured archive path, commits changed snapshots locally, never pushes, and refuses to run when the repository has pre-existing uncommitted changes. `archive index on` opts ordinary reindexing into copying first; otherwise archiving is explicit. Configured archive roots are included in ordinary discovery/indexing. They contain sensitive raw JSONL, are not encrypted, and Git history retains prior versions. Never make the archive a subdirectory of `~/.claude`, sync SQLite, or imply that deleting a working-tree file removes its history.
+
 **The index is a disposable cache.** `cc-analyzer index` scans every session, analyzes
 it, and upserts a flattened row into SQLite (`bun:sqlite`) at
 `~/.config/cc-analyzer/index.db`. It's **incremental** — files unchanged by (size,

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { listArchiveRoots } from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
 import { listAllSessions, retainsMissingRows, scanRoots } from "./discover.ts";
 import type { IndexStatus } from "./index-status-types.ts";
@@ -20,6 +21,9 @@ export async function inspectIndexStatus(
   now = Date.now(),
   roots: ClaudeRoot[] = claudeRoots(),
 ): Promise<IndexStatus> {
+  // Include archive roots exactly as the indexer does, preferring this machine's
+  // live root over its own backup copy while that source remains available.
+  roots = [...roots, ...(await listArchiveRoots(undefined, roots))];
   // Same prune rule the indexer applies, from the same helper, so `--check`
   // cannot report a deletion that `reindex` would not actually make.
   const retained = retainsMissingRows(await scanRoots(roots));

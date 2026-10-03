@@ -13,6 +13,19 @@ transcripts or Claude configuration during ordinary analysis. Its own cache,
 preferences, exports, update checks, and telemetry state live in the
 cc-analyzer state directory.
 
+## Optional raw transcript archive
+
+`cc-analyzer archive` is an explicit opt-in that copies raw session and
+subagent JSONL into a dedicated local Git repository. You can also enable
+copy-and-commit during index refreshes with `cc-analyzer archive index on`.
+This archive is outside Claude's data directory and is intended to survive its
+cleanup; the configured path must not overlap a Claude data directory. The
+archive is **not encrypted**. If you push it to a remote such as GitHub, that
+remote receives prompts, tool output, and other transcript content. A private
+repository is still a remote copy, and Git history retains old versions after
+files are updated or deleted. cc-analyzer never pushes automatically. Choose a
+remote and retention policy you trust.
+
 ## Optional Analyze-with-Claude handoff
 
 `analyze --with-claude` and the web Analyze action intentionally start a normal
