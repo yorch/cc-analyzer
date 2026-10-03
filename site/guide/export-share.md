@@ -1,6 +1,6 @@
 ---
-title: Export and share
-description: Export cc-analyzer reports safely as Markdown, HTML, JSON, CSV, or a ZIP archive.
+title: "Export & share Claude Code session reports"
+description: "Export Claude Code session and portfolio reports from cc-analyzer safely as Markdown, HTML, JSON, CSV, or ZIP, with redaction for sharing."
 ---
 
 # Export and share

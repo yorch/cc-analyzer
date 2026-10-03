@@ -1,6 +1,6 @@
 ---
-title: Privacy and security
-description: Understand what cc-analyzer reads, writes, sends, and exposes when you use local analysis and optional integrations.
+title: "Privacy & security of Claude Code analysis"
+description: "Understand what cc-analyzer reads, writes, sends, and exposes: local-only analysis, telemetry opt-out, the transcript archive, and Claude handoff."
 ---
 
 # Privacy and security

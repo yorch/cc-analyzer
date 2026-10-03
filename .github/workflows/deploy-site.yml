@@ -27,6 +27,10 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so sitemap <lastmod> and page dateModified come from
+          # real commit dates rather than the shallow checkout's single commit.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:

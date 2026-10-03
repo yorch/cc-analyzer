@@ -1,0 +1,27 @@
+# cc-analyzer
+
+> Read-only CLI, terminal UI, and local web dashboard that analyze Claude Code sessions stored in ~/.claude: cost, tokens, cache accounting, tools, skills, models, and per-turn breakdowns. Ships as a single binary for macOS, Linux, and Windows. MIT licensed.
+
+## Start here
+
+- [Install](https://cc-analyzer.brnby.com/install): one-line installer, prebuilt binaries, checksums, self-update
+- [Get started](https://cc-analyzer.brnby.com/guide/): index your sessions and pick an interface
+- [Workflows](https://cc-analyzer.brnby.com/guide/workflows): analyze a session, explore the portfolio, use the dashboard
+
+## Guides
+
+- [Export and share](https://cc-analyzer.brnby.com/guide/export-share): Markdown, HTML, JSON, CSV, ZIP, with redaction
+- [Privacy and security](https://cc-analyzer.brnby.com/guide/privacy): what is read, written, and sent
+- [Troubleshooting](https://cc-analyzer.brnby.com/guide/troubleshooting): stale indexes, missing sessions, cost gaps
+
+## Reference
+
+- [Implementation reference](https://cc-analyzer.brnby.com/docs/): architecture and internals
+- [CLI reference](https://cc-analyzer.brnby.com/docs/3-cli): commands and flags
+- [Cost and pricing model](https://cc-analyzer.brnby.com/docs/2-2-cost-and-pricing): how dollars are derived from tokens
+- [Analytics and insights](https://cc-analyzer.brnby.com/docs/7-analytics-and-insights): rollups, diagnostics, what-if repricing
+- [Glossary](https://cc-analyzer.brnby.com/docs/glossary): metric and term definitions
+
+## Source
+
+- [GitHub repository](https://github.com/yorch/cc-analyzer)

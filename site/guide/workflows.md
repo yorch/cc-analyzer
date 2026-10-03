@@ -1,9 +1,14 @@
 ---
-title: Workflows
-description: Task-oriented workflows for analyzing sessions, exploring the portfolio, using the dashboard, and keeping data fresh.
+title: "Claude Code session analysis workflows"
+description: "Task-oriented cc-analyzer workflows: analyze one Claude Code session, explore your portfolio, use the local web dashboard, and manage data directories."
 ---
 
 # Workflows
+
+These are the common ways to work with cc-analyzer once it is installed:
+inspecting a single Claude Code session, reviewing spend across every project,
+browsing in the local web dashboard, and pointing it at the right data
+directory. Each section is self-contained, so jump to the task you have.
 
 ## Understand one session
 

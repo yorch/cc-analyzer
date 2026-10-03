@@ -1,4 +1,7 @@
 User-agent: *
 Allow: /
+# Open-source project and docs: fine for search, AI answers, and training.
+# This is a preference, not enforcement; change it here if the policy changes.
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 
 Sitemap: https://cc-analyzer.brnby.com/sitemap.xml

@@ -1,6 +1,6 @@
 ---
-title: Install
-description: Install cc-analyzer — one-line installer, prebuilt binaries, checksum checks, self-update, and running from source.
+title: "Install the Claude Code session analyzer"
+description: "Install cc-analyzer, the Claude Code session analyzer: one-line installer, prebuilt binaries for macOS, Linux, and Windows, checksums, and self-update."
 ---
 
 # Install cc-analyzer

@@ -1,23 +1,104 @@
 // @ts-nocheck — site has its own VitePress toolchain (site/package.json), not the root tsconfig
-import { defineConfig } from "vitepress";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitepress";
 
 const siteUrl = "https://cc-analyzer.brnby.com";
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const pageDescriptions: Record<string, string> = {
-  "docs/index.md": "Implementation reference for cc-analyzer architecture, commands, analytics, and integrations.",
-  "docs/1-repository-structure.md": "Repository layout, build pipeline, and release workflows for cc-analyzer.",
-  "docs/2-core-analysis-engine.md": "How cc-analyzer parses, analyzes, prices, and indexes Claude Code sessions.",
-  "docs/3-cli.md": "Command and flag reference for the cc-analyzer CLI.",
-  "docs/4-tui.md": "Interactive terminal UI architecture and keybindings reference for cc-analyzer.",
-  "docs/5-web-server-and-api.md": "Local web server, API routes, payloads, and trust boundaries for cc-analyzer.",
-  "docs/6-web-spa-frontend.md": "React web dashboard views, routing, charts, and export behavior.",
-  "docs/7-analytics-and-insights.md": "Portfolio analytics, diagnostics, cost attribution, and chart-series reference.",
-  "docs/8-updates-and-distribution.md": "Installers, releases, checksums, self-update, and distribution details.",
-  "docs/9-docs-site.md": "VitePress site structure, wiki synchronization, and deployment workflow.",
-  "docs/10-recipes.md": "Practical cc-analyzer recipes for sharing, triage, health checks, and weekly reports.",
-  "docs/glossary.md": "Definitions for cc-analyzer metrics, costs, events, and implementation terms.",
+  "docs/index.md":
+    "Implementation reference for cc-analyzer: architecture, core analysis engine, CLI, terminal UI, web app, analytics, and distribution internals.",
+  "docs/1-repository-structure.md":
+    "Repository layout of cc-analyzer: source tree, build pipeline, the compiled single binary, tests, and the Changeset-driven release workflows.",
+  "docs/2-core-analysis-engine.md":
+    "How cc-analyzer parses, analyzes, prices, and indexes Claude Code sessions: the shared core behind the CLI, terminal UI, and web dashboard.",
+  "docs/2-1-session-parsing-and-events.md":
+    "How cc-analyzer parses Claude Code session JSONL: the event model, tolerant schemas, parse coverage, streaming, and subagent session trees.",
+  "docs/2-2-cost-and-pricing.md":
+    "How cc-analyzer prices Claude Code sessions from tokens: per-model rates, cache write and read costs, long-context tiers, and why cost is a floor.",
+  "docs/2-3-index-and-analytics.md":
+    "How cc-analyzer indexes sessions into SQLite and rolls them up: incremental scans, schema versions, cross-file de-duplication, and portfolio analytics.",
+  "docs/2-4-per-turn-steps.md":
+    "How cc-analyzer builds the per-turn step timeline for a Claude Code session: turn segmentation, tool calls, retries, and step attribution.",
+  "docs/3-cli.md":
+    "Command and flag reference for the cc-analyzer CLI: index, stats, analyze, doctor, report, insights, export, serve, and archive commands.",
+  "docs/4-tui.md":
+    "Architecture and keybindings of the cc-analyzer interactive terminal UI: portfolio, projects, sessions, charts, trends, and insights screens.",
+  "docs/5-web-server-and-api.md":
+    "cc-analyzer's local web server and API: Hono routes, payload shapes, the loopback Host guard, write routes, and trust boundaries.",
+  "docs/6-web-spa-frontend.md":
+    "The cc-analyzer React web dashboard: views, routing, shared chart components, themes, exports, and how the SPA is embedded in the binary.",
+  "docs/7-analytics-and-insights.md":
+    "Portfolio analytics and insights in cc-analyzer: cost attribution, cache efficiency, diagnostic rules, what-if repricing, and chart series.",
+  "docs/8-updates-and-distribution.md":
+    "How cc-analyzer is installed and updated: installers, release binaries, SHA256 checksums, build provenance, self-update, and version checks.",
+  "docs/9-docs-site.md":
+    "How the cc-analyzer docs site is built: VitePress structure, wiki synchronization, synthetic screenshot fixtures, and GitHub Pages deployment.",
+  "docs/10-recipes.md":
+    "Practical cc-analyzer recipes: share a session safely, triage an expensive one, run health checks, and build a weekly Claude Code spend report.",
+  "docs/glossary.md":
+    "Glossary of cc-analyzer and Claude Code terms: turns, sidechains, compactions, cache tiers, context tax, and the cost and metric definitions.",
 };
+
+// Keyword-bearing <title>s for the wiki-generated docs pages, whose own H1s are
+// terse section names. VitePress appends " | cc-analyzer", so keep each ≤ 46
+// characters. Guide/install titles live in their own frontmatter.
+const pageTitles: Record<string, string> = {
+  "docs/index.md": "Implementation reference",
+  "docs/1-repository-structure.md": "Repository structure & build pipeline",
+  "docs/2-core-analysis-engine.md": "Core analysis engine",
+  "docs/2-1-session-parsing-and-events.md": "Claude Code session parsing & event model",
+  "docs/2-2-cost-and-pricing.md": "Claude Code cost & pricing model",
+  "docs/2-3-index-and-analytics.md": "SQLite index & portfolio aggregation",
+  "docs/2-4-per-turn-steps.md": "Per-turn tool & step timeline",
+  "docs/3-cli.md": "CLI command reference",
+  "docs/4-tui.md": "Interactive terminal UI reference",
+  "docs/5-web-server-and-api.md": "Local web server & API reference",
+  "docs/6-web-spa-frontend.md": "Web dashboard (React SPA) frontend",
+  "docs/7-analytics-and-insights.md": "Analytics, insights & diagnostics",
+  "docs/8-updates-and-distribution.md": "Installers, updates & distribution",
+  "docs/9-docs-site.md": "Docs site architecture",
+  "docs/10-recipes.md": "Recipes: share, triage & weekly reports",
+  "docs/glossary.md": "Glossary of metrics & terms",
+};
+
+/** The wiki source behind a generated docs page (mirrors sync-wiki.ts renaming). */
+function wikiSource(relativePath: string): string | undefined {
+  if (!relativePath.startsWith("docs/")) return undefined;
+  const name = relativePath.slice("docs/".length);
+  return `wiki/${name === "index.md" ? "README.md" : name.replace(/^(\d+)-(\d+)-/, "$1.$2-")}`;
+}
+
+/**
+ * ISO date of the last commit touching a repo file, for generated pages that
+ * have no git history of their own under site/docs/. Needs full history in CI
+ * (deploy-site.yml checks out with fetch-depth: 0).
+ */
+function lastCommitDate(repoPath: string): string | undefined {
+  try {
+    const out = execFileSync("git", ["log", "-1", "--format=%cI", "--", repoPath], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    }).trim();
+    return out || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Breadcrumb trail (name, path) for a page, or undefined for the landing page. */
+function breadcrumbs(relativePath: string, title: string): [string, string][] | undefined {
+  if (relativePath === "index.md") return undefined;
+  const route = `/${relativePath.replace(/(?:index)?\.md$/, "")}`;
+  const trail: [string, string][] = [["Home", "/"]];
+  if (relativePath.startsWith("docs/")) {
+    trail.push(["Reference", "/docs/"]);
+  } else if (relativePath.startsWith("guide/")) {
+    trail.push(["Get started", "/guide/"]);
+  }
+  if (trail[trail.length - 1][1] !== route) trail.push([title, route]);
+  return trail;
+}
 
 // Landing-page structured data (SoftwareApplication). Emitted only on "/".
 const softwareApplicationSchema = {
@@ -34,6 +115,38 @@ const softwareApplicationSchema = {
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
+/** TechArticle + BreadcrumbList JSON-LD for every non-landing page. */
+function articleSchemas(pageData, title: string, description: string, canonical: string) {
+  const trail = breadcrumbs(pageData.relativePath, title);
+  if (!trail) return [];
+  const source = wikiSource(pageData.relativePath);
+  const modified =
+    (source && lastCommitDate(source)) ||
+    (pageData.lastUpdated ? new Date(pageData.lastUpdated).toISOString() : undefined);
+  return [
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      headline: title,
+      description,
+      url: canonical,
+      inLanguage: "en-US",
+      isPartOf: { "@type": "WebSite", name: "cc-analyzer", url: siteUrl },
+      ...(modified ? { dateModified: modified } : {}),
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: trail.map(([name, path], index) => ({
+        "@type": "ListItem",
+        position: index + 1,
+        name,
+        item: new URL(path, siteUrl).toString(),
+      })),
+    },
+  ];
+}
+
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   title: "cc-analyzer",
@@ -44,7 +157,20 @@ export default defineConfig({
   lastUpdated: true,
   cleanUrls: true,
   srcExclude: ["README.md", "GOTCHAS.md"],
-  sitemap: { hostname: siteUrl },
+  sitemap: {
+    hostname: siteUrl,
+    // Generated docs pages have no git history under site/docs/, so VitePress
+    // emits no <lastmod> for them. Take it from the wiki source instead.
+    transformItems(items) {
+      return items.map((item) => {
+        if (item.lastmod) return item;
+        const page = item.url.endsWith("/") ? `${item.url}index.md` : `${item.url}.md`;
+        const source = wikiSource(page);
+        const date = source && lastCommitDate(source);
+        return date ? { ...item, lastmod: Date.parse(date) } : item;
+      });
+    },
+  },
   // The whole aesthetic is an amber-phosphor CRT; dark is the intended default,
   // with the light "print-out" theme still one toggle away.
   appearance: "dark",
@@ -86,6 +212,11 @@ export default defineConfig({
     },
   },
 
+  transformPageData(pageData) {
+    const title = pageTitles[pageData.relativePath];
+    if (title) pageData.title = title;
+  },
+
   transformHead({ pageData, title, description }) {
     const isHome = pageData.relativePath === "index.md";
     const route =
@@ -97,7 +228,11 @@ export default defineConfig({
     return [
       ...(isHome
         ? [["script", { type: "application/ld+json" }, JSON.stringify(softwareApplicationSchema)]]
-        : []),
+        : articleSchemas(pageData, pageData.title || title, pageDescription, canonical).map((schema) => [
+            "script",
+            { type: "application/ld+json" },
+            JSON.stringify(schema),
+          ])),
       ["link", { rel: "canonical", href: canonical }],
       ["meta", { property: "og:title", content: title }],
       ["meta", { name: "description", content: pageDescription }],
