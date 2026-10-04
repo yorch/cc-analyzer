@@ -59,6 +59,7 @@ directory guide](/install#claude-data-directories).
 
 ## What should I read next?
 
+- [Archive sessions across computers](/guide/archive)
 - [Export and share](/guide/export-share)
 - [Troubleshooting](/guide/troubleshooting)
 - [Privacy and security](/guide/privacy)

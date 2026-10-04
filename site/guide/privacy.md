@@ -24,7 +24,8 @@ archive is **not encrypted**. If you push it to a remote such as GitHub, that
 remote receives prompts, tool output, and other transcript content. A private
 repository is still a remote copy, and Git history retains old versions after
 files are updated or deleted. cc-analyzer never pushes automatically. Choose a
-remote and retention policy you trust.
+remote and retention policy you trust. See the [multi-computer archive setup
+steps](/guide/archive) for the local setup and manual sync workflow.
 
 ## Optional Analyze-with-Claude handoff
 
