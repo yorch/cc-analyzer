@@ -808,6 +808,27 @@ describe("Claude data directories", () => {
     }
   });
 
+  test("archive alias current maps the working directory and commits it", async () => {
+    const stateDir = join(tmpDir, "alias-current-state");
+    const archiveDir = join(tmpDir, "alias-current-archive");
+    const projectDir = join(tmpDir, "project");
+    const env = { CC_ANALYZER_STATE_DIR: stateDir };
+    const configured = await run(["archive", "set", archiveDir], env, projectDir);
+    expect(configured.code, configured.stderr).toBe(0);
+    const set = await run(["archive", "alias", "current", "Acme App"], env, projectDir);
+    expect(set.code, set.stderr).toBe(0);
+    expect(set.stdout).toContain("Commit created locally");
+    const listed = await run(["archive", "alias", "list"], env, projectDir);
+    expect(listed.stdout).toContain(projectDir);
+    expect(listed.stdout).toContain("Acme App");
+  });
+
+  test("archive alias current requires a name", async () => {
+    const r = await run(["archive", "alias", "current"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("current <name>");
+  });
+
   test("claude-dir rejects a bad subcommand and a missing operand", async () => {
     expect((await run(["claude-dir", "frobnicate"])).code).toBe(2);
     expect((await run(["claude-dir", "add"])).code).toBe(2);

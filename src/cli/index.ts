@@ -128,7 +128,7 @@ Usage:
                                        Build, refresh, or check the session index
   cc-analyzer archive [show|set <path>|run|index on|off]
                                        Archive raw session trees in a local Git repo
-  cc-analyzer archive alias <list|set <path> <name>|remove <path>>
+  cc-analyzer archive alias <list|set <path> <name>|current <name>|remove <path>>
                                        Group project paths under a shared alias
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
@@ -304,10 +304,11 @@ async function cmdArchive(action: string | undefined, operands: string[]): Promi
       else console.log(table(["working directory", "shared name"], aliases));
       return 0;
     }
-    const path = operands[1];
-    if (operation === "set" && path && operands[2]) {
+    const path = operation === "current" ? process.cwd() : operands[1];
+    const name = operation === "current" ? operands[1] : operands[2];
+    if (path && name && (operation === "set" || operation === "current")) {
       try {
-        const changed = await setProjectAlias(path, operands[2]);
+        const changed = await setProjectAlias(path, name);
         console.log(
           changed
             ? `Alias set. Commit created locally; run \`cc-analyzer index\`.`
@@ -333,7 +334,9 @@ async function cmdArchive(action: string | undefined, operands: string[]): Promi
         return 1;
       }
     }
-    console.error("usage: cc-analyzer archive alias <list|set <path> <name>|remove <path>>");
+    console.error(
+      "usage: cc-analyzer archive alias <list|set <path> <name>|current <name>|remove <path>>",
+    );
     return 2;
   }
   if (action === "run") {

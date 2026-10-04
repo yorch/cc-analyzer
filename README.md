@@ -255,14 +255,20 @@ differ between computers, use the shared aliases stored in the archive:
 cc-analyzer archive alias set /Users/alice/work/app "Acme App"
 cc-analyzer archive alias set D:/work/app "Acme App"  # on another computer
 cc-analyzer archive alias list
+
+# Or, from the project directory whose path Claude records:
+cd /Users/alice/work/app
+cc-analyzer archive alias current "Acme App"
 ```
 
-Each path is the recorded project working directory on that computer. Matching
-paths with the same alias become one project in reports, and the alias is the
-displayed project name. The alias file is committed locally; push and pull the
-archive repository manually to share changes. Removing or changing aliases
-requires an index refresh on each computer. The SQLite index remains local and
-is rebuilt independently on each machine.
+Each path is the recorded project working directory on that computer. The
+`current` shortcut uses your shell's current directory, so run it from the same
+project root Claude Code records. Matching paths with the same alias become one
+project in reports, and the alias is the displayed project name. The alias file
+is committed locally; push and pull the archive repository manually to share
+changes. Before another `archive run`, pull first and ensure the repository is
+clean. Removing or changing aliases requires an index refresh on each computer.
+The SQLite index remains local and is rebuilt independently on each machine.
 
 Archives contain raw, potentially sensitive prompts and tool output. Git does
 not encrypt them: use a private remote only if you are comfortable storing the

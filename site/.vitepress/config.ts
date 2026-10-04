@@ -279,6 +279,7 @@ export default defineConfig({
           items: [
             { text: "Overview", link: "/guide/" },
             { text: "Workflows", link: "/guide/workflows" },
+            { text: "Archive across computers", link: "/guide/archive" },
             { text: "Export & share", link: "/guide/export-share" },
             { text: "Troubleshooting", link: "/guide/troubleshooting" },
             { text: "Privacy & security", link: "/guide/privacy" },
