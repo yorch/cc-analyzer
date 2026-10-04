@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   path TEXT PRIMARY KEY,
   claude_dir TEXT NOT NULL,
   project_id TEXT NOT NULL,
+  project_alias TEXT,
   project_path TEXT,
   session_id TEXT,
   title TEXT,
@@ -179,7 +180,11 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // high. Cost is computed at index time and stored, and the incremental indexer
 // skips unchanged files, so nothing short of a rebuild would fix them — the v18
 // rationale in reverse: that bump applied the forced rate, this one retires it.
-export const SCHEMA_VERSION = "20";
+// v21: `project_alias` stores the shared human label used to group sessions
+// whose working directories differ across machines; `project_id` is the
+// deterministic alias-group identity, and a rebuild applies the shared alias
+// map to every existing row.
+export const SCHEMA_VERSION = "21";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

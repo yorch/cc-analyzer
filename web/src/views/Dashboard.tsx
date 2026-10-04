@@ -99,7 +99,7 @@ export function Dashboard() {
   // shared labeller names the root only on the rows that actually collide.
   const projectLabel = labelProjects(
     byProject,
-    (p) => projectDisplayName(p.projectPath, p.projectId),
+    (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
     (p) => p.claudeDir,
   ).label;
   const byModel = data?.byModel ?? [];
@@ -354,7 +354,7 @@ export function Dashboard() {
                     <td className="num">{usd(r.cost)}</td>
                     <td>
                       <a href={link.project(r.projectId)}>
-                        {shortPath(r.projectPath, r.projectId)}
+                        {shortPath(r.projectAlias ?? r.projectPath, r.projectId)}
                       </a>
                     </td>
                   </tr>
@@ -514,7 +514,11 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
           />
           <Card
             label="Top project"
-            value={topProject ? shortPath(topProject.projectPath, topProject.projectId) : "—"}
+            value={
+              topProject
+                ? shortPath(topProject.projectAlias ?? topProject.projectPath, topProject.projectId)
+                : "—"
+            }
             sub={topProject ? usd(topProject.cost) : undefined}
           />
           <Card

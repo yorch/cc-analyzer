@@ -71,7 +71,7 @@ export function Projects() {
     // otherwise every project would carry the same redundant path.
     const { label, multiRoot: multi } = labelProjects(
       all,
-      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
       (p) => p.claudeDir,
     );
     const built: ProjectListRow[] = all.map((project) => ({

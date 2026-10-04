@@ -136,6 +136,7 @@ export function buildWeeklyDigest(
     .slice(0, TOP_PROJECTS)
     .map((r) => ({
       projectId: r.projectId,
+      projectAlias: r.projectAlias,
       projectPath: r.projectPath,
       claudeDir: r.claudeDir,
       cost: r.cost,

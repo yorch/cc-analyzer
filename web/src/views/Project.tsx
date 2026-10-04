@@ -82,7 +82,7 @@ export function Project({ id }: { id: string }) {
   // otherwise every project would carry the same redundant path.
   const { multiRoot } = labelProjects(
     projects.data ?? [],
-    (p) => projectDisplayName(p.projectPath, p.projectId),
+    (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
     (p) => p.claudeDir,
   );
 
@@ -103,7 +103,7 @@ export function Project({ id }: { id: string }) {
         />
       )}
       <header className="top">
-        <h1>{projectDisplayName(project?.projectPath, id)}</h1>
+        <h1>{projectDisplayName(project?.projectPath, id, project?.projectAlias)}</h1>
         <span className="muted">
           {sessions.length}
           {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
@@ -232,7 +232,10 @@ export function Project({ id }: { id: string }) {
 
       {view === "files" && (
         <ViewPanel id="project" view={view}>
-          <HotFiles rows={hotFiles} projectPath={project?.projectPath ?? null} />
+          <HotFiles
+            rows={hotFiles}
+            projectPath={project?.projectAlias ? null : (project?.projectPath ?? null)}
+          />
           {hotFiles.length === 0 && <EmptyNotice>No edited files were recorded.</EmptyNotice>}
         </ViewPanel>
       )}

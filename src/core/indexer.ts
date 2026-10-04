@@ -15,11 +15,13 @@ import { streamSessionTree } from "./parser.ts";
 import { getArchiveDuringIndex } from "./prefs.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
+import { aliasesForProjectPath, projectAliasId, readProjectAliases } from "./project-aliases.ts";
 
 export interface SessionRow {
   path: string;
   claude_dir: string;
   project_id: string;
+  project_alias: string | null;
   project_path: string | null;
   session_id: string | null;
   title: string | null;
@@ -97,14 +99,17 @@ export function toSessionRow(
   analysis: SessionAnalysis,
   info: SessionInfo,
   now: number,
+  aliases: ReadonlyMap<string, string> = new Map(),
 ): SessionRow {
   const t = analysis.totals.tokens;
   const c = analysis.totals.cost;
+  const alias = aliasesForProjectPath(analysis.projectPath, aliases) ?? null;
   const day = analysis.startTime ? localDay(analysis.startTime) : null;
   return {
     path: info.path,
     claude_dir: info.root,
-    project_id: info.projectId,
+    project_id: alias ? projectAliasId(alias) : info.projectId,
+    project_alias: alias,
     project_path: analysis.projectPath ?? null,
     session_id: analysis.sessionId ?? info.id,
     title: analysis.title ?? null,
@@ -176,6 +181,7 @@ const COLUMNS: (keyof SessionRow)[] = [
   "path",
   "claude_dir",
   "project_id",
+  "project_alias",
   "project_path",
   "session_id",
   "title",
@@ -262,6 +268,8 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return results;
 }
 
+const PROJECT_ALIASES_META_KEY = "project_aliases_hash";
+
 export interface ReindexResult {
   total: number;
   indexed: number;
@@ -290,6 +298,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const concurrency = opts.concurrency ?? 16;
   const pricing = opts.pricing ?? (await loadPricing()).table;
   const now = Date.now();
+  const aliases = await readProjectAliases();
 
   // Resolve the configured roots once and pass them down: resolution reads the
   // filesystem, and the discovery helpers would otherwise repeat it per project.
@@ -324,12 +333,17 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   }
 
   // On rebuild, ignore existing state for skipping — but still prune below.
-  const toIngest = opts.rebuild
-    ? files
-    : files.filter((f) => {
-        const prev = existing.get(f.path);
-        return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
-      });
+  const storedAliasHash = db
+    .query("SELECT value FROM meta WHERE key = ?")
+    .get(PROJECT_ALIASES_META_KEY) as { value: string } | undefined;
+  const aliasesChanged = storedAliasHash?.value !== aliases.fingerprint;
+  const toIngest =
+    opts.rebuild || aliasesChanged
+      ? files
+      : files.filter((f) => {
+          const prev = existing.get(f.path);
+          return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
+        });
   // Oldest first: when a continuation file and its parent land in the same
   // scan, the parent (older mtime) claims the shared calls, so the copied
   // spend attributes to the session that actually ran it. Attribution — not
@@ -371,7 +385,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
         detail: false,
         claimUsage: claimFor(info.path),
       });
-      return toSessionRow(analysis, info, now);
+      return toSessionRow(analysis, info, now, aliases.byPath);
     } catch {
       return null;
     } finally {
@@ -380,10 +394,9 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     }
   });
 
-  // No re-stamp pass: a project id is derived only from its root's path and its
-  // own directory name, so a row's identity cannot change while its file path
-  // stays the same. (It could when qualification depended on which root sorted
-  // first — that is one of the mechanisms uniform qualification removed.)
+  // No separate re-stamp pass: root qualification makes the ordinary project
+  // identity stable, while a changed shared alias fingerprint sends every file
+  // through this same analysis/upsert path so alias changes update row keys too.
   const upsert = upsertStatement(db);
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
   const deleteKeysStmt = db.query("DELETE FROM usage_keys WHERE path = ?");
@@ -417,6 +430,18 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
       LAST_SCAN_KEY,
       String(Date.now()),
     );
+    // Keep the old fingerprint if any file failed analysis or any protected
+    // unreadable-root row could not be revisited; otherwise the next run could
+    // skip a row whose alias change was never applied.
+    const hasRetainedUnavailableRows = [...existing].some(
+      ([path, prev]) => !currentPaths.has(path) && retained(prev.claude_dir),
+    );
+    if (rows.every((row) => row !== null) && !hasRetainedUnavailableRows) {
+      db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+        PROJECT_ALIASES_META_KEY,
+        aliases.fingerprint,
+      );
+    }
   });
   writeAll();
 

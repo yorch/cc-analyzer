@@ -46,13 +46,18 @@ const projectAccessors = (label: (row: ProjectCacheRow) => string): Accessors<Pr
 /** The one labelling rule for a set of project rows: qualify a name with its
  *  Claude root only when another root holds a project of the same name. */
 const rootLabeller = <
-  T extends { projectPath: string | null; projectId: string; claudeDir: string },
+  T extends {
+    projectPath: string | null;
+    projectId: string;
+    projectAlias?: string | null;
+    claudeDir: string;
+  },
 >(
   rows: readonly T[],
 ) =>
   labelProjects(
     rows,
-    (r) => projectDisplayName(r.projectPath, r.projectId),
+    (r) => projectDisplayName(r.projectPath, r.projectId, r.projectAlias),
     (r) => r.claudeDir,
   ).label;
 
@@ -183,7 +188,7 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
             d.projectId && (
               <p>
                 <a href={link.project(d.projectId)}>
-                  {projectDisplayName(d.projectPath, d.projectId)}
+                  {projectDisplayName(d.projectPath, d.projectId, d.projectAlias)}
                 </a>
               </p>
             )
@@ -412,7 +417,8 @@ export function InsightsProject({ id }: { id: string }) {
 
   // Never `?? id`: a project with no cache-active sessions (or a NULL
   // project_path) would put a raw `<slug>~<name>` in the heading.
-  const projectPath = projectDisplayName(all[0]?.projectPath, id);
+  const project = projects.data?.find((row) => row.projectId === id);
+  const projectPath = projectDisplayName(project?.projectPath, id, project?.projectAlias);
 
   return (
     <>

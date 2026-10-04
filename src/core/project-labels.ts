@@ -69,8 +69,9 @@ export function decodeProjectLabel(id: string): string {
 export function projectDisplayName(
   projectPath: string | null | undefined,
   projectId: string,
+  projectAlias?: string | null,
 ): string {
-  return projectPath ?? decodeProjectLabel(projectId);
+  return projectAlias ?? projectPath ?? decodeProjectLabel(projectId);
 }
 
 /** What a user-supplied project reference resolved to. */

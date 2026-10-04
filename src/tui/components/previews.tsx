@@ -83,7 +83,10 @@ export function ProjectPreview({
   return (
     <Box flexDirection="column">
       <Text bold color={role.heading}>
-        {truncate(projectDisplayName(project.projectPath, project.projectId), 48)}
+        {truncate(
+          projectDisplayName(project.projectPath, project.projectId, project.projectAlias),
+          48,
+        )}
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Field label="spend">
@@ -167,7 +170,9 @@ export function ProjectPreview({
           {hot.map((f) => (
             <Text key={f.file}>
               <Text color={role.body}>{String(f.sessions).padStart(3)}× </Text>
-              <Text color={role.muted}>{truncate(relFile(f.file, project.projectPath), 44)}</Text>
+              <Text color={role.muted}>
+                {truncate(relFile(f.file, project.projectAlias ? null : project.projectPath), 44)}
+              </Text>
             </Text>
           ))}
         </Box>

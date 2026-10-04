@@ -248,8 +248,21 @@ git -C /path/to/cc-archive push -u origin HEAD
 Clone that repository on another computer and run `cc-analyzer archive set
 <clone-path>` there. Archived sessions are included in the ordinary index and
 portfolio reports; enabling `archive index on` on each computer lets each one
-contribute its own sessions. The SQLite index remains local and is rebuilt
-independently on each machine.
+contribute its own sessions. To combine projects whose working directories
+differ between computers, use the shared aliases stored in the archive:
+
+```bash
+cc-analyzer archive alias set /Users/alice/work/app "Acme App"
+cc-analyzer archive alias set D:/work/app "Acme App"  # on another computer
+cc-analyzer archive alias list
+```
+
+Each path is the recorded project working directory on that computer. Matching
+paths with the same alias become one project in reports, and the alias is the
+displayed project name. The alias file is committed locally; push and pull the
+archive repository manually to share changes. Removing or changing aliases
+requires an index refresh on each computer. The SQLite index remains local and
+is rebuilt independently on each machine.
 
 Archives contain raw, potentially sensitive prompts and tool output. Git does
 not encrypt them: use a private remote only if you are comfortable storing the
