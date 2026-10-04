@@ -1,5 +1,15 @@
 # cc-analyzer
 
+## 0.25.0
+
+### Minor Changes
+
+- [#132](https://github.com/yorch/cc-analyzer/pull/132) [`464c17c`](https://github.com/yorch/cc-analyzer/commit/464c17c9b955eb17b56853a641428bb3385c96d1) Thanks [@yorch](https://github.com/yorch)! - Add shared project aliases to Git-backed session archives so reports can merge project activity across computers.
+
+### Patch Changes
+
+- [#134](https://github.com/yorch/cc-analyzer/pull/134) [`3e195cd`](https://github.com/yorch/cc-analyzer/commit/3e195cddd0d742245c406b456da51ffd7206971f) Thanks [@yorch](https://github.com/yorch)! - Add a current-directory project-alias shortcut and publish a multi-computer archive setup guide.
+
 ## 0.24.0
 
 ### Minor Changes
