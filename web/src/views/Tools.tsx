@@ -362,7 +362,7 @@ function Compactions({ data, query }: { data: CompactionUsage; query: string }) 
   const q = query.trim().toLowerCase();
   const rows = q
     ? data.byProject.filter((p) =>
-        `${p.projectPath ?? ""} ${p.projectId}`.toLowerCase().includes(q),
+        `${p.projectPath ?? ""} ${p.projectId} ${p.projectAlias ?? ""}`.toLowerCase().includes(q),
       )
     : data.byProject;
   return (
@@ -379,7 +379,7 @@ function Compactions({ data, query }: { data: CompactionUsage; query: string }) 
           <FactsTable
             head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
             rows={rows.map((p) => [
-              shortPath(p.projectPath, p.projectId),
+              shortPath(p.projectAlias ?? p.projectPath, p.projectId),
               count(p.compactions),
               `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
               `${(p.share * 100).toFixed(0)}%`,
@@ -804,9 +804,9 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Subagent $", "Share", "Total $"]}
                 rows={sc.byProject
-                  .filter((row) => matches(row.projectPath, row.projectId))
+                  .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
                   .map((p) => [
-                    shortPath(p.projectPath, p.projectId),
+                    shortPath(p.projectAlias ?? p.projectPath, p.projectId),
                     usd(p.sidechainCost),
                     `${(p.share * 100).toFixed(0)}%`,
                     usd(p.cost),
@@ -826,9 +826,9 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Searches", "Fetches"]}
                 rows={wt.byProject
-                  .filter((row) => matches(row.projectPath, row.projectId))
+                  .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
                   .map((p) => [
-                    shortPath(p.projectPath, p.projectId),
+                    shortPath(p.projectAlias ?? p.projectPath, p.projectId),
                     count(p.searches),
                     count(p.fetches),
                   ])}

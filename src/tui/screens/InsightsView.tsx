@@ -31,7 +31,11 @@ const PROJECT_SORT: SortField<ProjectCacheRow>[] = [
   { key: "waste", label: "waste", value: (r) => r.waste },
   { key: "ratio", label: "ratio", value: (r) => r.ratio },
   { key: "write", label: "write$", value: (r) => r.writeCost },
-  { key: "name", label: "name", value: (r) => projectDisplayName(r.projectPath, r.projectId) },
+  {
+    key: "name",
+    label: "name",
+    value: (r) => projectDisplayName(r.projectPath, r.projectId, r.projectAlias),
+  },
 ];
 const SESSION_SORT: SortField<SessionCacheRow>[] = [
   { key: "waste", label: "waste", value: (r) => r.waste },
@@ -99,7 +103,7 @@ export function InsightsView({
     () =>
       labelProjects(
         projects,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       ),
     [projects],
@@ -108,7 +112,7 @@ export function InsightsView({
     () =>
       labelProjects(
         tax.byProject,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       ),
     [tax.byProject],

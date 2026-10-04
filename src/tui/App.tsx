@@ -101,7 +101,7 @@ export function App({ db, pricing, indexStatus }: Props) {
     () =>
       labelProjects(
         projects,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       ),
     [projects],

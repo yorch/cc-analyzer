@@ -59,7 +59,7 @@ export function ProjectsView({
     () =>
       labelProjects(
         projects,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       ),
     [projects],

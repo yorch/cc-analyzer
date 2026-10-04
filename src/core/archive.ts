@@ -3,6 +3,12 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import type { ClaudeRoot } from "./claude-roots.ts";
 import { listAllSessions, type SessionInfo } from "./discover.ts";
 import { getArchiveMachineId, getArchivePath } from "./prefs.ts";
+import {
+  normalizeAliasPath,
+  PROJECT_ALIASES_FILE,
+  readProjectAliases,
+  writeProjectAliases,
+} from "./project-aliases.ts";
 
 export interface ArchiveResult {
   copied: number;
@@ -94,6 +100,29 @@ async function copySession(info: SessionInfo, repo: string, machineId: string): 
   return changed;
 }
 
+async function requireCleanRepository(repo: string): Promise<void> {
+  const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
+  if (status) {
+    throw new Error(
+      "Archive repository has uncommitted changes; commit or restore them before archiving.",
+    );
+  }
+}
+
+async function commitArchiveFiles(repo: string, paths: string[], message: string): Promise<void> {
+  await git(repo, ["add", "--force", ...paths]);
+  await git(repo, [
+    "-c",
+    "user.name=cc-analyzer",
+    "-c",
+    "user.email=cc-analyzer@localhost",
+    "commit",
+    "--quiet",
+    "-m",
+    message,
+  ]);
+}
+
 /**
  * Copy discovered raw session trees into a dedicated archive repository and
  * create one local Git commit for the batch. Remote pushes are never performed.
@@ -116,31 +145,19 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
   }
   await ensureRepository(repo);
   const machineId = getArchiveMachineId();
-  const priorStatus = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
-  if (priorStatus) {
-    throw new Error(
-      "Archive repository has uncommitted changes; commit or restore them before archiving.",
-    );
-  }
+  await requireCleanRepository(repo);
   const sessions = await listAllSessions(roots);
   let copied = 0;
   for (const session of sessions) {
     if (await copySession(session, repo, machineId)) copied++;
   }
-  if (copied > 0) await git(repo, ["add", "--force", "machines"]);
-  const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
   let committed = false;
-  if (status) {
-    await git(repo, [
-      "-c",
-      "user.name=cc-analyzer",
-      "-c",
-      "user.email=cc-analyzer@localhost",
-      "commit",
-      "--quiet",
-      "-m",
+  if (copied > 0) {
+    await commitArchiveFiles(
+      repo,
+      ["machines"],
       `Archive ${copied} session${copied === 1 ? "" : "s"}`,
-    ]);
+    );
     committed = true;
   }
   return {
@@ -149,6 +166,42 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
     committed,
     roots: (await listArchiveRoots(repo)).map((root) => root.path),
   };
+}
+
+/** List aliases stored in the shared archive configuration. */
+export async function listProjectAliases(): Promise<[string, string][]> {
+  const { byPath } = await readProjectAliases();
+  return [...byPath].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** Add/update an alias, or remove one with `alias === undefined`, and commit it locally. */
+export async function setProjectAlias(path: string, alias: string | undefined): Promise<boolean> {
+  const configuredPath = getArchivePath();
+  if (!configuredPath)
+    throw new Error("No archive repository configured. Run `cc-analyzer archive set <path>`.");
+  const repo = resolve(configuredPath);
+  await ensureRepository(repo);
+  await requireCleanRepository(repo);
+  const key = normalizeAliasPath(path);
+  if (!key || !(key.startsWith("/") || /^[A-Za-z]:\//.test(key))) {
+    throw new Error("Project path must be an absolute working-directory path.");
+  }
+  const { byPath } = await readProjectAliases(repo);
+  const value = alias?.trim();
+  if (alias !== undefined && !value) throw new Error("Project alias must not be empty.");
+  if (value) {
+    if (byPath.get(key) === value) return false;
+    byPath.set(key, value);
+  } else {
+    if (!byPath.delete(key)) return false;
+  }
+  await writeProjectAliases(byPath, repo);
+  await commitArchiveFiles(
+    repo,
+    [PROJECT_ALIASES_FILE],
+    value ? `Set project alias: ${value}` : "Remove project alias",
+  );
+  return true;
 }
 
 /** Build stable archive roots in Claude's normal on-disk layout. */

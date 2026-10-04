@@ -3,6 +3,7 @@ import { listArchiveRoots } from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
 import { listAllSessions, retainsMissingRows, scanRoots } from "./discover.ts";
 import type { IndexStatus } from "./index-status-types.ts";
+import { readProjectAliases } from "./project-aliases.ts";
 
 export const LAST_SCAN_KEY = "last_scan_at";
 
@@ -28,6 +29,11 @@ export async function inspectIndexStatus(
   // cannot report a deletion that `reindex` would not actually make.
   const retained = retainsMissingRows(await scanRoots(roots));
 
+  const aliases = await readProjectAliases();
+  const storedAliasHash = db
+    .query("SELECT value FROM meta WHERE key = ?")
+    .get("project_aliases_hash") as { value: string } | undefined;
+  const aliasesChanged = storedAliasHash?.value !== aliases.fingerprint;
   const files = await listAllSessions(roots);
   const existingRows = db
     .query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions")
@@ -47,6 +53,12 @@ export async function inspectIndexStatus(
     const row = existing.get(file.path);
     if (!row) added++;
     else if (row.mtime_ms !== file.mtimeMs || row.size_bytes !== file.sizeBytes) changed++;
+  }
+
+  if (aliasesChanged) {
+    changed = existingRows.filter(
+      (row) => sourcePaths.has(row.path) || retained(row.claude_dir),
+    ).length;
   }
 
   let deleted = 0;

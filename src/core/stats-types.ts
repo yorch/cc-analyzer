@@ -258,6 +258,7 @@ export interface HeatCell {
 
 export interface ProjectRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
    *  projects from different roots apart in a ranked list. */
@@ -303,6 +304,7 @@ export interface CacheMetrics {
 
 export interface ProjectCacheRow extends CacheMetrics {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
    *  projects from different roots apart in a ranked list. */
@@ -490,6 +492,7 @@ export interface WebToolsSummary {
 
 export interface WebToolsProjectRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   searches: number;
   fetches: number;
@@ -497,6 +500,7 @@ export interface WebToolsProjectRow {
 
 export interface EstimatedShareRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   cost: number;
   estimatedCost: number;
@@ -521,6 +525,7 @@ export interface SidechainDayRow {
 
 export interface SidechainProjectRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   cost: number;
   sidechainCost: number;
@@ -758,6 +763,7 @@ export interface CompactionSummary {
 
 export interface CompactionProjectRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   sessions: number;
   sessionsWithCompaction: number;
@@ -813,6 +819,7 @@ export interface ParseCoverageStats {
 
 export interface ContextTaxRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
    *  projects from different roots apart in a ranked list. */

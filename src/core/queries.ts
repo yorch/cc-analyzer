@@ -9,6 +9,7 @@ const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
 
 export interface IndexedProject {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir this project lives under — what tells two same-named
    *  projects from different roots apart in a list. */
@@ -81,6 +82,7 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
   const rows = db
     .query(
       `SELECT project_id AS projectId,
+        MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
         -- MAX() is a "pick any": project_id is globally unique (root-qualified
         -- at index time), so every row in a group shares one claude_dir.
@@ -143,10 +145,13 @@ export function indexedProjectForPath(
  */
 export function resolveIndexedProject(db: Database, ref: string): ProjectRefMatch {
   const rows = db.query("SELECT DISTINCT project_id AS id FROM sessions").all() as { id: string }[];
-  return resolveProjectRef(
-    ref,
-    rows.map((r) => r.id),
-  );
+  const ids = rows.map((r) => r.id);
+  if (ids.includes(ref)) return { status: "found", id: ref };
+  const alias = db
+    .query("SELECT DISTINCT project_id AS id FROM sessions WHERE project_alias = ?")
+    .get(ref) as { id: string } | undefined;
+  if (alias) return { status: "found", id: alias.id };
+  return resolveProjectRef(ref, ids);
 }
 
 /** Sessions within a project, most recent first. */

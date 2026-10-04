@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { archiveSessions, listArchiveRoots } from "../../src/core/archive.ts";
+import {
+  archiveSessions,
+  listArchiveRoots,
+  listProjectAliases,
+  setProjectAlias,
+} from "../../src/core/archive.ts";
 import { type ClaudeRoot, rootSlug } from "../../src/core/claude-roots.ts";
 import { getArchiveMachineId, setArchivePath } from "../../src/core/prefs.ts";
 
@@ -80,6 +85,18 @@ describe("archiveSessions", () => {
       ),
     ).toContain("Explore");
     expect(root).toContain(getArchiveMachineId());
+  });
+
+  test("stores aliases in a local Git commit and supports removal", async () => {
+    const result = await archiveSessions([sourceRoot]);
+    expect(result.committed).toBe(true);
+    await expect(setProjectAlias("relative/project", "Shared Project")).rejects.toThrow("absolute");
+    await expect(setProjectAlias("/Users/alice/project", " ")).rejects.toThrow("empty");
+    expect(await setProjectAlias("/Users/alice/project", "Shared Project")).toBe(true);
+    expect(await listProjectAliases()).toEqual([["/Users/alice/project", "Shared Project"]]);
+    expect(await setProjectAlias("/Users/alice/project", "Shared Project")).toBe(false);
+    expect(await setProjectAlias("/Users/alice/project", undefined)).toBe(true);
+    expect(await listProjectAliases()).toEqual([]);
   });
 
   test("exposes another machine's archive roots, but avoids a live source duplicate", async () => {

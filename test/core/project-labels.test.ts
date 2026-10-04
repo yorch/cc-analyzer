@@ -165,6 +165,10 @@ describe("projectDisplayName", () => {
     expect(projectDisplayName("/Users/me/proj", "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");
   });
 
+  test("an explicit shared alias takes precedence over the machine path", () => {
+    expect(projectDisplayName("/Users/me/proj", "alias~deadbeef", "Shared App")).toBe("Shared App");
+  });
+
   test("falls back to the decoded id with the slug stripped", () => {
     // A raw `<slug>~<name>` must never reach a person.
     expect(projectDisplayName(null, "aaaaaaaa~-Users-me-proj")).toBe("/Users/me/proj");

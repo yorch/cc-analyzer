@@ -102,6 +102,7 @@ export interface DigestHeadline {
 
 export interface DigestProjectRow {
   projectId: string;
+  projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
    *  projects from different roots apart in a ranked list. */
@@ -320,7 +321,7 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
       // terminal renderer and `cmdProjects` apply.
       const { multiRoot } = labelProjects(
         d.projects,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       );
       const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
@@ -336,7 +337,7 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
             : ["left", "right", "right", "right"],
           d.projects.map((p) => {
             const base = [
-              cell(projectDisplayName(p.projectPath, p.projectId)),
+              cell(projectDisplayName(p.projectPath, p.projectId, p.projectAlias)),
               formatUSD(p.cost),
               String(p.sessions),
               formatDigestDelta(p.delta, formatUSD),

@@ -2,7 +2,12 @@
 import { existsSync } from "node:fs";
 
 import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
-import { archiveSessions, listArchiveRoots } from "../core/archive.ts";
+import {
+  archiveSessions,
+  listArchiveRoots,
+  listProjectAliases,
+  setProjectAlias,
+} from "../core/archive.ts";
 import {
   CLAUDE_NOT_FOUND_MESSAGE,
   isValidModel,
@@ -123,6 +128,8 @@ Usage:
                                        Build, refresh, or check the session index
   cc-analyzer archive [show|set <path>|run|index on|off]
                                        Archive raw session trees in a local Git repo
+  cc-analyzer archive alias <list|set <path> <name>|remove <path>>
+                                       Group project paths under a shared alias
   cc-analyzer stats [--current] [--json]
                                        Portfolio or current-project analytics (needs an index)
   cc-analyzer audit [--json]           Cross-reference your installed setup with observed usage
@@ -258,10 +265,8 @@ const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
   default: "default",
 };
 
-async function cmdArchive(
-  action: string | undefined,
-  operand: string | undefined,
-): Promise<number> {
+async function cmdArchive(action: string | undefined, operands: string[]): Promise<number> {
+  const operand = operands[0];
   if (action === undefined || action === "show") {
     console.log(`Archive repository: ${getArchivePath() ?? "(not configured)"}`);
     console.log(`Archive during index: ${getArchiveDuringIndex() ? "on" : "off"}`);
@@ -291,6 +296,46 @@ async function cmdArchive(
     console.log(`Archiving during index is ${operand}.`);
     return 0;
   }
+  if (action === "alias") {
+    const operation = operands[0];
+    if (operation === "list") {
+      const aliases = await listProjectAliases();
+      if (aliases.length === 0) console.log("No project aliases configured.");
+      else console.log(table(["working directory", "shared name"], aliases));
+      return 0;
+    }
+    const path = operands[1];
+    if (operation === "set" && path && operands[2]) {
+      try {
+        const changed = await setProjectAlias(path, operands[2]);
+        console.log(
+          changed
+            ? `Alias set. Commit created locally; run \`cc-analyzer index\`.`
+            : "Alias unchanged.",
+        );
+        return 0;
+      } catch (error) {
+        console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+        return 1;
+      }
+    }
+    if (operation === "remove" && path) {
+      try {
+        const changed = await setProjectAlias(path, undefined);
+        console.log(
+          changed
+            ? `Alias removed. Commit created locally; run \`cc-analyzer index\`.`
+            : "No alias found for that path.",
+        );
+        return 0;
+      } catch (error) {
+        console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+        return 1;
+      }
+    }
+    console.error("usage: cc-analyzer archive alias <list|set <path> <name>|remove <path>>");
+    return 2;
+  }
   if (action === "run") {
     try {
       const result = await archiveSessions(claudeRoots());
@@ -304,7 +349,7 @@ async function cmdArchive(
       return 1;
     }
   }
-  console.error("usage: cc-analyzer archive [show|set <path>|run|index on|off]");
+  console.error("usage: cc-analyzer archive [show|set <path>|run|index on|off|alias ...]");
   return 2;
 }
 
@@ -1349,7 +1394,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "doctor":
       return cmdDoctor(positional[0], json);
     case "archive":
-      return cmdArchive(positional[0], positional[1]);
+      return cmdArchive(positional[0], positional.slice(1));
     case "index":
       if (rest.includes("--rebuild") && rest.includes("--check")) {
         console.error("error: --rebuild and --check cannot be used together.");

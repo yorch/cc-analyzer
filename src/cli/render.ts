@@ -627,7 +627,7 @@ export function renderPortfolioInsights(
     // A portfolio finding may be unscoped, in which case there is no project
     // line to print at all.
     pushFindings(lines, diagnostics, options, (d) =>
-      d.projectId ? projectDisplayName(d.projectPath, d.projectId) : d.projectPath,
+      d.projectId ? projectDisplayName(d.projectPath, d.projectId, d.projectAlias) : d.projectPath,
     );
     lines.push(
       muted(
@@ -694,7 +694,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
       // has room for the full column instead of a suffixed label.
       const { multiRoot } = labelProjects(
         d.projects,
-        (p) => projectDisplayName(p.projectPath, p.projectId),
+        (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
       );
       const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
@@ -709,7 +709,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
               formatUSD(p.cost),
               String(p.sessions),
               change(p.delta, formatUSD),
-              truncate(projectDisplayName(p.projectPath, p.projectId), 44),
+              truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 44),
             ];
             return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
           }),
@@ -1033,7 +1033,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     // space-constrained surfaces use (see `labelProjects`'s docstring).
     const { multiRoot } = labelProjects(
       v.byProject,
-      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
       (p) => p.claudeDir,
     );
     const projectRoots = [...new Set(v.byProject.map((p) => p.claudeDir))];
@@ -1048,7 +1048,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             formatUSD(p.cost),
             formatTokens(p.ioTokens, p.cacheTokens),
             String(p.sessions),
-            truncate(projectDisplayName(p.projectPath, p.projectId), 52),
+            truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 52),
           ];
           return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
         }),
@@ -1120,7 +1120,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
     // Same root-disambiguation decision as the other ranked project tables.
     const { multiRoot } = labelProjects(
       top10,
-      (p) => projectDisplayName(p.projectPath, p.projectId),
+      (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
       (p) => p.claudeDir,
     );
     const projectRoots = [...new Set(top10.map((p) => p.claudeDir))];
@@ -1136,7 +1136,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             formatCount(Math.round(p.p90Tokens)),
             formatCount(Math.round(p.avgTokens)),
             String(p.sessions),
-            truncate(projectDisplayName(p.projectPath, p.projectId), 44),
+            truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 44),
           ];
           return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
         }),

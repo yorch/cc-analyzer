@@ -99,6 +99,7 @@ export type StatsResponse = PortfolioStats & { costBasis: CostBasis };
 
 export interface IndexedProject extends TokenSplit {
   projectId: string;
+  projectAlias: string | null;
   projectPath: string | null;
   /** The Claude data dir this project lives under (several can be configured). */
   claudeDir: string;

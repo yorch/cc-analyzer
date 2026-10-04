@@ -65,6 +65,7 @@ export interface PortfolioDiagnostic {
   action: string;
   /** Project the signal is scoped to (or points at), when it is one project's. */
   projectId?: string;
+  projectAlias?: string;
   projectPath?: string;
 }
 
@@ -277,7 +278,13 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
       action:
         "Start with the worst project in the cache hit-list: its sessions rebuild cache they " +
         "then abandon — shorter, more focused sessions usually fix it.",
-      ...(top ? { projectId: top.projectId, projectPath: top.projectPath ?? undefined } : {}),
+      ...(top
+        ? {
+            projectId: top.projectId,
+            projectAlias: top.projectAlias ?? undefined,
+            projectPath: top.projectPath ?? undefined,
+          }
+        : {}),
       impact: cache.summary.waste,
     });
   }
@@ -331,6 +338,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
           "Trim that project's CLAUDE.md and default context, split work into smaller " +
           "sessions, or delegate bulk reading to subagents (they use their own context windows).",
         projectId: worst.projectId,
+        projectAlias: worst.projectAlias ?? undefined,
         projectPath: worst.projectPath ?? undefined,
         impact: 0,
       });
@@ -362,6 +370,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
             ? ` The setup audit already flags unused MCP servers (${unusedServers.join(", ")}) — their tool schemas are part of this tax.`
             : ""),
         projectId: heavy.projectId,
+        projectAlias: heavy.projectAlias ?? undefined,
         projectPath: heavy.projectPath ?? undefined,
         impact: 0,
       });
