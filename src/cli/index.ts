@@ -304,7 +304,16 @@ async function cmdArchive(action: string | undefined, operands: string[]): Promi
       else console.log(table(["working directory", "shared name"], aliases));
       return 0;
     }
-    const path = operation === "current" ? process.cwd() : operands[1];
+    // Shells retain the logical spelling in PWD (for example `/tmp` rather
+    // than macOS's physical `/private/tmp`), which is the form Claude Code
+    // records when it is launched from that shell. Prefer it so `current`
+    // maps the same project path the transcript carries.
+    const shellDirectory = process.env.PWD;
+    const currentDirectory =
+      shellDirectory && (shellDirectory.startsWith("/") || /^[A-Za-z]:[\\/]/.test(shellDirectory))
+        ? shellDirectory
+        : process.cwd();
+    const path = operation === "current" ? currentDirectory : operands[1];
     const name = operation === "current" ? operands[1] : operands[2];
     if (path && name && (operation === "set" || operation === "current")) {
       try {

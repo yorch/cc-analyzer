@@ -812,7 +812,7 @@ describe("Claude data directories", () => {
     const stateDir = join(tmpDir, "alias-current-state");
     const archiveDir = join(tmpDir, "alias-current-archive");
     const projectDir = join(tmpDir, "project");
-    const env = { CC_ANALYZER_STATE_DIR: stateDir };
+    const env = { CC_ANALYZER_STATE_DIR: stateDir, PWD: projectDir };
     const configured = await run(["archive", "set", archiveDir], env, projectDir);
     expect(configured.code, configured.stderr).toBe(0);
     const set = await run(["archive", "alias", "current", "Acme App"], env, projectDir);
@@ -821,6 +821,23 @@ describe("Claude data directories", () => {
     const listed = await run(["archive", "alias", "list"], env, projectDir);
     expect(listed.stdout).toContain(projectDir);
     expect(listed.stdout).toContain("Acme App");
+  });
+
+  test("archive alias current preserves the shell's logical PWD spelling", async () => {
+    const stateDir = join(tmpDir, "alias-logical-state");
+    const archiveDir = join(tmpDir, "alias-logical-archive");
+    const logicalPath = "/logical/path/to/acme";
+    const env = { CC_ANALYZER_STATE_DIR: stateDir, PWD: logicalPath };
+    expect((await run(["archive", "set", archiveDir], env)).code).toBe(0);
+    const set = await run(
+      ["archive", "alias", "current", "Acme App"],
+      env,
+      join(tmpDir, "project"),
+    );
+    expect(set.code, set.stderr).toBe(0);
+    const listed = await run(["archive", "alias", "list"], env);
+    expect(listed.stdout).toContain(logicalPath);
+    expect(listed.stdout).not.toContain(join(tmpDir, "project"));
   });
 
   test("archive alias current requires a name", async () => {
