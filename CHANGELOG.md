@@ -1,5 +1,11 @@
 # cc-analyzer
 
+## 0.25.1
+
+### Patch Changes
+
+- [#135](https://github.com/yorch/cc-analyzer/pull/135) [`ca0f761`](https://github.com/yorch/cc-analyzer/commit/ca0f7613990e043d26d29878540b98c5544a80de) Thanks [@yorch](https://github.com/yorch)! - Preserve a shell's logical working-directory path when creating a current-directory archive alias.
+
 ## 0.25.0
 
 ### Minor Changes
