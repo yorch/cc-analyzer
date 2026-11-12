@@ -27,6 +27,14 @@ files are updated or deleted. cc-analyzer never pushes automatically. Choose a
 remote and retention policy you trust. See the [multi-computer archive setup
 steps](/guide/archive) for the local setup and manual sync workflow.
 
+There is no `archive forget` command. Once a session is archived, everything in
+it, including a secret pasted into a prompt, stays in the Git history of the
+archive and of every clone that has fetched it. Deleting the file from the
+working tree does not remove it from history. Removing it takes a history
+rewrite, for example with `git filter-repo`, run on the archive and then
+coordinated on every clone and remote. Copies made before the rewrite are not
+changed by it. Rotate any exposed credential as well.
+
 ## Optional Analyze-with-Claude handoff
 
 `analyze --with-claude` and the web Analyze action intentionally start a normal
