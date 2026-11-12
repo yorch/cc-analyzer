@@ -1,5 +1,23 @@
 # cc-analyzer
 
+## 0.25.2
+
+### Patch Changes
+
+- [#137](https://github.com/yorch/cc-analyzer/pull/137) [`224608e`](https://github.com/yorch/cc-analyzer/commit/224608e30c586e0ce11694c9b3df1b2af70c1aa0) Thanks [@yorch](https://github.com/yorch)! - Make multi-computer archives trustworthy, and stop alias edits re-reading the whole portfolio.
+  
+  A computer's archive identity used to be a random id recorded only in local state. Losing it (a cleared state directory, a fresh install, a restored home) made the computer's own archived copy look like a *different* computer, so its sessions were counted twice — inflating session counts and activity metrics while the de-duplicated portfolio cost stayed correct, with nothing on screen to explain the discrepancy.
+  
+  Identity is now recorded in the archive itself as `machines/<id>/machine.json`, and resolution never guesses:
+  
+  - A computer with no recorded identity is reported as unresolved on **every** run until the user acts, rather than silently minting an id the first time any command reads the archive.
+  - A matching hostname is only a **suggestion**. Recovery is always explicit — `cc-analyzer archive machine adopt <id>`, or `cc-analyzer archive machine keep` for a genuinely new computer — because auto-adopting on a hostname match could make one computer claim another's identity and hide its sessions from the portfolio. `adopt` now also counts how many archived sessions it would hide and refuses unless `--force` is given.
+  - `archive run` refuses to write into permanent history while identity is unresolved, naming both remedies.
+  - `adopt` refuses an identity whose recorded hostnames exclude this computer unless `--force`, and tells you to run `index --rebuild` afterwards so per-session cost attribution is re-derived.
+  - `archive show` lists every machine directory it recognises with its full id, marks which one is this computer, and marks ones that predate `machine.json` as unidentified instead of hiding them.
+  
+  Changing a project alias now re-analyzes only the sessions whose project label actually changed, instead of the entire portfolio. The selection compares each indexed row's own recorded alias against the current map, so it cannot be thrown off by a partially failed scan or an unreadable root, and `index --check` reports exactly the work `index` will do. Archiving also compares file contents by streaming instead of hashing every session twice per run.
+
 ## 0.25.1
 
 ### Patch Changes
