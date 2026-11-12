@@ -187,6 +187,7 @@ cc-analyzer index --check            # check for new/changed/deleted sessions
 cc-analyzer archive set <path>       # configure a local Git archive repository
 cc-analyzer archive run              # archive raw session trees and commit locally
 cc-analyzer archive index on|off     # opt into archiving during index refresh
+cc-analyzer archive machine          # show this computer's archive identity
 cc-analyzer stats [--current] [--json]
                                      # portfolio or current-project analytics (needs an index)
 cc-analyzer audit [--json]           # cross-reference your installed setup with observed usage

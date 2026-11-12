@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { DEFAULT_ANALYSIS_MODEL, isValidModel } from "./claude-handoff.ts";
 import type { CostBasis } from "./cost-framing.ts";
@@ -19,6 +19,7 @@ interface PrefsConfig {
   analysisModel?: string;
   archivePath?: string;
   archiveDuringIndex?: boolean;
+  archiveMachineLabel?: string;
   [key: string]: unknown;
 }
 
@@ -113,25 +114,37 @@ export function setArchiveDuringIndex(enabled: boolean): void {
   writeConfig(cfg);
 }
 
-/** Stable per-installation identity so multiple computers get separate archive paths. */
-export function getArchiveMachineId(): string {
+/** Human label for this computer in the archive; display-only, defaults to the hostname. */
+export function getArchiveMachineLabel(): string {
+  const label = readConfig().archiveMachineLabel;
+  return typeof label === "string" && label.trim() ? label.trim() : hostname();
+}
+
+/** Set or clear (undefined) the archive machine label. */
+export function setArchiveMachineLabel(label: string | undefined): void {
+  const cfg = { ...readConfig() };
+  const value = label?.trim();
+  if (value) cfg.archiveMachineLabel = value;
+  else delete cfg.archiveMachineLabel;
+  writeConfig(cfg);
+}
+
+export const ARCHIVE_MACHINE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The persisted machine id when the local state file holds a valid one. */
+export function readStoredArchiveMachineId(): string | undefined {
+  try {
+    const existing = readFileSync(archiveMachineIdPath(), "utf8").trim();
+    return ARCHIVE_MACHINE_ID_PATTERN.test(existing) ? existing : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist an explicit machine id (adopting an identity found in the archive). */
+export function setArchiveMachineId(id: string): void {
   const path = archiveMachineIdPath();
-  try {
-    const existing = readFileSync(path, "utf8").trim();
-    if (/^[0-9a-f-]{36}$/.test(existing)) return existing;
-  } catch {
-    // Create lazily below.
-  }
-  const id = randomUUID();
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${id}\n`, { flag: "wx" });
-    return id;
-  } catch {
-    try {
-      return readFileSync(path, "utf8").trim();
-    } catch {
-      return id;
-    }
-  }
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${id}\n`);
 }

@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
-import { archiveSessions, listArchiveRoots } from "./archive.ts";
+import {
+  ArchiveIdentityError,
+  type ArchiveMachineResolution,
+  archiveSessions,
+  listArchiveRoots,
+  resolveArchiveMachine,
+} from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
 import {
   listAllSessions,
@@ -10,12 +16,17 @@ import {
   scanRoots,
   sessionTree,
 } from "./discover.ts";
-import { LAST_SCAN_KEY } from "./index-status.ts";
+import { LAST_SCAN_KEY, REBUILD_REQUIRED_KEY } from "./index-status.ts";
 import { streamSessionTree } from "./parser.ts";
-import { getArchiveDuringIndex } from "./prefs.ts";
+import { getArchiveDuringIndex, getArchivePath } from "./prefs.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
-import { aliasesForProjectPath, projectAliasId, readProjectAliases } from "./project-aliases.ts";
+import {
+  aliasesForProjectPath,
+  aliasNeedsReindex,
+  projectAliasId,
+  readProjectAliases,
+} from "./project-aliases.ts";
 
 export interface SessionRow {
   path: string;
@@ -268,13 +279,13 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return results;
 }
 
-const PROJECT_ALIASES_META_KEY = "project_aliases_hash";
-
 export interface ReindexResult {
   total: number;
   indexed: number;
   skipped: number;
   deleted: number;
+  /** This computer's archive identity for this run; absent when no archive is configured. */
+  archiveMachine?: ArchiveMachineResolution;
 }
 
 export interface ReindexOptions {
@@ -303,8 +314,22 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   // Resolve the configured roots once and pass them down: resolution reads the
   // filesystem, and the discovery helpers would otherwise repeat it per project.
   const sourceRoots = opts.roots ?? claudeRoots();
+  // Resolve this computer's archive identity up front, whether or not this run
+  // archives: `listArchiveRoots` needs it to suppress the machine's OWN backup
+  // copy, so a lost identity turns every one of its sessions into a second row
+  // on a plain `index` too — not only when archiving-during-index is on. The id
+  // is NOT persisted by the resolver: an unresolved identity is reported on
+  // `archiveMachine` on every run until the user adopts or keeps one.
+  let archiveMachine: ArchiveMachineResolution | undefined;
+  if (getArchivePath()) archiveMachine = await resolveArchiveMachine();
   if (opts.archive ?? getArchiveDuringIndex()) {
-    await archiveSessions(sourceRoots);
+    try {
+      await archiveSessions(sourceRoots);
+    } catch (error) {
+      // Unresolved identity: indexing only reads the archive, so proceed and
+      // let the caller warn via `archiveMachine`. `archive run` is the refusal.
+      if (!(error instanceof ArchiveIdentityError)) throw error;
+    }
   }
   const roots = [...sourceRoots, ...(await listArchiveRoots(undefined, sourceRoots))];
   // A configured-but-unreadable root (unmounted volume, a synced folder
@@ -315,35 +340,52 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const files = await listAllSessions(roots);
   const currentPaths = new Set(files.map((f) => f.path));
 
-  const existing = new Map<string, { mtime_ms: number; size_bytes: number; claude_dir: string }>();
+  const existing = new Map<
+    string,
+    {
+      mtime_ms: number;
+      size_bytes: number;
+      claude_dir: string;
+      project_path: string | null;
+      project_alias: string | null;
+    }
+  >();
   {
-    const rows = db.query("SELECT path, mtime_ms, size_bytes, claude_dir FROM sessions").all() as {
+    const rows = db
+      .query(
+        "SELECT path, mtime_ms, size_bytes, claude_dir, project_path, project_alias FROM sessions",
+      )
+      .all() as {
       path: string;
       mtime_ms: number;
       size_bytes: number;
       claude_dir: string;
+      project_path: string | null;
+      project_alias: string | null;
     }[];
     for (const r of rows) {
       existing.set(r.path, {
         mtime_ms: r.mtime_ms,
         size_bytes: r.size_bytes,
         claude_dir: r.claude_dir,
+        project_path: r.project_path,
+        project_alias: r.project_alias,
       });
     }
   }
 
   // On rebuild, ignore existing state for skipping — but still prune below.
-  const storedAliasHash = db
-    .query("SELECT value FROM meta WHERE key = ?")
-    .get(PROJECT_ALIASES_META_KEY) as { value: string } | undefined;
-  const aliasesChanged = storedAliasHash?.value !== aliases.fingerprint;
-  const toIngest =
-    opts.rebuild || aliasesChanged
-      ? files
-      : files.filter((f) => {
-          const prev = existing.get(f.path);
-          return !prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes;
-        });
+  // Beyond size/mtime, a row is stale when the alias it was indexed under (its
+  // own `project_alias` column) disagrees with the current map. Using the row
+  // as ground truth means a run that failed partway, or a root that was
+  // unreadable, can never leave a stale alias that a later run cannot see.
+  const toIngest = opts.rebuild
+    ? files
+    : files.filter((f) => {
+        const prev = existing.get(f.path);
+        if (!prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes) return true;
+        return aliasNeedsReindex(prev.project_path, prev.project_alias, aliases.byPath);
+      });
   // Oldest first: when a continuation file and its parent land in the same
   // scan, the parent (older mtime) claims the shared calls, so the copied
   // spend attributes to the session that actually ran it. Attribution — not
@@ -395,8 +437,9 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   });
 
   // No separate re-stamp pass: root qualification makes the ordinary project
-  // identity stable, while a changed shared alias fingerprint sends every file
-  // through this same analysis/upsert path so alias changes update row keys too.
+  // identity stable, while a stale alias sends just the affected files (rows whose
+  // recorded project_alias disagrees with the current map) through this same
+  // analysis/upsert path, so alias changes update row keys too.
   const upsert = upsertStatement(db);
   const deleteStmt = db.query("DELETE FROM sessions WHERE path = ?");
   const deleteKeysStmt = db.query("DELETE FROM usage_keys WHERE path = ?");
@@ -426,22 +469,11 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
       deleteKeysStmt.run(path);
       deleted++;
     }
+    if (opts.rebuild) db.query("DELETE FROM meta WHERE key = ?").run(REBUILD_REQUIRED_KEY);
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
       LAST_SCAN_KEY,
       String(Date.now()),
     );
-    // Keep the old fingerprint if any file failed analysis or any protected
-    // unreadable-root row could not be revisited; otherwise the next run could
-    // skip a row whose alias change was never applied.
-    const hasRetainedUnavailableRows = [...existing].some(
-      ([path, prev]) => !currentPaths.has(path) && retained(prev.claude_dir),
-    );
-    if (rows.every((row) => row !== null) && !hasRetainedUnavailableRows) {
-      db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
-        PROJECT_ALIASES_META_KEY,
-        aliases.fingerprint,
-      );
-    }
   });
   writeAll();
 
@@ -451,5 +483,6 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     indexed,
     skipped: files.length - toIngest.length,
     deleted,
+    archiveMachine,
   };
 }

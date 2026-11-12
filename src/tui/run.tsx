@@ -1,4 +1,5 @@
 import { render } from "ink";
+import { warnIfUnresolvedArchive } from "../core/archive.ts";
 import { openDb } from "../core/db.ts";
 import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
@@ -16,6 +17,7 @@ export async function runTui(): Promise<number> {
   }
   const db = openDb();
   const { table } = await loadPricing();
+  await warnIfUnresolvedArchive();
   const refreshed = await refreshIndexIfNeeded(db, {
     pricing: table,
     onProgress: (done, total) => {

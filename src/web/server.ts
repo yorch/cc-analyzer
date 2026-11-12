@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
+import { warnIfUnresolvedArchive } from "../core/archive.ts";
 import { openDb } from "../core/db.ts";
 import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
@@ -94,6 +95,7 @@ export function createApp(
 export async function runServe(opts: ServeOptions = {}): Promise<number> {
   const db = openDb();
   const { table } = await loadPricing();
+  await warnIfUnresolvedArchive();
   const refreshed = await refreshIndexIfNeeded(db, {
     refresh: opts.refresh,
     pricing: table,

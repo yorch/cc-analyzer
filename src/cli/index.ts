@@ -1,12 +1,21 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
+import { hostname } from "node:os";
 
 import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
 import {
+  adoptArchiveMachine,
+  archiveHasHistory,
   archiveSessions,
+  describeUnresolvedMachine,
+  keepArchiveMachine,
+  listArchiveMachineEntries,
   listArchiveRoots,
   listProjectAliases,
+  resolveArchiveMachine,
   setProjectAlias,
+  warnIfUnresolvedArchive,
+  warnIfUnresolvedMachine,
 } from "../core/archive.ts";
 import {
   CLAUDE_NOT_FOUND_MESSAGE,
@@ -36,7 +45,12 @@ import {
   sessionTree,
 } from "../core/discover.ts";
 import { exportBundle, parseFormats, parseScope } from "../core/export.ts";
-import { inspectIndexStatus } from "../core/index-status.ts";
+import {
+  inspectIndexStatus,
+  markRebuildRequired,
+  REBUILD_REQUIRED_MESSAGE,
+  rebuildRequired,
+} from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
 import { parseSessionTree } from "../core/parser.ts";
@@ -45,10 +59,13 @@ import { assemblePortfolioSignals } from "../core/portfolio-signals.ts";
 import {
   getAnalysisModel,
   getArchiveDuringIndex,
+  getArchiveMachineLabel,
   getArchivePath,
   getClaudeDirs,
   getCostBasis,
+  readStoredArchiveMachineId,
   setArchiveDuringIndex,
+  setArchiveMachineLabel,
   setArchivePath,
   setClaudeDirs,
   setCostBasis,
@@ -128,6 +145,8 @@ Usage:
                                        Build, refresh, or check the session index
   cc-analyzer archive [show|set <path>|run|index on|off]
                                        Archive raw session trees in a local Git repo
+  cc-analyzer archive machine [set <label>|adopt <id> [--force]|keep]
+                                       Show or name this computer in the archive
   cc-analyzer archive alias <list|set <path> <name>|current <name>|remove <path>>
                                        Group project paths under a shared alias
   cc-analyzer stats [--current] [--json]
@@ -265,7 +284,11 @@ const ROOT_SOURCE_LABEL: Record<ClaudeRootSource, string> = {
   default: "default",
 };
 
-async function cmdArchive(action: string | undefined, operands: string[]): Promise<number> {
+async function cmdArchive(
+  action: string | undefined,
+  operands: string[],
+  force = false,
+): Promise<number> {
   const operand = operands[0];
   if (action === undefined || action === "show") {
     console.log(`Archive repository: ${getArchivePath() ?? "(not configured)"}`);
@@ -273,7 +296,103 @@ async function cmdArchive(action: string | undefined, operands: string[]): Promi
     console.log(
       "Archived transcripts are raw, sensitive data; Git does not encrypt them. Push is manual.",
     );
+    const repo = getArchivePath();
+    if (repo) {
+      const machines = await listArchiveMachineEntries(repo);
+      const own = readStoredArchiveMachineId();
+      if (machines.length > 0) {
+        console.log("Machines in archive:");
+        for (const m of machines) {
+          const mark = m.id === own ? "  <- this computer" : "";
+          console.log(
+            m.identified
+              ? `  ${m.label}  ${m.id}  ${m.hostnames.join(", ") || "(no hostnames)"}${mark}`
+              : `  (unidentified)  ${m.id}  no machine.json yet; it is written when that computer next runs archive run${mark}`,
+          );
+        }
+        if (own && !machines.some((m) => m.id === own))
+          console.log(`This computer's id (${own}) has no directory in the archive yet.`);
+      }
+    }
     return 0;
+  }
+  if (action === "machine") {
+    const sub = operands[0];
+    if (sub === undefined) {
+      const resolved = await resolveArchiveMachine();
+      console.log(`Machine id: ${resolved.id}`);
+      console.log(`Source: ${resolved.source}`);
+      console.log(`Label: ${getArchiveMachineLabel()}`);
+      console.log(`Hostname: ${hostname()}`);
+      if (resolved.source === "unidentified") {
+        if (resolved.candidates.length > 0) warnIfUnresolvedMachine(resolved);
+        else if (!getArchivePath())
+          console.log(
+            "This id is not saved yet. Configure an archive first (`cc-analyzer archive set <path>`), then `cc-analyzer archive run` saves it.",
+          );
+        else if (await archiveHasHistory())
+          for (const line of describeUnresolvedMachine(resolved)) console.log(line);
+        else
+          console.log(
+            "This id is not saved yet. `cc-analyzer archive run` saves it, or run `cc-analyzer archive machine keep`.",
+          );
+      }
+      return 0;
+    }
+    if (sub === "keep") {
+      try {
+        const kept = await keepArchiveMachine(undefined, { force });
+        console.log(`Machine id: ${kept.id} (saved for this computer).`);
+        if (kept.passedOver.length > 0) {
+          console.log("Kept a NEW id, not any of the archived machines:");
+          for (const m of kept.passedOver)
+            console.log(`  ${m.id}  ${m.identified ? m.label : "(unidentified)"}`);
+          console.log(
+            "Those directories stay in the archive. If one of them is this computer, its sessions " +
+              "will be counted twice from now on, with no further warning. " +
+              "Undo by adopting it: cc-analyzer archive machine adopt <id> --force.",
+          );
+          markIndexRebuildRequired();
+          console.log(REBUILD_REQUIRED_MESSAGE);
+        }
+        return 0;
+      } catch (error) {
+        console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+        return 1;
+      }
+    }
+    if (sub === "set") {
+      const label = operands.slice(1).join(" ").trim();
+      if (!label) {
+        console.error("usage: cc-analyzer archive machine set <label>");
+        return 2;
+      }
+      setArchiveMachineLabel(label);
+      console.log(`Machine label set to ${label}. It is recorded on the next \`archive run\`.`);
+      return 0;
+    }
+    if (sub === "adopt") {
+      const id = operands[1]?.trim().toLowerCase();
+      if (!id) {
+        console.error("usage: cc-analyzer archive machine adopt <id> [--force]");
+        return 2;
+      }
+      try {
+        const { hiddenSessions } = await adoptArchiveMachine(id, undefined, { force });
+        console.log(`Adopted machine id ${id}.`);
+        console.log(
+          `Hidden archived sessions with no counterpart on this computer: ${hiddenSessions}.`,
+        );
+        markIndexRebuildRequired();
+        console.log(REBUILD_REQUIRED_MESSAGE);
+        return 0;
+      } catch (error) {
+        console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+        return 1;
+      }
+    }
+    console.error("usage: cc-analyzer archive machine [set <label>|adopt <id> [--force]|keep]");
+    return 2;
   }
   if (action === "set") {
     if (!operand) {
@@ -361,7 +480,9 @@ async function cmdArchive(action: string | undefined, operands: string[]): Promi
       return 1;
     }
   }
-  console.error("usage: cc-analyzer archive [show|set <path>|run|index on|off|alias ...]");
+  console.error(
+    "usage: cc-analyzer archive [show|set <path>|run|index on|off|machine ...|alias ...]",
+  );
   return 2;
 }
 
@@ -862,6 +983,17 @@ function indexChangeSummary(status: { added: number; changed: number; deleted: n
   return `${status.added} new, ${status.changed} changed, ${status.deleted} deleted`;
 }
 
+/** Record that the index needs `--rebuild`; best effort (the index may not exist yet). */
+function markIndexRebuildRequired(): void {
+  try {
+    const db = openDb();
+    markRebuildRequired(db);
+    db.close();
+  } catch {
+    // No index to repair yet; the first build derives everything fresh.
+  }
+}
+
 async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   const db = openDb();
   if (check) {
@@ -876,7 +1008,14 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     // Coverage comes from the indexed rows (schema v11), so `--check` keeps its
     // no-parse guarantee: this is one SQL scan, no session file is reopened.
     const coverage = parseCoverage(db).summary;
+    const needsRebuild = rebuildRequired(db);
     db.close();
+    await warnIfUnresolvedArchive();
+    if (needsRebuild) {
+      console.log("Index needs a rebuild after an archive identity change.");
+      console.log(REBUILD_REQUIRED_MESSAGE);
+      if (!status.stale) return 1;
+    }
     if (status.stale) {
       console.log(`Index is stale: ${indexChangeSummary(status)} sessions.`);
       console.log("Run `cc-analyzer index` to refresh.");
@@ -910,8 +1049,11 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
+  const stillRequired = !rebuild && rebuildRequired(db);
   db.close();
   if (result.total > result.skipped) process.stderr.write("\n");
+  warnIfUnresolvedMachine(result.archiveMachine);
+  if (stillRequired) console.error(REBUILD_REQUIRED_MESSAGE);
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   console.log(
     `Indexed ${result.indexed}, skipped ${result.skipped}, deleted ${result.deleted} ` +
@@ -1406,7 +1548,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "doctor":
       return cmdDoctor(positional[0], json);
     case "archive":
-      return cmdArchive(positional[0], positional.slice(1));
+      return cmdArchive(positional[0], positional.slice(1), rest.includes("--force"));
     case "index":
       if (rest.includes("--rebuild") && rest.includes("--check")) {
         console.error("error: --rebuild and --check cannot be used together.");
