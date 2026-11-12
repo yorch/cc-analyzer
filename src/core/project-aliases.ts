@@ -17,28 +17,20 @@ export function normalizeAliasPath(path: string): string {
   return rooted.length > 1 ? rooted.replace(/\/$/, "") : rooted;
 }
 
-function fingerprint(aliases: ReadonlyMap<string, string>): string {
-  const canonical = JSON.stringify(
-    Object.fromEntries([...aliases].sort(([a], [b]) => a.localeCompare(b))),
-  );
-  return new Bun.CryptoHasher("sha256").update(canonical).digest("hex");
-}
-
 export interface ProjectAliases {
   byPath: Map<string, string>;
-  fingerprint: string;
 }
 
 /** Read shared path-to-label mappings from the configured archive repository. */
 export async function readProjectAliases(repo = getArchivePath()): Promise<ProjectAliases> {
-  if (!repo) return { byPath: new Map(EMPTY_ALIASES), fingerprint: fingerprint(EMPTY_ALIASES) };
+  if (!repo) return { byPath: new Map(EMPTY_ALIASES) };
   const file = join(resolve(repo), PROJECT_ALIASES_FILE);
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(file, "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { byPath: new Map(EMPTY_ALIASES), fingerprint: fingerprint(EMPTY_ALIASES) };
+      return { byPath: new Map(EMPTY_ALIASES) };
     }
     throw new Error(
       `Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`,
@@ -69,7 +61,7 @@ export async function readProjectAliases(repo = getArchivePath()): Promise<Proje
     }
     byPath.set(normalizedPath, alias.trim());
   }
-  return { byPath, fingerprint: fingerprint(byPath) };
+  return { byPath };
 }
 
 /** Canonical index identity for sessions whose project paths share one alias. */
@@ -100,4 +92,19 @@ export function aliasesForProjectPath(
 ): string | undefined {
   if (!path) return undefined;
   return aliases.get(normalizeAliasPath(path));
+}
+
+/**
+ * Whether an indexed row was keyed under an alias the current map no longer
+ * agrees with. The row's own `project_alias` column is the ground truth for
+ * what it was indexed under, so no separate bookkeeping can go stale. Shared by
+ * `reindex()` and `inspectIndexStatus()` so `index --check` never reports work
+ * the indexer will not do.
+ */
+export function aliasNeedsReindex(
+  projectPath: string | null | undefined,
+  projectAlias: string | null | undefined,
+  aliases: ReadonlyMap<string, string>,
+): boolean {
+  return (aliasesForProjectPath(projectPath, aliases) ?? null) !== (projectAlias ?? null);
 }
