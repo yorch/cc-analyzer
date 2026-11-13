@@ -408,7 +408,13 @@ async function cmdArchive(
   if (action === "alias") {
     const operation = operands[0];
     if (operation === "list") {
-      const aliases = await listProjectAliases();
+      let aliases: [string, string][];
+      try {
+        aliases = await listProjectAliases();
+      } catch (error) {
+        console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+        return 1;
+      }
       if (aliases.length === 0) console.log("No project aliases configured.");
       else console.log(table(["working directory", "shared name"], aliases));
       return 0;
@@ -1096,9 +1102,18 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
       }
     : { type: "portfolio" as const };
   const costBasis = getCostBasis();
+  let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
+  try {
+    indexStatus = await inspectIndexStatus(db);
+  } catch (error) {
+    // A strict alias-file read failure: report it cleanly instead of a stack trace.
+    db.close();
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
   const view = {
     scope,
-    index: await inspectIndexStatus(db),
+    index: indexStatus,
     ...portfolio,
     ttl: cacheTtlSplit(db, projectId),
     bash: analytics.bash.slice(0, 10),

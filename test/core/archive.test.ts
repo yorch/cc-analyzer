@@ -20,6 +20,7 @@ import {
   setArchiveMachineLabel,
   setArchivePath,
 } from "../../src/core/prefs.ts";
+import { MAX_ALIAS_UPDATED_AT } from "../../src/core/project-aliases.ts";
 
 let temp: string;
 let previousStateDir: string | undefined;
@@ -108,6 +109,159 @@ describe("archiveSessions", () => {
     expect(await setProjectAlias("/Users/alice/project", "Shared Project")).toBe(false);
     expect(await setProjectAlias("/Users/alice/project", undefined)).toBe(true);
     expect(await listProjectAliases()).toEqual([]);
+  });
+
+  describe("per-computer alias files", () => {
+    const gitOut = async (...args: string[]) => {
+      const proc = Bun.spawn(["git", ...args], {
+        cwd: archivePath,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return (await new Response(proc.stdout).text()).trim();
+    };
+    const OTHER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const ownFile = () =>
+      join(archivePath, "machines", readStoredArchiveMachineId() as string, "project-aliases.json");
+
+    test("writes only this computer's files and commits only those paths", async () => {
+      // No archive run first, so machine.json is new in the alias commit.
+      await keepArchiveMachine(archivePath);
+      expect(await setProjectAlias("/Users/alice/project", "Shared Project")).toBe(true);
+      const id = readStoredArchiveMachineId() as string;
+      // The exact file list of the commit: the clean-repo precondition alone
+      // would hide committing too much.
+      expect((await gitOut("show", "--name-only", "--format=", "HEAD")).split("\n").sort()).toEqual(
+        [`machines/${id}/machine.json`, `machines/${id}/project-aliases.json`].sort(),
+      );
+      expect(await gitOut("status", "--porcelain")).toBe("");
+      expect(await Bun.file(join(archivePath, "project-aliases.json")).exists()).toBe(false);
+      const body = JSON.parse(await readFile(ownFile(), "utf8"));
+      expect(body.version).toBe(2);
+      expect(body.aliases["/Users/alice/project"]).toMatchObject({ label: "Shared Project" });
+    });
+
+    test("removing writes a tombstone; removing nothing is a no-op", async () => {
+      await archiveSessions([sourceRoot]);
+      expect(await setProjectAlias("/Users/alice/none", undefined)).toBe(false);
+      await setProjectAlias("/Users/alice/project", "Shared Project");
+      expect(await setProjectAlias("/Users/alice/project", undefined)).toBe(true);
+      const body = JSON.parse(await readFile(ownFile(), "utf8"));
+      expect(body.aliases["/Users/alice/project"]).toMatchObject({ removed: true });
+      expect(await listProjectAliases()).toEqual([]);
+      expect(await setProjectAlias("/Users/alice/project", undefined)).toBe(false);
+    });
+
+    test("an unchanged set makes no commit", async () => {
+      await archiveSessions([sourceRoot]);
+      await setProjectAlias("/Users/alice/project", "Shared Project");
+      const head = await gitOut("rev-parse", "HEAD");
+      expect(await setProjectAlias("/Users/alice/project", "Shared Project")).toBe(false);
+      expect(await gitOut("rev-parse", "HEAD")).toBe(head);
+    });
+
+    test("removing a legacy-only alias tombstones it in this computer's file", async () => {
+      await archiveSessions([sourceRoot]);
+      await writeFile(
+        join(archivePath, "project-aliases.json"),
+        '{"version":1,"aliases":{"/Users/alice/legacy":"Legacy"}}\n',
+      );
+      await gitOut("add", "project-aliases.json");
+      await gitOut("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "legacy");
+      expect(await listProjectAliases()).toEqual([["/Users/alice/legacy", "Legacy"]]);
+      expect(await setProjectAlias("/Users/alice/legacy", undefined)).toBe(true);
+      expect(await listProjectAliases()).toEqual([]);
+      // The legacy file is never rewritten.
+      expect(await readFile(join(archivePath, "project-aliases.json"), "utf8")).toContain("Legacy");
+    });
+
+    test("an edit beats another computer's far-future timestamp (skew-proof)", async () => {
+      await archiveSessions([sourceRoot]);
+      const future = Date.now() + 10 * 365 * 24 * 3600 * 1000;
+      const file = join(archivePath, "machines", OTHER, "project-aliases.json");
+      await mkdir(join(archivePath, "machines", OTHER), { recursive: true });
+      await writeFile(
+        file,
+        JSON.stringify({
+          version: 2,
+          aliases: { "/Users/alice/project": { label: "Remote", updatedAt: future } },
+        }),
+      );
+      await gitOut("add", "machines");
+      await gitOut("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "other");
+      expect(await setProjectAlias("/Users/alice/project", "Mine")).toBe(true);
+      expect(await listProjectAliases()).toEqual([["/Users/alice/project", "Mine"]]);
+      const body = JSON.parse(await readFile(ownFile(), "utf8"));
+      expect(body.aliases["/Users/alice/project"].updatedAt).toBe(future + 1);
+      // And removal of another computer's alias wins the same way.
+      expect(await setProjectAlias("/Users/alice/project", undefined)).toBe(true);
+      expect(await listProjectAliases()).toEqual([]);
+    });
+
+    const commitAs = async (message: string) => {
+      await gitOut("add", "-A");
+      await gitOut("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message);
+    };
+    const writeOther = async (entry: unknown) => {
+      await mkdir(join(archivePath, "machines", OTHER), { recursive: true });
+      await writeFile(
+        join(archivePath, "machines", OTHER, "project-aliases.json"),
+        JSON.stringify({ version: 2, aliases: { "/Users/alice/project": entry } }),
+      );
+      await commitAs("other");
+    };
+
+    test("refuses to stamp above the ceiling and leaves the repository untouched", async () => {
+      await archiveSessions([sourceRoot]);
+      await writeOther({ label: "Poison", updatedAt: MAX_ALIAS_UPDATED_AT });
+      const head = await gitOut("rev-parse", "HEAD");
+      const err = await setProjectAlias("/Users/alice/project", "Mine").catch((e) => e as Error);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain(`machines/${OTHER}/project-aliases.json`);
+      expect((err as Error).message).toContain("commit");
+      expect(await gitOut("rev-parse", "HEAD")).toBe(head);
+      expect(await gitOut("status", "--porcelain")).toBe("");
+      expect(await Bun.file(ownFile()).exists()).toBe(false);
+      // The poisoned archive is still readable (exactly-ceiling is valid).
+      expect(await listProjectAliases()).toEqual([["/Users/alice/project", "Poison"]]);
+    });
+
+    test("alias set records and commits machine.json even without an archive run", async () => {
+      const kept = await keepArchiveMachine(archivePath);
+      expect(kept.source).toBe("local");
+      expect(await setProjectAlias("/Users/alice/project", "Shared")).toBe(true);
+      const id = readStoredArchiveMachineId() as string;
+      const record = JSON.parse(
+        await readFile(join(archivePath, "machines", id, "machine.json"), "utf8"),
+      );
+      expect(record.hostnames).toEqual([hostname()]);
+      expect(await gitOut("status", "--porcelain")).toBe("");
+      expect(await gitOut("ls-files", `machines/${id}/machine.json`)).toBe(
+        `machines/${id}/machine.json`,
+      );
+      // A second computer cannot adopt this live computer's id.
+      await expect(adoptArchiveMachine(id, archivePath, { host: "other-host" })).rejects.toThrow(
+        "records hostnames",
+      );
+    });
+
+    test("a failed edit on a fresh path leaves no repository behind", async () => {
+      const fresh = join(temp, "fresh-archive");
+      setArchivePath(fresh);
+      await expect(setProjectAlias("/Users/alice/project", "X")).rejects.toThrow("archive machine");
+      expect(await stat(fresh).catch(() => null)).toBeNull();
+    });
+
+    test("without a recorded identity an edit explains how to get one", async () => {
+      await archiveSessions([sourceRoot]);
+      await rm(join(temp, "state"), { recursive: true, force: true });
+      setArchivePath(archivePath);
+      expect(readStoredArchiveMachineId()).toBeUndefined();
+      await expect(setProjectAlias("/Users/alice/project", "X")).rejects.toThrow(
+        "archive machine adopt",
+      );
+      expect(await gitOut("status", "--porcelain")).toBe("");
+    });
   });
 
   test("lists every machine's archive roots, this computer's own included", async () => {

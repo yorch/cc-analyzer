@@ -7,7 +7,11 @@ import { openDb } from "../../src/core/db.ts";
 import { inspectIndexStatus } from "../../src/core/index-status.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import { setArchivePath } from "../../src/core/prefs.ts";
-import { projectAliasId, writeProjectAliases } from "../../src/core/project-aliases.ts";
+import {
+  projectAliasId,
+  writeMachineAliases,
+  writeProjectAliases,
+} from "../../src/core/project-aliases.ts";
 import { resolveIndexedProject } from "../../src/core/queries.ts";
 import { spendByProject } from "../../src/core/stats.ts";
 import { samplePricing } from "../helpers/pricing.ts";
@@ -126,6 +130,44 @@ describe("scoped alias re-ingest", () => {
     expect(rowFor("proj-a")).toMatchObject({ project_alias: "App" });
     expect(rowFor("proj-a").project_id).toBe(projectAliasId("App"));
     expect(rowFor("proj-b")).toEqual(bBefore);
+  });
+
+  test("per-machine alias files re-key sessions and index --check agrees", async () => {
+    const idA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const idB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    await seed([
+      ["proj-a", cwds.a],
+      ["proj-b", cwds.b],
+    ]);
+    expect((await run()).indexed).toBe(2);
+    const bBefore = rowFor("proj-b");
+    expect((await inspectIndexStatus(db, Date.now(), [root])).stale).toBe(false);
+
+    await writeMachineAliases(
+      new Map([[cwds.a, { label: "App", updatedAt: 10 }]]),
+      idA,
+      archivePath,
+    );
+    expect(await inspectIndexStatus(db, Date.now(), [root])).toMatchObject({
+      stale: true,
+      changed: 1,
+    });
+    const res = await run();
+    expect(res.indexed).toBe(1);
+    expect(res.skipped).toBe(1);
+    expect(rowFor("proj-a")).toMatchObject({
+      project_alias: "App",
+      project_id: projectAliasId("App"),
+    });
+    expect(rowFor("proj-b")).toEqual(bBefore);
+    expect((await inspectIndexStatus(db, Date.now(), [root])).stale).toBe(false);
+
+    // Another computer's newer tombstone removes the alias; the row is restored.
+    await writeMachineAliases(new Map([[cwds.a, { updatedAt: 11 }]]), idB, archivePath);
+    expect(await inspectIndexStatus(db, Date.now(), [root])).toMatchObject({ changed: 1 });
+    expect((await run()).indexed).toBe(1);
+    expect(rowFor("proj-a").project_alias).toBeNull();
+    expect((await inspectIndexStatus(db, Date.now(), [root])).stale).toBe(false);
   });
 
   test("removing an alias restores the root-qualified project id", async () => {
