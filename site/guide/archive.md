@@ -35,7 +35,7 @@ cc-analyzer index
 ```
 
 `archive machine keep` records a fresh identity for this computer. It is required
-before this computer can archive, because the archive already holds another
+before this computer can archive or edit aliases, because the archive already holds another
 computer's work and cc-analyzer never guesses which machine it is running on. If
 this computer has archived into this repository *before* and only lost its local
 state, adopt its existing id instead — see
@@ -59,10 +59,10 @@ cd /Users/alice/work/app
 cc-analyzer archive alias current "Acme App"
 ```
 
-On another computer, first get the latest alias file, then run the same command from that computer's project directory:
+Alias edits need a recorded identity on the computer making them. A computer that completed section 2 already has one. A computer that only ran `archive set` must run `cc-analyzer archive machine keep` (or `adopt`, see [Machine identity](#_5-machine-identity-and-recovery)) first. On another computer, pull the archive, then run the same command from that computer's project directory:
 
 ```sh
-git -C ~/cc-archive pull --ff-only
+git -C ~/cc-archive pull
 cd D:/work/app
 cc-analyzer archive alias current "Acme App"
 ```
@@ -73,12 +73,12 @@ cc-analyzer archive alias current "Acme App"
 cc-analyzer archive alias set "/Users/alice/work/app" "Acme App"
 ```
 
-Use `cc-analyzer archive alias list` to review mappings. Aliases are shared in `project-aliases.json`; after adding or changing one, push the archive and pull it on the other computers. Reindex after pulling so the project rollups use the updated mapping:
+Use `cc-analyzer archive alias list` to review mappings. Each computer keeps its own alias file, `machines/<id>/project-aliases.json`, and the effective alias for a path is the latest edit across all of them. After adding or changing one, push the archive and pull it on the other computers. A pull that is not a fast-forward is merged as described in [When a pull is not a fast-forward](#when-a-pull-is-not-a-fast-forward). Reindex after pulling so the project rollups use the updated mapping:
 
 ```sh
 git -C ~/cc-archive push
 # On each other computer:
-git -C ~/cc-archive pull --ff-only
+git -C ~/cc-archive pull
 cc-analyzer index
 ```
 
@@ -116,40 +116,43 @@ git -C ~/cc-archive push
 cc-analyzer index
 ```
 
-`--no-rebase` makes the merge explicit, so Git does not stop with a "need to specify how to reconcile divergent branches" error on a machine without a `pull.rebase` setting. Session files should merge without conflicts. The exception is `project-aliases.json`, which both computers can edit.
+`--no-rebase` makes the merge explicit, so Git does not stop with a "need to specify how to reconcile divergent branches" error on a machine without a `pull.rebase` setting. Session files and alias files merge without conflicts, because every computer writes only under its own `machines/<id>/` directory.
 
-### When `project-aliases.json` conflicts
+### Alias edits and clock skew
 
-If two computers changed aliases before syncing, the merge stops with a conflict in `project-aliases.json`. Keep the entries from both computers:
+Alias edits cannot conflict in Git. Each computer writes only its own alias file, so a pull merges them like any other file, and the effective alias for each path is the latest edit across all computers. A removal is recorded as a tombstone, so it wins over older labels. Each new edit is stamped later than any edit this computer can already see, so it wins even when this computer's clock is behind. Clocks that disagree can still let two edits to the same path, made at nearly the same time, resolve either way. Every computer resolves them the same way once they hold the same files. To make the other label win, run the alias command again on the computer whose edit lost.
 
-```sh
-git -C ~/cc-archive status
-# edit ~/cc-archive/project-aliases.json: remove the <<<<<<<, =======, and >>>>>>> lines
-# and keep the entries from both sides
-cc-analyzer archive alias list
-git -C ~/cc-archive add project-aliases.json
-git -C ~/cc-archive commit --no-edit
-git -C ~/cc-archive push
-cc-analyzer index
-```
+Update every computer before editing aliases from more than one. An older cc-analyzer reads only the shared `project-aliases.json` at the archive root, so it does not see aliases written by this version. If it rewrites that root file, its entries are overridden by any per-computer edit to the same path. Nothing is lost, since this version never rewrites or deletes the root file, but the older value stops counting.
 
-The merged file must stay in the format cc-analyzer reads: `version` must be `1`, `aliases` must be an object, every key must be an absolute path (starting with `/` or a drive letter such as `D:/`; backslashes in a Windows path are converted to forward slashes, but write them as forward slashes in the file), and every value must be a non-empty name. A file that breaks these rules is rejected, and `cc-analyzer archive alias list` reads the file, so running it before the commit confirms the result. For example:
+### When an alias file is unreadable
+
+cc-analyzer reads every alias file strictly. A file that is not valid JSON, has the wrong `version`, or has an entry that does not match the format is an error, and so is a timestamp past 2200-01-01. Reading around a bad file would silently move sessions to different projects. `archive alias list` and `stats` print the error and exit 1, and the TUI and `serve` print it and exit 1 at startup. The message names the machine id that wrote the file. Each entry must be exactly one of a label or `"removed": true`:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "aliases": {
-    "/Users/alice/work/app": "Acme App",
-    "D:/work/app": "Acme App"
+    "/Users/alice/work/app": { "label": "Acme App", "updatedAt": 1767225600000 },
+    "/Users/alice/work/old": { "removed": true, "updatedAt": 1767225600000 }
   }
 }
 ```
 
-A path that both computers mapped to different names cannot hold two values. Keep one name and remove the other. A conflict in any other file is unexpected, so check `git status` before resolving it. `archive alias set`, `current`, and `remove` refuse to run while the repository has unfinished merge work, so finish the commit first. `archive alias list` only reads the file: it works as soon as the conflict markers are gone, and until then it fails with a JSON parse error.
+Recover in one of two ways:
+
+```sh
+# The bad edit was made on this computer and is not committed yet: discard it
+git -C ~/cc-archive checkout -- machines/<id>/project-aliases.json
+
+# Otherwise, on the computer that wrote the file, fix or revert it, commit, push,
+# then pull here
+```
+
+`archive alias set`, `current`, and `remove` refuse to run while the repository has unfinished merge work, so finish the commit first. `archive alias list` only reads the files.
 
 ## 5. Machine identity and recovery
 
-Each computer has a machine id, a UUID generated once and stored in cc-analyzer's state directory. `archive run` archives under that id, in `machines/<id>/roots/...`, and records the id, a label, and the hostnames it has archived from in `machines/<id>/machine.json`. The label defaults to the hostname. To name the computer:
+Each computer has a machine id, a UUID generated once and stored in cc-analyzer's state directory. `archive run` archives under that id, in `machines/<id>/roots/...`, and records the id, a label, and the hostnames it has archived from in `machines/<id>/machine.json`. An alias edit writes the same record in the same commit as its alias file. The label defaults to the hostname. To name the computer:
 
 ```sh
 cc-analyzer archive machine set "Work laptop"
@@ -188,7 +191,7 @@ git -C ~/cc-archive push
 
 Run `cc-analyzer archive run` after adopting, not before, so new sessions go to the adopted id.
 
-Archives created before this version have no `machine.json` until each computer runs `cc-analyzer archive run` once with it. Until then they record no hostnames, so they cannot be suggested. They still appear in `archive show`, marked unidentified, and in the candidate list that `archive machine` prints. Pick the right one by its id and adopt it by hand.
+Archives created before this version have no `machine.json` until each computer runs `cc-analyzer archive run` (or edits an alias) with it. Until then they record no hostnames, so they cannot be suggested. They still appear in `archive show`, marked unidentified, and in the candidate list that `archive machine` prints. Pick the right one by its id and adopt it by hand.
 
 ### How archived copies are matched
 
