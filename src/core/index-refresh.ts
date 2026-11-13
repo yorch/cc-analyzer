@@ -18,3 +18,14 @@ export async function refreshIndexIfNeeded(
   if (!opts.refresh && !isIndexEmpty(db)) return undefined;
   return reindex(db, opts);
 }
+
+/**
+ * The warning a frontend should print when archive-during-index was requested
+ * but did not run (an unresolved archive identity). Pure and returned rather
+ * than printed: core never writes to the terminal. Every surface that calls
+ * `reindex` must surface it — a silent skip means the backup the user turned on
+ * stops happening, and sessions Claude Code later cleans up were never copied.
+ */
+export function archiveSkippedWarning(result: ReindexResult | undefined): string | undefined {
+  return result?.archiveSkipped ? `warning: ${result.archiveSkipped}` : undefined;
+}

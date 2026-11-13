@@ -110,13 +110,16 @@ describe("archiveSessions", () => {
     expect(await listProjectAliases()).toEqual([]);
   });
 
-  test("exposes another machine's archive roots, but avoids a live source duplicate", async () => {
-    await archiveSessions([sourceRoot]);
-    expect(await listArchiveRoots(archivePath, [sourceRoot])).toEqual([]);
-    const remoteSource = { ...sourceRoot, path: join(temp, "other-claude"), slug: "otherroot" };
-    expect(await listArchiveRoots(archivePath, [remoteSource])).toHaveLength(1);
+  test("lists every machine's archive roots, this computer's own included", async () => {
+    // Suppressing a backup copy of a live session is per session (see
+    // `dedupeSessions`), never per root: a root-level skip hid sessions whenever
+    // the live tree was emptied or incomplete.
+    const result = await archiveSessions([sourceRoot]);
+    const roots = await listArchiveRoots(archivePath);
+    expect(roots.map((r) => r.slug)).toEqual([`archive-${result.machine?.id}-${sourceRoot.slug}`]);
+    expect(roots.every((r) => r.source === "archive")).toBe(true);
     await rm(sourceRoot.path, { recursive: true, force: true });
-    expect(await listArchiveRoots(archivePath, [sourceRoot])).toHaveLength(1);
+    expect(await listArchiveRoots(archivePath)).toHaveLength(1);
   });
 
   test("skips identical snapshots and commits changed sessions", async () => {
@@ -237,7 +240,7 @@ describe("archive machine identity", () => {
     expect(out).toContain("(unidentified)");
   }, 30_000);
 
-  test("A ordering: a read path first does not silence the warning, and nothing is persisted", async () => {
+  test("A ordering: a read path first persists nothing, and a lost id changes no row", async () => {
     const { reindex } = await import("../../src/core/indexer.ts");
     const { inspectIndexStatus } = await import("../../src/core/index-status.ts");
     const { openDb } = await import("../../src/core/db.ts");
@@ -248,42 +251,33 @@ describe("archive machine identity", () => {
       recursive: true,
       force: true,
     });
-    const previousClaude = process.env.CC_ANALYZER_CLAUDE_DIR;
-    process.env.CC_ANALYZER_CLAUDE_DIR = sourceRoot.path;
-    try {
-      const first = await archiveSessions([sourceRoot]);
-      const db = openDb(":memory:");
-      await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-      const before = db.query("SELECT SUM(turns) AS t FROM sessions").get() as { t: number };
-      await rm(join(temp, "state", "archive-machine-id"));
-      // The read path that used to mint silently (index --check, TUI, serve, ...).
-      await inspectIndexStatus(db, Date.now(), [sourceRoot]);
-      await inspectIndexStatus(db, Date.now(), [sourceRoot]);
-      expect(readStoredArchiveMachineId()).toBeUndefined();
-      // Archive-during-index stays off (the default): index must still resolve identity.
-      const result = await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-      expect(result.archiveMachine?.source).toBe("unidentified");
-      expect(result.archiveMachine?.candidates.map((m) => m.id)).toEqual([
-        first.machine?.id as string,
-      ]);
-      expect(result.archiveMachine?.suggestion?.id).toBe(first.machine?.id as string);
-      // Still unresolved, so it warns again on the next run.
-      const again = await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-      expect(again.archiveMachine?.source).toBe("unidentified");
-      // Adopting resolves it and the duplicate row is pruned.
-      await adoptArchiveMachine(first.machine?.id as string, archivePath);
-      const fixed = await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-      expect(fixed.archiveMachine?.source).toBe("local");
-      const rows = db.query("SELECT COUNT(*) AS n, SUM(turns) AS t FROM sessions").get() as {
-        n: number;
-        t: number;
-      };
-      expect(rows.n).toBe(1);
-      expect(rows.t).toBe(before.t);
-    } finally {
-      if (previousClaude === undefined) delete process.env.CC_ANALYZER_CLAUDE_DIR;
-      else process.env.CC_ANALYZER_CLAUDE_DIR = previousClaude;
-    }
+    const first = await archiveSessions([sourceRoot]);
+    const db = openDb(":memory:");
+    await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
+    const before = db.query("SELECT SUM(turns) AS t FROM sessions").get() as { t: number };
+    await rm(join(temp, "state", "archive-machine-id"));
+    // The read path that used to mint silently (index --check, TUI, serve, ...).
+    await inspectIndexStatus(db, Date.now(), [sourceRoot]);
+    await inspectIndexStatus(db, Date.now(), [sourceRoot]);
+    expect(readStoredArchiveMachineId()).toBeUndefined();
+    // Test 6: a plain index with the id lost used to add the machine's own
+    // archive as a second row (2 rows / twice the turns). Identity no longer
+    // takes part in which copy is shown.
+    await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
+    const lost = db.query("SELECT COUNT(*) AS n, SUM(turns) AS t FROM sessions").get() as {
+      n: number;
+      t: number;
+    };
+    expect(lost).toEqual({ n: 1, t: before.t });
+    expect(before.t).toBeGreaterThan(0);
+    // Adopting changes nothing the index shows.
+    await adoptArchiveMachine(first.machine?.id as string, archivePath);
+    await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
+    const fixed = db.query("SELECT COUNT(*) AS n, SUM(turns) AS t FROM sessions").get() as {
+      n: number;
+      t: number;
+    };
+    expect(fixed).toEqual({ n: 1, t: before.t });
   });
 
   test("lost id with a different hostname mints a new id and signals it", async () => {
@@ -311,7 +305,7 @@ describe("archive machine identity", () => {
     // the same path, hence the same slug, and the same hostname as A.
     const a = await archiveSessions([sourceRoot]);
     await rm(join(temp, "state", "archive-machine-id"));
-    const roots = await listArchiveRoots(archivePath, [sourceRoot]);
+    const roots = await listArchiveRoots(archivePath);
     expect(roots.map((r) => r.slug)).toEqual([`archive-${a.machine?.id}-${sourceRoot.slug}`]);
     expect(readStoredArchiveMachineId()).toBeUndefined();
   });
@@ -341,7 +335,7 @@ describe("archive machine identity", () => {
     const a = await archiveSessions([sourceRoot]);
     const id = a.machine?.id as string;
     await rm(join(temp, "state", "archive-machine-id"));
-    await adoptArchiveMachine(id.toUpperCase(), archivePath, { liveRoots: [sourceRoot] });
+    await adoptArchiveMachine(id.toUpperCase(), archivePath);
     expect(readStoredArchiveMachineId()).toBe(id);
   });
 
@@ -414,7 +408,7 @@ describe("archive machine identity", () => {
     expect(run.err).toContain("archive machine keep");
     const adopt = await cli("archive", "machine", "adopt", id);
     expect(adopt.code).toBe(0);
-    expect(adopt.out).toContain("index --rebuild");
+    expect(adopt.out).not.toContain("rebuild");
     expect((await cli("archive", "machine")).out).toContain("Source: local");
   }, 60_000);
 
@@ -490,7 +484,7 @@ describe("archive machine identity", () => {
       recursive: true,
     });
     expect(await readArchiveMachines(archivePath)).toEqual([]);
-    expect(await listArchiveRoots(archivePath, [])).toBeDefined();
+    expect(await listArchiveRoots(archivePath)).toBeDefined();
     expect((await resolveArchiveMachine(archivePath)).source).toBe("local");
   });
 });
@@ -550,12 +544,12 @@ describe("archive identity gaps", () => {
     });
     // Lose identity: nothing should make the legacy directory a second row set.
     await rm(join(temp, "state", "archive-machine-id"));
-    const discovered = await listArchiveRoots(archivePath, [sourceRoot]);
+    const discovered = await listArchiveRoots(archivePath);
     expect(discovered.map((r) => r.slug)).toEqual([`archive-${id}-${sourceRoot.slug}`]);
     const db = openDb(":memory:");
     await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-    // Only the real machine's copy doubles it (identity unresolved); never the legacy one.
-    expect((await rows(db)).filter((r) => r.path.includes("legacy-machine"))).toEqual([]);
+    // Never the legacy directory; and the live copy shadows the real machine's archive.
+    expect((await rows(db)).map((r) => r.path)).toEqual([sessionPath]);
   });
 
   test("1: an archive with history is not a first run even when machines/ is not readable", async () => {
@@ -572,51 +566,78 @@ describe("archive identity gaps", () => {
     expect(readStoredArchiveMachineId()).toBeUndefined();
   });
 
-  test("2: index --check and archive machine warn on stderr about an unresolved identity", async () => {
+  test("2: a lost identity changes nothing index --check or index print; archive machine still says so", async () => {
     await realSession();
     const a = await archiveSessions([sourceRoot]);
     const id = a.machine?.id as string;
     expect((await cli("index")).code).toBe(0);
     await rm(join(temp, "state", "archive-machine-id"));
+    // The old warning claimed sessions "are counted twice"; they are not, so
+    // read surfaces say nothing and the index is simply current.
     const check = await cli("index", "--check");
-    expect(check.err).toContain("warning: this computer has no recorded identity");
-    expect(check.err).toContain(`archive machine adopt ${id}`);
-    expect(check.out).not.toContain("warning");
+    expect(check.code).toBe(0);
+    expect(check.err).toBe("");
+    expect(check.out).toContain("Index is current (0 changes)");
+    const idx = await cli("index");
+    expect(idx.err).toBe("");
+    expect(idx.out).toContain("Indexed 0, skipped 1, deleted 0 (1 sessions)");
+    // Identity-aware commands still explain it.
+    const machine = await cli("archive", "machine");
+    expect(machine.err).toContain("warning: this computer has no recorded identity");
+    expect(machine.err).toContain(`archive machine adopt ${id}`);
+    expect(machine.err).not.toContain("counted twice");
   }, 60_000);
 
-  test("3: adopt refuses to hide sessions absent locally, allows genuine recovery", async () => {
-    // Two computers, same hostname and same ~/.claude path hash: this computer's
-    // live root is missing a session the other computer archived.
+  test("2b: archive-during-index that the identity refuses is reported, and indexing still runs", async () => {
+    const { reindex } = await import("../../src/core/indexer.ts");
+    const { openDb } = await import("../../src/core/db.ts");
+    const { samplePricing } = await import("../helpers/pricing.ts");
+    await realSession();
+    await archiveSessions([sourceRoot]);
+    await rm(join(temp, "state", "archive-machine-id"));
+    const db = openDb(":memory:");
+    const skipped = await reindex(db, {
+      pricing: samplePricing,
+      roots: [sourceRoot],
+      archive: true,
+    });
+    expect(skipped.archiveSkipped).toContain("archive machine adopt");
+    expect(skipped.total).toBe(1);
+    const plain = await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
+    expect(plain.archiveSkipped).toBeUndefined();
+    // A genuinely first run archives under the id it persists and reports no skip.
+    await rm(archivePath, { recursive: true, force: true });
+    await rm(join(temp, "state", "archive-machine-id"), { force: true });
+    const first = await reindex(db, { pricing: samplePricing, roots: [sourceRoot], archive: true });
+    expect(first.archiveSkipped).toBeUndefined();
+    expect(readStoredArchiveMachineId()).toBeDefined();
+  });
+
+  test("3: adopting hides nothing, even sessions this computer never had", async () => {
+    // Two computers, same hostname and same ~/.claude path hash: the archive
+    // holds a session this computer's live root lacks. Adoption used to refuse
+    // (and, forced, delete that session's row); suppression is per session now.
+    const { reindex } = await import("../../src/core/indexer.ts");
+    const { openDb } = await import("../../src/core/db.ts");
+    const { samplePricing } = await import("../helpers/pricing.ts");
+    await realSession();
     const a = await archiveSessions([sourceRoot]);
     const id = a.machine?.id as string;
     const projects = join(archivePath, "machines", id, "roots", sourceRoot.slug, "projects");
-    await writeFile(
-      join(projects, "-Users-test-project", "other-computer.jsonl"),
-      '{"type":"user"}\n',
-    );
+    const otherPath = join(projects, "-Users-test-project", "other-computer.jsonl");
+    await Bun.write(otherPath, await Bun.file(fixture).text());
     await rm(join(temp, "state", "archive-machine-id"));
-    await expect(adoptArchiveMachine(id, archivePath, { liveRoots: [sourceRoot] })).rejects.toThrow(
-      "would hide 1 archived session that is not present",
-    );
-    expect(readStoredArchiveMachineId()).toBeUndefined();
-    const forced = await adoptArchiveMachine(id, archivePath, {
-      liveRoots: [sourceRoot],
-      force: true,
-    });
-    expect(forced.hiddenSessions).toBe(1);
+    await adoptArchiveMachine(id, archivePath);
     expect(readStoredArchiveMachineId()).toBe(id);
-    // Genuine recovery: the archive mirrors the live files.
-    await rm(join(projects, "-Users-test-project", "other-computer.jsonl"));
-    await rm(join(temp, "state", "archive-machine-id"));
-    expect(await adoptArchiveMachine(id, archivePath, { liveRoots: [sourceRoot] })).toEqual({
-      hiddenSessions: 0,
-    });
+    const db = openDb(":memory:");
+    await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
+    expect((await rows(db)).map((r) => r.path)).toEqual([otherPath, sessionPath].sort());
   });
 
   test("4: keep needs --force when a candidate records this host, and names the consequence", async () => {
     const a = await archiveSessions([sourceRoot]);
     await rm(join(temp, "state", "archive-machine-id"));
-    await expect(keepArchiveMachine(archivePath)).rejects.toThrow("counted twice");
+    await expect(keepArchiveMachine(archivePath)).rejects.toThrow("archived a second time");
     expect(readStoredArchiveMachineId()).toBeUndefined();
     const kept = await keepArchiveMachine(archivePath, { force: true });
     expect(kept.passedOver.map((m) => m.id)).toEqual([a.machine?.id as string]);
@@ -627,7 +648,7 @@ describe("archive identity gaps", () => {
     );
   });
 
-  test("4/5: CLI keep restates the candidates, the consequence and the rebuild instruction", async () => {
+  test("4/5: CLI keep restates the candidates and the consequence, and needs no rebuild", async () => {
     await realSession();
     const a = await archiveSessions([sourceRoot]);
     await rm(join(temp, "state", "archive-machine-id"));
@@ -637,23 +658,23 @@ describe("archive identity gaps", () => {
     const kept = await cli("archive", "machine", "keep", "--force");
     expect(kept.code).toBe(0);
     expect(kept.out).toContain(a.machine?.id as string);
-    expect(kept.out).toContain("counted twice");
-    expect(kept.out).toContain("index --rebuild");
+    expect(kept.out).toContain("archived a second time");
+    expect(kept.out).not.toContain("rebuild");
+    expect((await cli("index")).code).toBe(0);
     const check = await cli("index", "--check");
-    expect(check.code).toBe(1);
-    expect(check.out).toContain("index --rebuild");
-    expect((await cli("index", "--rebuild")).code).toBe(0);
-    expect((await cli("index", "--check")).out).not.toContain("needs a rebuild");
+    expect(check.code).toBe(0);
+    expect(check.out).not.toContain("rebuild");
   }, 90_000);
 
-  test("5: after adopt a plain index still has the wrong cost; --rebuild repairs it", async () => {
+  test("5: lost id, then adopt, then plain index: correct cost with no rebuild", async () => {
     const { reindex } = await import("../../src/core/indexer.ts");
     const { openDb } = await import("../../src/core/db.ts");
     const { samplePricing } = await import("../helpers/pricing.ts");
     await realSession();
     const first = await archiveSessions([sourceRoot]);
-    // Grow the live file so the archive copy carries the OLDER mtime and is
-    // analyzed (and claims usage) first.
+    // Grow the live file so the archive copy carries the OLDER mtime. Before
+    // the change that copy was analyzed (and claimed the usage) first, left the
+    // live row at $0 once adoption pruned the duplicate, and needed --rebuild.
     await new Promise((r) => setTimeout(r, 20));
     await writeFile(sessionPath, `${await readFile(sessionPath, "utf8")}{"type":"summary"}\n`);
     const healthy = openDb(":memory:");
@@ -664,23 +685,14 @@ describe("archive identity gaps", () => {
     await rm(join(temp, "state", "archive-machine-id"));
     const db = openDb(":memory:");
     await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
-    const doubled = await rows(db);
-    expect(doubled).toHaveLength(2);
-    const live = doubled.find((r) => r.path === sessionPath);
-    expect(live?.cost ?? 0).toBe(0);
-    expect(doubled.find((r) => r.path !== sessionPath)?.cost).toBeCloseTo(baseline, 8);
+    const lost = await rows(db);
+    expect(lost.map((r) => r.path)).toEqual([sessionPath]);
+    expect(lost[0]?.cost).toBeCloseTo(baseline, 8);
 
-    await adoptArchiveMachine(first.machine?.id as string, archivePath, {
-      liveRoots: [sourceRoot],
-    });
+    await adoptArchiveMachine(first.machine?.id as string, archivePath);
     await reindex(db, { pricing: samplePricing, roots: [sourceRoot] });
     const plain = await rows(db);
-    expect(plain).toHaveLength(1);
-    expect(plain[0]?.cost ?? 0).toBe(0);
-
-    await reindex(db, { pricing: samplePricing, roots: [sourceRoot], rebuild: true });
-    const repaired = await rows(db);
-    expect(repaired).toHaveLength(1);
-    expect(repaired[0]?.cost).toBeCloseTo(baseline, 8);
+    expect(plain.map((r) => r.path)).toEqual([sessionPath]);
+    expect(plain[0]?.cost).toBeCloseTo(baseline, 8);
   });
 });

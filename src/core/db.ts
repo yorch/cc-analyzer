@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS usage_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
+
+CREATE TABLE IF NOT EXISTS reanalyze_keys (
+  key TEXT PRIMARY KEY
+);
 `;
 
 // v6: replaces the classified bash/test columns (bash_json, bash_errors_json,
@@ -184,7 +188,21 @@ CREATE INDEX IF NOT EXISTS idx_usage_keys_path ON usage_keys(path);
 // whose working directories differ across machines; `project_id` is the
 // deterministic alias-group identity, and a rebuild applies the shared alias
 // map to every existing row.
-export const SCHEMA_VERSION = "21";
+// v22: archive copies are now deduped per session by redundancy (a copy is
+// dropped only when another holds all of its content; see `dedupeSessions`),
+// and the cross-file `usage_keys` ledger is healed by re-analysis instead of
+// being left wrong. The new `reanalyze_keys` table holds SESSION KEYS (encoded
+// project directory + session id, see `sessionRowKey`) whose surviving rows owe
+// a re-analysis even though their file (size, mtime) did not change: a row was
+// pruned, or a file shed content, so calls its same-session copies carry were
+// freed from the ledger and nobody counts them yet. `planSessions` turns each
+// such key into work for the next scan and `index --check` reports it; a key
+// leaves the table only once every surviving row with that key was re-analyzed.
+// Rows indexed while an unreleased build's duplicate/pruning rules were in
+// effect can sit at $0 (or short of calls) with `--check` reporting the index
+// fresh: their file size/mtime never change, so no scan revisits them. Only a
+// rebuild re-derives them.
+export const SCHEMA_VERSION = "22";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it
@@ -206,6 +224,7 @@ export function openDb(path: string = indexDbPath()): Database {
     // sessions table (with the current columns) so a rebuild fills it accurately.
     db.exec("DROP TABLE IF EXISTS sessions;");
     db.exec("DROP TABLE IF EXISTS usage_keys;");
+    db.exec("DROP TABLE IF EXISTS reanalyze_keys;");
     db.query("DELETE FROM meta WHERE key = 'last_scan_at'").run();
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
       SCHEMA_VERSION,

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { listArchiveRoots } from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
-import { listAllSessions, retainsMissingRows, scanRoots } from "./discover.ts";
+import { planSessions, retainsMissingRows, scanRoots } from "./discover.ts";
 import type { IndexStatus } from "./index-status-types.ts";
 import { aliasNeedsReindex, readProjectAliases } from "./project-aliases.ts";
 
@@ -16,28 +16,15 @@ export function lastIndexScanAt(db: Database): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-/** Set by `archive machine adopt|keep`; cleared by `index --rebuild`. */
-export const REBUILD_REQUIRED_KEY = "rebuild_required";
-
 /**
- * Changing archive identity prunes or leaves duplicate rows whose `usage_keys`
- * claims do not transfer, so per-session cost stays wrong until a rebuild — and
- * `--check` would otherwise call that index fresh. Persist the debt.
+ * Session keys whose surviving rows owe a re-analysis (see `reanalyze_keys` in
+ * db.ts). Read by both `reindex` and `inspectIndexStatus` so `--check` reports
+ * exactly the work the next `index` does.
  */
-export function markRebuildRequired(db: Database): void {
-  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
-    REBUILD_REQUIRED_KEY,
-    String(Date.now()),
-  );
+export function readReanalyzeKeys(db: Database): Set<string> {
+  const rows = db.query("SELECT key FROM reanalyze_keys").all() as { key: string }[];
+  return new Set(rows.map((r) => r.key));
 }
-
-export function rebuildRequired(db: Database): boolean {
-  return db.query("SELECT 1 FROM meta WHERE key = ?").get(REBUILD_REQUIRED_KEY) !== null;
-}
-
-export const REBUILD_REQUIRED_MESSAGE =
-  "Run `cc-analyzer index --rebuild`: changing this computer's archive identity leaves " +
-  "per-session and per-project cost wrong until usage claims are re-derived.";
 
 /** Compare source file metadata with the SQLite cache without parsing sessions. */
 export async function inspectIndexStatus(
@@ -45,15 +32,14 @@ export async function inspectIndexStatus(
   now = Date.now(),
   roots: ClaudeRoot[] = claudeRoots(),
 ): Promise<IndexStatus> {
-  // Include archive roots exactly as the indexer does, preferring this machine's
-  // live root over its own backup copy while that source remains available.
-  roots = [...roots, ...(await listArchiveRoots(undefined, roots))];
+  // Include archive roots exactly as the indexer does; `planSessions` then
+  // drops archived copies of sessions that exist elsewhere, per session.
+  roots = [...roots, ...(await listArchiveRoots())];
   // Same prune rule the indexer applies, from the same helper, so `--check`
   // cannot report a deletion that `reindex` would not actually make.
   const retained = retainsMissingRows(await scanRoots(roots));
 
   const aliases = await readProjectAliases();
-  const files = await listAllSessions(roots);
   const existingRows = db
     .query(
       "SELECT path, mtime_ms, size_bytes, claude_dir, project_path, project_alias FROM sessions",
@@ -67,6 +53,12 @@ export async function inspectIndexStatus(
     project_alias: string | null;
   }[];
   const existing = new Map(existingRows.map((row) => [row.path, row]));
+  const { sessions: files, reingest } = await planSessions(
+    roots,
+    existing,
+    retained,
+    readReanalyzeKeys(db),
+  );
   const sourcePaths = new Set<string>();
   let added = 0;
   let changed = 0;
@@ -78,6 +70,7 @@ export async function inspectIndexStatus(
     else if (
       row.mtime_ms !== file.mtimeMs ||
       row.size_bytes !== file.sizeBytes ||
+      reingest.has(file.path) ||
       // Same predicate the indexer uses, so `--check` reports exactly the work
       // `reindex` will do for alias edits.
       aliasNeedsReindex(row.project_path, row.project_alias, aliases.byPath)
