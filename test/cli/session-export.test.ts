@@ -1,10 +1,13 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CACHE_FORMAT_VERSION } from "../../src/core/pricing-source.ts";
 import { samplePricing } from "../helpers/pricing.ts";
+
+// Spawns real `bun` subprocesses; see test/cli/cli.test.ts for the measurement.
+setDefaultTimeout(10_000);
 
 const cliPath = fileURLToPath(new URL("../../src/cli/index.ts", import.meta.url));
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));

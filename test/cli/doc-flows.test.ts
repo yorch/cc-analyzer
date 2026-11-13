@@ -1,11 +1,15 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CACHE_FORMAT_VERSION } from "../../src/core/pricing-source.ts";
 import { samplePricing } from "../helpers/pricing.ts";
+
+// Every flow spawns real `bun` subprocesses; see test/cli/cli.test.ts for the
+// measurement behind this timeout.
+setDefaultTimeout(10_000);
 
 /**
  * The command sequences `site/install.md` tells users to run, executed.
