@@ -1466,7 +1466,11 @@ describe("`sessions <project>` explains an emptied live project", () => {
     const both = [live, { path: second, slug: rootSlug(second), source: "default" as const }];
     const roots = [...both, ...(await listArchiveRoots())];
     const projects = await listProjects(roots);
-    const mine = projects.find((p) => p.root === live.path) as { id: string };
+    // The live root holds two projects here, so select by id: `find` on the root
+    // alone returns whichever the filesystem lists first, which differs by platform.
+    const mine = projects.find((p) => p.root === live.path && p.id.endsWith(PROJECT)) as {
+      id: string;
+    };
     const shadowing = projects.find(
       (p) => p.root.includes("machines") && p.id.endsWith(PROJECT),
     ) as { id: string };
