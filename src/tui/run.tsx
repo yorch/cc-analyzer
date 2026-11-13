@@ -36,7 +36,15 @@ export async function runTui(): Promise<number> {
   });
   if (refreshed && refreshed.total > 0) process.stderr.write("\n");
   reportRefresh(refreshed);
-  const indexStatus = await inspectIndexStatus(db);
+  let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
+  try {
+    indexStatus = await inspectIndexStatus(db);
+  } catch (error) {
+    // A strict alias-file read failure: report it cleanly instead of a stack trace.
+    db.close();
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
   const app = render(<App db={db} pricing={table} indexStatus={indexStatus} />);
   await app.waitUntilExit();
   db.close();

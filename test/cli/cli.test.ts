@@ -815,6 +815,9 @@ describe("Claude data directories", () => {
     const env = { CC_ANALYZER_STATE_DIR: stateDir, PWD: projectDir };
     const configured = await run(["archive", "set", archiveDir], env, projectDir);
     expect(configured.code, configured.stderr).toBe(0);
+    // Alias edits are stored per computer, so they need a recorded identity.
+    const kept = await run(["archive", "machine", "keep"], env, projectDir);
+    expect(kept.code, kept.stderr).toBe(0);
     const set = await run(["archive", "alias", "current", "Acme App"], env, projectDir);
     expect(set.code, set.stderr).toBe(0);
     expect(set.stdout).toContain("Commit created locally");
@@ -829,6 +832,7 @@ describe("Claude data directories", () => {
     const logicalPath = "/logical/path/to/acme";
     const env = { CC_ANALYZER_STATE_DIR: stateDir, PWD: logicalPath };
     expect((await run(["archive", "set", archiveDir], env)).code).toBe(0);
+    expect((await run(["archive", "machine", "keep"], env)).code).toBe(0);
     const set = await run(
       ["archive", "alias", "current", "Acme App"],
       env,
