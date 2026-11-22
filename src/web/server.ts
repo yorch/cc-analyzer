@@ -115,7 +115,15 @@ export async function runServe(opts: ServeOptions = {}): Promise<number> {
     db.close();
     return 1;
   }
-  const indexStatus = await inspectIndexStatus(db);
+  let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
+  try {
+    indexStatus = await inspectIndexStatus(db);
+  } catch (error) {
+    // A strict alias-file read failure: report it cleanly instead of a stack trace.
+    db.close();
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
   if (indexStatus.stale) {
     console.error(
       `Index is behind: ${indexStatus.added} new, ${indexStatus.changed} changed, ` +

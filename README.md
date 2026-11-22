@@ -252,7 +252,9 @@ portfolio reports; enabling `archive index on` on each computer lets each one
 contribute its own sessions. A session present both live and in the archive is
 matched by project and session id, so its cost is counted once. A copy that has
 diverged from the live one is kept as well. To combine projects whose working
-directories differ between computers, use the shared aliases stored in the archive:
+directories differ between computers, give them a shared alias. Alias commands need
+a recorded archive identity on the computer you run them on: `archive machine keep`
+for a new computer, or `archive machine adopt <id>` for one already in the archive.
 
 ```bash
 cc-analyzer archive alias set /Users/alice/work/app "Acme App"
@@ -267,10 +269,16 @@ cc-analyzer archive alias current "Acme App"
 Each path is the recorded project working directory on that computer. The
 `current` shortcut uses your shell's current directory, so run it from the same
 project root Claude Code records. Matching paths with the same alias become one
-project in reports, and the alias is the displayed project name. The alias file
-is committed locally; push and pull the archive repository manually to share
-changes. Before another `archive run`, pull first and ensure the repository is
-clean. Removing or changing aliases requires an index refresh on each computer.
+project in reports, and the alias is the displayed project name. Each computer
+keeps its own alias file in the archive (`machines/<id>/project-aliases.json`),
+and each edit is committed locally; push and pull the archive repository manually
+to share changes. The effective alias for a path is the latest edit across all
+computers, and a removal wins over older labels. Alias files never conflict in Git,
+though clocks that disagree can let two near-simultaneous edits resolve either way;
+every computer resolves them the same way, and setting the label again on the
+computer that lost wins. Before another `archive run`, pull first and ensure the
+repository is clean. Removing or changing aliases requires an index refresh on each
+computer.
 The SQLite index remains local and is rebuilt independently on each machine.
 
 Archives contain raw, potentially sensitive prompts and tool output. Git does

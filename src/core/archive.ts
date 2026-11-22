@@ -12,10 +12,13 @@ import {
   setArchiveMachineId,
 } from "./prefs.ts";
 import {
+  MAX_ALIAS_UPDATED_AT,
+  mergeAliasSources,
   normalizeAliasPath,
   PROJECT_ALIASES_FILE,
+  readAliasSources,
   readProjectAliases,
-  writeProjectAliases,
+  writeMachineAliases,
 } from "./project-aliases.ts";
 
 export interface ArchiveResult {
@@ -106,7 +109,8 @@ async function readMachineRecord(machinesDir: string, dir: string): Promise<Arch
 
 /**
  * Every `machines/<id>` directory, identified or not. A directory without a
- * usable `machine.json` (an archive predating identity records) still appears,
+ * usable `machine.json` (an archive predating identity records, or a damaged or
+ * hand-deleted record; `alias set` writes the record itself) still appears,
  * with no label or hostnames, so it can be shown and offered for adoption.
  * Never throws.
  */
@@ -535,37 +539,74 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
   };
 }
 
-/** List aliases stored in the shared archive configuration. */
+/** List the effective aliases (last writer wins per path across all computers' files). */
 export async function listProjectAliases(): Promise<[string, string][]> {
   const { byPath } = await readProjectAliases();
   return [...byPath].sort(([a], [b]) => a.localeCompare(b));
 }
 
-/** Add/update an alias, or remove one with `alias === undefined`, and commit it locally. */
+/**
+ * Add/update an alias, or remove one with `alias === undefined`, and commit it
+ * locally. Writes ONLY this computer's `machines/<id>/project-aliases.json`
+ * (removal is a tombstone), so two computers can never edit the same file and
+ * Git cannot report a conflict. Each entry is stamped
+ * `max(Date.now(), highest updatedAt already known for the path + 1)`: an edit
+ * made now beats everything this computer can see even if its clock is behind
+ * another machine's. Clocks that disagree can still make two genuinely
+ * concurrent edits resolve either way, but identically on every computer.
+ */
 export async function setProjectAlias(path: string, alias: string | undefined): Promise<boolean> {
   const configuredPath = getArchivePath();
   if (!configuredPath)
     throw new Error("No archive repository configured. Run `cc-analyzer archive set <path>`.");
   const repo = resolve(configuredPath);
-  await ensureRepository(repo);
-  await requireCleanRepository(repo);
   const key = normalizeAliasPath(path);
   if (!key || !(key.startsWith("/") || /^[A-Za-z]:\//.test(key))) {
     throw new Error("Project path must be an absolute working-directory path.");
   }
-  const { byPath } = await readProjectAliases(repo);
   const value = alias?.trim();
   if (alias !== undefined && !value) throw new Error("Project alias must not be empty.");
-  if (value) {
-    if (byPath.get(key) === value) return false;
-    byPath.set(key, value);
-  } else {
-    if (!byPath.delete(key)) return false;
+  // Identity is checked before ensureRepository so a failed edit on a fresh
+  // path does not leave an empty `git init`-ed repository behind.
+  const machineId = readStoredArchiveMachineId();
+  if (!machineId) {
+    throw new Error(
+      "this computer has no recorded identity, and alias edits are stored per computer. " +
+        "If this computer already appears in the archive, adopt its id:\n" +
+        "  cc-analyzer archive machine adopt <id>\n" +
+        "Otherwise, if it is new:\n" +
+        "  cc-analyzer archive machine keep\n" +
+        "(`cc-analyzer archive run` records an identity on a first run.)",
+    );
   }
-  await writeProjectAliases(byPath, repo);
+  await ensureRepository(repo);
+  await requireCleanRepository(repo);
+  const sources = await readAliasSources(repo);
+  const winner = mergeAliasSources(sources).get(key);
+  if (value ? winner?.label === value : winner?.label === undefined) return false;
+  const own = new Map(sources.find((s) => s.machineId === machineId)?.entries);
+  const updatedAt = Math.max(Date.now(), (winner?.updatedAt ?? -1) + 1);
+  if (updatedAt > MAX_ALIAS_UPDATED_AT) {
+    // Refuse before writing anything: a stamp above the ceiling would make our
+    // own file unreadable on every computer that pulls it.
+    const holder = winner?.machineId
+      ? `machines/${winner.machineId}/${PROJECT_ALIASES_FILE}`
+      : PROJECT_ALIASES_FILE;
+    throw new Error(
+      `Cannot edit the alias for '${key}': ${holder} holds an entry with updatedAt ` +
+        `${winner?.updatedAt}, so a newer edit would exceed the maximum ${MAX_ALIAS_UPDATED_AT}. ` +
+        "Edit or remove that entry in that file, commit it, and try again.",
+    );
+  }
+  own.set(key, { ...(value ? { label: value } : {}), updatedAt });
+  const file = await writeMachineAliases(own, machineId, repo);
+  // The identity record travels in the same commit: a `machines/<id>/` holding
+  // only an alias file would look unidentified to other computers, which could
+  // then adopt a live computer's id.
+  await writeMachineRecord(repo, machineId, hostname());
   await commitArchiveFiles(
     repo,
-    [PROJECT_ALIASES_FILE],
+    [file, join(repo, "machines", machineId, MACHINE_FILE)],
     value ? `Set project alias: ${value}` : "Remove project alias",
   );
   return true;
