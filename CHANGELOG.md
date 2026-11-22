@@ -1,5 +1,40 @@
 # cc-analyzer
 
+## 0.26.0
+
+### Minor Changes
+
+- [#141](https://github.com/yorch/cc-analyzer/pull/141) [`2e730e5`](https://github.com/yorch/cc-analyzer/commit/2e730e58ac808a340e3a0b65f84347ca02df56ac) Thanks [@yorch](https://github.com/yorch)! - Store project aliases per computer so editing them can never cause a Git merge conflict. Each computer now writes its alias edits only under its own `machines/<id>/` (in `project-aliases.json`), and the effective alias for a path is the most recent edit across all computers (removals are recorded so they win too). Computers that edit aliases at different times merge with a plain `git pull`; there is no shared JSON file to hand-merge.
+  
+  The old shared `project-aliases.json` is still read, as the lowest-priority source, and is never rewritten, so existing aliases keep working. An older cc-analyzer on another computer will not see aliases written by this version, so update every computer before editing aliases from more than one.
+  
+  `archive alias set`, `current`, and `remove` now need this computer to have a recorded identity (`archive machine keep`, `archive machine adopt <id>`, or a first `archive run`). Each edit commits this computer's `machine.json` in the same commit as its alias file. Commands that read aliases now report an unreadable alias file as a clean error that names the computer that wrote it and how to recover, instead of a stack trace.
+
+### Patch Changes
+
+- [#137](https://github.com/yorch/cc-analyzer/pull/137) [`224608e`](https://github.com/yorch/cc-analyzer/commit/224608e30c586e0ce11694c9b3df1b2af70c1aa0) Thanks [@yorch](https://github.com/yorch)! - Make multi-computer archives trustworthy, and stop alias edits re-reading the whole portfolio.
+  
+  A computer's archive identity used to be a random id recorded only in local state. Losing it (a cleared state directory, a fresh install, a restored home) made the computer's own archived copy look like a *different* computer, so its sessions were counted twice, inflating session counts and activity metrics while the de-duplicated portfolio cost stayed correct. Identity is now recorded in the archive itself as `machines/<id>/machine.json`, and resolution never guesses:
+  
+  - A computer with no recorded identity is not assigned one silently. `archive machine` lists the archived machines until the user acts, and `archive run` refuses to write into the archive's permanent history while identity is unresolved, naming both remedies.
+  - A matching hostname is only a **suggestion**. Recovery is always explicit: `cc-analyzer archive machine adopt <id>`, or `cc-analyzer archive machine keep` for a genuinely new computer. Auto-adopting on a hostname match could make two computers archive into one machine directory, mixing their raw transcripts in Git history.
+  - `adopt` refuses an identity whose recorded hostnames exclude this computer unless `--force` is given.
+  - `archive show` lists every machine directory it recognises with its full id, marks which one is this computer, and marks ones that predate `machine.json` as unidentified instead of hiding them.
+  
+  Changing a project alias now re-analyzes only the sessions whose project label actually changed, instead of the entire portfolio. The selection compares each indexed row's own recorded alias against the current map, so it cannot be thrown off by a partially failed scan or an unreadable root, and `index --check` reports exactly the work `index` will do. Archiving also compares file contents by streaming instead of hashing every session twice per run.
+
+- [#140](https://github.com/yorch/cc-analyzer/pull/140) [`1e70869`](https://github.com/yorch/cc-analyzer/commit/1e70869dd85b67d3495ac8d45bf7022afb064117) Thanks [@yorch](https://github.com/yorch)! - Match archived sessions to live sessions one session at a time, not by hiding a whole computer's archive.
+  
+  Before, a computer's archived copy of its own sessions was hidden from the index whenever its live Claude data directory was readable, and that decision depended on which archived machine was "this computer". Sessions disappeared from reports after emptying `~/.claude/projects`, after a parent transcript was deleted, or when two computers shared a hostname. Now every archived copy is matched to its live session by project and session id. A copy is left out only when another copy already holds everything in it, so a session's cost is never counted twice, and a session that is only in the archive is kept. Copies that differ, for example because a session was continued on another computer, are both kept, so no activity is lost. Their cost is still counted once.
+  
+  - `archive run` no longer overwrites a complete archived transcript with a shorter live copy. It keeps the archived file and reports the session as not updated.
+  - When archive-during-index cannot copy because this computer's archive identity is unresolved, `index`, the TUI, and `serve` all print a warning saying so. A skipped backup is otherwise lost for good once Claude Code deletes the live transcript.
+  - `index --rebuild` no longer double-counts a session for good when one of its transcripts cannot be read during the rebuild. The total corrects itself on the next run that can read the file.
+  - `cc-analyzer sessions <project>` points you to another project only when that project really holds the sessions.
+  - The index schema is now 22, so an existing index is dropped and rebuilt on the next index refresh.
+
+- [#139](https://github.com/yorch/cc-analyzer/pull/139) [`f115593`](https://github.com/yorch/cc-analyzer/commit/f1155935e9b7b8318a706f75348b7ce4aa3f2551) Thanks [@yorch](https://github.com/yorch)! - Build the docs site in CI on every pull request, so a broken docs link or anchor fails the PR instead of the post-merge site deploy. The CLI telemetry test now asserts that the event is delivered by a process that outlives the command, instead of comparing arrival times, which a busy machine could reorder and fail about a third of the time.
+
 ## 0.25.1
 
 ### Patch Changes
