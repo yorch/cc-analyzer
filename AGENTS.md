@@ -1081,7 +1081,9 @@ interrupted.
 ## Release
 
 CI (`.github/workflows/ci.yml`) runs lint, both typechecks, tests, and a full build on
-every push/PR. A pull request that changes this publishable root package must also
+every push/PR, plus a `docs` job that builds the docs site (`bun run docs:build`, no
+deploy) so a broken docs link fails the PR rather than the post-merge deploy. A pull
+request that changes this publishable root package must also
 carry a non-empty Changeset (`bun run changeset`); CI compares it to the base branch
 and rejects missing release metadata. The generated `changeset-release/*` version PR
 is exempt because it consumes those files.

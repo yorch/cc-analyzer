@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 import { CACHE_FORMAT_VERSION } from "../../src/core/pricing-source.ts";
 import { VERSION } from "../../src/core/version.ts";
 import { samplePricing } from "../helpers/pricing.ts";
+
+// Every test here spawns a real `bun` subprocess. This is headroom, not a fix for
+// an observed failure: no test in this file exceeded the 5s default even under
+// synthetic load 76 on 10 cores (slowest ~1.7s), so 10s is ~6x the worst seen.
+setDefaultTimeout(10_000);
 
 const cliPath = fileURLToPath(new URL("../../src/cli/index.ts", import.meta.url));
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
@@ -221,17 +226,30 @@ describe("CLI dispatch & exit codes", () => {
 
   // A quick command exits in ~100ms, far too little for a cold TLS handshake,
   // and `process.exit()` kills an in-flight socket outright. The event is
-  // therefore delivered by a detached child that outlives its parent — which is
-  // what the ordering assertion below pins down: an in-process request would
-  // necessarily have arrived *before* the parent exited, not after.
-  test("a quick command's telemetry outlives the process that fired it", async () => {
+  // therefore delivered by a detached child that outlives its parent.
+  //
+  // This pins that down CAUSALLY rather than by timing. An earlier version
+  // asserted the request arrived *after* the parent exited, which a loaded
+  // machine can legitimately violate: with the parent descheduled, the freshly
+  // booted child can connect first (it failed ~30-50% of runs under CPU
+  // contention). What cannot vary is who keeps the connection open: the server
+  // holds its response until the test releases it, so a sender that died with
+  // the parent shows up as an aborted request, while a surviving poster does not.
+  test("a quick command's telemetry is delivered by a process that outlives it", async () => {
     let body: { props?: { name?: string } } | undefined;
-    let receivedAt = 0;
+    let aborted = false;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const server = Bun.serve({
       port: 0,
       async fetch(req) {
+        req.signal.addEventListener("abort", () => {
+          aborted = true;
+        });
         body = (await req.json()) as { props?: { name?: string } };
-        receivedAt = performance.now();
+        await gate;
         return new Response("", { status: 202 });
       },
     });
@@ -242,13 +260,16 @@ describe("CLI dispatch & exit codes", () => {
         DO_NOT_TRACK: undefined,
         CI: undefined,
       });
-      const exitedAt = performance.now();
+      // The parent has exited. Nothing waits on the poster, so give it room to
+      // boot and connect.
       expect(r.code).toBe(0);
-      // Nothing waits on the poster, so give it room to boot and connect.
       for (let i = 0; i < 200 && !body; i++) await Bun.sleep(25);
       expect(body?.props?.name).toBe("projects");
-      expect(receivedAt).toBeGreaterThan(exitedAt);
+      // Let a dead sender's socket be torn down and reported before asserting.
+      await Bun.sleep(300);
+      expect(aborted).toBe(false);
     } finally {
+      release();
       server.stop(true);
     }
   });

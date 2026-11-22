@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,10 @@ import {
   setArchiveMachineLabel,
   setArchivePath,
 } from "../../src/core/prefs.ts";
+
+// Several tests spawn real `git` and `bun` subprocesses; see test/cli/cli.test.ts
+// for the load measurement behind this timeout.
+setDefaultTimeout(10_000);
 
 let temp: string;
 let previousStateDir: string | undefined;
