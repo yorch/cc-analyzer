@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
-import { listAllSessions, type SessionInfo } from "./discover.ts";
+import type { ClaudeRoot } from "./claude-roots.ts";
+import { fileCoveredBy, listAllSessions, type SessionInfo } from "./discover.ts";
 import {
   ARCHIVE_MACHINE_ID_PATTERN,
   getArchiveMachineLabel,
@@ -21,6 +21,11 @@ import {
 export interface ArchiveResult {
   copied: number;
   unchanged: number;
+  /**
+   * Sessions with at least one file left as archived because the live source is
+   * a truncated (prefix) version of the archived copy; see `copyIfChanged`.
+   */
+  notUpdated: number;
   committed: boolean;
   roots: string[];
   /** The machine identity this run archived under. */
@@ -129,14 +134,16 @@ export async function listArchiveMachineEntries(
  * memory (`source: "unidentified"`), with every archived machine as a
  * `candidate` and, when exactly one records this hostname, a `suggestion`.
  *
- * Not persisting is deliberate, not an oversight. This runs on every read path
- * (`index --check`, TUI, `serve`, `projects`, ...); persisting there made the
- * first reader mint silently, so every later command saw "local" and the
- * warning fired once per machine, ever. An unidentified machine instead
- * re-mints each run: its own archive stays unsuppressed and every surface keeps
- * warning until the user resolves it (`archive machine adopt|keep`). It never
- * auto-adopts either: two computers can share a hostname and a root slug, and
- * a wrong guess suppresses another computer's sessions from the index.
+ * Not persisting is deliberate, not an oversight. This runs on every
+ * identity-aware path; persisting there would make the first reader mint
+ * silently. It never auto-adopts either: a hostname match is not identity (two
+ * computers can share a hostname and a root slug), and a wrong adoption would
+ * file this computer's transcripts under another computer's id in permanent Git
+ * history. Identity matters only for WRITING the archive: reads and the index
+ * dedupe by session, never by machine, so an unresolved identity changes no
+ * number any read surface prints. What it does stop is the backup itself:
+ * `archive run` refuses, and archive-during-index skips and reports it as
+ * `ReindexResult.archiveSkipped`, which every surface that indexes must print.
  */
 export async function resolveArchiveMachine(
   repo = getArchivePath(),
@@ -167,7 +174,7 @@ export function describeUnresolvedMachine(machine: ArchiveMachineResolution): st
   }
   const lines = [
     "this computer has no recorded identity and the archive already holds other machines.",
-    "If one of them is this computer, adopt its id so its sessions are not counted twice:",
+    "If one of them is this computer, adopt its id so its sessions stay under one archive directory:",
   ];
   for (const m of machine.candidates) {
     // The label defaults to the hostname, so only list hostnames that add
@@ -184,9 +191,9 @@ export function describeUnresolvedMachine(machine: ArchiveMachineResolution): st
 
 /**
  * Warn (via `log`, stderr by default) while this computer's archive identity is
- * unresolved and the archive holds other machines. Fires on EVERY run until
- * the user adopts or keeps an id: the resolver never persists, so nothing
- * silences it by accident. Stderr only, so `--json` consumers are unaffected.
+ * unresolved and the archive holds other machines. Used where the user is
+ * working with identity (`archive machine`) and when archiving was skipped
+ * because of it. Stderr only, so `--json` consumers are unaffected.
  */
 export function warnIfUnresolvedMachine(
   machine: ArchiveMachineResolution | undefined,
@@ -196,16 +203,6 @@ export function warnIfUnresolvedMachine(
   const [first, ...rest] = describeUnresolvedMachine(machine);
   log(`warning: ${first}`);
   for (const line of rest) log(line);
-}
-
-/** Resolve identity and warn when unresolved. For surfaces that read the index without reindexing. */
-export async function warnIfUnresolvedArchive(): Promise<void> {
-  if (!getArchivePath()) return;
-  try {
-    warnIfUnresolvedMachine(await resolveArchiveMachine());
-  } catch {
-    // A warning must never break the surface that carries it.
-  }
 }
 
 /**
@@ -244,7 +241,7 @@ export interface KeepResult extends ArchiveMachineResolution {
  * Persist a freshly minted id for a genuinely new computer. No-op when one is
  * already stored. Refuses without `force` when an archived machine records this
  * hostname: that is the suggestion case, where `keep` is most likely a mistake
- * (this computer's own older directory would be double-counted forever).
+ * (this computer's own older directory would stay in the repository next to a second copy of everything).
  */
 export async function keepArchiveMachine(
   repo = getArchivePath(),
@@ -257,8 +254,9 @@ export async function keepArchiveMachine(
   if (!options.force && matching.length > 0) {
     throw new Error(
       `Archived machine ${matching.map((m) => m.id).join(", ")} records this computer's hostname ` +
-        `(${host}). Keeping a new id leaves that directory in place and its sessions will be ` +
-        "counted twice from now on. If it is this computer, adopt it instead: " +
+        `(${host}). Keeping a new id leaves that directory in place, and from now on this ` +
+        "computer's transcripts are archived a second time under the new id. " +
+        "If it is this computer, adopt it instead: " +
         `cc-analyzer archive machine adopt ${matching[0]?.id}. Otherwise re-run with --force.`,
     );
   }
@@ -267,42 +265,9 @@ export async function keepArchiveMachine(
 }
 
 export interface AdoptOptions {
-  /** Claim an id whose recorded hostnames exclude this computer, or that would hide sessions. */
+  /** Claim an id whose recorded hostnames exclude this computer. */
   force?: boolean;
   host?: string;
-  /** This computer's live roots, to compare the archive against. Defaults to the configured ones. */
-  liveRoots?: ClaudeRoot[];
-}
-
-export interface AdoptResult {
-  /** Archived sessions that adoption hides and that have no counterpart on this computer. */
-  hiddenSessions: number;
-}
-
-/**
- * Count archived top-level session files under `machines/<id>` for the root
- * slugs this computer also has live, with no file of the same project/name under
- * the live root. Those are exactly the rows adoption would delete from the index.
- */
-async function countHiddenSessions(
-  repo: string,
-  id: string,
-  liveRoots: ClaudeRoot[],
-): Promise<number> {
-  let hidden = 0;
-  for (const live of liveRoots) {
-    const liveProjects = join(live.path, "projects");
-    if (!(await stat(liveProjects).catch(() => null))?.isDirectory()) continue;
-    const archived = join(repo, "machines", id, "roots", live.slug, "projects");
-    for (const project of await readdir(archived).catch(() => [] as string[])) {
-      const files = await readdir(join(archived, project)).catch(() => [] as string[]);
-      for (const file of files) {
-        if (!file.endsWith(".jsonl")) continue;
-        if (!(await stat(join(liveProjects, project, file)).catch(() => null))) hidden++;
-      }
-    }
-  }
-  return hidden;
 }
 
 /** Explicitly claim an id that exists in the archive. Throws when it does not. */
@@ -310,7 +275,7 @@ export async function adoptArchiveMachine(
   id: string,
   repo = getArchivePath(),
   options: AdoptOptions = {},
-): Promise<AdoptResult> {
+): Promise<void> {
   if (!repo)
     throw new Error("No archive repository configured. Run `cc-analyzer archive set <path>`.");
   id = id.trim().toLowerCase();
@@ -323,31 +288,12 @@ export async function adoptArchiveMachine(
   if (!options.force && entry.hostnames.length > 0 && !entry.hostnames.includes(host)) {
     throw new Error(
       `Machine ${id} (${entry.label}) records hostnames ${entry.hostnames.join(", ")}, not this ` +
-        `computer (${host}). Adopting another live computer's id would hide its sessions. ` +
+        `computer (${host}). Adopting another live computer's id would make two computers ` +
+        "archive into one machine directory, mixing their raw transcripts in Git history. " +
         "If this computer was renamed, re-run with --force.",
     );
   }
-  // Adoption makes `listArchiveRoots` suppress this id's copy of every root
-  // slug we also have live. Sessions archived there that we do NOT have are
-  // another computer's (same hostname and same ~/.claude path hash the same),
-  // and suppressing them deletes their rows. Genuine lost-identity recovery
-  // mirrors the live files, so it counts zero.
-  const hiddenSessions = await countHiddenSessions(
-    resolve(repo),
-    id,
-    options.liveRoots ?? claudeRoots(),
-  );
-  if (!options.force && hiddenSessions > 0) {
-    throw new Error(
-      `Adopting ${id} would hide ${hiddenSessions} archived ` +
-        (hiddenSessions === 1
-          ? "session that is not present on this computer: it looks like another computer's. "
-          : `sessions that are not present on this computer: they look like another computer's. `) +
-        "If they really are yours and their sources are gone, re-run with --force.",
-    );
-  }
   setArchiveMachineId(id);
-  return { hiddenSessions };
 }
 
 /** Write/refresh this machine's record, unioning hostnames. Returns whether the file changed. */
@@ -439,18 +385,35 @@ async function sameContents(a: string, b: string): Promise<boolean> {
   }
 }
 
-async function copyIfChanged(source: string, destination: string): Promise<boolean> {
+type CopyOutcome = "copied" | "unchanged" | "kept";
+
+/**
+ * Copy `source` over `destination` unless that would lose data. When the
+ * source is a truncated version of an already-archived file (smaller, and a
+ * prefix by the same tail-window test the indexer's redundancy rule uses) the
+ * archived file is kept: the working-tree copy is what the index reads, and
+ * Git history holding the old content does not help it. A source that merely
+ * differs (diverged) is still copied; history retains what it replaces.
+ */
+async function copyIfChanged(source: string, destination: string): Promise<CopyOutcome> {
   const sourceStat = await stat(source);
   const destinationStat = await stat(destination).catch(() => null);
   if (destinationStat?.size === sourceStat.size && (await sameContents(source, destination))) {
-    return false;
+    return "unchanged";
+  }
+  if (destinationStat && destinationStat.size > sourceStat.size) {
+    if (await fileCoveredBy(source, destination)) return "kept";
   }
   await mkdir(dirname(destination), { recursive: true });
   await copyFile(source, destination);
-  return true;
+  return "copied";
 }
 
-async function copySession(info: SessionInfo, repo: string, machineId: string): Promise<boolean> {
+async function copySession(
+  info: SessionInfo,
+  repo: string,
+  machineId: string,
+): Promise<{ changed: boolean; kept: boolean }> {
   const projectName = basename(dirname(info.path));
   const sourceRootSlug = info.projectId.slice(0, info.projectId.indexOf("~"));
   const sessionId = basename(info.path, ".jsonl");
@@ -464,21 +427,22 @@ async function copySession(info: SessionInfo, repo: string, machineId: string): 
     projectName,
   );
   let changed = false;
-  if (info.parentExists) {
-    changed = (await copyIfChanged(info.path, join(sessionDir, `${sessionId}.jsonl`))) || changed;
-  }
+  let kept = false;
+  const copy = async (source: string, destination: string) => {
+    const outcome = await copyIfChanged(source, destination);
+    if (outcome === "copied") changed = true;
+    if (outcome === "kept") kept = true;
+  };
+  if (info.parentExists) await copy(info.path, join(sessionDir, `${sessionId}.jsonl`));
   for (const source of info.subagentPaths) {
     const name = basename(source);
-    changed =
-      (await copyIfChanged(source, join(sessionDir, sessionId, "subagents", name))) || changed;
+    await copy(source, join(sessionDir, sessionId, "subagents", name));
     const meta = join(dirname(source), `${basename(source, ".jsonl")}.meta.json`);
     if (await Bun.file(meta).exists()) {
-      changed =
-        (await copyIfChanged(meta, join(sessionDir, sessionId, "subagents", basename(meta)))) ||
-        changed;
+      await copy(meta, join(sessionDir, sessionId, "subagents", basename(meta)));
     }
   }
-  return changed;
+  return { changed, kept };
 }
 
 async function requireCleanRepository(repo: string): Promise<void> {
@@ -544,8 +508,11 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
   const metadataChanged = await writeMachineRecord(repo, machineId, hostname());
   const sessions = await listAllSessions(roots);
   let copied = 0;
+  let notUpdated = 0;
   for (const session of sessions) {
-    if (await copySession(session, repo, machineId)) copied++;
+    const { changed, kept } = await copySession(session, repo, machineId);
+    if (changed) copied++;
+    if (kept) notUpdated++;
   }
   let committed = false;
   if (copied > 0 || metadataChanged) {
@@ -561,6 +528,7 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
   return {
     copied,
     unchanged: sessions.length - copied,
+    notUpdated,
     committed,
     roots: (await listArchiveRoots(repo)).map((root) => root.path),
     machine,
@@ -603,11 +571,15 @@ export async function setProjectAlias(path: string, alias: string | undefined): 
   return true;
 }
 
-/** Build stable archive roots in Claude's normal on-disk layout. */
-export async function listArchiveRoots(
-  repo = getArchivePath(),
-  liveRoots: ClaudeRoot[] = [],
-): Promise<ClaudeRoot[]> {
+/**
+ * Build stable archive roots in Claude's normal on-disk layout.
+ *
+ * Every machine's every root is returned: nothing here depends on which
+ * computer is "this one". A backup copy of a session that still exists live is
+ * dropped per session by `dedupeSessions` (discover.ts), so an identity mistake
+ * can never hide a session.
+ */
+export async function listArchiveRoots(repo = getArchivePath()): Promise<ClaudeRoot[]> {
   if (!repo) return [];
   const repoStat = await stat(repo).catch(() => null);
   if (!repoStat?.isDirectory()) {
@@ -624,21 +596,10 @@ export async function listArchiveRoots(
     ARCHIVE_MACHINE_ID_PATTERN.test(d),
   );
   const roots: ClaudeRoot[] = [];
-  const ownId = liveRoots.length > 0 ? (await resolveArchiveMachine(repo)).id : undefined;
   for (const machine of machines.sort()) {
     const rootsDir = join(machinesDir, machine, "roots");
     const sourceRoots = await readdir(rootsDir).catch(() => []);
     for (const sourceRoot of sourceRoots.sort()) {
-      // Prefer this machine's live source while it exists; its archive is a
-      // backup copy, not a second session row. If the source disappears, the
-      // same archive root becomes visible on the next scan.
-      if (machine === ownId && liveRoots.some((root) => root.slug === sourceRoot)) {
-        const live = liveRoots.find((root) => root.slug === sourceRoot);
-        const liveProjects = live
-          ? await stat(join(live.path, "projects")).catch(() => null)
-          : null;
-        if (liveProjects?.isDirectory()) continue;
-      }
       const path = join(rootsDir, sourceRoot);
       const projects = await stat(join(path, "projects")).catch(() => null);
       if (!projects?.isDirectory()) continue;

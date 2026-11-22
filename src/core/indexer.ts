@@ -1,24 +1,19 @@
 import type { Database } from "bun:sqlite";
 import type { SessionAnalysis } from "./analyze.ts";
 import { analyzeSessionStream } from "./analyze.ts";
-import {
-  ArchiveIdentityError,
-  type ArchiveMachineResolution,
-  archiveSessions,
-  listArchiveRoots,
-  resolveArchiveMachine,
-} from "./archive.ts";
+import { ArchiveIdentityError, archiveSessions, listArchiveRoots } from "./archive.ts";
 import { type ClaudeRoot, claudeRoots } from "./claude-roots.ts";
 import {
-  listAllSessions,
+  planSessions,
   retainsMissingRows,
   type SessionInfo,
   scanRoots,
+  sessionRowKey,
   sessionTree,
 } from "./discover.ts";
-import { LAST_SCAN_KEY, REBUILD_REQUIRED_KEY } from "./index-status.ts";
+import { LAST_SCAN_KEY, readReanalyzeKeys } from "./index-status.ts";
 import { streamSessionTree } from "./parser.ts";
-import { getArchiveDuringIndex, getArchivePath } from "./prefs.ts";
+import { getArchiveDuringIndex } from "./prefs.ts";
 import type { PricingTable } from "./pricing.ts";
 import { loadPricing } from "./pricing-source.ts";
 import {
@@ -284,8 +279,12 @@ export interface ReindexResult {
   indexed: number;
   skipped: number;
   deleted: number;
-  /** This computer's archive identity for this run; absent when no archive is configured. */
-  archiveMachine?: ArchiveMachineResolution;
+  /**
+   * Why archive-during-index did not copy sessions this run (an unresolved
+   * archive identity); absent when it ran or was not requested. Indexing is
+   * unaffected: it only reads the archive.
+   */
+  archiveSkipped?: string;
 }
 
 export interface ReindexOptions {
@@ -314,31 +313,22 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   // Resolve the configured roots once and pass them down: resolution reads the
   // filesystem, and the discovery helpers would otherwise repeat it per project.
   const sourceRoots = opts.roots ?? claudeRoots();
-  // Resolve this computer's archive identity up front, whether or not this run
-  // archives: `listArchiveRoots` needs it to suppress the machine's OWN backup
-  // copy, so a lost identity turns every one of its sessions into a second row
-  // on a plain `index` too — not only when archiving-during-index is on. The id
-  // is NOT persisted by the resolver: an unresolved identity is reported on
-  // `archiveMachine` on every run until the user adopts or keeps one.
-  let archiveMachine: ArchiveMachineResolution | undefined;
-  if (getArchivePath()) archiveMachine = await resolveArchiveMachine();
+  let archiveSkipped: string | undefined;
   if (opts.archive ?? getArchiveDuringIndex()) {
     try {
       await archiveSessions(sourceRoots);
     } catch (error) {
-      // Unresolved identity: indexing only reads the archive, so proceed and
-      // let the caller warn via `archiveMachine`. `archive run` is the refusal.
+      // Unresolved identity: indexing only reads the archive, so proceed, but
+      // report that the backup did not run (`archive run` is the refusal).
       if (!(error instanceof ArchiveIdentityError)) throw error;
+      archiveSkipped = error.message;
     }
   }
-  const roots = [...sourceRoots, ...(await listArchiveRoots(undefined, sourceRoots))];
+  const roots = [...sourceRoots, ...(await listArchiveRoots())];
   // A configured-but-unreadable root (unmounted volume, a synced folder
   // mid-setup) must not have its rows pruned — only a root the user actually
   // de-configured should lose its data.
   const retained = retainsMissingRows(await scanRoots(roots));
-
-  const files = await listAllSessions(roots);
-  const currentPaths = new Set(files.map((f) => f.path));
 
   const existing = new Map<
     string,
@@ -374,6 +364,17 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     }
   }
 
+  // One plan shared with `inspectIndexStatus`: the deduped files, the rows this
+  // run deletes (`pruned` — their usage claims must not block this run's
+  // analyses, or a session taking over from a pruned copy indexes at $0), and
+  // the survivors that must be re-analyzed because a pruned row shares their key.
+  const {
+    sessions: files,
+    reingest,
+    pruned,
+  } = await planSessions(roots, existing, retained, readReanalyzeKeys(db));
+  const currentPaths = new Set(files.map((f) => f.path));
+
   // On rebuild, ignore existing state for skipping — but still prune below.
   // Beyond size/mtime, a row is stale when the alias it was indexed under (its
   // own `project_alias` column) disagrees with the current map. Using the row
@@ -384,6 +385,7 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     : files.filter((f) => {
         const prev = existing.get(f.path);
         if (!prev || prev.mtime_ms !== f.mtimeMs || prev.size_bytes !== f.sizeBytes) return true;
+        if (reingest.has(f.path)) return true;
         return aliasNeedsReindex(prev.project_path, prev.project_alias, aliases.byPath);
       });
   // Oldest first: when a continuation file and its parent land in the same
@@ -402,14 +404,40 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   // small on incremental scans, the whole portfolio once on a full rebuild.
   const runClaims = new Map<string, string>();
   const priorClaim = db.query("SELECT path FROM usage_keys WHERE key = ?");
-  if (opts.rebuild) db.query("DELETE FROM usage_keys").run();
+  if (opts.rebuild) {
+    // Re-derive every claim from scratch — except those of rows this run will
+    // not re-analyze (a root unreadable right now keeps its rows): they keep
+    // counting their calls, so their claims must keep blocking the other copies
+    // of the session, exactly as on an incremental run. The re-analysis debt is
+    // not wiped either: the settling loop below clears a key once every row with
+    // it was re-analyzed, so only keys a row could not pay stay owed.
+    const retainedRows = new Set<string>();
+    for (const path of existing.keys()) {
+      if (!pruned.has(path) && !currentPaths.has(path)) retainedRows.add(path);
+    }
+    const kept = (
+      db.query("SELECT key, path FROM usage_keys").all() as {
+        key: string;
+        path: string;
+      }[]
+    ).filter((c) => retainedRows.has(c.path));
+    db.query("DELETE FROM usage_keys").run();
+    const reclaim = db.query("INSERT INTO usage_keys (key, path) VALUES (?, ?)");
+    for (const c of kept) reclaim.run(c.key, c.path);
+  }
   const claimFor =
     (path: string) =>
     (key: string): boolean => {
       const mine = runClaims.get(key);
       if (mine !== undefined) return mine === path;
       const prior = priorClaim.get(key) as { path: string } | undefined;
-      if (prior && prior.path !== path) return false;
+      // A prior claim held by a different file blocks, unless that file's row
+      // is being deleted this run. The holder keeps the claim even when it is
+      // itself being re-analyzed: its re-analysis may FAIL (unreadable file),
+      // in which case its old row keeps counting the call, and handing the call
+      // to a second row would count it twice. A call the holder later sheds is
+      // healed by re-analysis on the next run instead (`reanalyze_keys`).
+      if (prior && prior.path !== path && !pruned.has(prior.path)) return false;
       runClaims.set(key, path);
       return true;
     };
@@ -445,13 +473,57 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   const deleteKeysStmt = db.query("DELETE FROM usage_keys WHERE path = ?");
   const insertKeyStmt = db.query("INSERT OR REPLACE INTO usage_keys (key, path) VALUES (?, ?)");
 
+  const oldKeysStmt = db.query("SELECT key FROM usage_keys WHERE path = ?");
+  const debtDelete = db.query("DELETE FROM reanalyze_keys WHERE key = ?");
+  const debtInsert = db.query("INSERT OR REPLACE INTO reanalyze_keys (key) VALUES (?)");
+
   let deleted = 0;
   const writeAll = db.transaction(() => {
     // A re-analyzed file's stored claims are replaced wholesale by this run's;
     // a file whose analysis failed keeps its old row AND its old claims.
     const okPaths = new Set<string>();
+    // Rows (after this run) per session key, to decide who owes re-analysis.
+    const members = new Map<string, Set<string>>();
+    const addMember = (path: string) => {
+      const key = sessionRowKey(path);
+      const set = members.get(key);
+      if (set) set.add(path);
+      else members.set(key, new Set([path]));
+    };
+    for (const path of existing.keys()) if (!pruned.has(path)) addMember(path);
+    for (const row of rows) if (row) addMember(row.path);
+
+    // This run's claims grouped by the file that took them, built once: a
+    // per-row scan of `runClaims` is quadratic when many sessions keep both
+    // copies (every sibling row would walk the whole portfolio's claims).
+    const claimedBy = new Map<string, Set<string>>();
+    if (!opts.rebuild) {
+      for (const [key, path] of runClaims) {
+        const set = claimedBy.get(path);
+        if (set) set.add(key);
+        else claimedBy.set(path, new Set([key]));
+      }
+    }
+
+    const released = new Set<string>(); // session keys whose copies must be re-analyzed
     for (const row of rows) {
       if (!row) continue;
+      // A rebuild cleared the ledger first, so there are no old claims to
+      // compare against.
+      const sibling = !opts.rebuild && (members.get(sessionRowKey(row.path))?.size ?? 0) > 1;
+      // Claims this row held before and no longer claims. Only matters when
+      // another row of the same session exists, so single-copy sessions (the
+      // overwhelming majority) skip the key comparison entirely.
+      if (sibling) {
+        const now = claimedBy.get(row.path) ?? new Set<string>();
+        for (const { key } of oldKeysStmt.all(row.path) as { key: string }[]) {
+          if (now.has(key)) continue;
+          // No other file can have taken it this run: the row's own prior claim
+          // blocked every other file from it.
+          released.add(sessionRowKey(row.path));
+          break;
+        }
+      }
       upsert.run(...rowValues(row));
       okPaths.add(row.path);
       deleteKeysStmt.run(row.path);
@@ -459,17 +531,47 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     for (const [key, path] of runClaims) {
       if (okPaths.has(path)) insertKeyStmt.run(key, path);
     }
+    const prunedKeys = new Set<string>();
     for (const [path, prev] of existing) {
       if (currentPaths.has(path)) continue;
       if (retained(prev.claude_dir)) continue;
-      // Note: calls the deleted file had claimed stay uncounted in surviving
-      // rows until those are re-analyzed (a rebuild reclaims everything) —
-      // under-counting briefly beats double-counting silently.
+      // The deleted file's claims are freed here. Survivors of the same session
+      // were re-analyzed this run with those claims available (`pruned` bypasses
+      // the ledger); any that were not (a failed analysis, an unreadable
+      // retained root) are recorded as debt below.
       deleteStmt.run(path);
       deleteKeysStmt.run(path);
+      prunedKeys.add(sessionRowKey(path));
       deleted++;
     }
-    if (opts.rebuild) db.query("DELETE FROM meta WHERE key = ?").run(REBUILD_REQUIRED_KEY);
+    // Maintain the re-analysis debt (`reanalyze_keys`, session keys). A key is
+    // OWED when (a) a pruned row shared it and some surviving row of the
+    // session was not successfully re-analyzed this run, or (b) a re-analyzed
+    // file released claims no analyzed file took, while another row of the
+    // session exists: that row's unchanged (size, mtime) means no scan would
+    // ever revisit it. It is SETTLED once every row with the key was
+    // re-analyzed successfully (or none remain). A key whose rows cannot be
+    // re-analyzed (unreadable file, retained root) stays owed, so a permanently
+    // failing file keeps `--check` honest instead of silently dropping the debt.
+    for (const key of readReanalyzeKeys(db)) {
+      const rest = members.get(key);
+      if (!rest || [...rest].every((p) => okPaths.has(p))) debtDelete.run(key);
+    }
+    for (const key of prunedKeys) {
+      const rest = members.get(key);
+      if (rest && [...rest].some((p) => !okPaths.has(p))) debtInsert.run(key);
+    }
+    for (const key of released) debtInsert.run(key);
+    // A rebuild wiped the ledger up front, so a file whose analysis FAILED keeps
+    // its old row (and its old call count) with no claims behind it: any other
+    // copy would re-claim those calls and count them twice. Owe the session a
+    // re-analysis; the failed row is not in `okPaths`, so the debt stands until
+    // the file reads again, and then re-claims only what no one else holds.
+    if (opts.rebuild) {
+      toIngest.forEach((f, i) => {
+        if (!rows[i] && existing.has(f.path)) debtInsert.run(sessionRowKey(f.path));
+      });
+    }
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
       LAST_SCAN_KEY,
       String(Date.now()),
@@ -483,6 +585,6 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
     indexed,
     skipped: files.length - toIngest.length,
     deleted,
-    archiveMachine,
+    archiveSkipped,
   };
 }

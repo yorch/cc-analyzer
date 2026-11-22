@@ -249,8 +249,10 @@ git -C /path/to/cc-archive push -u origin HEAD
 Clone that repository on another computer and run `cc-analyzer archive set
 <clone-path>` there. Archived sessions are included in the ordinary index and
 portfolio reports; enabling `archive index on` on each computer lets each one
-contribute its own sessions. To combine projects whose working directories
-differ between computers, use the shared aliases stored in the archive:
+contribute its own sessions. A session present both live and in the archive is
+matched by project and session id, so its cost is counted once. A copy that has
+diverged from the live one is kept as well. To combine projects whose working
+directories differ between computers, use the shared aliases stored in the archive:
 
 ```bash
 cc-analyzer archive alias set /Users/alice/work/app "Acme App"

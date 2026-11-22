@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
-import { warnIfUnresolvedArchive } from "../core/archive.ts";
 import { openDb } from "../core/db.ts";
-import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
+import { archiveSkippedWarning, refreshIndexIfNeeded } from "../core/index-refresh.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
 import type { PricingTable } from "../core/pricing.ts";
@@ -95,7 +94,6 @@ export function createApp(
 export async function runServe(opts: ServeOptions = {}): Promise<number> {
   const db = openDb();
   const { table } = await loadPricing();
-  await warnIfUnresolvedArchive();
   const refreshed = await refreshIndexIfNeeded(db, {
     refresh: opts.refresh,
     pricing: table,
@@ -109,6 +107,8 @@ export async function runServe(opts: ServeOptions = {}): Promise<number> {
       `Indexed ${refreshed.indexed}, skipped ${refreshed.skipped}, ` +
         `deleted ${refreshed.deleted} (${refreshed.total} sessions).`,
     );
+    const archiveWarning = archiveSkippedWarning(refreshed);
+    if (archiveWarning) console.error(archiveWarning);
   }
   if (isIndexEmpty(db)) {
     console.error("No Claude Code sessions were found; nothing to serve.");

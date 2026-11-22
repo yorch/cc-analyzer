@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
+import { dirname } from "node:path";
 
 import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
 import {
@@ -14,7 +15,6 @@ import {
   listProjectAliases,
   resolveArchiveMachine,
   setProjectAlias,
-  warnIfUnresolvedArchive,
   warnIfUnresolvedMachine,
 } from "../core/archive.ts";
 import {
@@ -39,18 +39,15 @@ import {
   findProject,
   findSessionById,
   listProjects,
+  listSessions,
   listSessionsIn,
   type SessionSource,
+  scanSessions,
   sessionSourceAt,
   sessionTree,
 } from "../core/discover.ts";
 import { exportBundle, parseFormats, parseScope } from "../core/export.ts";
-import {
-  inspectIndexStatus,
-  markRebuildRequired,
-  REBUILD_REQUIRED_MESSAGE,
-  rebuildRequired,
-} from "../core/index-status.ts";
+import { inspectIndexStatus } from "../core/index-status.ts";
 import { reindex } from "../core/indexer.ts";
 import { scanInventories } from "../core/inventory.ts";
 import { parseSessionTree } from "../core/parser.ts";
@@ -348,12 +345,10 @@ async function cmdArchive(
           for (const m of kept.passedOver)
             console.log(`  ${m.id}  ${m.identified ? m.label : "(unidentified)"}`);
           console.log(
-            "Those directories stay in the archive. If one of them is this computer, its sessions " +
-              "will be counted twice from now on, with no further warning. " +
+            "Those directories stay in the archive. If one of them is this computer, its " +
+              "transcripts will be archived a second time under the new id. " +
               "Undo by adopting it: cc-analyzer archive machine adopt <id> --force.",
           );
-          markIndexRebuildRequired();
-          console.log(REBUILD_REQUIRED_MESSAGE);
         }
         return 0;
       } catch (error) {
@@ -378,13 +373,8 @@ async function cmdArchive(
         return 2;
       }
       try {
-        const { hiddenSessions } = await adoptArchiveMachine(id, undefined, { force });
+        await adoptArchiveMachine(id, undefined, { force });
         console.log(`Adopted machine id ${id}.`);
-        console.log(
-          `Hidden archived sessions with no counterpart on this computer: ${hiddenSessions}.`,
-        );
-        markIndexRebuildRequired();
-        console.log(REBUILD_REQUIRED_MESSAGE);
         return 0;
       } catch (error) {
         console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
@@ -471,6 +461,12 @@ async function cmdArchive(
     try {
       const result = await archiveSessions(claudeRoots());
       console.log(`Archived ${result.copied} changed session(s); ${result.unchanged} unchanged.`);
+      if (result.notUpdated > 0) {
+        console.log(
+          `${result.notUpdated} session${result.notUpdated === 1 ? "" : "s"} not updated: ` +
+            "the live copy is a truncated version of the archived one.",
+        );
+      }
       console.log(
         result.committed ? "Changes committed locally; push is manual." : "No changes to commit.",
       );
@@ -489,7 +485,7 @@ async function cmdArchive(
 async function allSessionRoots() {
   const liveRoots = claudeRoots();
   if (liveRoots[0]?.source === "flag") return liveRoots;
-  return [...liveRoots, ...(await listArchiveRoots(undefined, liveRoots))];
+  return [...liveRoots, ...(await listArchiveRoots())];
 }
 
 async function cmdProjects(): Promise<number> {
@@ -632,7 +628,8 @@ async function cmdSessions(projectId: string | undefined): Promise<number> {
   // Stored ids are root-qualified, but nobody should have to type a hash: a
   // bare encoded name resolves when only one root holds that project. When
   // several do, name them instead of silently picking one.
-  const found = await findProject(projectId, await allSessionRoots());
+  const roots = await allSessionRoots();
+  const found = await findProject(projectId, roots);
   if (found.status === "ambiguous") {
     console.error(
       `error: '${projectId}' matches ${found.candidates.length} projects across your Claude ` +
@@ -645,8 +642,31 @@ async function cmdSessions(projectId: string | undefined): Promise<number> {
     console.error(`No project '${projectId}'. Run \`cc-analyzer projects\` to list ids.`);
     return 1;
   }
-  const sessions = await listSessionsIn(found.project);
+  // The deduped listing, so this agrees with `projects` and with what the index holds.
+  const sessions = await listSessions(found.project.id, roots);
   if (sessions.length === 0) {
+    // Redirect only when sessions really are here and were dropped as redundant
+    // to another copy of the same session (typically the archive: the live files
+    // were truncated or removed, so the archive copy is the one the portfolio
+    // shows). Point at the projects of the copies that shadow them, nobody else:
+    // a same-named project in another root is not related to this one.
+    const shadowed = (await scanSessions(roots)).shadowed;
+    const winners = new Set<string>();
+    for (const s of await listSessionsIn(found.project)) {
+      for (const path of shadowed.get(s.path) ?? []) winners.add(path);
+    }
+    const holders = (await listProjects(roots)).filter(
+      (p) => p.id !== found.project.id && [...winners].some((w) => dirname(w) === p.dir),
+    );
+    if (holders.length > 0) {
+      console.error(
+        `No sessions to list under '${projectId}': its sessions are shown under the archived ` +
+          `copy of this project instead (the copy here is contained in it).\n` +
+          holders.map((p) => `  cc-analyzer sessions ${p.id}  (${p.root})`).join("\n") +
+          `\nRun \`cc-analyzer projects\` to see both.`,
+      );
+      return 1;
+    }
     console.error(`No sessions found for project '${projectId}'.`);
     return 1;
   }
@@ -983,17 +1003,6 @@ function indexChangeSummary(status: { added: number; changed: number; deleted: n
   return `${status.added} new, ${status.changed} changed, ${status.deleted} deleted`;
 }
 
-/** Record that the index needs `--rebuild`; best effort (the index may not exist yet). */
-function markIndexRebuildRequired(): void {
-  try {
-    const db = openDb();
-    markRebuildRequired(db);
-    db.close();
-  } catch {
-    // No index to repair yet; the first build derives everything fresh.
-  }
-}
-
 async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
   const db = openDb();
   if (check) {
@@ -1008,14 +1017,7 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     // Coverage comes from the indexed rows (schema v11), so `--check` keeps its
     // no-parse guarantee: this is one SQL scan, no session file is reopened.
     const coverage = parseCoverage(db).summary;
-    const needsRebuild = rebuildRequired(db);
     db.close();
-    await warnIfUnresolvedArchive();
-    if (needsRebuild) {
-      console.log("Index needs a rebuild after an archive identity change.");
-      console.log(REBUILD_REQUIRED_MESSAGE);
-      if (!status.stale) return 1;
-    }
     if (status.stale) {
       console.log(`Index is stale: ${indexChangeSummary(status)} sessions.`);
       console.log("Run `cc-analyzer index` to refresh.");
@@ -1049,11 +1051,9 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-  const stillRequired = !rebuild && rebuildRequired(db);
   db.close();
   if (result.total > result.skipped) process.stderr.write("\n");
-  warnIfUnresolvedMachine(result.archiveMachine);
-  if (stillRequired) console.error(REBUILD_REQUIRED_MESSAGE);
+  if (result.archiveSkipped) console.error(`warning: ${result.archiveSkipped}`);
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   console.log(
     `Indexed ${result.indexed}, skipped ${result.skipped}, deleted ${result.deleted} ` +

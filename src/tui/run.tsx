@@ -1,10 +1,21 @@
 import { render } from "ink";
-import { warnIfUnresolvedArchive } from "../core/archive.ts";
 import { openDb } from "../core/db.ts";
-import { refreshIndexIfNeeded } from "../core/index-refresh.ts";
+import { archiveSkippedWarning, refreshIndexIfNeeded } from "../core/index-refresh.ts";
 import { inspectIndexStatus } from "../core/index-status.ts";
+import type { ReindexResult } from "../core/indexer.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { App } from "./App.tsx";
+
+/** Print the outcome of the startup index refresh (stderr, before the TUI takes the screen). */
+export function reportRefresh(
+  refreshed: ReindexResult | undefined,
+  log: (message: string) => void = console.error,
+): void {
+  if (!refreshed) return;
+  log(`Indexed ${refreshed.indexed} Claude Code sessions.`);
+  const warning = archiveSkippedWarning(refreshed);
+  if (warning) log(warning);
+}
 
 /** Launch the interactive terminal UI. Returns the process exit code. */
 export async function runTui(): Promise<number> {
@@ -17,17 +28,14 @@ export async function runTui(): Promise<number> {
   }
   const db = openDb();
   const { table } = await loadPricing();
-  await warnIfUnresolvedArchive();
   const refreshed = await refreshIndexIfNeeded(db, {
     pricing: table,
     onProgress: (done, total) => {
       process.stderr.write(`\rBuilding initial index ${done}/${total}...`);
     },
   });
-  if (refreshed) {
-    if (refreshed.total > 0) process.stderr.write("\n");
-    console.error(`Indexed ${refreshed.indexed} Claude Code sessions.`);
-  }
+  if (refreshed && refreshed.total > 0) process.stderr.write("\n");
+  reportRefresh(refreshed);
   const indexStatus = await inspectIndexStatus(db);
   const app = render(<App db={db} pricing={table} indexStatus={indexStatus} />);
   await app.waitUntilExit();
