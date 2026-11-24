@@ -192,7 +192,11 @@ export function isEmptyPeriod(d: WeeklyDigest): boolean {
  * negative — so a digest cell and the same number in the CLI or the web card
  * are formatted identically. */
 
-const pct = (share: number): string => `${share >= 0 ? "+" : ""}${(share * 100).toFixed(0)}%`;
+const pct = (share: number): string => {
+  const n = Math.round(share * 100);
+  // A share that rounds to zero reads "0%", never "-0%" or "+0%".
+  return n === 0 ? "0%" : `${n > 0 ? "+" : ""}${n}%`;
+};
 
 /**
  * A delta as `+$1.90 (+18%)`. With no prior activity there is no percentage to
@@ -397,10 +401,10 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
         `(${(r.correctionShare * 100).toFixed(0)}%) · ${formatSignedCount(r.interruptionTurns)} interrupted`,
     );
     out.push("");
-    if (r.correctionTurns > 0 || r.interruptionTurns > 0) {
-      out.push(`_${CORRECTION_CAVEAT}_`);
-      out.push("");
-    }
+    // Printed whenever the corrections line is, zero counts included: a "0 of N"
+    // reads as "none happened", which an undercounting heuristic cannot claim.
+    out.push(`_${CORRECTION_CAVEAT}_`);
+    out.push("");
 
     if (d.skills.length > 0) {
       out.push("### Skills");

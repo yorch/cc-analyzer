@@ -180,8 +180,11 @@ async function* readLines(path: string): AsyncGenerator<string> {
 export async function* streamSessionEvents(
   path: string,
   onError?: (error: ParseError) => void,
+  into?: ParseCoverage,
 ): AsyncGenerator<SessionEvent, ParseCoverage> {
-  const coverage = newCoverage();
+  // `into` lets a caller keep the lines counted so far when the read throws
+  // midway (a generator that throws returns nothing).
+  const coverage = into ?? newCoverage();
   let line = 0;
   for await (const raw of readLines(path)) {
     const outcome = parseLineOutcome(raw, ++line);
@@ -237,6 +240,8 @@ interface Cursor {
    * to the event it followed rather than sorting it to the front. */
   key: string;
   coverage?: ParseCoverage;
+  /** Live counters for this file, surviving a mid-stream read failure. */
+  partial: ParseCoverage;
 }
 
 /**
@@ -260,7 +265,12 @@ async function advance(cursor: Cursor): Promise<void> {
   } catch (err) {
     if (!cursor.tolerant) throw err;
     cursor.event = undefined;
-    cursor.coverage = { lines: 1, parseErrors: 1, unknownEvents: 0 };
+    // Keep what was counted before the failure; add the unreadable remainder.
+    cursor.coverage = {
+      lines: cursor.partial.lines + 1,
+      parseErrors: cursor.partial.parseErrors + 1,
+      unknownEvents: cursor.partial.unknownEvents,
+    };
     cursor.onError?.({
       line: 0,
       raw: "",
@@ -313,13 +323,17 @@ export async function* streamSessionTree(
     // one file whose unreadability is worth failing over.
     ...(tree.parent === undefined ? [] : [{ path: tree.parent, tolerant: false }]),
     ...tree.subagents.map((path) => ({ path, tolerant: true })),
-  ].map(({ path, tolerant }) => ({
-    path,
-    onError,
-    tolerant,
-    iter: streamSessionEvents(path, stampPath(path, onError)),
-    key: "",
-  }));
+  ].map(({ path, tolerant }) => {
+    const partial = newCoverage();
+    return {
+      path,
+      onError,
+      tolerant,
+      partial,
+      iter: streamSessionEvents(path, stampPath(path, onError), partial),
+      key: "",
+    };
+  });
   if (cursors.length === 0) return coverage;
 
   // Closing this generator early (an aborted analysis) must close every child.

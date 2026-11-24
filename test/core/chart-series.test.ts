@@ -503,9 +503,15 @@ describe("turnCostShape", () => {
     expect(shape?.detail).toContain("the cache was rewritten 7 times");
   });
 
-  test("a single rewrite reads in the singular", () => {
-    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 9, cacheWriteCalls: 1 }));
-    expect(shape?.detail).toContain("rewritten 1 time in this turn");
+  test("a single cache write is the healthy shape, not churn", () => {
+    expect(
+      turnCostShape(point({ cost: 10, costCacheWrite: 9, cacheWriteCalls: 1 })),
+    ).toBeUndefined();
+  });
+
+  test("two rewrites is the smallest churn", () => {
+    const shape = turnCostShape(point({ cost: 10, costCacheWrite: 9, cacheWriteCalls: 2 }));
+    expect(shape?.kind).toBe("cache-churn");
   });
 
   test("output dominance is a long generation", () => {

@@ -235,9 +235,29 @@ export function isRealPrompt(e: UserEvent): boolean {
   if (e.isSidechain === true) return false;
   if (e.isMeta === true) return false;
   if (e.isCompactSummary === true) return false;
-  const content = e.message.content;
+  const content = (e as { message?: { content?: unknown } }).message?.content;
   if (typeof content === "string") return true;
-  return content.some((b) => (b as ContentBlock).type !== "tool_result");
+  // A schema-drifted event kept as a tolerant unknown can carry any shape.
+  if (!Array.isArray(content)) return false;
+  return content.some((b) => (b as ContentBlock | null)?.type !== "tool_result");
+}
+
+/** Narrow a tolerant event to a structurally usable assistant event: `message`
+ * must be an object (drifted lines keep `type: "assistant"` without one). */
+export function isUsableAssistant(e: SessionEvent): e is AssistantEvent {
+  if ((e as { type?: string }).type !== "assistant") return false;
+  const m = (e as { message?: unknown }).message;
+  return typeof m === "object" && m !== null && !Array.isArray(m);
+}
+
+/** Narrow a tolerant event to a structurally usable user event: `message` an
+ * object whose `content` is a string or array. */
+export function isUsableUser(e: SessionEvent): e is UserEvent {
+  if ((e as { type?: string }).type !== "user") return false;
+  const m = (e as { message?: unknown }).message;
+  if (typeof m !== "object" || m === null || Array.isArray(m)) return false;
+  const c = (m as { content?: unknown }).content;
+  return typeof c === "string" || Array.isArray(c);
 }
 
 /**
@@ -257,7 +277,7 @@ export function isInterruptionMarker(text: string): boolean {
 
 /** Does this user event carry a machine-written interruption marker? */
 export function isInterruptionEvent(event: UserEvent): boolean {
-  return hasInterruptionContent(event.message.content);
+  return hasInterruptionContent((event as { message?: { content?: unknown } }).message?.content);
 }
 
 function hasInterruptionContent(content: UserEvent["message"]["content"] | unknown): boolean {

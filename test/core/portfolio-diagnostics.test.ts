@@ -14,13 +14,14 @@ import type {
   ParseCoverageVersionRow,
   ProjectCacheRow,
 } from "../../src/core/stats-types.ts";
+import { shiftDay, THRASH_STREAK_MIN } from "../../src/core/stats-types.ts";
 
 /* ——— Fixture builders: a healthy baseline, overridden per rule ————————— */
 
-/** Flat 1%-error weeks, oldest first. */
-function flatWeeks(n: number, calls = 500, errors = 5): ErrorWeekRow[] {
+/** Flat error-rate weeks (Monday-aligned, consecutive from `start`), oldest first. */
+function flatWeeks(n: number, calls = 500, errors = 5, start = 0): ErrorWeekRow[] {
   return Array.from({ length: n }, (_, i) => ({
-    week: `2026-0${1 + Math.floor(i / 4)}-0${1 + (i % 4)}`,
+    week: shiftDay("2026-01-05", 7 * (start + i)),
     toolCalls: calls,
     errors,
     errorRate: calls > 0 ? errors / calls : 0,
@@ -489,7 +490,7 @@ describe("retry-churn", () => {
 
 describe("error-rate-rising", () => {
   /** 5 quiet weeks then 5 bad weeks; the newest is dropped as in-progress. */
-  const rising = [...flatWeeks(5, 500, 5), ...flatWeeks(5, 500, 15)];
+  const rising = [...flatWeeks(5, 500, 5), ...flatWeeks(5, 500, 15, 5)];
   test("fires when the last 4 full weeks run 1.5× the prior 4", () => {
     const f = buildPortfolioDiagnostics(signals({ errorWeekly: rising })).find(
       (d) => d.code === "error-rate-rising",
@@ -498,12 +499,37 @@ describe("error-rate-rising", () => {
     expect(f?.evidence).toContain("3.0%");
     expect(f?.evidence).toContain("1.0%");
   });
+  test("keeps the newest week when it is already complete (today is in a later week)", () => {
+    // 10 weeks from 2026-01-05; the newest (2026-03-09) is complete by 2026-03-20? No:
+    // 2026-03-20 is in that week, so use a later day to make it complete.
+    const rows = [...flatWeeks(4, 500, 5), ...flatWeeks(4, 500, 15, 4)];
+    const f = (today?: string) =>
+      buildPortfolioDiagnostics({ ...signals({ errorWeekly: rows }), today }).find(
+        (d) => d.code === "error-rate-rising",
+      );
+    // Newest week is 2026-02-23. With today inside it, it is dropped: only 7 weeks.
+    expect(f("2026-02-25")).toBeUndefined();
+    // With today in a later week, all 8 weeks count.
+    expect(f("2026-03-10")?.severity).toBe("warning");
+  });
+  test("zero-fills a quiet gap week rather than collapsing it", () => {
+    // Drop one week from the prior window: the gap becomes a zero-call week,
+    // so the prior window holds less volume and a comparison still resolves.
+    const rows = [...flatWeeks(5, 500, 5), ...flatWeeks(5, 500, 15, 5)].filter(
+      (r) => r.week !== "2026-01-19",
+    );
+    const f = buildPortfolioDiagnostics(signals({ errorWeekly: rows })).find(
+      (d) => d.code === "error-rate-rising",
+    );
+    expect(f?.severity).toBe("warning");
+    expect(f?.evidence).toContain("(1,500 calls)");
+  });
   test("stays quiet with fewer than 8 full weeks of history", () => {
-    const short = [...flatWeeks(3, 500, 5), ...flatWeeks(5, 500, 15)];
+    const short = [...flatWeeks(3, 500, 5), ...flatWeeks(5, 500, 15, 3)];
     expect(codes(signals({ errorWeekly: short }))).not.toContain("error-rate-rising");
   });
   test("stays quiet below the per-window call volume", () => {
-    const thin = [...flatWeeks(5, 40, 0), ...flatWeeks(5, 40, 4)];
+    const thin = [...flatWeeks(5, 40, 0), ...flatWeeks(5, 40, 4, 5)];
     expect(codes(signals({ errorWeekly: thin }))).not.toContain("error-rate-rising");
   });
 });
@@ -688,6 +714,17 @@ describe("test-thrash-pattern", () => {
     expect(f?.action).toContain("bisect");
   });
 
+  test("clamps the share at 100% and quotes the shared thresholds", () => {
+    const f = buildPortfolioDiagnostics(
+      signals({
+        tests: { runs: 100, sessions: 4 },
+        thrash: { testThrashSessions: 6, worstTestFailStreak: 7 },
+      }),
+    ).find((d) => d.code === "test-thrash-pattern");
+    expect(f?.evidence).toContain("100%");
+    expect(f?.evidence).toContain(`${THRASH_STREAK_MIN}+ consecutive`);
+  });
+
   test("stays quiet below 3 sessions", () => {
     expect(
       codes(
@@ -789,7 +826,7 @@ describe("ranking", () => {
     const out = buildPortfolioDiagnostics(
       signals({
         // error-rate-rising: warning, no dollar impact.
-        errorWeekly: [...flatWeeks(5, 500, 5), ...flatWeeks(5, 500, 15)],
+        errorWeekly: [...flatWeeks(5, 500, 5), ...flatWeeks(5, 500, 15, 5)],
         // cache-leaky + cache-waste-heavy: warnings with $12 of waste behind them.
         summary: { cacheWriteTokens: 1_000_000, cacheReadTokens: 500_000 },
         cacheSummary: { writeCost: 30, waste: 12 },

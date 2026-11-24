@@ -253,3 +253,76 @@ describe("correction-loop", () => {
     expect(find(3, 13)).toBeUndefined(); // three corrections, 23% share
   });
 });
+
+describe("buildSessionDiagnostics · idle-cache-rewrite precision", () => {
+  const find = (events: SessionEvent[]) =>
+    buildSessionDiagnostics(analyzeSession(events, pricing)).find(
+      (d) => d.code === "idle-cache-rewrite",
+    );
+
+  test("a healthy prefix read-back after a gap is not a rewrite", () => {
+    const diagnostic = find([
+      prompt("u1", 0),
+      assistant("a1", 0, { input_tokens: 100, output_tokens: 1 }),
+      prompt("u2", 6),
+      assistant("a2", 6, {
+        input_tokens: 100,
+        output_tokens: 1,
+        cache_read_input_tokens: 50_000,
+        cache_creation_input_tokens: 2_000,
+      }),
+    ]);
+    expect(diagnostic).toBeUndefined();
+  });
+
+  const oneHour = (id: string, minutes: number, write: number, read = 0) =>
+    assistantEvent({
+      uuid: id,
+      timestamp: at(minutes, 10),
+      stopReason: "end_turn",
+      usage: {
+        input_tokens: 100,
+        output_tokens: 1,
+        cache_read_input_tokens: read,
+        cache_creation: { ephemeral_1h_input_tokens: write },
+      },
+    });
+
+  test("a gap under the 1h TTL does not count when the prefix was a 1h write", () => {
+    expect(
+      find([prompt("u1", 0), oneHour("a1", 0, 5_000), prompt("u2", 30), oneHour("a2", 30, 2_000)]),
+    ).toBeUndefined();
+  });
+
+  test("a gap past the 1h TTL counts", () => {
+    const d = find([
+      prompt("u1", 0),
+      oneHour("a1", 0, 5_000),
+      prompt("u2", 90),
+      oneHour("a2", 90, 2_000),
+    ]);
+    expect(d?.evidence).toContain("2,000 cache tokens");
+  });
+});
+
+describe("buildSessionDiagnostics · repeated-file-reads chain scope", () => {
+  test("reads spread across separate chains are evidence, never the trigger", () => {
+    // Four reads of one file, each on its own sidechain: no chain read it 3 times.
+    const events: SessionEvent[] = [prompt("u1", 0)];
+    for (let i = 0; i < 4; i++) {
+      events.push(
+        assistantEvent({
+          uuid: `s${i}`,
+          timestamp: at(0, i + 1),
+          isSidechain: true,
+          content: [toolUseBlock(`r${i}`, "Read", { file_path: "/p/hot.md" })],
+        }),
+      );
+    }
+    const a = analyzeSession(events, pricing);
+    expect(a.redundantReads).toBe(0);
+    expect(
+      buildSessionDiagnostics(a).find((d) => d.code === "repeated-file-reads"),
+    ).toBeUndefined();
+  });
+});

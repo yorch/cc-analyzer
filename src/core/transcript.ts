@@ -1,9 +1,9 @@
 import {
-  type AssistantEvent,
   type ContentBlock,
   isRealPrompt,
+  isUsableAssistant,
+  isUsableUser,
   type SessionEvent,
-  type UserEvent,
 } from "./events.ts";
 
 export type TranscriptRole = "user" | "assistant" | "system";
@@ -22,12 +22,8 @@ export interface TranscriptItem {
   timestamp?: string;
 }
 
-function isAssistant(e: SessionEvent): e is AssistantEvent {
-  return (e as { type?: string }).type === "assistant";
-}
-function isUser(e: SessionEvent): e is UserEvent {
-  return (e as { type?: string }).type === "user";
-}
+const isAssistant = isUsableAssistant;
+const isUser = isUsableUser;
 
 /** Normalize a tool_result `content` (string | blocks) into readable text. */
 function contentToText(content: unknown): string {
@@ -110,7 +106,8 @@ export function buildTranscript(events: SessionEvent[]): TranscriptItem[] {
     }
 
     if (isAssistant(event)) {
-      for (const block of event.message.content) {
+      const blocks = Array.isArray(event.message.content) ? event.message.content : [];
+      for (const block of blocks) {
         const b = block as ContentBlock & {
           text?: string;
           thinking?: string;

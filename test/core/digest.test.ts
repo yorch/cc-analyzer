@@ -175,7 +175,7 @@ describe("buildDigestMarkdown", () => {
     expect(md).toContain("Insights above are current state");
   });
 
-  test("omits the correction caveat when neither signal fired", () => {
+  test("keeps the correction caveat even when neither signal fired", () => {
     const quiet = buildDigestMarkdown(
       sampleDigest({
         reliability: {
@@ -195,7 +195,8 @@ describe("buildDigestMarkdown", () => {
       }),
     );
     expect(quiet).toContain("Corrections: 0 of 5 turns");
-    expect(quiet).not.toContain(CORRECTION_CAVEAT);
+    // The heuristic undercounts, so even "0 of 5" carries the caveat.
+    expect(quiet).toContain(CORRECTION_CAVEAT);
   });
 
   test("prints the cost-framing sentence only for a subscription basis", () => {
@@ -274,5 +275,16 @@ describe("buildDigestMarkdown", () => {
     expect(buildDigestMarkdown(sampleDigest({ insights: [] }))).toContain(
       "No findings — the portfolio looks healthy by every rule.",
     );
+  });
+});
+
+describe("formatDigestDelta zero rounding", () => {
+  test("a share that rounds to zero never prints -0% or +0%", () => {
+    expect(
+      formatDigestDelta({ current: 0, prior: 0, absolute: -0.001, share: -0.001 }, (n) => `${n}`),
+    ).toBe("-0.001 (0%)");
+    expect(
+      formatDigestDelta({ current: 0, prior: 0, absolute: 0.001, share: 0.002 }, (n) => `${n}`),
+    ).toBe("+0.001 (0%)");
   });
 });

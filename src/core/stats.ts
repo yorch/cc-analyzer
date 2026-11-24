@@ -1201,7 +1201,13 @@ export function parseCoverage(db: Database): ParseCoverageStats {
     summary: coverageRow(total),
     byVersion: [...byVersion.entries()]
       .map(([version, a]) => ({ version, ...coverageRow(a) }))
-      .sort((a, b) => compareVersions(b.version, a.version)),
+      .sort(
+        (a, b) =>
+          compareVersions(b.version, a.version) ||
+          // Distinct strings can compare equal ("v2.1" vs "2.1.0"): break the
+          // tie on the raw text so the order is total and stable.
+          (a.version < b.version ? -1 : a.version > b.version ? 1 : 0),
+      ),
   };
 }
 

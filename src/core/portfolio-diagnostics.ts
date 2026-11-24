@@ -15,7 +15,7 @@
  * `audit.today`).
  */
 
-import { pct } from "./format-shared.ts";
+import { formatUSD, pct } from "./format-shared.ts";
 import type { SetupAudit } from "./setup-audit.ts";
 import type {
   AnalyticsRollup,
@@ -29,6 +29,13 @@ import type {
   PortfolioStats,
   ProjectCacheRow,
   WhatIfRepricing,
+} from "./stats-types.ts";
+import {
+  CORRECTION_CAVEAT,
+  shiftDay,
+  THRASH_REREAD_MIN,
+  THRASH_STREAK_MIN,
+  weekOf,
 } from "./stats-types.ts";
 
 /** Every implemented rule code, in the order the rules run — the single source
@@ -90,6 +97,10 @@ export interface PortfolioSignals {
   compactions: CompactionUsage;
   /** `errorRateByWeek()` — ascending ISO weeks. */
   errorWeekly: ErrorWeekRow[];
+  /** Local YYYY-MM-DD "today", when the assembler knows it. The trend rule
+   * drops the newest week only when it is this (incomplete) week; falls back to
+   * `audit.today`, and to dropping the newest week when neither is present. */
+  today?: string;
   /** `contextTax()`. */
   contextTax: ContextTax;
   /** `whatIfRepricing()`. */
@@ -203,12 +214,26 @@ export const SIDECHAIN_NONE_MIN_SESSIONS = 50;
 
 /* ——— Formatting helpers (deterministic, locale-pinned) ———————————————— */
 
-const usd = (value: number): string =>
-  value >= 100 ? `$${Math.round(value).toLocaleString("en-US")}` : `$${value.toFixed(2)}`;
-
 const tok = (value: number): string => Math.round(value).toLocaleString("en-US");
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Ascending weekly rows, gaps zero-filled (a quiet week is a real week of zero
+ * calls, not a missing one, otherwise "last 4 weeks" would span a longer
+ * period), with the newest row dropped only when it is the current week. When
+ * "today" is unknown the newest week is dropped, the conservative choice. */
+function fullErrorWeeks(rows: ErrorWeekRow[], today: string | undefined): ErrorWeekRow[] {
+  const last = rows[rows.length - 1];
+  const first = rows[0];
+  if (!first || !last) return [];
+  const byWeek = new Map(rows.map((r) => [r.week, r]));
+  const filled: ErrorWeekRow[] = [];
+  for (let week = first.week; week <= last.week; week = shiftDay(week, 7)) {
+    filled.push(byWeek.get(week) ?? { week, toolCalls: 0, errors: 0, errorRate: 0 });
+  }
+  const newestIsCurrent = today === undefined || last.week >= weekOf(today);
+  return newestIsCurrent ? filled.slice(0, -1) : filled;
+}
 
 /* ——— The rules ———————————————————————————————————————————————————————— */
 
@@ -252,7 +277,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
       title: "Cache writes are not being read back",
       evidence:
         `Portfolio read:write token ratio is ${ratio.toFixed(1)}× — ` +
-        `${usd(cache.summary.writeCost)} paid to write cache, ${usd(cache.summary.waste)} of it never read back.`,
+        `${formatUSD(cache.summary.writeCost)} paid to write cache, ${formatUSD(cache.summary.waste)} of it never read back.`,
       action:
         "Batch related work so the cache amortizes: avoid long idle gaps mid-task and finish " +
         "related turns together — the prompt cache expires after 5 minutes.",
@@ -272,9 +297,9 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
       severity: "warning",
       title: "A large share of cache-write spend never amortized",
       evidence:
-        `${usd(cache.summary.waste)} of ${usd(cache.summary.writeCost)} cache-write spend ` +
+        `${formatUSD(cache.summary.waste)} of ${formatUSD(cache.summary.writeCost)} cache-write spend ` +
         `(${pct(cache.summary.waste / cache.summary.writeCost)}) was never read back` +
-        (top ? `; the top wasting project alone accounts for ${usd(top.waste)}.` : "."),
+        (top ? `; the top wasting project alone accounts for ${formatUSD(top.waste)}.` : "."),
       action:
         "Start with the worst project in the cache hit-list: its sessions rebuild cache they " +
         "then abandon — shorter, more focused sessions usually fix it.",
@@ -392,8 +417,8 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         severity: "info",
         title: "The same tokens priced on one cheaper model save real money",
         evidence:
-          `Routing every repriced token to ${s.bestModel} would have cost ${usd(s.bestCost)} ` +
-          `instead of ${usd(s.actualCost)} — ${usd(savings)} (${pct(savings / s.actualCost)}) lower.`,
+          `Routing every repriced token to ${s.bestModel} would have cost ${formatUSD(s.bestCost)} ` +
+          `instead of ${formatUSD(s.actualCost)} — ${formatUSD(savings)} (${pct(savings / s.actualCost)}) lower.`,
         action:
           "A judgment call, not a directive: this replays your actual token counts at other " +
           "rates — a different model produces different tokens, and quality is not priced in. " +
@@ -431,7 +456,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
   {
     // The newest week is usually in progress; drop it so a half-week of bad
     // luck never fires the trend. With < 8 full weeks left there is no trend.
-    const weeks = errorWeekly.slice(0, -1);
+    const weeks = fullErrorWeeks(errorWeekly, signals.today ?? audit?.today);
     if (weeks.length >= ERROR_WINDOW_WEEKS * 2) {
       const recent = weeks.slice(-ERROR_WINDOW_WEEKS);
       const prior = weeks.slice(-ERROR_WINDOW_WEEKS * 2, -ERROR_WINDOW_WEEKS);
@@ -479,7 +504,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         title: "A few sessions carry most of the spend",
         evidence:
           `The most expensive 10% of ${plural(dist.sessions, "session")} carry ` +
-          `${pct(dist.topDecileShare)} of total spend (portfolio total ${usd(summary.cost)}).`,
+          `${pct(dist.topDecileShare)} of total spend (portfolio total ${formatUSD(summary.cost)}).`,
         action:
           "Open the most expensive sessions and read their per-session diagnostics — " +
           "optimizing anything outside that top slice moves little.",
@@ -495,7 +520,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
       severity: "info",
       title: "A large share of computed spend used heuristic pricing",
       evidence:
-        `${pct(summary.estimatedShare)} of the ${usd(summary.cost)} total was priced by the ` +
+        `${pct(summary.estimatedShare)} of the ${formatUSD(summary.cost)} total was priced by the ` +
         "model-family heuristic rather than an exact rate match.",
       action:
         "Refresh the pricing table (`cc-analyzer pricing update`); until the model ids resolve " +
@@ -532,7 +557,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         severity: "info",
         title: "Subagents account for most of the spend",
         evidence:
-          `${usd(sc.cost)} of ${usd(sc.totalCost)} (${pct(sc.share)}) ran on subagent ` +
+          `${formatUSD(sc.cost)} of ${formatUSD(sc.totalCost)} (${pct(sc.share)}) ran on subagent ` +
           `sidechains, over ${tok(sc.calls)} API calls.`,
         action:
           "Verify the delegation earns its keep: every subagent re-reads context into its own " +
@@ -594,9 +619,9 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         severity: "warning",
         title: "Edit-test loops repeat without progress across sessions",
         evidence:
-          `${plural(th.testThrashSessions, "session")} hit 3+ consecutive failing test runs ` +
+          `${plural(th.testThrashSessions, "session")} hit ${THRASH_STREAK_MIN}+ consecutive failing test runs ` +
           `without a pass (worst streak: ${th.worstTestFailStreak}) — ` +
-          `${pct(th.testThrashSessions / testSessions)} of the ${plural(testSessions, "session")} that ran tests.`,
+          `${pct(Math.min(1, th.testThrashSessions / testSessions))} of the ${plural(testSessions, "session")} that ran tests.`,
         action:
           "When a test fails twice in a row, step back and read the failure output carefully " +
           "or bisect — repeated blind edit-test cycles burn tokens; consider asking for a " +
@@ -617,7 +642,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         title: "The same files are re-read over and over",
         evidence:
           `${tok(th.redundantReads)} redundant reads (3rd+ read of a file) across ` +
-          `${plural(th.rereadSessions, "session")} with 4 or more` +
+          `${plural(th.rereadSessions, "session")} with ${THRASH_REREAD_MIN} or more` +
           (top
             ? `; the most re-read file is ${top.file} (${plural(top.sessions, "session")}).`
             : "."),
@@ -643,7 +668,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
           (co.interruptionTurns > 0
             ? `; ${pct(co.interruptionShare)} of turns were interrupted mid-flight.`
             : ".") +
-          " English-only keyword heuristic — it undercounts.",
+          ` ${CORRECTION_CAVEAT}`,
         action:
           "Invest in first prompts: more context, constraints, and acceptance criteria up " +
           "front. When a turn misfires, /clear plus a fresh, fuller prompt usually beats " +
