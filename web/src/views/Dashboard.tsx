@@ -468,10 +468,15 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
     return () => window.clearTimeout(timer);
   }, [copied]);
 
+  // `useAsync` keeps the previous data while refetching, so after a cost-basis
+  // flip the old digest (with the old framing sentence) is still in `data`.
+  // Treat a basis mismatch as loading rather than showing or copying it.
+  const stale = data !== null && data.costBasis !== costBasis;
   if (loading) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
   if (error)
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load the weekly digest." />;
   if (!data) return null;
+  if (stale) return <LoadingNotice>Loading the weekly digest…</LoadingNotice>;
 
   const h = data.headline;
   const topProject = data.projects[0];

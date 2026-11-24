@@ -23,6 +23,9 @@ function decode(segment: string): string {
 
 function parse(hash: string): Route {
   const path = hash.replace(/^#/, "").split("?")[0] ?? "";
+  // Only hash paths are routes. A fragment that is not a path (an in-page
+  // anchor such as `#main-content`) is not a missing page, so show the dashboard.
+  if (!path.startsWith("/")) return { name: "dashboard" };
   const insightsProject = path.match(/^\/insights\/(.+)$/);
   if (insightsProject) return { name: "insightsProject", id: decode(insightsProject[1] as string) };
   if (path === "/insights") return { name: "insights" };

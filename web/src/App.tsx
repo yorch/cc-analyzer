@@ -1,4 +1,11 @@
-import { Component, type ErrorInfo, type ReactNode, useEffect, useRef } from "react";
+import {
+  Component,
+  type ErrorInfo,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+} from "react";
 import { api } from "./api.ts";
 import { IndexFreshness, IndexNotice } from "./IndexNotice.tsx";
 import { link, useHashRoute } from "./router.ts";
@@ -59,6 +66,14 @@ export function App() {
   const route = useHashRoute();
   const routeKey = "id" in route ? `${route.name}:${route.id}` : route.name;
   const firstRoute = useRef(true);
+  // The skip link targets the in-page main landmark. Handle it here so the hash
+  // never changes (a hash change would re-parse as a route).
+  const skipToMain = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const main = document.getElementById("main-content");
+    main?.focus({ preventScroll: true });
+    main?.scrollIntoView?.({ block: "start" });
+  };
   // Per-route document title, and — after the first paint — move focus to the
   // main landmark and scroll to the top so keyboard and screen-reader users
   // land on the new view rather than on the link they just activated.
@@ -76,14 +91,16 @@ export function App() {
   // Report a sanitized pageview whenever the route changes. Depending on the
   // complete route counts navigation between two records of the same type, but
   // only the route name is passed through so ids are never sent.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: routeKey (name + id) is the navigation trigger; only route.name is sent
   useEffect(() => {
     trackView(route.name);
-  }, [route.name]);
+  }, [routeKey]);
   const onInsights = route.name === "insights" || route.name === "insightsProject";
   const onProjects = route.name === "projects" || route.name === "project";
   return (
     <div className="wrap">
-      <a className="skip-link" href="#main-content">
+      {/* biome-ignore lint/a11y/useValidAnchor: a real in-page link (keeps its href for no-JS and copy-link); onClick only suppresses the hash change */}
+      <a className="skip-link" href="#main-content" onClick={skipToMain}>
         Skip to Main Content
       </a>
       <header className="masthead">
