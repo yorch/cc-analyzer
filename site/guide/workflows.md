@@ -46,8 +46,8 @@ before opening it. The dashboard covers projects, trends, tools, insights,
 session charts, transcript views, and export actions.
 
 Only expose a non-loopback host when you understand the trust boundary:
-there is no authentication, and the server includes transcript, export,
-preference, and optional Claude-handoff routes.
+there is no authentication, and the server serves transcripts. Writes
+(preferences, export, Claude handoff) are refused with `403` off loopback.
 
 ## Keep data directories straight
 

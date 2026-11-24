@@ -728,7 +728,9 @@ refresh an existing index before serving, and `--open` to launch the URL in your
 default browser (best-effort, loopback hosts only). The server listens on
 loopback only (`127.0.0.1`) and rejects non-local `Host` headers, since sessions
 contain full conversation transcripts; pass `--host=0.0.0.0` only if you
-deliberately want to expose it to your network.
+deliberately want to expose it to your network. A non-loopback server is
+read-only for writes: preference changes, Analyze-with-Claude and bulk export
+return `403`.
 
 The UI's pages:
 

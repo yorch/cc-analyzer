@@ -61,8 +61,9 @@ export DO_NOT_TRACK=1
 
 The web server binds to `127.0.0.1` by default and applies a loopback Host
 guard. A non-loopback `--host` disables that protection and exposes the
-unauthenticated dashboard, transcript and export routes, preference writes,
-and optional Claude handoff to the network. Use a trusted network and add your
+unauthenticated dashboard and transcript routes to the network (preference
+writes, bulk export and the optional Claude handoff answer `403` on a
+non-loopback host). Use a trusted network and add your
 own access control if you intentionally expose it.
 
 See the [Web/API implementation reference](/docs/5-web-server-and-api) for
