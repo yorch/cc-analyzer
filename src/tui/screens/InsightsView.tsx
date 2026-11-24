@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text } from "ink";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import {
   buildPortfolioDiagnostics,
@@ -67,21 +67,33 @@ interface Props {
  * drilling into a project's sessions. Self-contained two-level drill (like the
  * detail screen) so App only routes to it.
  */
-export function InsightsView({
+export function InsightsView(props: Props) {
+  const { db, pricing } = props;
+  // One assembly at the screen boundary, deferred past first paint: it scans
+  // the index and the filesystem inventory, which froze the UI with no frame.
+  const [signals, setSignals] = useState<ReturnType<typeof assemblePortfolioSignals>>();
+  useEffect(() => {
+    setSignals(undefined);
+    const timer = setTimeout(() => setSignals(assemblePortfolioSignals(db, pricing)), 0);
+    return () => clearTimeout(timer);
+  }, [db, pricing]);
+  if (!signals) return <Text color={role.muted}>Loading insights…</Text>;
+  return <InsightsBody {...props} signals={signals} />;
+}
+
+function InsightsBody({
   db,
-  pricing,
   columns,
   pageSize,
   isActive,
   onOpenSession,
   onBack,
-}: Props) {
-  // One assembly at the screen boundary: the portfolio signals carry every
-  // number this screen shows (cache summary, context tax, what-if) as well as
-  // the inputs the rules fold, so computing them twice would only be a second
-  // chance to disagree. Everything below is a plain prop — the presentation
-  // components never touch the database.
-  const signals = useMemo(() => assemblePortfolioSignals(db, pricing), [db, pricing]);
+  signals,
+}: Props & { signals: ReturnType<typeof assemblePortfolioSignals> }) {
+  // The portfolio signals carry every number this screen shows (cache summary,
+  // context tax, what-if) as well as the inputs the rules fold, so computing
+  // them twice would only be a second chance to disagree. Everything below is
+  // a plain prop — the presentation components never touch the database.
   const summary = signals.cache.summary;
   // The one list not taken off the shared signals: the rules only need the
   // default top slice (limit 50), but this screen filters and sorts

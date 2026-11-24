@@ -70,10 +70,33 @@ describe("App (smoke render)", () => {
     stdin.write(""); // esc → focus the nav rail
     await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("4"); // jump to the 4th view (insights)
-    await waitForFrame(lastFrame, "un-amortized");
+    // Insights assembles off the first paint, so a "Loading insights…" frame comes first.
+    await waitForFrame(lastFrame, "Loading insights");
+    await waitForFrame(lastFrame, (f) => f.includes("un-amortized") && !f.includes("Loading"));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("insights"); // breadcrumb
     expect(frame).toContain("un-amortized"); // the cache summary header
+    unmount();
+  });
+
+  test("session search keeps the open session mounted; esc returns to the same view", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write("\u001b"); // focus rail
+    await waitForFrame(lastFrame, "switch view");
+    stdin.write("3"); // sessions
+    await waitForFrame(lastFrame, "Add hello function");
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("\r"); // open the session
+    await waitForFrame(lastFrame, "turns");
+    await new Promise((r) => setTimeout(r, 50));
+    stdin.write("t"); // transcript mode
+    await waitForFrame(lastFrame, "esc turns");
+    stdin.write("/");
+    await waitForFrame(lastFrame, "Open session by ID or path");
+    expect(lastFrame() ?? "").not.toContain("esc turns");
+    stdin.write("\u001b"); // esc closes the overlay only
+    await waitForFrame(lastFrame, "esc turns");
+    expect(lastFrame() ?? "").not.toContain("Open session by ID");
     unmount();
   });
 

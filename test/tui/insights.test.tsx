@@ -38,9 +38,10 @@ beforeAll(() => {
 });
 
 const noop = () => {};
+const settle = () => new Promise((r) => setTimeout(r, 30));
 
 describe("InsightsView", () => {
-  test("ranks projects by waste and previews the leader's breakdown", () => {
+  test("ranks projects by waste and previews the leader's breakdown", async () => {
     const { lastFrame, unmount } = render(
       <InsightsView
         db={db}
@@ -52,6 +53,7 @@ describe("InsightsView", () => {
         onBack={noop}
       />,
     );
+    await waitForFrame(lastFrame, "/p/leaky");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("un-amortized"); // header + preview
     expect(frame).toContain("/p/leaky"); // worst offender listed first
@@ -72,6 +74,7 @@ describe("InsightsView", () => {
       />,
     );
     await waitForFrame(lastFrame, "/p/leaky"); // ranked list rendered before drilling
+    await settle(); // let the list register its input handler
     stdin.write("\r"); // drill into the top project (p-leaky)
     await waitForFrame(lastFrame, "leaky-1");
     expect(lastFrame() ?? "").toContain("leaky-1"); // its session now listed
@@ -100,6 +103,7 @@ describe("InsightsView", () => {
     );
     await waitForFrame(lastFrame, "/p/many-0");
     expect(lastFrame() ?? "").not.toContain("/p/needle"); // off the first page
+    await settle();
     stdin.write("needle"); // type-to-filter
     await waitForFrame(lastFrame, "/p/needle");
     expect(lastFrame() ?? "").toContain("/p/needle");
@@ -107,7 +111,7 @@ describe("InsightsView", () => {
     wide.close();
   });
 
-  test("header lists fired portfolio findings as glyph + title lines", () => {
+  test("header lists fired portfolio findings as glyph + title lines", async () => {
     const wasteful = openDb(":memory:");
     // One project wasting $18 of $20 cache-write spend — over both the 20%
     // share and the $10 floor of the cache-waste-heavy rule, so a warning
@@ -124,6 +128,8 @@ describe("InsightsView", () => {
         onBack={noop}
       />,
     );
+    await waitForFrame(lastFrame, "never amortized");
+    await waitForFrame(lastFrame, "never amortized");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("! "); // warning glyph
     expect(frame).toContain("never amortized"); // cache-waste-heavy title
@@ -131,7 +137,7 @@ describe("InsightsView", () => {
     wasteful.close();
   });
 
-  test("summarizes context tax and the cheapest single model", () => {
+  test("summarizes context tax and the cheapest single model", async () => {
     const priced = openDb(":memory:");
     // Two sessions, baselines 20k and 40k → median 30k.
     for (const [path, baseline] of [
@@ -165,6 +171,8 @@ describe("InsightsView", () => {
         onBack={noop}
       />,
     );
+    await waitForFrame(lastFrame, "context tax");
+    await waitForFrame(lastFrame, "context tax");
     const frame = lastFrame() ?? "";
     expect(frame).toContain("context tax");
     expect(frame).toContain("30.0k"); // median baseline
