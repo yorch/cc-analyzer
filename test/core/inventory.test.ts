@@ -169,6 +169,69 @@ describe("scanInventory", () => {
     ]);
   });
 
+  describe("plugin layouts (fixtures from Claude Code's documented shapes)", () => {
+    const mkPlugin = (path: string, name: string, skill: string): void => {
+      write(join(path, ".claude-plugin", "plugin.json"), JSON.stringify({ name }));
+      write(join(path, "skills", skill, "SKILL.md"), "---\nname: x\n---\n");
+    };
+
+    test("installed_plugins.json installPath is the authority; cloned marketplaces are not installed", () => {
+      const dir = fakeClaudeDir();
+      const installPath = join(dir, "plugins", "cache", "acme-mk", "fmt", "1.2.0");
+      mkPlugin(installPath, "fmt", "format");
+      // Cloned catalog entry that was never installed.
+      mkPlugin(join(dir, "plugins", "marketplaces", "acme-mk", "plugins", "unused"), "unused", "u");
+      write(
+        join(dir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          version: 2,
+          plugins: {
+            "fmt@acme-mk": [{ scope: "user", installPath, version: "1.2.0" }],
+            "gone@acme-mk": [{ scope: "user", installPath: join(dir, "nope"), version: "1" }],
+          },
+        }),
+      );
+      const names = scanInventory().plugins.map((p) => p.name);
+      expect(names).toEqual(["fmt", "gone"]);
+      expect(scanInventory().plugins[0]?.skills).toEqual(["format"]);
+    });
+
+    test("object-shaped entries never invent plugins named after their fields", () => {
+      const dir = fakeClaudeDir();
+      write(
+        join(dir, "plugins", "installed_plugins.json"),
+        JSON.stringify({ plugins: { "solo@mk": { scope: "user", installPath: "/missing" } } }),
+      );
+      expect(scanInventory().plugins.map((p) => p.name)).toEqual(["solo"]);
+    });
+
+    test("without installed_plugins.json, plugins under cache/ are still discovered", () => {
+      const dir = fakeClaudeDir();
+      mkPlugin(join(dir, "plugins", "cache", "mk", "fmt", "1.0.0"), "fmt", "format");
+      expect(scanInventory().plugins.map((p) => p.name)).toEqual(["fmt"]);
+    });
+
+    test("fallback walk names cache plugins by their dir and keeps only the newest version", () => {
+      const dir = fakeClaudeDir();
+      const noManifest = (path: string, skill: string): void =>
+        write(join(path, "skills", skill, "SKILL.md"), "---\nname: x\n---\n");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.9.0"), "old");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.10.0"), "new");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.2.0"), "older");
+      mkPlugin(join(dir, "plugins", "cache", "mk", "dir-name", "2.0.0"), "declared", "d");
+      const plugins = scanInventory().plugins;
+      expect(plugins.map((p) => p.name)).toEqual(["declared", "fmt"]);
+      expect(plugins.find((p) => p.name === "fmt")?.skills).toEqual(["new"]);
+    });
+
+    test("malformed installed_plugins.json falls back to the directory walk", () => {
+      const dir = fakeClaudeDir();
+      write(join(dir, "plugins", "installed_plugins.json"), "{ nope");
+      mkPlugin(join(dir, "plugins", "repos", "acme", "tool"), "tool", "t");
+      expect(scanInventory().plugins.map((p) => p.name)).toEqual(["tool"]);
+    });
+  });
+
   test("merges MCP servers from settings.json and the sibling config file", () => {
     const dir = fakeClaudeDir();
     seed(dir);

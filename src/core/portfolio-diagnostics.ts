@@ -31,6 +31,7 @@ import type {
   WhatIfRepricing,
 } from "./stats-types.ts";
 import {
+  COMPACTION_MIN_SESSIONS,
   CORRECTION_CAVEAT,
   shiftDay,
   THRASH_REREAD_MIN,
@@ -131,9 +132,10 @@ export const IDLE_MIN_BUCKET_SESSIONS = 5;
 export const IDLE_WASTE_SHARE_DELTA = 0.15;
 export const IDLE_RATIO_FACTOR = 0.5;
 
+export { COMPACTION_MIN_SESSIONS };
+
 /** Half a project's sessions compacting is chronic ceiling pressure; five
  * sessions keeps one long session in a three-session project from firing it. */
-export const COMPACTION_MIN_SESSIONS = 5;
 export const COMPACTION_SHARE = 0.5;
 
 /** A 30k-token median floor is ~15% of a 200k window paid before the first

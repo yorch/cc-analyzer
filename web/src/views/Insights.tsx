@@ -63,7 +63,7 @@ const rootLabeller = <
   ).label;
 
 export function Insights() {
-  const { data, error, loading, retry } = useAsync(() => api.insights(), []);
+  const { data, error, loading, retry } = useAsync(() => api.insights(), [], "insights");
   // Cost basis is a preference, not an insight: fetch it from the tiny
   // `/api/prefs` endpoint rather than pulling the whole portfolio payload in
   // just to frame the dollar tables below.
@@ -204,7 +204,7 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
  * from the cache data so a slow (or failing) analytics scan never blocks the
  * cache hit-list this page is primarily about. */
 function CostOptimization() {
-  const { data } = useAsync(() => api.analytics(), []);
+  const { data } = useAsync(() => api.analytics(), [], "analytics");
   if (!data) return null;
   return (
     <>

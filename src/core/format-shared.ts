@@ -62,9 +62,11 @@ export function formatSignedUSD(n: number): string {
   return text.startsWith("-") ? text : `+${text}`;
 }
 
-/** A ratio as a whole-percent string ("25%") — the form every findings/evidence
- * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
-export const pct = (value: number): string => `${Math.round(value * 100)}%`;
+/** A ratio as a percent string — whole ("25%") by default, the form every
+ * findings/evidence string uses; `digits` > 0 gives fixed precision ("25.3%").
+ * Deltas that need a sign carry their own formatter (`digest.ts`). */
+export const pct = (value: number, digits = 0): string =>
+  digits > 0 ? `${(value * 100).toFixed(digits)}%` : `${Math.round(value * 100)}%`;
 
 /** errors/calls as a whole-percent string; "0%" when there were no calls. */
 export const errorRate = (errors: number, calls: number): string =>

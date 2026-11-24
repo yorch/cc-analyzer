@@ -54,6 +54,7 @@ import type {
 } from "./stats-types.ts";
 import {
   bucketSeries,
+  COMPACTION_MIN_SESSIONS,
   localDayOfMs,
   shiftDay,
   THRASH_REREAD_MIN,
@@ -606,6 +607,7 @@ export function webToolUsage(
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
+        MAX(claude_dir) AS claudeDir,
         SUM(web_searches) AS searches,
         SUM(web_fetches) AS fetches
       FROM sessions
@@ -624,6 +626,7 @@ export function estimatedShareByProject(db: Database, limit = 20): EstimatedShar
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
+        MAX(claude_dir) AS claudeDir,
         SUM(cost_total) AS cost,
         SUM(cost_total * cost_estimated) AS estimatedCost,
         CASE WHEN SUM(cost_total) > 0
@@ -670,6 +673,7 @@ export function sidechainByProject(db: Database, limit = 20): SidechainProjectRo
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
+        MAX(claude_dir) AS claudeDir,
         SUM(cost_total) AS cost,
         COALESCE(SUM(sidechain_cost), 0) AS sidechainCost,
         CASE WHEN SUM(cost_total) > 0
@@ -966,22 +970,46 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
     sidechain += b.sidechain;
     inherited += b.inherited;
   }
-  const byProject = (
-    db
-      .query(
-        `SELECT project_id AS projectId,
+  // Top-N by raw compaction count UNION top-N by share: the `compaction-pressure`
+  // rule ranks by share, so a small high-share project must stay reachable even
+  // when bigger projects out-count it.
+  const projectRows = db
+    .query(
+      `SELECT project_id AS projectId,
           MAX(project_alias) AS projectAlias,
           MAX(project_path) AS projectPath,
+          MAX(claude_dir) AS claudeDir,
           COUNT(*) AS sessions,
           COALESCE(SUM(compactions > 0), 0) AS sessionsWithCompaction,
           COALESCE(SUM(compactions), 0) AS compactions
         FROM sessions
         GROUP BY project_id
-        HAVING SUM(compactions) > 0
-        ORDER BY compactions DESC LIMIT ?`,
-      )
-      .all(limit) as Omit<CompactionProjectRow, "share">[]
-  ).map((p) => ({ ...p, share: p.sessions > 0 ? p.sessionsWithCompaction / p.sessions : 0 }));
+        HAVING SUM(compactions) > 0`,
+    )
+    .all() as Omit<CompactionProjectRow, "share">[];
+  const withShare: CompactionProjectRow[] = projectRows.map((p) => ({
+    ...p,
+    share: p.sessions > 0 ? p.sessionsWithCompaction / p.sessions : 0,
+  }));
+  // Half the budget each, so the union never exceeds `limit`. The share half
+  // only ranks projects the rule can judge (COMPACTION_MIN_SESSIONS), or
+  // one-session share-1.0 projects would crowd out every qualifying one.
+  const countBudget = Math.ceil(limit / 2);
+  const shareBudget = Math.floor(limit / 2);
+  const byCount = [...withShare]
+    .sort((a, b) => b.compactions - a.compactions || a.projectId.localeCompare(b.projectId))
+    .slice(0, countBudget);
+  const byShare = withShare
+    .filter((p) => p.sessions >= COMPACTION_MIN_SESSIONS)
+    .sort(
+      (a, b) =>
+        b.share - a.share || b.sessions - a.sessions || a.projectId.localeCompare(b.projectId),
+    )
+    .slice(0, shareBudget);
+  const keep = new Set([...byCount, ...byShare].map((p) => p.projectId));
+  const byProject = withShare
+    .filter((p) => keep.has(p.projectId))
+    .sort((a, b) => b.compactions - a.compactions || a.projectId.localeCompare(b.projectId));
   return {
     summary: { sessions, totalSessions, compactions, auto, manual, unknown, sidechain, inherited },
     byProject,

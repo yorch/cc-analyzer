@@ -750,7 +750,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
           [
             "tool calls",
             `${formatSignedCount(r.toolCalls)} (${formatSignedCount(r.toolErrors)} errors, ` +
-              `${(r.toolErrorRate * 100).toFixed(1)}%)`,
+              `${pct(r.toolErrorRate, 1)})`,
           ],
           [
             "test runs",
@@ -819,13 +819,13 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
  */
 export function renderParseCoverageLine(c: ParseCoverageSummary): string {
   if (c.lines === 0) return "Parse coverage: no indexed lines yet.";
-  const clean = ((1 - c.unparsedShare) * 100).toFixed(1);
+  const clean = pct(1 - c.unparsedShare, 1);
   const tail =
     c.unparsedShare >= PARSE_COVERAGE_MAX_UNPARSED_SHARE
       ? " — run `cc-analyzer update`; the session format may have moved ahead of this parser."
       : "";
   return (
-    `Parse coverage: ${clean}% of ${formatCount(c.lines)} indexed lines fully parsed ` +
+    `Parse coverage: ${clean} of ${formatCount(c.lines)} indexed lines fully parsed ` +
     `(${formatCount(c.parseErrors)} unreadable, ${formatCount(c.unknownEvents)} unknown events)${tail}`
   );
 }
@@ -1186,7 +1186,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
         v.bash.map((b) => [
           b.command,
           formatCount(b.uses),
-          `${(b.errorRate * 100).toFixed(1)}%`,
+          pct(b.errorRate, 1),
           String(b.sessions),
         ]),
         { align: ["left", "right", "right", "right"] },
@@ -1205,7 +1205,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
           formatCount(s.attributedTurns),
           formatUSD(s.attributedCost),
           formatUSD(s.totalCost),
-          `${(s.errorRate * 100).toFixed(1)}%`,
+          pct(s.errorRate, 1),
         ]),
         { align: ["left", "right", "right", "right", "right", "right"] },
       ),

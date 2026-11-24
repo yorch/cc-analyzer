@@ -10,7 +10,7 @@ import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { App } from "../../src/tui/App.tsx";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
-import { waitForFrame, waitForFrameGone } from "../helpers/tui.ts";
+import { waitForFrame, waitForFrameGone, writeUntil } from "../helpers/tui.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 let claude: ReturnType<typeof tempClaudeDir>;
@@ -70,10 +70,29 @@ describe("App (smoke render)", () => {
     stdin.write(""); // esc → focus the nav rail
     await waitForFrame(lastFrame, "switch view"); // rail-focused key hints
     stdin.write("4"); // jump to the 4th view (insights)
-    await waitForFrame(lastFrame, "un-amortized");
+    // Insights assembles off the first paint, so a "Loading insights…" frame comes first.
+    await waitForFrame(lastFrame, "Loading insights");
+    await waitForFrame(lastFrame, (f) => f.includes("un-amortized") && !f.includes("Loading"));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("insights"); // breadcrumb
     expect(frame).toContain("un-amortized"); // the cache summary header
+    unmount();
+  });
+
+  test("session search keeps the open session mounted; esc returns to the same view", async () => {
+    const { stdin, lastFrame, unmount } = render(<App db={db} pricing={pricing} />);
+    stdin.write("\u001b"); // focus rail
+    await waitForFrame(lastFrame, "switch view");
+    stdin.write("3"); // sessions
+    await waitForFrame(lastFrame, "Add hello function");
+    await writeUntil(stdin, "\r", lastFrame, "t read turn"); // open the session (detail footer)
+    await writeUntil(stdin, "t", lastFrame, "esc turns"); // transcript mode
+    stdin.write("/");
+    await waitForFrame(lastFrame, "Open session by ID or path");
+    expect(lastFrame() ?? "").not.toContain("esc turns");
+    stdin.write("\u001b"); // esc closes the overlay only
+    await waitForFrame(lastFrame, "esc turns");
+    expect(lastFrame() ?? "").not.toContain("Open session by ID");
     unmount();
   });
 

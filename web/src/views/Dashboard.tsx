@@ -36,6 +36,7 @@ import { ExportPanel } from "../ExportPanel.tsx";
 import { maxOf } from "../extent.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
+import { MiniBar } from "../MiniBar.tsx";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
@@ -207,7 +208,9 @@ export function Dashboard() {
                 <SortTh label="Cost" col="cost" sort={monthSort} className="num" />
                 <SortTh label="Tokens" col="tokens" sort={monthSort} className="num" />
                 <SortTh label="Sessions" col="sessions" sort={monthSort} className="num" />
-                <th style={{ width: "34%" }} />
+                <th style={{ width: "34%" }}>
+                  <span className="sr-only">Cost bar</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -218,9 +221,7 @@ export function Dashboard() {
                   <td className="num">{tokens(m.ioTokens, m.cacheTokens)}</td>
                   <td className="num">{m.sessions}</td>
                   <td>
-                    <div className="bar">
-                      <span style={{ width: `${(m.cost / maxMonth) * 100}%` }} />
-                    </div>
+                    <MiniBar value={m.cost} max={maxMonth} />
                   </td>
                 </tr>
               ))}

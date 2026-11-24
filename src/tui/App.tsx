@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
-import { useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { truncate } from "../cli/format.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
@@ -40,6 +40,7 @@ import { SessionDetailScreen } from "./screens/SessionDetailScreen.tsx";
 import { SessionListView } from "./screens/SessionListView.tsx";
 import { ToolsView } from "./screens/ToolsView.tsx";
 import { TrendsView } from "./screens/TrendsView.tsx";
+import { lookupSession } from "./sessionLookup.ts";
 import { AppShell, type NavEntry } from "./shell/AppShell.tsx";
 import { role } from "./theme.ts";
 import { useTermSize } from "./useTermSize.ts";
@@ -60,6 +61,10 @@ const RAIL: NavEntry[] = [
   { key: "trends", label: "trends", icon: "∿" },
   { key: "tools", label: "tools", icon: "⚒" },
 ];
+
+// Kept mounted (display: none) under overlays: memoized so search keystrokes,
+// which re-render App, don't re-render a possibly huge session tree.
+const MemoSessionDetail = memo(SessionDetailScreen);
 
 export function App({ db, pricing, indexStatus }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
@@ -85,16 +90,24 @@ export function App({ db, pricing, indexStatus }: Props) {
   // on the audit (context-tax-heavy only names unused MCP servers in its
   // action text), so the per-project set is the same either way. The Insights
   // screen still assembles its own full signals when opened.
-  const findingsByProject = useMemo(() => {
-    const diagnostics = buildPortfolioDiagnostics(
-      assemblePortfolioSignals(db, pricing, { audit: false }),
-    );
-    const byProject = new Map<string, PortfolioDiagnostic[]>();
-    for (const d of diagnostics) {
-      if (!d.projectId) continue;
-      byProject.set(d.projectId, [...(byProject.get(d.projectId) ?? []), d]);
-    }
-    return byProject;
+  const [findingsByProject, setFindingsByProject] = useState<Map<string, PortfolioDiagnostic[]>>(
+    () => new Map(),
+  );
+  // Deferred past first paint: assembling signals scans the whole index, and
+  // doing it in render froze the UI with no frame on screen.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const diagnostics = buildPortfolioDiagnostics(
+        assemblePortfolioSignals(db, pricing, { audit: false }),
+      );
+      const byProject = new Map<string, PortfolioDiagnostic[]>();
+      for (const d of diagnostics) {
+        if (!d.projectId) continue;
+        byProject.set(d.projectId, [...(byProject.get(d.projectId) ?? []), d]);
+      }
+      setFindingsByProject(byProject);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [db, pricing]);
   // Root-qualified labels for the drill breadcrumb — bare projectDisplayName
   // would render two same-path projects from different roots identically.
@@ -114,6 +127,7 @@ export function App({ db, pricing, indexStatus }: Props) {
   const [drill, setDrill] = useState<IndexedProject | null>(null);
   const [drillSessions, setDrillSessions] = useState<IndexedSession[]>([]);
   const [openSession, setOpenSession] = useState<IndexedSession | null>(null);
+  const closeSession = useCallback(() => setOpenSession(null), []);
   const [help, setHelp] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
@@ -127,53 +141,18 @@ export function App({ db, pricing, indexStatus }: Props) {
   };
 
   const handleSessionSearch = async (raw: string) => {
-    const trimmed = raw.trim();
-    if (!trimmed) return;
+    if (!raw.trim()) return;
     setSearchLoading(true);
     setSearchError(null);
     try {
-      // Try indexed lookup first (ID)
-      const indexed = indexedSessionById(db, trimmed);
-      if (indexed) {
-        setOpenSession(indexed);
+      const result = await lookupSession(db, raw);
+      if (result.ok) {
+        setOpenSession(result.session);
         setSearchOpen(false);
         setSearchInput("");
-        return;
+      } else {
+        setSearchError(result.message);
       }
-      // Path-like: only .jsonl files (prevents arbitrary file read like /etc/passwd)
-      const isPathLike = trimmed.endsWith(".jsonl");
-      if (isPathLike) {
-        // Create a temporary IndexedSession for path-based sessions not in index
-        // SessionDetailScreen will parse via sessionSourceAt, so we just need path
-        const tmp: IndexedSession = {
-          sessionId: trimmed.split("/").pop()?.replace(".jsonl", "") ?? trimmed,
-          path: trimmed,
-          title: null,
-          cost: 0,
-          costEstimated: false,
-          ioTokens: 0,
-          cacheTokens: 0,
-          startTime: null,
-          turns: 0,
-          apiCalls: 0,
-          toolCalls: 0,
-          mtimeMs: Date.now(),
-        };
-        // Verify the path is readable (or has subagents) before opening
-        try {
-          const { sessionSourceAt } = await import("../core/discover.ts");
-          const source = await sessionSourceAt(trimmed);
-          if (source.parentExists || source.subagentPaths.length > 0) {
-            setOpenSession(tmp);
-            setSearchOpen(false);
-            setSearchInput("");
-            return;
-          }
-        } catch {
-          // Filesystem probe failed — fall through to not-found
-        }
-      }
-      setSearchError(`Session not found: ${trimmed}`);
     } finally {
       setSearchLoading(false);
     }
@@ -250,59 +229,70 @@ export function App({ db, pricing, indexStatus }: Props) {
     );
   }
 
+  // An open session stays mounted (display: none) under the help/search
+  // overlays so its tab, cursor and Claude result survive; its input is
+  // deactivated while an overlay owns the keyboard.
+  const overlayOpen = help || searchOpen;
+  const sessionScreen = openSession ? (
+    <Box flexDirection="column" padding={1} display={overlayOpen ? "none" : "flex"}>
+      <MemoSessionDetail
+        key={openSession.path}
+        session={openSession}
+        pricing={pricing}
+        isActive={!overlayOpen}
+        columns={columns}
+        rows={rows}
+        onBack={closeSession}
+      />
+    </Box>
+  ) : null;
+
   if (help) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <HelpOverlay isActive rows={rows} onClose={() => setHelp(false)} />
-      </Box>
+      <>
+        {sessionScreen}
+        <Box flexDirection="column" padding={1}>
+          <HelpOverlay isActive rows={rows} onClose={() => setHelp(false)} />
+        </Box>
+      </>
     );
   }
 
   if (searchOpen) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="cyan"
-          paddingX={1}
-          paddingY={1}
-        >
-          <Text bold color="cyan">
-            Open session by ID or path
-          </Text>
-          <Text color={role.muted}>
-            Enter session UUID or .jsonl path — Enter to open, Esc to cancel
-          </Text>
-          <Box marginTop={1}>
-            <Text color="cyan">❯ </Text>
-            <Text>{searchInput}</Text>
-            <Text color={role.muted}>█</Text>
-          </Box>
-          {searchLoading && <Text color={role.muted}>Resolving…</Text>}
-          {searchError && <Text color="red">{searchError}</Text>}
-          <Box marginTop={1}>
-            <Text color={role.muted}>Press Enter to open · Esc to cancel · paste supported</Text>
+      <>
+        {sessionScreen}
+        <Box flexDirection="column" padding={1}>
+          <Box
+            flexDirection="column"
+            borderStyle="round"
+            borderColor="cyan"
+            paddingX={1}
+            paddingY={1}
+          >
+            <Text bold color="cyan">
+              Open session by ID or path
+            </Text>
+            <Text color={role.muted}>
+              Enter session UUID or .jsonl path — Enter to open, Esc to cancel
+            </Text>
+            <Box marginTop={1}>
+              <Text color="cyan">❯ </Text>
+              <Text>{searchInput}</Text>
+              <Text color={role.muted}>█</Text>
+            </Box>
+            {searchLoading && <Text color={role.muted}>Resolving…</Text>}
+            {searchError && <Text color="red">{searchError}</Text>}
+            <Box marginTop={1}>
+              <Text color={role.muted}>Press Enter to open · Esc to cancel · paste supported</Text>
+            </Box>
           </Box>
         </Box>
-      </Box>
+      </>
     );
   }
 
-  if (openSession) {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <SessionDetailScreen
-          session={openSession}
-          pricing={pricing}
-          isActive
-          columns={columns}
-          rows={rows}
-          onBack={() => setOpenSession(null)}
-        />
-      </Box>
-    );
-  }
+  if (openSession) return sessionScreen;
 
   const bodyActive = focus === "body";
   const focusRail = () => setFocus("rail");

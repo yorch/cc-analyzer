@@ -32,12 +32,12 @@ import type {
 
 export type { SetupInventory } from "./setup-audit.ts";
 
-/** Depth cap for the plugin walk: real layouts nest at most repos/<owner>/<plugin>. */
-const PLUGIN_SCAN_DEPTH = 3;
+/** Depth cap for the plugin walk: real layouts nest at most cache/<marketplace>/<plugin>/<version>. */
+const PLUGIN_SCAN_DEPTH = 4;
 /** Hard cap on directories visited while hunting for plugins. */
 const PLUGIN_SCAN_LIMIT = 500;
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "cache", ".cache"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".cache"]);
 
 type Json = Record<string, unknown>;
 
@@ -258,6 +258,36 @@ function serverMapKeys(file: Json | undefined): string[] {
   return looksLikeServers ? entries.map(([key]) => key) : [];
 }
 
+function mtimeOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/** Dotted numeric version ("v1.10.0" → [1, 10, 0]); undefined when not semver-like. */
+function versionParts(v: string): number[] | undefined {
+  const m = /^v?(\d+(?:\.\d+)*)/.exec(v);
+  return m?.[1] ? m[1].split(".").map(Number) : undefined;
+}
+
+/** True when `a` is a newer install than `b`: numeric version order, mtime otherwise. */
+function newerVersion(
+  a: { version: string; mtimeMs: number },
+  b: { version: string; mtimeMs: number },
+): boolean {
+  const pa = versionParts(a.version);
+  const pb = versionParts(b.version);
+  if (pa && pb) {
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d > 0;
+    }
+  }
+  return a.mtimeMs > b.mtimeMs;
+}
+
 function pluginAt(dir: string): PluginEntry {
   const manifest = readJson(join(dir, ".claude-plugin", "plugin.json"));
   const declared = typeof manifest?.name === "string" ? manifest.name.trim() : "";
@@ -270,37 +300,98 @@ function pluginAt(dir: string): PluginEntry {
 }
 
 /**
- * Best-effort plugin discovery. The on-disk layout has changed across Claude
- * Code versions (`plugins/repos/<owner>/<plugin>`, `plugins/marketplaces/...`,
- * or plugins sitting directly under `plugins/`), so instead of hard-coding one
- * shape this walks a few levels down and takes every dir that looks like a
- * plugin, then folds in any names the JSON config files mention.
+ * Plugins Claude Code itself records as installed, from
+ * `plugins/installed_plugins.json`. Current shape:
+ * `{ version, plugins: { "name@marketplace": [{ scope, installPath, version }] } }`
+ * (an entry may also be a bare object, or a list of names in older files).
+ * Returns `undefined` when the file is absent or has no usable `plugins` map,
+ * so callers fall back to walking the directory tree. Never throws.
+ */
+function installedPlugins(pluginsRoot: string): PluginEntry[] | undefined {
+  const file = readJson(join(pluginsRoot, "installed_plugins.json"));
+  const map = file?.plugins;
+  if (!isObject(map)) return undefined;
+  const out: PluginEntry[] = [];
+  for (const [key, entry] of Object.entries(map)) {
+    // "name@marketplace" → "name"; an entry's own fields are never names.
+    const fallback = key.includes("@") ? key.slice(0, key.indexOf("@")) : key;
+    if (fallback.length === 0) continue;
+    const records = Array.isArray(entry) ? entry : [entry];
+    let entryFound: PluginEntry | undefined;
+    for (const rec of records) {
+      const installPath =
+        isObject(rec) && typeof rec.installPath === "string" ? rec.installPath : undefined;
+      if (installPath && exists(installPath)) {
+        const at = pluginAt(installPath);
+        // Prefer the key's name over the directory name (a version dir like
+        // "1.0.0" is not a plugin name); a manifest-declared name still wins.
+        const manifest = readJson(join(installPath, ".claude-plugin", "plugin.json"));
+        const declared = typeof manifest?.name === "string" && manifest.name.trim().length > 0;
+        entryFound = declared ? at : { ...at, name: fallback };
+        break;
+      }
+    }
+    out.push(entryFound ?? { name: fallback, skills: [], agents: [], mcpServers: [] });
+  }
+  return out.sort(byName);
+}
+
+/**
+ * Plugin discovery. `installed_plugins.json` is the authority for what is
+ * *installed* when present: `plugins/marketplaces/*` holds cloned catalogs of
+ * plugins that may never have been installed, and walking them would report
+ * those as installed (and then as unused). Without that file the layout is
+ * guessed by walking a few levels down for dirs that look like plugins
+ * (`plugins/repos/<owner>/<plugin>`, `plugins/cache/<mk>/<plugin>/<version>`,
+ * plugins directly under `plugins/`), then folding in names the older JSON
+ * config files mention.
  */
 function scanPlugins(root: string): PluginEntry[] {
   const pluginsRoot = join(root, "plugins");
+  const installed = installedPlugins(pluginsRoot);
+  if (installed) return installed;
+
   const found = new Map<string, PluginEntry>();
+  /** Version dir backing a `found` entry that came from `cache/<mk>/<plugin>/<version>`. */
+  const versioned = new Map<string, { version: string; mtimeMs: number }>();
   let visited = 0;
 
-  const walk = (dir: string, depth: number): void => {
+  const walk = (dir: string, depth: number, segments: string[]): void => {
     if (depth > PLUGIN_SCAN_DEPTH || visited >= PLUGIN_SCAN_LIMIT) return;
     for (const name of listDirs(dir)) {
       if (SKIP_DIRS.has(name) || visited >= PLUGIN_SCAN_LIMIT) continue;
+      // Cloned catalogs hold plugins that may never have been installed.
+      if (depth === 1 && name === "marketplaces") continue;
       visited += 1;
       const child = join(dir, name);
       if (looksLikePlugin(child)) {
         const entry = pluginAt(child);
+        // `cache/<marketplace>/<plugin>/<version>`: the version dir is not the
+        // plugin's name (the <plugin> dir is; a manifest name still wins), and
+        // only the newest version of one plugin is the installed one.
+        if (depth === 4 && segments[0] === "cache") {
+          const manifest = readJson(join(child, ".claude-plugin", "plugin.json"));
+          const declared = typeof manifest?.name === "string" && manifest.name.trim().length > 0;
+          if (!declared) entry.name = segments[2] ?? entry.name;
+          const next = { version: name, mtimeMs: mtimeOf(child) };
+          const prior = versioned.get(entry.name);
+          if (!found.has(entry.name) || (prior && newerVersion(next, prior))) {
+            found.set(entry.name, entry);
+            versioned.set(entry.name, next);
+          }
+          continue;
+        }
         if (!found.has(entry.name)) found.set(entry.name, entry);
         continue; // A plugin's own subdirs are its contents, not more plugins.
       }
-      walk(child, depth + 1);
+      walk(child, depth + 1, [...segments, name]);
     }
   };
-  walk(pluginsRoot, 1);
+  walk(pluginsRoot, 1, []);
 
-  // Names the config files know about, even when no dir was recognized.
-  for (const file of ["config.json", "installed_plugins.json"]) {
-    const config = readJson(join(pluginsRoot, file));
-    if (!config) continue;
+  // Names the older config files know about, even when no dir was recognized.
+  const config = readJson(join(pluginsRoot, "config.json"));
+  if (config) {
     for (const field of ["installedPlugins", "plugins", "repositories"]) {
       const value = config[field];
       if (!isObject(value)) continue;

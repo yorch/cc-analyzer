@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type SyntheticEvent, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -35,6 +35,28 @@ import { useAsync } from "../useAsync.ts";
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // strftime %w, Monday first
 
+/** Hover tooltips (`<title>`) never fire on touch or from the keyboard, so a
+ *  heat/calendar chart pairs with its data table and says so: the hint button
+ *  opens the `<details>` the chart already ships. */
+function useDataTable() {
+  const [open, setOpen] = useState(false);
+  return {
+    hint: (
+      <p className="muted chart-hint">
+        Hover a cell for its value.{" "}
+        <button type="button" className="linklike" onClick={() => setOpen(true)}>
+          Show data table
+        </button>{" "}
+        for touch or keyboard.
+      </p>
+    ),
+    detailsProps: {
+      open,
+      onToggle: (e: SyntheticEvent<HTMLDetailsElement>) => setOpen(e.currentTarget.open),
+    },
+  };
+}
+
 const Heatmap = memo(function Heatmap({
   cells,
   metric,
@@ -50,6 +72,7 @@ const Heatmap = memo(function Heatmap({
     }
   }
   const max = maxOf(grid.flat(), 1e-9);
+  const table = useDataTable();
   return (
     <>
       <div className="heatmap" aria-hidden="true">
@@ -79,7 +102,8 @@ const Heatmap = memo(function Heatmap({
           </div>
         ))}
       </div>
-      <details className="chart-data">
+      {table.hint}
+      <details className="chart-data" {...table.detailsProps}>
         <summary>View Activity Data</summary>
         <div className="tablewrap">
           <table>
@@ -138,6 +162,7 @@ const Calendar = memo(function Calendar({
   daily: DayRow[];
   metric: HeatMetric;
 }) {
+  const table = useDataTable();
   const grid = calendarWeeks(
     daily.map((d) => ({ day: d.day, v: metric === "cost" ? d.cost : d.sessions })),
     CAL_WEEKS,
@@ -212,7 +237,8 @@ const Calendar = memo(function Calendar({
         <span>more</span>
         <span className="muted">· up to {fmt(metric, grid.max)} in a day</span>
       </div>
-      <details className="chart-data">
+      {table.hint}
+      <details className="chart-data" {...table.detailsProps}>
         <summary>View Calendar Data</summary>
         <div className="tablewrap">
           <table>

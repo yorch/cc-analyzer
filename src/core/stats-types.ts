@@ -494,6 +494,8 @@ export interface WebToolsProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
+  claudeDir?: string;
   searches: number;
   fetches: number;
 }
@@ -502,6 +504,8 @@ export interface EstimatedShareRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
+  claudeDir?: string;
   cost: number;
   estimatedCost: number;
   /** estimatedCost / cost, in [0, 1]. */
@@ -527,6 +531,8 @@ export interface SidechainProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
+  claudeDir?: string;
   cost: number;
   sidechainCost: number;
   share: number;
@@ -765,6 +771,8 @@ export interface CompactionProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
+  claudeDir?: string;
   sessions: number;
   sessionsWithCompaction: number;
   /** Own main-chain compactions as RAW per-row sums of the `compactions`
@@ -968,3 +976,9 @@ export interface ErrorWeekRow {
   errors: number;
   errorRate: number;
 }
+
+/** A project needs at least this many sessions before `compaction-pressure`
+ * may fire on it (one long session in a three-session project is not a
+ * pattern). Shared so `compactionUsage()` ranks by share only among projects
+ * the rule can actually judge. */
+export const COMPACTION_MIN_SESSIONS = 5;

@@ -234,6 +234,36 @@ describe("compaction reclaim annotation", () => {
     expect(s.markers[0]?.reclaimed).toBe(190);
   });
 
+  test("measures from the timed anchor even when the marker is drawn before an untimed call", () => {
+    const untimed = assistantEvent({
+      uuid: "x",
+      timestamp: ts(8),
+      stopReason: "end_turn",
+      usage: { input_tokens: 240, output_tokens: 1 },
+    });
+    delete (untimed as { timestamp?: string }).timestamp;
+    const a = analyzeSession(
+      [
+        prompt("u1", 0, "p"),
+        assistant("a", 5, { input_tokens: 100, output_tokens: 10 }),
+        untimed,
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: ts(12),
+          compactMetadata: { trigger: "auto", preTokens: 260 },
+        } as unknown as SessionEvent,
+        prompt("u2", 14, "q"),
+        assistant("d", 15, { input_tokens: 70, output_tokens: 10 }),
+      ],
+      pricing,
+    );
+    const s = buildContextSeries(a);
+    expect(s.points.map((p) => p.contextTokens)).toEqual([100, 240, 70]);
+    expect(s.markers[0]?.pos).toBe(1); // drawn before the untimed call
+    expect(s.markers[0]?.reclaimed).toBe(190); // 260 - d's 70, not 260 - 240
+  });
+
   test("undefined when the compaction closed the session (no call after)", () => {
     const tail = analyzeSession(
       [
@@ -301,6 +331,32 @@ describe("projectHeadroom", () => {
 });
 
 describe("buildGapMarkers", () => {
+  test("untimed points do not push a marker past the gap's anchor point", () => {
+    const pt = (ms?: number) => ({
+      ...(ms !== undefined ? { ms } : {}),
+      cost: 0,
+      sidechainCost: 0,
+      callCost: 0,
+      isSidechain: false,
+    });
+    // timed 0, untimed, untimed, timed 10_000: a gap ending at 5_000 anchors at
+    // index 3 (first timed point at/after it), drawn before the untimed run.
+    const points = [pt(0), pt(), pt(), pt(10_000)];
+    expect(buildGapMarkers(points, [{ startMs: 0, durationMs: 5_000 }])).toEqual([
+      { pos: 1, durationMs: 5_000 },
+    ]);
+    // Markers stay ordered and never cross a previous marker.
+    const two = buildGapMarkers(points, [
+      { startMs: 0, durationMs: 5_000 },
+      { startMs: 5_000, durationMs: 4_000 },
+    ]);
+    expect(two.map((g) => g.pos)).toEqual([1, 1]);
+    // No timed point at/after the end: marker sits before the trailing untimed run.
+    expect(buildGapMarkers([pt(0), pt()], [{ startMs: 0, durationMs: 9_000 }])).toEqual([
+      { pos: 1, durationMs: 9_000 },
+    ]);
+  });
+
   test("places the analyzer's idle periods on the call after each gap", () => {
     const idle = analyzeSession(
       [

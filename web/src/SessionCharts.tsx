@@ -40,6 +40,7 @@ import {
 } from "./chart-hover.tsx";
 import { maxOf } from "./extent.ts";
 import { count, duration, usd } from "./format.ts";
+import { MiniBar } from "./MiniBar.tsx";
 import { useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
 import {
@@ -953,7 +954,9 @@ function ModelMixPanel({ rows }: { rows: SessionModelRow[] }) {
             <th className="num">Calls</th>
             <th className="num">Cost</th>
             <th className="num">Share</th>
-            <th aria-label="Cost bar" />
+            <th>
+              <span className="sr-only">Cost bar</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -964,9 +967,7 @@ function ModelMixPanel({ rows }: { rows: SessionModelRow[] }) {
               <td className="num">{usd(r.cost)}</td>
               <td className="num">{pct(r.share)}</td>
               <td>
-                <div className="bar">
-                  <span style={{ width: `${(r.cost / max) * 100}%` }} />
-                </div>
+                <MiniBar value={r.cost} max={max} />
               </td>
             </tr>
           ))}
