@@ -9,7 +9,7 @@ import {
   buildSessionMarkdown,
   sanitizeFilename,
 } from "../../src/core/session-markdown.ts";
-import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
+import { assistantEvent, clock, promptEvent, toolUseBlock } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const at = clock(2026, 7, 1, 10);
@@ -237,5 +237,93 @@ describe("buildSessionHtml", () => {
     // HTML wraps markdown
     expect(md).toContain("# Session:");
     expect(html).toContain("Session:");
+  });
+});
+
+describe("buildSessionHtml hardening", () => {
+  const XSS = "<img src=x onerror=alert(1)>$";
+
+  test("hostile compaction trigger / subagentType never reach the page unescaped", () => {
+    const { analysis } = makeAnalysis();
+    analysis.compactions = [{ trigger: XSS, preTokens: 1000, timestamp: at(1) }];
+    analysis.subagents = [XSS];
+    analysis.sidechainBursts = [
+      {
+        subagentType: XSS,
+        apiCalls: 1,
+        cost: 1,
+        tokens: analysis.totals.tokens,
+      },
+    ];
+    const html = buildSessionHtml(analysis);
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img src=x");
+  });
+
+  test("ships no script and no innerHTML, and pins a CSP that forbids scripts", () => {
+    const { analysis } = makeAnalysis();
+    const html = buildSessionHtml(analysis);
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("innerHTML");
+    expect(html).not.toContain("onclick");
+    expect(html).toContain("Content-Security-Policy");
+    expect(html).toContain("default-src 'none'");
+  });
+
+  test("diagnostic list items render <br> structurally, not as literal text", () => {
+    const { analysis } = makeAnalysis();
+    analysis.testFailStreak = 6;
+    const html = buildSessionHtml(analysis);
+    expect(html).not.toContain("&lt;br&gt;");
+  });
+});
+
+describe("redact mode", () => {
+  const SECRET = "/home/secret/CANARY-path.ts";
+  function rereadAnalysis(): SessionAnalysis {
+    const events: SessionEvent[] = [promptEvent("u1", at(0), "CANARY prompt text")];
+    for (let i = 0; i < 6; i++) {
+      events.push(
+        assistantEvent({
+          uuid: `a${i}`,
+          timestamp: at(0, i + 1),
+          content: [toolUseBlock(`t${i}`, "Read", { file_path: SECRET })],
+        }),
+      );
+    }
+    const analysis = analyzeSession(events, pricing);
+    analysis.title = "CANARY title";
+    analysis.projectPath = "/home/secret/CANARY-project";
+    analysis.gitBranches = ["CANARY-branch"];
+    analysis.skills = { "CANARY-skill": 1 };
+    return analysis;
+  }
+
+  test("sanity: the unredacted export does surface the path", () => {
+    const analysis = rereadAnalysis();
+    expect(buildSessionMarkdown(analysis)).toContain("CANARY-path.ts");
+  });
+
+  test("markdown carries no analysis text", () => {
+    const md = buildSessionMarkdown(rereadAnalysis(), { redact: true });
+    expect(md).not.toContain("CANARY");
+    expect(md).toContain("Actionable diagnostics");
+  });
+
+  test("html carries no analysis text, including <title> and <h1>", () => {
+    const html = buildSessionHtml(rereadAnalysis(), { redact: true });
+    expect(html).not.toContain("CANARY");
+    expect(html).toContain("<title>Session export");
+  });
+
+  test("redacted transcript bodies are hidden", () => {
+    const html = buildSessionMarkdown(rereadAnalysis(), {
+      redact: true,
+      includeTranscript: true,
+      transcript: [
+        { index: 0, turnIndex: 0, role: "user", kind: "prompt", label: "You", body: "CANARY body" },
+      ],
+    });
+    expect(html).not.toContain("CANARY");
   });
 });

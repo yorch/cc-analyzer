@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   api,
@@ -34,6 +34,7 @@ import { Card } from "../Card.tsx";
 import { copyText } from "../clipboard.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { ExportPanel } from "../ExportPanel.tsx";
+import { maxOf, minOf } from "../extent.ts";
 import { cacheOf, count, duration, ioOf, tokensOf, usd } from "../format.ts";
 import { link, useHashParam } from "../router.ts";
 import { Seg } from "../Seg.tsx";
@@ -42,6 +43,7 @@ import { ChartData, chartBox } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
 import { useProjects } from "../useProjects.ts";
 import { type Accessors, useSort } from "../useSort.ts";
+import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
 
 type Tab = "summary" | "charts" | "timeline" | "turns" | "transcript" | "claude";
 const SESSION_TABS = ["summary", "charts", "timeline", "turns", "transcript", "claude"] as const;
@@ -82,22 +84,28 @@ export function Session({ id }: { id: string }) {
   };
   // Sticky once the transcript tab has been opened, so switching tabs doesn't
   // refetch — but the (potentially huge) transcript is never fetched eagerly.
-  // Derived from `tab` in an effect so any way of reaching the tab (deep link,
-  // keyboard) latches it, not just the tab button's onClick.
+  // `wanted` is derived during render so the very render that selects the tab
+  // already asks for the data (no one-frame "0 items"); the latch keeps it on.
   const [transcriptWanted, setTranscriptWanted] = useState(false);
+  const wanted = tab === "transcript" || transcriptWanted;
   useEffect(() => {
     if (tab === "transcript") setTranscriptWanted(true);
   }, [tab]);
   // Shared across every page that needs the project list — see useProjects.ts
-  // — so this doesn't refetch the whole portfolio just to resolve one id.
+  // — so this doesn't refetch the whole portfolio just to resolve one id. Only
+  // the breadcrumb link reads it, so it never blocks the page.
   const projects = useProjects();
-  const analysis = useAsync(() => api.session(id), [id]);
+  const analysis = useAsync((signal) => api.session(id, signal), [id]);
   const transcript = useAsync(
-    () => (transcriptWanted ? api.transcript(id) : Promise.resolve(null)),
-    [id, transcriptWanted],
+    (signal) => (wanted ? api.transcript(id, signal) : Promise.resolve(null)),
+    [id, wanted],
   );
+  // Between the render that selects the tab and the effect that starts the
+  // fetch, `transcript` still holds the idle null — treat that as loading.
+  const transcriptLoading =
+    transcript.loading || (wanted && transcript.data === null && !transcript.error);
 
-  if (analysis.loading || projects.loading) return <LoadingNotice>Loading session…</LoadingNotice>;
+  if (analysis.loading) return <LoadingNotice>Loading session…</LoadingNotice>;
   if (analysis.error)
     return (
       <ErrorNotice
@@ -164,35 +172,16 @@ export function Session({ id }: { id: string }) {
       <SessionExport id={id} />
       <ExportPanel sessionId={id} />
 
-      <div className="tabs" role="tablist" aria-label="Session Views">
-        {SESSION_TABS.map((t, index) => (
-          <button
-            type="button"
-            key={t}
-            className={t === tab ? "active" : ""}
-            onClick={() => setTab(t)}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-              event.preventDefault();
-              const delta = event.key === "ArrowRight" ? 1 : -1;
-              const next = SESSION_TABS[
-                (index + delta + SESSION_TABS.length) % SESSION_TABS.length
-              ] as Tab;
-              setTab(next);
-              document.getElementById(`session-tab-${next}`)?.focus();
-            }}
-            id={`session-tab-${t}`}
-            role="tab"
-            aria-selected={t === tab}
-            aria-controls={`session-panel-${t}`}
-            tabIndex={t === tab ? 0 : -1}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <ViewTabs
+        items={SESSION_TABS}
+        value={tab}
+        onChange={setTab}
+        label="Session Views"
+        id="session"
+        className="tabs"
+      />
 
-      <div id={`session-panel-${tab}`} role="tabpanel" aria-labelledby={`session-tab-${tab}`}>
+      <ViewPanel id="session" view={tab}>
         {tab === "summary" && (
           <Summary a={a} onGoToTurn={goToTurn} onGoToTranscript={goToTranscript} />
         )}
@@ -203,7 +192,7 @@ export function Session({ id }: { id: string }) {
         {tab === "turns" && <Turns a={a} focus={focus} onGoToTranscript={goToTranscript} />}
         {tab === "transcript" && (
           <Transcript
-            loading={transcript.loading}
+            loading={transcriptLoading}
             error={transcript.error}
             retry={transcript.retry}
             items={transcript.data ?? []}
@@ -214,7 +203,7 @@ export function Session({ id }: { id: string }) {
           />
         )}
         {tab === "claude" && <SessionClaude id={id} />}
-      </div>
+      </ViewPanel>
     </>
   );
 }
@@ -224,6 +213,8 @@ function SessionExport({ id }: { id: string }) {
   const [includeTranscript, setIncludeTranscript] = useState(false);
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
 
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   const doCopy = async () => {
     try {
       const text = await api.sessionReportText(id, { redact, transcript: includeTranscript });
@@ -231,7 +222,8 @@ function SessionExport({ id }: { id: string }) {
     } catch {
       setCopied("failed");
     }
-    setTimeout(() => setCopied("idle"), 2000);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied("idle"), 2000);
   };
 
   const doDownload = (format: "md" | "html" | "json") => {
@@ -260,8 +252,11 @@ function SessionExport({ id }: { id: string }) {
         transcript
       </label>
       <button type="button" onClick={doCopy}>
-        {copied === "ok" ? "Copied!" : copied === "failed" ? "Copy failed" : "Copy as Markdown"}
+        Copy as Markdown
       </button>
+      <span className="status" role="status" aria-live="polite">
+        {copied === "ok" ? "Copied!" : copied === "failed" ? "Copy failed" : ""}
+      </span>
       <button type="button" onClick={() => doDownload("md")}>
         Download MD
       </button>
@@ -301,30 +296,51 @@ function SessionClaude({ id }: { id: string }) {
     api.setAnalysisModel(next).catch(() => {});
   };
 
+  // Abort an in-flight run when the tab unmounts or the route changes, so a
+  // navigated-away analysis stops streaming into (and billing for) nothing.
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+
   const run = async () => {
+    controller.current?.abort();
+    const ctl = new AbortController();
+    controller.current = ctl;
     setRunning(true);
     setOutput("");
     setCost(undefined);
     setError(null);
     setDone(false);
     let streamed = false;
+    let ended = false; // saw a terminal `result` or `error` event
     try {
-      await api.analyze(id, selected, (event) => {
-        if (event.type === "text") {
-          streamed = true;
-          setOutput((prev) => prev + event.delta);
-        } else if (event.type === "result") {
-          if (!streamed && event.text) setOutput(event.text);
-          setCost(event.costUsd);
-        } else {
-          setError(event.message);
-        }
-      });
+      await api.analyze(
+        id,
+        selected,
+        (event) => {
+          if (event.type === "text") {
+            streamed = true;
+            setOutput((prev) => prev + event.delta);
+          } else if (event.type === "result") {
+            ended = true;
+            if (!streamed && event.text) setOutput(event.text);
+            setCost(event.costUsd);
+          } else {
+            ended = true;
+            setError(event.message);
+          }
+        },
+        ctl.signal,
+      );
+      if (!ended && !ctl.signal.aborted) {
+        setError("The analysis stream ended without a result. The run may have been interrupted.");
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (!ctl.signal.aborted) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRunning(false);
-      setDone(true);
+      if (!ctl.signal.aborted) {
+        setRunning(false);
+        setDone(true);
+      }
     }
   };
 
@@ -360,11 +376,12 @@ function SessionClaude({ id }: { id: string }) {
           {error}
         </p>
       )}
-      {output && (
-        <pre className="claude-output" aria-live="polite">
-          {output}
-        </pre>
-      )}
+      {/* Announce only the run's state — a streaming <pre> with aria-live would
+          re-read every delta. */}
+      <span className="sr-only" role="status">
+        {running ? "Analysis running" : done && !error ? "Analysis finished" : ""}
+      </span>
+      {output && <pre className="claude-output">{output}</pre>}
       {running && !output && <p className="muted">Waiting for Claude Code…</p>}
     </div>
   );
@@ -814,8 +831,8 @@ function Timeline({ a }: { a: SessionAnalysis }) {
   );
   const { limit, more } = useWindowed(timed.length, TIMELINE_WINDOW);
   if (timed.length === 0) return <EmptyNotice>No timed turns in this session.</EmptyNotice>;
-  const t0 = Math.min(...timed.map((t) => t.startMs));
-  const t1 = Math.max(...timed.map((t) => t.endMs));
+  const t0 = minOf(timed.map((t) => t.startMs));
+  const t1 = maxOf(timed.map((t) => t.endMs));
   const span = Math.max(t1 - t0, 1);
   const shown = timed.slice(0, limit);
   const W = 900;
@@ -1229,10 +1246,19 @@ function Transcript({
   }, [items]);
   const focusPos = focus ? (turnStarts.get(focus.turn) ?? -1) : -1;
   const { limit, more } = useWindowed(items.length, TRANSCRIPT_WINDOW, focusPos + 1);
+  // Scroll once per focus request, as soon as its anchor is actually in the DOM:
+  // a deep link arrives before the transcript has loaded (or before the window
+  // has widened to the turn), so the effect re-runs as those change and the
+  // handled ref keeps "show more" from yanking the page back afterwards.
+  const handledFocus = useRef<TurnFocus | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loading/items/limit are the "anchor may exist now" triggers
   useEffect(() => {
-    if (!focus) return;
-    document.getElementById(transcriptTurnAnchorId(focus.turn))?.scrollIntoView({ block: "start" });
-  }, [focus]);
+    if (!focus || handledFocus.current === focus) return;
+    const el = document.getElementById(transcriptTurnAnchorId(focus.turn));
+    if (!el) return;
+    handledFocus.current = focus;
+    el.scrollIntoView({ block: "start" });
+  }, [focus, loading, items.length, limit]);
   if (loading) return <LoadingNotice>Loading transcript…</LoadingNotice>;
   if (error)
     return <ErrorNotice error={error} retry={retry} label="Couldn’t load the transcript." />;

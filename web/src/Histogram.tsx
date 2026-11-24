@@ -1,3 +1,4 @@
+import { maxOf } from "./extent.ts";
 import { count } from "./format.ts";
 
 export interface HistogramRow {
@@ -7,7 +8,10 @@ export interface HistogramRow {
 
 /** Horizontal bar histogram normalized to the fullest bucket. */
 export function Histogram({ rows }: { rows: HistogramRow[] }) {
-  const max = Math.max(...rows.map((r) => r.count), 1);
+  const max = maxOf(
+    rows.map((r) => r.count),
+    1,
+  );
   return (
     <div className="hist">
       {rows.map((r) => (

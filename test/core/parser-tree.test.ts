@@ -227,3 +227,13 @@ test("streaming returns coverage as the generator's return value", async () => {
   expect(count).toBe(2);
   expect(next.value.lines).toBe(2);
 });
+
+test("streamSessionEvents accumulates into a caller-supplied coverage object", async () => {
+  const { streamSessionEvents } = await import("../../src/core/parser.ts");
+  const path = writeEvents("one.jsonl", [userEvent("2026-08-06T10:00:00Z", "p1")]);
+  const into = { lines: 0, parseErrors: 0, unknownEvents: 0 };
+  for await (const _ of streamSessionEvents(path, undefined, into)) {
+    // drain
+  }
+  expect(into).toEqual({ lines: 1, parseErrors: 0, unknownEvents: 0 });
+});

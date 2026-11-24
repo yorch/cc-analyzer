@@ -6,15 +6,18 @@ export function ViewTabs<T extends string>({
   onChange,
   label,
   id,
+  className = "view-nav",
 }: {
   items: readonly T[];
   value: T;
   onChange: (value: T) => void;
   label: string;
   id: string;
+  /** Visual variant: `view-nav` (default) or the session page's `tabs`. */
+  className?: string;
 }) {
   return (
-    <div className="view-nav" role="tablist" aria-label={label}>
+    <div className={className} role="tablist" aria-label={label}>
       {items.map((item, index) => (
         <button
           type="button"
@@ -22,15 +25,21 @@ export function ViewTabs<T extends string>({
           id={`${id}-tab-${item}`}
           role="tab"
           aria-selected={value === item}
-          aria-controls={`${id}-panel-${item}`}
+          // Only the active panel is mounted, so only it can be referenced.
+          aria-controls={value === item ? `${id}-panel-${item}` : undefined}
           tabIndex={value === item ? 0 : -1}
           className={value === item ? "active" : ""}
           onClick={() => onChange(item)}
           onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            let nextIndex: number;
+            if (event.key === "ArrowRight") nextIndex = (index + 1) % items.length;
+            else if (event.key === "ArrowLeft")
+              nextIndex = (index - 1 + items.length) % items.length;
+            else if (event.key === "Home") nextIndex = 0;
+            else if (event.key === "End") nextIndex = items.length - 1;
+            else return;
             event.preventDefault();
-            const delta = event.key === "ArrowRight" ? 1 : -1;
-            const next = items[(index + delta + items.length) % items.length] as T;
+            const next = items[nextIndex] as T;
             onChange(next);
             document.getElementById(`${id}-tab-${next}`)?.focus();
           }}

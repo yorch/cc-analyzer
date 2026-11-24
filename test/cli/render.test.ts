@@ -254,13 +254,18 @@ describe("renderSessionSummary · turns table", () => {
           timestamp: at(1),
           usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 200_000 },
         }),
+        assistantEvent({
+          uuid: "a1",
+          timestamp: at(2),
+          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 200_000 },
+        }),
       ],
       pricing,
     );
     const out = renderSessionSummary(a);
     expect(out).toContain("shape");
     expect(out).toContain("cache churn");
-    expect(out).toContain("the cache was rewritten 1 time");
+    expect(out).toContain("the cache was rewritten 2 times");
   });
 
   test("attributes context growth to the issuing call, with the caveat verbatim", () => {

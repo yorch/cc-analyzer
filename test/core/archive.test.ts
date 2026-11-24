@@ -854,3 +854,36 @@ describe("archive identity gaps", () => {
     expect(plain[0]?.cost).toBeCloseTo(baseline, 8);
   });
 });
+
+describe("archive repository location", () => {
+  test("refuses an archive path inside another Git repository", async () => {
+    const outer = join(temp, "outer");
+    await mkdir(outer, { recursive: true });
+    Bun.spawnSync(["git", "init", "--quiet"], { cwd: outer });
+    const nested = join(outer, "archive");
+    setArchivePath(nested);
+    await expect(archiveSessions([sourceRoot])).rejects.toThrow(/inside another Git repository/);
+    // Nothing was committed into the enclosing repository.
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: outer });
+    expect(new TextDecoder().decode(status.stdout).includes("machines")).toBe(false);
+  });
+
+  test("skips a symlinked destination instead of writing through it", async () => {
+    const first = await archiveSessions([sourceRoot]);
+    const root = first.roots[0] as string;
+    const target = join(temp, "elsewhere");
+    await mkdir(target, { recursive: true });
+    const projectDir = join(root, "projects", "-Users-test-project");
+    await rm(projectDir, { recursive: true, force: true });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(target, projectDir);
+    await writeFile(sessionPath, '{"type":"user"}\n{"type":"user","n":2}\n');
+    Bun.spawnSync(["git", "add", "-A"], { cwd: archivePath });
+    Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], {
+      cwd: archivePath,
+    });
+    const second = await archiveSessions([sourceRoot]);
+    expect(second.refused?.length).toBeGreaterThan(0);
+    expect(await readdir(target)).toEqual([]);
+  });
+});

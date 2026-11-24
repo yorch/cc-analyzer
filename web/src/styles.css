@@ -17,13 +17,19 @@
   --muted: #a89d88;
   /* Text tokens carry their WCAG AA contrast against every surface below
      (--bg / --bg-2 / --panel / --panel-2): --faint styles 10–11px labels, so
-     it may never dip under 4.5:1 — it is 4.6:1 on the lightest of them. Data
+     it may never dip under 4.5:1 — it is 4.6:1 on the lightest of them.
+     --signal / --teal are the bright brand tones for MARKS and FILLS (bars,
+     dots, borders, selection); on the light theme they are only ~3.3:1 and
+     ~4:1 against paper, so any small text uses --signal-text / --teal-text,
+     which are AA-safe (>= 4.5:1) on every surface in both themes. Data
      marks have their own tokens (below) precisely so tuning these for reading
      can never shift a chart color. */
   --faint: #908573;
   --signal: #f2a63a;
   --signal-2: #ffcf8c;
+  --signal-text: #f2a63a;
   --teal: #5cb6a3;
+  --teal-text: #5cb6a3;
   --red: #e5695c;
   /* Chart-only palette: gridlines and empty cells, plus the three non-brand
      series colors. Never used for text, so they answer to separation, not to
@@ -58,7 +64,9 @@
   --faint: #6e6452;
   --signal: #b26a10;
   --signal-2: #935610;
+  --signal-text: #935610;
   --teal: #2c7d6d;
+  --teal-text: #266a5a;
   --red: #b23b31;
   /* The three series colors were tuned against near-black and lose their
      separation on paper, so each gets a darker, more saturated twin. */
@@ -128,12 +136,14 @@ a {
     border-color 0.15s;
 }
 a:hover {
-  color: var(--signal);
+  color: var(--signal-text);
   border-color: var(--signal);
 }
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
 summary:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--signal);
@@ -162,7 +172,7 @@ summary {
   left: 10px;
   z-index: 10000;
   padding: 8px 12px;
-  background: var(--signal);
+  background: var(--signal-text);
   color: var(--bg);
   transform: translateY(-160%);
 }
@@ -213,7 +223,7 @@ main {
     "WONK" 1;
   font-size: 30px;
   line-height: 1;
-  color: var(--signal);
+  color: var(--signal-text);
   letter-spacing: -0.01em;
 }
 .brand-name {
@@ -236,7 +246,7 @@ main {
 }
 .masthead-nav a:hover,
 .masthead-nav a.active {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .masthead-tag {
   font-size: 10px;
@@ -258,7 +268,7 @@ main {
   border-block: 1px solid var(--border-strong);
 }
 .index-notice-mark {
-  color: var(--signal);
+  color: var(--signal-text);
   font-size: 17px;
   line-height: 1.2;
 }
@@ -324,7 +334,7 @@ main {
 .site-footer-label::before {
   content: "◆";
   margin-right: 8px;
-  color: var(--signal);
+  color: var(--signal-text);
   font-size: 8px;
 }
 .site-footer nav {
@@ -336,7 +346,7 @@ main {
   border-bottom-color: transparent;
 }
 .site-footer a:hover {
-  color: var(--signal);
+  color: var(--signal-text);
   border-bottom-color: var(--signal);
 }
 
@@ -375,7 +385,7 @@ main {
   border: none;
 }
 .crumbs a:hover {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 
 /* ---------------------------------------------------------------- sections */
@@ -637,11 +647,11 @@ th.num {
   white-space: nowrap;
 }
 .verdict.efficient {
-  color: var(--teal);
+  color: var(--teal-text);
   border-color: var(--teal);
 }
 .verdict.ok {
-  color: var(--signal);
+  color: var(--signal-text);
   border-color: var(--signal);
 }
 .verdict.leaky {
@@ -939,18 +949,18 @@ th.num {
   color: var(--red);
 }
 .rate-mid {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 /* What-if repricing deltas: an alternative that would have cost less reads as
    the positive signal (teal), one that would have cost more as the warning. */
 .delta-down {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 .delta-up {
   color: var(--red);
 }
 .est {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .muted {
   color: var(--muted);
@@ -995,7 +1005,7 @@ p.muted {
   cursor: pointer;
 }
 .row-button:hover {
-  color: var(--signal);
+  color: var(--signal-text);
   border-color: var(--signal);
 }
 
@@ -1103,7 +1113,7 @@ p.muted {
   border-left-color: var(--signal);
 }
 .k-prompt .head {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .k-thinking {
   border-left-color: var(--faint);
@@ -1116,7 +1126,7 @@ p.muted {
   border-left-color: var(--teal);
 }
 .k-tool_use .head {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 .k-tool_result {
   border-left-color: var(--border-strong);
@@ -1140,7 +1150,7 @@ p.muted {
   padding: 0;
 }
 .turnhead:hover {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .turnprompt {
   color: var(--muted);
@@ -1248,7 +1258,7 @@ p.muted {
   cursor: help;
 }
 .ctxgrowth.big {
-  color: var(--signal);
+  color: var(--signal-text);
   font-weight: 600;
 }
 /* Cost-shape badge on a turn header: why the turn cost what it did. Dotted
@@ -1259,14 +1269,14 @@ p.muted {
   cursor: help;
 }
 .ok {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 .step.k-run {
   border-left-color: var(--signal);
 }
 .step.k-run .stepicon,
 .step.k-run .steplabel {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .step.k-edit,
 .step.k-subagent {
@@ -1276,7 +1286,7 @@ p.muted {
 .step.k-edit .steplabel,
 .step.k-subagent .stepicon,
 .step.k-subagent .steplabel {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 .step.k-search,
 .step.k-skill,
@@ -1372,7 +1382,7 @@ p.muted {
 .loadmore button:hover,
 .digest-actions button:hover {
   border-color: var(--signal);
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .digest-actions .status {
   color: var(--muted);
@@ -1396,7 +1406,7 @@ p.muted {
 }
 .loading::before {
   content: "▸ ";
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .loading.err {
   color: var(--red);
@@ -1499,7 +1509,7 @@ p.muted {
 }
 .chart-data[open] summary {
   margin-bottom: 8px;
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .chart-data .tablewrap {
   max-height: 320px;
@@ -1561,7 +1571,7 @@ p.muted {
 }
 .eyebrow {
   margin: 0 0 4px;
-  color: var(--signal);
+  color: var(--signal-text);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.24em;
@@ -1569,7 +1579,7 @@ p.muted {
 }
 .view-nav button:hover,
 .view-nav button.active {
-  color: var(--signal);
+  color: var(--signal-text);
   border-color: var(--border-strong);
 }
 
@@ -1648,8 +1658,18 @@ p.muted {
   }
   .view-nav button,
   .tabs button,
-  .seg button {
+  .seg button,
+  .sort-button,
+  button.legend-item.interactive,
+  .row-button,
+  .turnhead {
     min-height: 44px;
+  }
+  .sort-button,
+  button.legend-item.interactive,
+  .row-button {
+    display: inline-flex;
+    align-items: center;
   }
   .trend-panel {
     padding: 12px;
@@ -1958,7 +1978,7 @@ button.legend-item.interactive {
 }
 .chart-tip .tip-pin {
   display: block;
-  color: var(--signal);
+  color: var(--signal-text);
   font-size: 9px;
   letter-spacing: 0.02em;
   margin-bottom: 3px;
@@ -2083,4 +2103,28 @@ button.legend-item.interactive {
 }
 .export-hint {
   margin-top: 8px;
+}
+
+/* Session-id lookup: SearchField beside its submit button. */
+.session-id-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.session-id-form .search-field {
+  flex: 1;
+  min-width: 240px;
+  max-width: 640px;
+  margin-bottom: 0;
+}
+.session-id-form .search {
+  max-width: none;
+}
+.session-id-form + .notice {
+  margin-top: 8px;
+}
+
+main:focus {
+  outline: none;
 }

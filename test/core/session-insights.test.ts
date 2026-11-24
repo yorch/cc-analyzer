@@ -95,4 +95,12 @@ describe("sessionOutcomes", () => {
     expect(o.filesTouched).toBe(2);
     expect(o.testRuns).toBe(0);
   });
+
+  test("costPerActiveHour is absent when active time is under a minute", () => {
+    const tiny = {
+      ...analysis,
+      totals: { ...analysis.totals, activeMs: 30_000 },
+    } as SessionAnalysis;
+    expect(sessionOutcomes(tiny).costPerActiveHour).toBeUndefined();
+  });
 });

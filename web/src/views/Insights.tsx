@@ -16,6 +16,7 @@ import {
   type PortfolioDiagnostic,
   type ProjectCacheRow,
   type SessionCacheRow,
+  WHATIF_CAVEAT,
   type WhatIfRepricing,
 } from "../api.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
@@ -286,10 +287,7 @@ function WhatIfPanel({ whatIf }: { whatIf: WhatIfRepricing }) {
         )}
       </p>
       <p className="insight-callout">
-        <strong>Caveat:</strong> these are your actual token counts replayed at other models' rates.
-        A different model would produce a different number of tokens — usually more of them on a
-        smaller model — and quality is not priced in at all. Treat it as a rate comparison, not a
-        forecast.
+        <strong>Caveat:</strong> {WHATIF_CAVEAT}
       </p>
       {s.fallbackAlternatives && (
         <p className="muted">
@@ -384,7 +382,7 @@ export function InsightsProject({ id }: { id: string }) {
   // with Project/Session so it's a no-op fetch once either has loaded it.
   const projects = useProjects();
   const { data, error, errorCause, loading, retry } = useAsync(
-    () => api.insightsSessions(id),
+    (signal) => api.insightsSessions(id, signal),
     [id],
   );
   const [query, setQuery] = useHashParam<string>("q", "");

@@ -8,22 +8,36 @@ export type Route =
   | { name: "tools" }
   | { name: "projects" }
   | { name: "project"; id: string }
-  | { name: "session"; id: string };
+  | { name: "session"; id: string }
+  | { name: "notFound"; path: string };
+
+/** A malformed escape (`%E0%A4%A`) must not throw during render — fall back to
+ *  the raw segment, which simply won't match any id. */
+function decode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
 
 function parse(hash: string): Route {
   const path = hash.replace(/^#/, "").split("?")[0] ?? "";
+  // Only hash paths are routes. A fragment that is not a path (an in-page
+  // anchor such as `#main-content`) is not a missing page, so show the dashboard.
+  if (!path.startsWith("/")) return { name: "dashboard" };
   const insightsProject = path.match(/^\/insights\/(.+)$/);
-  if (insightsProject)
-    return { name: "insightsProject", id: decodeURIComponent(insightsProject[1] as string) };
+  if (insightsProject) return { name: "insightsProject", id: decode(insightsProject[1] as string) };
   if (path === "/insights") return { name: "insights" };
   if (path === "/trends") return { name: "trends" };
   if (path === "/tools") return { name: "tools" };
   if (path === "/projects") return { name: "projects" };
   const project = path.match(/^\/project\/(.+)$/);
-  if (project) return { name: "project", id: decodeURIComponent(project[1] as string) };
+  if (project) return { name: "project", id: decode(project[1] as string) };
   const session = path.match(/^\/session\/(.+)$/);
-  if (session) return { name: "session", id: decodeURIComponent(session[1] as string) };
-  return { name: "dashboard" };
+  if (session) return { name: "session", id: decode(session[1] as string) };
+  if (path === "" || path === "/") return { name: "dashboard" };
+  return { name: "notFound", path };
 }
 
 function params(): URLSearchParams {

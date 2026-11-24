@@ -45,20 +45,26 @@ export function Project({ id }: { id: string }) {
   // Shared across every page that needs the project list — see useProjects.ts
   // — so navigating here from the Dashboard or a Session page doesn't refetch it.
   const projects = useProjects();
+  // Three independent fetches: the sessions list gates the page, while the
+  // (slower) trends and hot-file queries fill their own panels when they land.
   const { data, error, errorCause, loading, retry } = useAsync(
-    () => Promise.all([api.sessions(id), api.projectFiles(id), api.projectTrends(id)]),
+    (signal) => api.sessions(id, signal),
     [id],
   );
+  const filesState = useAsync((signal) => api.projectFiles(id, signal), [id]);
+  const trendsState = useAsync((signal) => api.projectTrends(id, signal), [id]);
   const [query, setQuery] = useHashParam<string>("q", "");
   const [view, setView] = useHashParam<ProjectView>("view", "overview", PROJECT_VIEWS);
-  const [allSessions, hotFiles, trends] = data ?? [[], [], null];
+  const allSessions = data ?? [];
+  const hotFiles = filesState.data ?? [];
+  const trends = trendsState.data;
   const q = query.toLowerCase();
   const filtered = q
     ? allSessions.filter((s) => `${s.title ?? ""} ${s.sessionId ?? ""}`.toLowerCase().includes(q))
     : allSessions;
   const sort = useSort(filtered, SESSION_SORT, "modified");
   const sessions = sort.sorted;
-  if (loading || projects.loading) return <LoadingNotice>Loading project…</LoadingNotice>;
+  if (loading) return <LoadingNotice>Loading project…</LoadingNotice>;
   if (error) {
     // A bare id (old bookmark, hand-typed ref) can match more than one
     // root-qualified project — the server says so via a 409 candidate list
@@ -106,7 +112,7 @@ export function Project({ id }: { id: string }) {
         <h1>{projectDisplayName(project?.projectPath, id, project?.projectAlias)}</h1>
         <span className="muted">
           {sessions.length}
-          {q ? `/${allSessions.length}` : ""} sessions · {usd(project?.cost ?? 0)}
+          {q ? `/${allSessions.length}` : ""} sessions{project ? ` · ${usd(project.cost)}` : ""}
           {project ? ` · ${tokens(project.ioTokens, project.cacheTokens)} tokens` : ""}
           {project && project.compactions > 0
             ? ` · ${count(project.compactions)} compaction${project.compactions === 1 ? "" : "s"}`
@@ -125,33 +131,47 @@ export function Project({ id }: { id: string }) {
 
       {view === "overview" && <ExportPanel projectId={id} />}
 
-      {view === "overview" && trends && (
+      {view === "overview" && (
         <ViewPanel id="project" view={view}>
-          <div className="analysis-intro">
-            <p className="eyebrow">Project Analysis</p>
-            <p className="muted">Cost shape, agentic depth, and the tools this project leans on.</p>
-          </div>
-          <section className="trend-panel">
-            <div className="trend-head">
-              <h2>Session cost distribution</h2>
-              <span className="muted">how spend spreads across this project’s sessions</span>
-            </div>
-            <CostDist d={trends.distribution} />
-          </section>
-          <section className="trend-panel">
-            <div className="trend-head">
-              <h2>Turn depth</h2>
-              <span className="muted">main-chain API calls per turn</span>
-            </div>
-            <DepthDist depth={trends.turnDepth} />
-          </section>
-          <section className="trend-panel">
-            <div className="trend-head">
-              <h2>Tool mix</h2>
-              <span className="muted">invocations across this project’s sessions</span>
-            </div>
-            <ToolMix tools={trends.tools} />
-          </section>
+          {trendsState.loading && <LoadingNotice>Loading project analysis…</LoadingNotice>}
+          {trendsState.error && (
+            <ErrorNotice
+              error={trendsState.error}
+              retry={trendsState.retry}
+              label="Couldn’t load the project analysis."
+            />
+          )}
+          {trends && (
+            <>
+              <div className="analysis-intro">
+                <p className="eyebrow">Project Analysis</p>
+                <p className="muted">
+                  Cost shape, agentic depth, and the tools this project leans on.
+                </p>
+              </div>
+              <section className="trend-panel">
+                <div className="trend-head">
+                  <h2>Session cost distribution</h2>
+                  <span className="muted">how spend spreads across this project’s sessions</span>
+                </div>
+                <CostDist d={trends.distribution} />
+              </section>
+              <section className="trend-panel">
+                <div className="trend-head">
+                  <h2>Turn depth</h2>
+                  <span className="muted">main-chain API calls per turn</span>
+                </div>
+                <DepthDist depth={trends.turnDepth} />
+              </section>
+              <section className="trend-panel">
+                <div className="trend-head">
+                  <h2>Tool mix</h2>
+                  <span className="muted">invocations across this project’s sessions</span>
+                </div>
+                <ToolMix tools={trends.tools} />
+              </section>
+            </>
+          )}
         </ViewPanel>
       )}
 
@@ -207,36 +227,60 @@ export function Project({ id }: { id: string }) {
         </ViewPanel>
       )}
 
-      {view === "trends" && trends && (
+      {view === "trends" && (
         <ViewPanel id="project" view={view}>
-          {trends.daily.length > 0 && (
-            <section className="trend-panel">
-              <BurnPanel daily={trends.daily} />
-            </section>
+          {trendsState.loading && <LoadingNotice>Loading project trends…</LoadingNotice>}
+          {trendsState.error && (
+            <ErrorNotice
+              error={trendsState.error}
+              retry={trendsState.retry}
+              label="Couldn’t load the project trends."
+            />
           )}
-          {trends.modelMix.length > 0 && (
-            <section className="trend-panel">
-              <div className="trend-head">
-                <h2>Model mix</h2>
-                <span className="muted">daily spend per model in this project</span>
-              </div>
-              <ModelMix rows={trends.modelMix} />
-            </section>
-          )}
+          {trends && (
+            <>
+              {trends.daily.length > 0 && (
+                <section className="trend-panel">
+                  <BurnPanel daily={trends.daily} />
+                </section>
+              )}
+              {trends.modelMix.length > 0 && (
+                <section className="trend-panel">
+                  <div className="trend-head">
+                    <h2>Model mix</h2>
+                    <span className="muted">daily spend per model in this project</span>
+                  </div>
+                  <ModelMix rows={trends.modelMix} />
+                </section>
+              )}
 
-          <section className="trend-panel">
-            <ScatterPanel points={trends.scatter} />
-          </section>
+              <section className="trend-panel">
+                <ScatterPanel points={trends.scatter} />
+              </section>
+            </>
+          )}
         </ViewPanel>
       )}
 
       {view === "files" && (
         <ViewPanel id="project" view={view}>
-          <HotFiles
-            rows={hotFiles}
-            projectPath={project?.projectAlias ? null : (project?.projectPath ?? null)}
-          />
-          {hotFiles.length === 0 && <EmptyNotice>No edited files were recorded.</EmptyNotice>}
+          {filesState.loading && <LoadingNotice>Loading hot files…</LoadingNotice>}
+          {filesState.error && (
+            <ErrorNotice
+              error={filesState.error}
+              retry={filesState.retry}
+              label="Couldn’t load the hot files."
+            />
+          )}
+          {filesState.data && (
+            <>
+              <HotFiles
+                rows={hotFiles}
+                projectPath={project?.projectAlias ? null : (project?.projectPath ?? null)}
+              />
+              {hotFiles.length === 0 && <EmptyNotice>No edited files were recorded.</EmptyNotice>}
+            </>
+          )}
         </ViewPanel>
       )}
     </>

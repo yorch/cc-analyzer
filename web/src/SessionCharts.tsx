@@ -38,6 +38,7 @@ import {
   TipRow,
   usePointerIndex,
 } from "./chart-hover.tsx";
+import { maxOf } from "./extent.ts";
 import { count, duration, usd } from "./format.ts";
 import { useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
@@ -634,7 +635,7 @@ function TurnBars({
     [turns, order, metric],
   );
   const values = ordered.map((t) => turnValue(t, metric));
-  const max = Math.max(...values, 1e-9);
+  const max = maxOf(values, 1e-9);
   const peakIdx = values.reduce((best, v, i) => (v > (values[best] ?? -1) ? i : best), 0);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
@@ -834,7 +835,7 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
   const { perTurn, totals, max } = useMemo(() => {
     const perTurn = turns.map((t) => groupCounts(t.kindCounts));
     const totals = perTurn.map((g) => g.reduce((s, v) => s + v, 0));
-    return { perTurn, totals, max: Math.max(...totals, 1) };
+    return { perTurn, totals, max: maxOf(totals, 1) };
   }, [turns]);
   const slot = (CHART_W - CHART_PAD * 2) / n;
   const gap = Math.min(2, slot * 0.2);
@@ -939,7 +940,10 @@ function ToolActivity({ turns }: { turns: TurnPoint[] }) {
 }
 
 function ModelMixPanel({ rows }: { rows: SessionModelRow[] }) {
-  const max = Math.max(...rows.map((r) => r.cost), 1e-9);
+  const max = maxOf(
+    rows.map((r) => r.cost),
+    1e-9,
+  );
   return (
     <div className="tablewrap">
       <table>

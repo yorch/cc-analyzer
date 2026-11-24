@@ -149,13 +149,13 @@ Sources: [src/core/chart-series.ts:L53-L165](https://github.com/yorch/cc-analyze
 explainable recommendations shared by the CLI, TUI, and web summary. The
 diagnostic set covers context pressure at or above 75% of a known window, a
 single-call context increase of at least 25% of the window, cache writes following
-gaps of at least five minutes, a first post-compaction call that refills at least
+idle gaps longer than the previous call's cache TTL (five minutes, or one hour for 1-hour writes) where the write outweighs the read (`idle-cache-rewrite`), a first post-compaction call that refills at least
 75% of recorded pre-compaction context, one turn carrying at least half the
 cost of a session with three or more turns, `edit-test-thrash` (at least three
 consecutive failing test runs without a pass on one chain — info at 3, warning
 at 4; edits between the failures do not break the streak), and
 `repeated-file-reads` (at least four redundant reads — the 3rd+ read of a file
-on one chain — or any single file read four times; warning at eight redundant
+on one chain — or any single file read four times, triggered only by files with per-chain redundant reads; warning at eight redundant
 reads, naming the most re-read file), and `correction-loop` (at least three
 correction turns that are also ≥ 25% of the session's turns — warning at 40% —
 computed from the same `isCorrectionPrompt`/`isInterruptionMarker` heuristics
@@ -298,7 +298,7 @@ The rules, with thresholds (each documented beside its code with a rationale):
 | `context-tax-heavy` | info / warning | A project with ≥ 5 sessions whose median first-call baseline is ≥ 30k tokens (warning at ≥ 50k). Cross-references the setup audit's unused MCP servers when present. |
 | `model-downshift-opportunity` | info | The what-if best single-model delta saves ≥ 20% of actual cost AND ≥ $5. The quality-not-priced caveat is part of the action text. |
 | `retry-churn` | info | One tool retried ≥ 20 times across ≥ 3 sessions, or ≥ 1 retry per session on average over ≥ 10 sessions; names the top tool. |
-| `error-rate-rising` | warning | With the newest (in-progress) week dropped and ≥ 8 full weeks left: the last 4 weeks' pooled tool-error rate ≥ 1.5× the prior 4 weeks', both windows ≥ 200 calls, recent rate ≥ 2%. |
+| `error-rate-rising` | warning | Gap weeks zero-filled and the newest week dropped only when it is the current (in-progress) one (`PortfolioSignals.today`), with ≥ 8 full weeks left: the last 4 weeks' pooled tool-error rate ≥ 1.5× the prior 4 weeks', both windows ≥ 200 calls, recent rate ≥ 2%. |
 | `spend-concentration` | info | Top decile of sessions carries ≥ 60% of spend, over ≥ 20 sessions. |
 | `estimated-pricing-share` | info | ≥ 25% of computed spend used heuristic (family-matched) pricing. |
 | `setup-debt` | info | The setup audit (when supplied) contains ≥ 1 warning; names the top one and points at `cc-analyzer audit` / the Setup tab. |

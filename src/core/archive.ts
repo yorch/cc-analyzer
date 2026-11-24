@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { hostname } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ClaudeRoot } from "./claude-roots.ts";
 import { fileCoveredBy, listAllSessions, type SessionInfo } from "./discover.ts";
 import {
@@ -30,6 +39,8 @@ export interface ArchiveResult {
    */
   notUpdated: number;
   committed: boolean;
+  /** Destination paths skipped because a path component is a symlink. */
+  refused?: string[];
   roots: string[];
   /** The machine identity this run archived under. */
   machine?: ArchiveMachineResolution;
@@ -348,12 +359,35 @@ async function canonicalPath(path: string): Promise<string> {
 
 async function ensureRepository(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
-  const inside = await git(path, ["rev-parse", "--is-inside-work-tree"], false);
-  if (inside === "true") return;
+  // The archive must BE a repository root, never a directory inside some other
+  // repository: committing there would write transcripts into that history.
+  const top = await git(path, ["rev-parse", "--show-toplevel"], false);
+  if (top) {
+    if ((await canonicalPath(top)) !== (await canonicalPath(path))) {
+      throw new Error(
+        `Archive path is inside another Git repository (${top}); choose a dedicated directory: ${path}`,
+      );
+    }
+    return;
+  }
   const entries = await readdir(path);
   if (entries.length > 0)
     throw new Error(`Archive path is not an empty directory or Git repository: ${path}`);
   await git(path, ["init", "--quiet"]);
+}
+
+class SymlinkRefused extends Error {}
+
+/** Refuse a destination whose existing components under `repo` include a symlink. */
+async function assertNoSymlinks(repo: string, destination: string): Promise<void> {
+  const parts = relative(repo, destination).split(sep).filter(Boolean);
+  let current = repo;
+  for (const part of parts) {
+    current = join(current, part);
+    const info = await lstat(current).catch(() => null);
+    if (!info) return; // nothing deeper exists yet
+    if (info.isSymbolicLink()) throw new SymlinkRefused(current);
+  }
 }
 
 /** Streaming byte comparison that stops at the first difference. */
@@ -399,7 +433,12 @@ type CopyOutcome = "copied" | "unchanged" | "kept";
  * Git history holding the old content does not help it. A source that merely
  * differs (diverged) is still copied; history retains what it replaces.
  */
-async function copyIfChanged(source: string, destination: string): Promise<CopyOutcome> {
+async function copyIfChanged(
+  source: string,
+  destination: string,
+  repo?: string,
+): Promise<CopyOutcome> {
+  if (repo) await assertNoSymlinks(repo, destination);
   const sourceStat = await stat(source);
   const destinationStat = await stat(destination).catch(() => null);
   if (destinationStat?.size === sourceStat.size && (await sameContents(source, destination))) {
@@ -417,7 +456,7 @@ async function copySession(
   info: SessionInfo,
   repo: string,
   machineId: string,
-): Promise<{ changed: boolean; kept: boolean }> {
+): Promise<{ changed: boolean; kept: boolean; refused: string[] }> {
   const projectName = basename(dirname(info.path));
   const sourceRootSlug = info.projectId.slice(0, info.projectId.indexOf("~"));
   const sessionId = basename(info.path, ".jsonl");
@@ -432,10 +471,17 @@ async function copySession(
   );
   let changed = false;
   let kept = false;
+  const refused: string[] = [];
   const copy = async (source: string, destination: string) => {
-    const outcome = await copyIfChanged(source, destination);
-    if (outcome === "copied") changed = true;
-    if (outcome === "kept") kept = true;
+    try {
+      const outcome = await copyIfChanged(source, destination, repo);
+      if (outcome === "copied") changed = true;
+      if (outcome === "kept") kept = true;
+    } catch (error) {
+      // A symlinked destination is skipped (never followed); anything else is real.
+      if (!(error instanceof SymlinkRefused)) throw error;
+      refused.push(error.message);
+    }
   };
   if (info.parentExists) await copy(info.path, join(sessionDir, `${sessionId}.jsonl`));
   for (const source of info.subagentPaths) {
@@ -446,7 +492,7 @@ async function copySession(
       await copy(meta, join(sessionDir, sessionId, "subagents", basename(meta)));
     }
   }
-  return { changed, kept };
+  return { changed, kept, refused };
 }
 
 async function requireCleanRepository(repo: string): Promise<void> {
@@ -459,7 +505,7 @@ async function requireCleanRepository(repo: string): Promise<void> {
 }
 
 async function commitArchiveFiles(repo: string, paths: string[], message: string): Promise<void> {
-  await git(repo, ["add", "--force", ...paths]);
+  await git(repo, ["add", "--force", "--", ...paths]);
   await git(repo, [
     "-c",
     "user.name=cc-analyzer",
@@ -469,6 +515,7 @@ async function commitArchiveFiles(repo: string, paths: string[], message: string
     "--quiet",
     "-m",
     message,
+    "--",
   ]);
 }
 
@@ -513,8 +560,10 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
   const sessions = await listAllSessions(roots);
   let copied = 0;
   let notUpdated = 0;
+  const refused: string[] = [];
   for (const session of sessions) {
-    const { changed, kept } = await copySession(session, repo, machineId);
+    const { changed, kept, refused: skipped } = await copySession(session, repo, machineId);
+    refused.push(...skipped);
     if (changed) copied++;
     if (kept) notUpdated++;
   }
@@ -534,6 +583,7 @@ export async function archiveSessions(roots: ClaudeRoot[]): Promise<ArchiveResul
     unchanged: sessions.length - copied,
     notUpdated,
     committed,
+    ...(refused.length > 0 ? { refused } : {}),
     roots: (await listArchiveRoots(repo)).map((root) => root.path),
     machine,
   };

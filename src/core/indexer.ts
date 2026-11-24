@@ -22,6 +22,7 @@ import {
   projectAliasId,
   readProjectAliases,
 } from "./project-aliases.ts";
+import { localDayOfMs } from "./stats-types.ts";
 
 export interface SessionRow {
   path: string;
@@ -94,10 +95,9 @@ export interface SessionRow {
  * the activity heatmap, which buckets by `strftime(..., 'localtime')`.
  */
 function localDay(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return null;
+  return localDayOfMs(ms);
 }
 
 /** Flatten a session analysis + file metadata into a database row. */
@@ -404,33 +404,38 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
   // small on incremental scans, the whole portfolio once on a full rebuild.
   const runClaims = new Map<string, string>();
   const priorClaim = db.query("SELECT path FROM usage_keys WHERE key = ?");
+  // On a rebuild the ledger is NOT wiped up front (an interrupted run would
+  // leave rows with an empty ledger and double count later). Instead the claims
+  // of rows this run will not re-analyze are held in memory and consulted in
+  // place of the ledger; the DELETE + re-insert happens inside `writeAll`'s
+  // transaction. Rows a rebuild does re-analyze re-derive from scratch.
+  // Retained rows (a root unreadable right now) keep counting their calls, so
+  // their claims keep blocking the other copies, as on an incremental run. The
+  // re-analysis debt is not wiped either: the settling loop below clears a key
+  // once every row with it was re-analyzed, so only keys a row could not pay
+  // stay owed.
+  let keptClaims: Map<string, string> | undefined;
   if (opts.rebuild) {
-    // Re-derive every claim from scratch — except those of rows this run will
-    // not re-analyze (a root unreadable right now keeps its rows): they keep
-    // counting their calls, so their claims must keep blocking the other copies
-    // of the session, exactly as on an incremental run. The re-analysis debt is
-    // not wiped either: the settling loop below clears a key once every row with
-    // it was re-analyzed, so only keys a row could not pay stay owed.
     const retainedRows = new Set<string>();
     for (const path of existing.keys()) {
       if (!pruned.has(path) && !currentPaths.has(path)) retainedRows.add(path);
     }
-    const kept = (
-      db.query("SELECT key, path FROM usage_keys").all() as {
-        key: string;
-        path: string;
-      }[]
-    ).filter((c) => retainedRows.has(c.path));
-    db.query("DELETE FROM usage_keys").run();
-    const reclaim = db.query("INSERT INTO usage_keys (key, path) VALUES (?, ?)");
-    for (const c of kept) reclaim.run(c.key, c.path);
+    keptClaims = new Map();
+    for (const c of db.query("SELECT key, path FROM usage_keys").all() as {
+      key: string;
+      path: string;
+    }[]) {
+      if (retainedRows.has(c.path)) keptClaims.set(c.key, c.path);
+    }
   }
   const claimFor =
     (path: string) =>
     (key: string): boolean => {
       const mine = runClaims.get(key);
       if (mine !== undefined) return mine === path;
-      const prior = priorClaim.get(key) as { path: string } | undefined;
+      const prior = keptClaims
+        ? ((p) => (p === undefined ? undefined : { path: p }))(keptClaims.get(key))
+        : (priorClaim.get(key) as { path: string } | undefined);
       // A prior claim held by a different file blocks, unless that file's row
       // is being deleted this run. The holder keeps the claim even when it is
       // itself being re-analyzed: its re-analysis may FAIL (unreadable file),
@@ -457,6 +462,9 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
       });
       return toSessionRow(analysis, info, now, aliases.byPath);
     } catch {
+      // A failed analysis keeps its old row and takes no claims: release any
+      // it took before throwing so they do not block sibling copies.
+      for (const [key, owner] of runClaims) if (owner === info.path) runClaims.delete(key);
       return null;
     } finally {
       done++;
@@ -479,6 +487,10 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
 
   let deleted = 0;
   const writeAll = db.transaction(() => {
+    if (keptClaims) {
+      db.query("DELETE FROM usage_keys").run();
+      for (const [key, path] of keptClaims) insertKeyStmt.run(key, path);
+    }
     // A re-analyzed file's stored claims are replaced wholesale by this run's;
     // a file whose analysis failed keeps its old row AND its old claims.
     const okPaths = new Set<string>();
@@ -562,16 +574,19 @@ export async function reindex(db: Database, opts: ReindexOptions = {}): Promise<
       if (rest && [...rest].some((p) => !okPaths.has(p))) debtInsert.run(key);
     }
     for (const key of released) debtInsert.run(key);
-    // A rebuild wiped the ledger up front, so a file whose analysis FAILED keeps
-    // its old row (and its old call count) with no claims behind it: any other
-    // copy would re-claim those calls and count them twice. Owe the session a
-    // re-analysis; the failed row is not in `okPaths`, so the debt stands until
-    // the file reads again, and then re-claims only what no one else holds.
-    if (opts.rebuild) {
-      toIngest.forEach((f, i) => {
-        if (!rows[i] && existing.has(f.path)) debtInsert.run(sessionRowKey(f.path));
-      });
-    }
+    // A rebuild wipes the ledger, so a file whose analysis FAILED keeps its old
+    // row (and its old call count) with no claims behind it: any other copy
+    // would re-claim those calls and count them twice. More generally, a failed
+    // file's siblings may have been refused calls it held. Owe the session a
+    // re-analysis whenever another row of it exists (or, on a rebuild, whenever
+    // the failed file had a row); the failed row is not in `okPaths`, so the
+    // debt stands until the file reads again.
+    toIngest.forEach((f, i) => {
+      if (rows[i]) return;
+      const key = sessionRowKey(f.path);
+      const others = [...(members.get(key) ?? [])].some((p) => p !== f.path);
+      if ((opts.rebuild && existing.has(f.path)) || others) debtInsert.run(key);
+    });
     db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
       LAST_SCAN_KEY,
       String(Date.now()),

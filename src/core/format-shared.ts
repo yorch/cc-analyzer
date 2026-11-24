@@ -26,11 +26,14 @@ export interface SignOptions {
 
 export function formatUSD(n: number): string {
   if (!Number.isFinite(n)) return "-";
-  const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
   if (abs === 0) return "$0.00";
-  if (abs < 0.01) return `${sign}$${abs.toFixed(4)}`;
-  return `${sign}$${abs.toFixed(2)}`;
+  if (abs < 0.01) {
+    const body = abs.toFixed(4);
+    // A negative that rounds to zero must not read "-$0.0000".
+    return `${n < 0 && Number(body) !== 0 ? "-" : ""}$${body}`;
+  }
+  return `${n < 0 ? "-" : ""}$${abs.toFixed(2)}`;
 }
 
 function abbreviate(n: number): string {
@@ -55,12 +58,17 @@ export const formatSignedCount = (n: number): string => formatCount(n, { signed:
  * both render "+$0.00" so a zero delta never looks like a saving. */
 export function formatSignedUSD(n: number): string {
   if (!Number.isFinite(n)) return "-";
-  return n < 0 ? formatUSD(n) : `+${formatUSD(n)}`;
+  const text = formatUSD(n);
+  return text.startsWith("-") ? text : `+${text}`;
 }
 
 /** A ratio as a whole-percent string ("25%") — the form every findings/evidence
  * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
 export const pct = (value: number): string => `${Math.round(value * 100)}%`;
+
+/** errors/calls as a whole-percent string; "0%" when there were no calls. */
+export const errorRate = (errors: number, calls: number): string =>
+  calls > 0 ? pct(errors / calls) : "0%";
 
 /** Hours before the day band takes over. Below it, "36h 10m" is still the
  * reading a person wants; above it, hour counts stop being countable — a

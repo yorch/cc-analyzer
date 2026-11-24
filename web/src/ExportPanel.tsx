@@ -90,7 +90,9 @@ export function ExportPanel(props: { projectId?: string; sessionId?: string } = 
         <button type="button" onClick={run} disabled={busy} className="export-button">
           {busy ? "Exporting…" : "Download ZIP"}
         </button>
-        {msg && <span className="muted">{msg}</span>}
+        <span className="muted" role="status" aria-live="polite">
+          {msg}
+        </span>
       </div>
       <p className="muted export-hint">
         CLI:{" "}

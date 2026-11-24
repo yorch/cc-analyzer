@@ -31,6 +31,7 @@ import {
   usePointerNearest,
   viewBoxX,
 } from "./chart-hover.tsx";
+import { maxOf } from "./extent.ts";
 import { count, duration, usd } from "./format.ts";
 import { link, useHashParam } from "./router.ts";
 import { Seg } from "./Seg.tsx";
@@ -238,10 +239,10 @@ export function LineChart({
   const vValues = zoomed ? values.slice(lo, hi + 1) : values;
   const vLabels = zoomed ? labels.slice(lo, hi + 1) : labels;
   const n = vValues.length;
-  const max = Math.max(...vValues, 1e-9);
+  const max = maxOf(vValues, 1e-9);
   // aria-label describes the whole series, not the mouse-only zoom window — an
   // AT user can't brush, so the summary must not silently narrow.
-  const fullMax = Math.max(...values, 1e-9);
+  const fullMax = maxOf(values, 1e-9);
   const x = xScale(n);
   const y = (v: number) => H - CHART_PAD - (v / max) * (H - CHART_PAD * 2);
   const line = linePath(vValues, x, y);
@@ -773,8 +774,11 @@ export const Scatter = memo(function Scatter({
   const H = 260;
   const pad = 10;
   const xv = (p: ScatterSession) => (xAxis === "wall" ? p.durationMs : p.activeMs);
-  const maxX = Math.max(...usable.map(xv), 1);
-  const maxY = Math.max(...usable.map((p) => p.cost), 1e-9);
+  const maxX = maxOf(usable.map(xv), 1);
+  const maxY = maxOf(
+    usable.map((p) => p.cost),
+    1e-9,
+  );
   // sqrt scales keep the dense cheap-and-short corner readable.
   const x = (p: ScatterSession) => pad + Math.sqrt(xv(p) / maxX) * (W - pad * 2);
   const y = (p: ScatterSession) => H - pad - Math.sqrt(p.cost / maxY) * (H - pad * 2);

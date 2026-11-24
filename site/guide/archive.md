@@ -225,3 +225,7 @@ git -C ~/cc-archive gc
 
 - [Privacy and security](/guide/privacy)
 - [CLI reference: archive](/docs/3-cli)
+
+## Safety checks
+
+The archive path must be a dedicated directory: `archive run` refuses a path that sits inside another Git repository, and it never writes through a symlinked destination (those files are skipped and listed as refused).

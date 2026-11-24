@@ -9,10 +9,13 @@
 import type { ApiCall, SessionAnalysis } from "./analyze.ts";
 import { buildContextSeries } from "./chart-series.ts";
 import { pct } from "./format-shared.ts";
-import { THRASH_REREAD_MIN, THRASH_STREAK_MIN } from "./stats-types.ts";
+import { CORRECTION_CAVEAT, THRASH_REREAD_MIN, THRASH_STREAK_MIN } from "./stats-types.ts";
 
 /** Prompt-cache rewrites become interesting after the five-minute TTL boundary. */
 const CACHE_IDLE_GAP_MS = 5 * 60_000;
+
+/** A prefix cached with the 1-hour TTL survives idle gaps up to an hour. */
+const CACHE_IDLE_GAP_1H_MS = 60 * 60_000;
 
 /** Edit-test thrash escalates to a warning here: four consecutive failing test
  * runs without a pass is the loop clearly repeating, not a debugging step. */
@@ -170,12 +173,32 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
   let rewriteCount = 0;
   let rewriteTokens = 0;
   let firstRewriteTurn: number | undefined;
-  for (let i = 1; i < calls.length; i++) {
+  // Most recent main-chain call that wrote cache: its TTL governs the cache the
+  // next call finds (a pure read-only call in between writes nothing, so it must
+  // not reset the TTL back to the 5m default).
+  let lastWriter: TimedCall | undefined;
+  for (let i = 0; i < calls.length; i++) {
     const previous = calls[i - 1];
     const current = calls[i];
-    if (!previous || !current || current.ms - previous.ms < CACHE_IDLE_GAP_MS) continue;
+    if (!current) continue;
+    const priorWriter = lastWriter;
+    const curWrites =
+      current.call.tokens.cacheWrite5mTokens + current.call.tokens.cacheWrite1hTokens > 0;
+    if (curWrites) lastWriter = current;
+    if (!previous) continue;
+    // A 1h write keeps the cache alive for an hour, a 5m write for five minutes.
+    const wt = priorWriter?.call.tokens;
+    const ttl =
+      wt && wt.cacheWrite1hTokens > 0 && wt.cacheWrite5mTokens === 0
+        ? CACHE_IDLE_GAP_1H_MS
+        : CACHE_IDLE_GAP_MS;
+    if (current.ms - previous.ms < ttl) continue;
     const tokens = current.call.tokens.cacheWrite5mTokens + current.call.tokens.cacheWrite1hTokens;
     if (tokens <= 0) continue;
+    // A rewrite means the prefix was paid for again instead of read back: a
+    // healthy call after a gap reads the old prefix and writes only the new
+    // tail, so require the write to outweigh the read.
+    if (current.call.tokens.cacheReadTokens >= tokens) continue;
     rewriteCount += 1;
     rewriteTokens += tokens;
     firstRewriteTurn ??= current.turnIndex;
@@ -185,7 +208,7 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
       code: "idle-cache-rewrite",
       severity: rewriteCount >= 2 ? "warning" : "info",
       title: "Idle gaps were followed by cache rewrites",
-      evidence: `${rewriteCount} call${rewriteCount === 1 ? "" : "s"} after a gap of at least 5 minutes wrote ${rewriteTokens.toLocaleString()} cache tokens.`,
+      evidence: `${rewriteCount} call${rewriteCount === 1 ? "" : "s"} after an idle gap longer than the prompt-cache TTL (5 minutes, or 1 hour for 1-hour writes) re-wrote ${rewriteTokens.toLocaleString()} cache tokens instead of reading them back.`,
       action:
         "Finish related turns together when practical, or start fresh after a long task switch.",
       turnIndex: firstRewriteTurn,
@@ -227,9 +250,12 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
 
   {
     const reads = readCountsByFile(analysis);
+    // Only files with per-chain redundant reads are candidates; their
+    // session-wide count (across chains) is display evidence, never the trigger.
     let topFile: string | undefined = analysis.rereadFiles[0];
     let topReads = topFile !== undefined ? (reads.get(topFile) ?? 0) : 0;
-    for (const [file, n] of reads) {
+    for (const file of analysis.rereadFiles) {
+      const n = reads.get(file) ?? 0;
       if (n > topReads) {
         topFile = file;
         topReads = n;
@@ -237,7 +263,7 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
     }
     if (
       analysis.redundantReads >= THRASH_REREAD_MIN ||
-      (topFile !== undefined && topReads >= SINGLE_FILE_READS)
+      (analysis.redundantReads >= 2 && topFile !== undefined && topReads >= SINGLE_FILE_READS)
     ) {
       const total = analysis.redundantReads;
       diagnostics.push({
@@ -272,7 +298,7 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
         evidence:
           `${corrections} of ${turns} turns (${pct(share)}) opened by correcting the previous ` +
           `one${interruptions > 0 ? `; ${interruptions} turn${interruptions === 1 ? "" : "s"} interrupted mid-flight` : ""}. ` +
-          "English-only keyword heuristic — it undercounts.",
+          CORRECTION_CAVEAT,
         action:
           "Invest in the first prompt: more context, constraints, and acceptance criteria up " +
           "front. When a turn misfires, consider /clear plus a fresh, fuller prompt instead of " +

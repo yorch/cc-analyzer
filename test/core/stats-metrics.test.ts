@@ -412,6 +412,17 @@ describe("parseCoverage", () => {
     });
   });
 
+  test("versions that compare equal still sort in a stable, total order", () => {
+    const order = (first: string, second: string) => {
+      const db = fresh();
+      insert(db, { ...session("x", 100, 0, 1, [first]) });
+      insert(db, { ...session("y", 100, 0, 1, [second]) });
+      return parseCoverage(db).byVersion.map((v) => v.version);
+    };
+    // "v1.2" and "1.2.0" compare equal numerically; insertion order must not matter.
+    expect(order("v1.2", "1.2.0")).toEqual(order("1.2.0", "v1.2"));
+  });
+
   test("attributes a session to the newest version it ran under, newest row first", () => {
     const db = fresh();
     // A session that spanned an upgrade belongs to the newer version — 1.10.0

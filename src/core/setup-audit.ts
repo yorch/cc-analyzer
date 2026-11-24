@@ -256,6 +256,14 @@ interface Observed<T> {
 const observeAll = <T extends { name: string }>(rows: T[]): Observed<T>[] =>
   rows.map((row) => ({ name: observedName(row.name), row }));
 
+/** MCP server names compare normalized the way Claude Code builds tool names:
+ * anything outside `[A-Za-z0-9_-]` becomes `_`, case-insensitively. */
+export const normalizeMcpName = (name: string): string =>
+  name
+    .trim()
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    .toLowerCase();
+
 /** Server name out of an `mcp__<server>__<tool>` tool name, if it is one. */
 export function mcpServerFromTool(tool: string): string | null {
   if (!tool.startsWith("mcp__")) return null;
@@ -420,9 +428,11 @@ function attribute(
   userNames: Set<string>,
 ): Attribution {
   if (observed.bare !== item.bare) return "none";
-  if (item.plugin === null) return "owned"; // (0) the user's own item
   // (1) Qualified: nothing to guess — it names its plugin or it is not ours.
+  // Checked before the user case: a qualified row names a *plugin*, so it can
+  // never be the user's own same-named item.
   if (observed.prefix !== null) return observed.prefix === item.plugin ? "owned" : "none";
+  if (item.plugin === null) return "owned"; // (0) the user's own item
   if (userNames.has(observed.bare)) return "none"; // (4) shadowed by a user item
   return (owners.get(observed.bare)?.size ?? 0) === 1 ? "owned" : "shared"; // (2) / (3)
 }
@@ -486,7 +496,7 @@ export function buildPluginUsage(
     }
 
     const mcpServersUsed = plugin.mcpServers.filter((name) =>
-      usedServers.has(name.toLowerCase()),
+      usedServers.has(normalizeMcpName(name)),
     ).length;
 
     return {
@@ -539,7 +549,7 @@ function observedMcpServers(tools: ToolUsageRow[]): Set<string> {
   return new Set(
     tools.flatMap((row) => {
       const server = mcpServerFromTool(row.tool);
-      return server ? [server.toLowerCase()] : [];
+      return server ? [normalizeMcpName(server)] : [];
     }),
   );
 }
@@ -666,7 +676,7 @@ export function buildSetupAudit(
   }
 
   for (const server of inventory.mcpServers) {
-    if (usedServers.has(server.name.toLowerCase())) continue;
+    if (usedServers.has(normalizeMcpName(server.name))) continue;
     const scope =
       server.scope === "global"
         ? "configured globally"

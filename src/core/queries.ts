@@ -195,10 +195,12 @@ export function indexedSessionById(db: Database, id: string): IndexedSession | u
         tool_calls AS toolCalls,
         mtime_ms AS mtimeMs
       FROM sessions
-      WHERE session_id = ?
+      WHERE path = ?
       LIMIT 1`,
     )
-    .get(id) as (Omit<IndexedSession, "costEstimated"> & { costEstimated: number }) | undefined;
+    .get(sessionRowById(db, id)?.path ?? "") as
+    | (Omit<IndexedSession, "costEstimated"> & { costEstimated: number })
+    | undefined;
   return row ? { ...row, costEstimated: row.costEstimated === 1 } : undefined;
 }
 
@@ -249,13 +251,26 @@ export interface SessionRefRow {
 export function sessionRowById(db: Database, id: string): SessionRefRow | undefined {
   const select =
     "SELECT path, project_id AS projectId, COALESCE(cost_total, 0) AS cost FROM sessions";
-  const exact = db.query(`${select} WHERE session_id = ? LIMIT 1`).get(id) as
+  // Deterministic when several rows qualify (a live copy beside archive copies,
+  // or a continuation file whose basename matches another row's session_id):
+  // exact basename match first, live root before archive root, newest first,
+  // path last as the final tiebreak. Both separators are matched.
+  const like = escapeLike(id);
+  const baseA = `%/${like}.jsonl`;
+  const baseB = `%\\\\${like}.jsonl`; // LIKE-escaped literal backslash
+  const order = `ORDER BY
+      CASE WHEN path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+      CASE WHEN replace(claude_dir, '\\', '/') LIKE '%/machines/%/roots/%' THEN 1 ELSE 0 END,
+      mtime_ms DESC,
+      path
+    LIMIT 1`;
+  const exact = db.query(`${select} WHERE session_id = ? ${order}`).get(id, baseA, baseB) as
     | SessionRefRow
     | undefined;
   if (exact) return exact;
   return db
-    .query(`${select} WHERE path LIKE ? ESCAPE '\\' LIMIT 1`)
-    .get(`%/${escapeLike(id)}.jsonl`) as SessionRefRow | undefined;
+    .query(`${select} WHERE path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' ${order}`)
+    .get(baseA, baseB, baseA, baseB) as SessionRefRow | undefined;
 }
 
 /** Look up a session's file path from the index by session id. */

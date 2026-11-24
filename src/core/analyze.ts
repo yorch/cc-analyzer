@@ -5,11 +5,12 @@ import {
   isCorrectionPrompt,
   isInterruptionEvent,
   isRealPrompt,
+  isUsableAssistant,
+  isUsableUser,
   type ParseCoverage,
   type SessionEvent,
   type ToolUseBlock,
   type Usage,
-  type UserEvent,
 } from "./events.ts";
 import {
   addCost,
@@ -450,40 +451,40 @@ export function isTestCommand(command: string): boolean {
 
 /** Extract the four priced token categories from a usage block. */
 export function usageToTokens(usage?: Usage): TokenCounts {
-  if (!usage) return zeroTokens();
-  const c5 = usage.cache_creation?.ephemeral_5m_input_tokens;
-  const c1 = usage.cache_creation?.ephemeral_1h_input_tokens;
+  if (!usage || typeof usage !== "object") return zeroTokens();
+  const cc = typeof usage.cache_creation === "object" ? usage.cache_creation : undefined;
+  const c5 = cc?.ephemeral_5m_input_tokens;
+  const c1 = cc?.ephemeral_1h_input_tokens;
   let write5m = 0;
   let write1h = 0;
   if (c5 !== undefined || c1 !== undefined) {
-    write5m = c5 ?? 0;
-    write1h = c1 ?? 0;
+    write5m = num(c5);
+    write1h = num(c1);
   } else {
-    write5m = usage.cache_creation_input_tokens ?? 0;
+    write5m = num(usage.cache_creation_input_tokens);
   }
   return {
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
+    inputTokens: num(usage.input_tokens),
+    outputTokens: num(usage.output_tokens),
     cacheWrite5mTokens: write5m,
     cacheWrite1hTokens: write1h,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheReadTokens: num(usage.cache_read_input_tokens),
   };
 }
 
-function isAssistant(e: SessionEvent): e is AssistantEvent {
-  return (e as { type?: string }).type === "assistant";
-}
+const isAssistant = isUsableAssistant;
+const isUser = isUsableUser;
 
-function isUser(e: SessionEvent): e is UserEvent {
-  return (e as { type?: string }).type === "user";
-}
+/** A usage counter as a finite number; drifted strings/objects count as 0. */
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-function promptPreview(content: UserEvent["message"]["content"]): string {
+function promptPreview(content: unknown): string {
   if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
   const text = content
     .map((b) => {
-      const block = b as ContentBlock & { text?: string };
-      return block.type === "text" ? (block.text ?? "") : "";
+      const block = b as (ContentBlock & { text?: string }) | null;
+      return block?.type === "text" && typeof block.text === "string" ? block.text : "";
     })
     .join(" ")
     .trim();
@@ -513,6 +514,9 @@ interface PendingTool {
   bashFamily?: string;
   /** Whether this Bash call looked like a test run — for deferred `testFailures`. */
   isTest?: boolean;
+  /** `turnCount` when the call was issued — a late result must not seed the
+   * next turn's fail streak (works in aggregate mode, unlike `turn`). */
+  turnNo: number;
   /** Raw command heads of this Bash call — for deferred `commandHeadErrors`. */
   heads?: string[];
   /** The step to patch when the result arrives — only in detail mode. */
@@ -661,6 +665,8 @@ class SessionAnalyzer {
   // stop_reason counted (it can arrive on any line of the call).
   private readonly seenUsage = new Set<string>();
   private readonly callsByKey = new Map<string, ApiCall>();
+  /** First non-empty requestId seen per message id, to spot replayed lines. */
+  private readonly requestIdByMid = new Map<string, string>();
   private readonly stoppedKeys = new Set<string>();
   private readonly pending = new Map<string, PendingTool>();
 
@@ -680,15 +686,17 @@ class SessionAnalyzer {
   }
 
   private touchTime(ts?: string): void {
-    if (!ts) return;
+    if (!ts || typeof ts !== "string") return;
+    // An unparseable timestamp would poison start/end (and durationMs = NaN).
+    const ms = Date.parse(ts);
+    if (Number.isNaN(ms)) return;
     if (!this.startTime || ts < this.startTime) this.startTime = ts;
     if (!this.endTime || ts > this.endTime) this.endTime = ts;
     if (this.detail && this.current) {
       if (!this.current.startTime || ts < this.current.startTime) this.current.startTime = ts;
       if (!this.current.endTime || ts > this.current.endTime) this.current.endTime = ts;
     }
-    const ms = Date.parse(ts);
-    if (!Number.isNaN(ms)) this.eventMs.push(ms);
+    this.eventMs.push(ms);
   }
 
   /**
@@ -787,7 +795,7 @@ class SessionAnalyzer {
     }
     // Test-fail streak: a failing test run extends its chain's streak, a
     // passing one breaks it; non-test results never touch it.
-    if (p.isTest) {
+    if (p.isTest && p.turnNo === this.turnCount) {
       if (isError) {
         const streak = (this.testStreakByChain.get(p.chain) ?? 0) + 1;
         this.testStreakByChain.set(p.chain, streak);
@@ -970,8 +978,20 @@ class SessionAnalyzer {
     // pending registration run for every assistant line (including
     // continuations); only usage counting is gated on the first line.
     const steps: TurnStep[] = [];
-    for (const block of event.message.content) {
+    // A line replaying an already-seen message id under a *different*,
+    // non-empty requestId is a re-log of the same response (sidechain logs
+    // replay parent messages) — its tool blocks were already counted. Streamed
+    // continuations (same/absent requestId) still count their own blocks.
+    let isReplay = false;
+    if (typeof mid === "string" && event.requestId) {
+      const first = this.requestIdByMid.get(mid);
+      if (first === undefined) this.requestIdByMid.set(mid, event.requestId);
+      else if (first !== event.requestId) isReplay = true;
+    }
+    const blocks = !isReplay && Array.isArray(event.message.content) ? event.message.content : [];
+    for (const block of blocks) {
       const b = block as ContentBlock & { text?: string; thinking?: string };
+      if (!b || typeof b !== "object") continue;
       if (b.type === "text") {
         if (!this.detail) continue;
         const text = b.text ?? "";
@@ -1112,6 +1132,7 @@ class SessionAnalyzer {
         skillName,
         bashFamily,
         isTest,
+        turnNo: this.turnCount,
         heads,
         step,
         turn: this.current,
@@ -1138,6 +1159,9 @@ class SessionAnalyzer {
     if (mid !== undefined) this.seenUsage.add(mid);
 
     this.seenApiCalls += 1;
+    // Turn depth counts every main-chain call in the open turn, including one
+    // whose usage a cross-file claim refuses (it still happened in this turn).
+    if (event.isSidechain !== true && this.hasTurn) this.currentDepth += 1;
 
     // Cross-file de-dup: when the indexer's claim callback refuses this call's
     // identity (another indexed file already counted it — continuation files
@@ -1155,8 +1179,10 @@ class SessionAnalyzer {
 
     // First (or only) line of this API call: count and price its usage once.
     const usage = event.message.usage;
-    this.webSearches += usage?.server_tool_use?.web_search_requests ?? 0;
-    this.webFetches += usage?.server_tool_use?.web_fetch_requests ?? 0;
+    const stu =
+      usage && typeof usage.server_tool_use === "object" ? usage.server_tool_use : undefined;
+    this.webSearches += num(stu?.web_search_requests);
+    this.webFetches += num(stu?.web_fetch_requests);
 
     const tokens = usageToTokens(usage);
     const model = event.message.model;
@@ -1210,8 +1236,6 @@ class SessionAnalyzer {
           if (!burst.endTime || ts > burst.endTime) burst.endTime = ts;
         }
       }
-    } else if (this.hasTurn) {
-      this.currentDepth += 1;
     }
     this.totalTokens = addTokens(this.totalTokens, tokens);
     this.totalCost = addCost(this.totalCost, cost);

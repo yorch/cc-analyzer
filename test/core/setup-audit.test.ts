@@ -548,3 +548,61 @@ describe("unused-plugin", () => {
     ]);
   });
 });
+
+describe("attribute: qualified rows and user items", () => {
+  test("a qualified row never counts for the user's own same-named skill", () => {
+    const inv = inventory({
+      skills: [user("fmt"), { name: "fmt", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["fmt"] })],
+    });
+    const audit = buildSetupAudit(
+      inv,
+      usage({ skills: [skillRow({ name: "toolkit:fmt", invocations: 3 })] }),
+      TODAY,
+    );
+    // The plugin's skill ran; the user's own `fmt` did not.
+    expect(audit.findings.map((f) => `${f.code}:${f.subject}`)).toEqual(["unused-skill:fmt"]);
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "toolkit:fmt", invocations: 3 })] }),
+    );
+    expect(rows.find((r) => r.plugin === "toolkit")).toMatchObject({ invocations: 3 });
+  });
+
+  test("a bare row is still the user's own item (shadowing unchanged)", () => {
+    const inv = inventory({
+      skills: [user("fmt"), { name: "fmt", source: "plugin:toolkit" }],
+      plugins: [plugin({ name: "toolkit", skills: ["fmt"] })],
+    });
+    const rows = buildPluginUsage(
+      inv,
+      usage({ skills: [skillRow({ name: "fmt", invocations: 3 })] }),
+    );
+    expect(rows.find((r) => r.plugin === "toolkit")).toMatchObject({ invocations: 0 });
+  });
+});
+
+describe("MCP server name normalization", () => {
+  test("a server with spaces/dots matches its mcp__ tool prefix", () => {
+    const inv = inventory({
+      mcpServers: [
+        { name: "My Server.v2", scope: "global", projects: 0 },
+        { name: "GitHub", scope: "global", projects: 0 },
+      ],
+    });
+    const audit = buildSetupAudit(
+      inv,
+      usage({ tools: [toolRow("mcp__My_Server_v2__run"), toolRow("mcp__github__list")] }),
+      TODAY,
+    );
+    expect(audit.findings).toEqual([]);
+  });
+
+  test("plugin-shipped servers normalize the same way", () => {
+    const rows = buildPluginUsage(
+      inventory({ plugins: [plugin({ name: "p", mcpServers: ["My Server"] })] }),
+      usage({ tools: [toolRow("mcp__My_Server__go")] }),
+    );
+    expect(rows[0]?.mcpServersUsed).toBe(1);
+  });
+});

@@ -579,7 +579,8 @@ export function turnCostShape(t: TurnPoint): TurnCostShape | undefined {
       detail: `subagent burst — ${Math.round(share(t.costSidechain) * 100)}% of this turn's cost ran in subagents`,
     };
   }
-  if (share(t.costCacheWrite) >= SHAPE_CACHE_WRITE_SHARE) {
+  // One write is the healthy "write the prefix once" shape; churn needs a rewrite.
+  if (share(t.costCacheWrite) >= SHAPE_CACHE_WRITE_SHARE && t.cacheWriteCalls >= 2) {
     return {
       kind: "cache-churn",
       label: "cache churn",

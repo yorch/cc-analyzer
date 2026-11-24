@@ -4,6 +4,7 @@ import {
   formatCount,
   formatDuration,
   formatSignedCount,
+  formatSignedUSD,
   formatUSD,
 } from "../../src/core/format-shared.ts";
 
@@ -79,5 +80,13 @@ describe("durations", () => {
   test("an absent or unparseable duration renders as a dash", () => {
     expect(formatDuration(undefined)).toBe("-");
     expect(formatCompactDuration(Number.NaN)).toBe("-");
+  });
+});
+
+describe("formatUSD tiny negatives", () => {
+  test("a negative that rounds to zero carries no sign", () => {
+    expect(formatUSD(-1e-7)).toBe("$0.0000");
+    expect(formatSignedUSD(-1e-7)).toBe("+$0.0000");
+    expect(formatUSD(-0.0042)).toBe("-$0.0042");
   });
 });
