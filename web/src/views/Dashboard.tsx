@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
+  ApiError,
   api,
   buildDigestMarkdown,
   CORRECTION_CAVEAT,
@@ -32,6 +33,7 @@ import {
 } from "../chart-hover.tsx";
 import { copyText } from "../clipboard.ts";
 import { ExportPanel } from "../ExportPanel.tsx";
+import { maxOf } from "../extent.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { link, useHashParam } from "../router.ts";
@@ -379,7 +381,10 @@ export function Dashboard() {
 function MonthBarChart({ rows }: { rows: MonthRow[] }) {
   const n = rows.length;
   const H = 160;
-  const max = Math.max(...rows.map((r) => r.cost), 1e-9);
+  const max = maxOf(
+    rows.map((r) => r.cost),
+    1e-9,
+  );
   // Guard div-by-zero for the empty series; the early return below (after
   // every hook has run — rules of hooks) is what actually degrades it.
   const slot = (CHART_W - CHART_PAD * 2) / Math.max(n, 1);
@@ -617,29 +622,23 @@ function SessionIdSearch() {
     if (!trimmed) return;
     setLoading(true);
     setError(null);
-    // Use resolveSession helper which handles both ID and path via server fallback
+    // The server resolves both a session id and a .jsonl path on this route.
     api
-      .resolveSession(trimmed)
+      .session(trimmed)
       .then((session) => {
         const targetId = session.sessionId ?? trimmed;
         window.location.hash = link.session(targetId);
       })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("404")) {
+        if (err instanceof ApiError && err.status === 404) {
           setError(`Session not found: ${trimmed}`);
         } else {
-          setError(`Failed to resolve session: ${msg}`);
+          setError(
+            `Failed to resolve session: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       })
       .finally(() => setLoading(false));
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      navigate();
-    }
   };
 
   return (
@@ -648,30 +647,25 @@ function SessionIdSearch() {
       <p className="muted">
         Enter a session UUID or a .jsonl file path to jump directly to that session.
       </p>
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          type="text"
-          aria-label="Session ID or file path"
+      <form
+        className="session-id-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          navigate();
+        }}
+      >
+        <SearchField
+          label="Session ID or file path"
           placeholder="e.g., 01a03650-f38d-7d62-8890-78a99b65b93a or /path/to/session.jsonl"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          style={{
-            flex: 1,
-            minWidth: "280px",
-            padding: "8px 12px",
-            border: "1px solid var(--border)",
-            borderRadius: "6px",
-            background: "var(--bg-card)",
-            color: "var(--text)",
-          }}
+          onChange={setInput}
         />
-        <button type="button" onClick={navigate} disabled={loading || !input.trim()}>
+        <button type="submit" disabled={loading || !input.trim()}>
           {loading ? "Resolving…" : "Open"}
         </button>
-      </div>
+      </form>
       {error && (
-        <p className="notice error-notice" role="alert" style={{ marginTop: "8px" }}>
+        <p className="notice error-notice" role="alert">
           {error}
         </p>
       )}

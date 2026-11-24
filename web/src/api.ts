@@ -220,8 +220,8 @@ async function errorBody(res: Response): Promise<unknown> {
   }
 }
 
-async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+async function get<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new ApiError(res.status, url, await errorBody(res));
   return (await res.json()) as T;
 }
@@ -257,11 +257,13 @@ async function streamAnalyze(
   const flush = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return;
+    let event: AnalysisEvent;
     try {
-      onEvent(JSON.parse(trimmed) as AnalysisEvent);
+      event = JSON.parse(trimmed) as AnalysisEvent;
     } catch {
-      // ignore malformed NDJSON line (heartbeat / partial)
+      return; // ignore malformed NDJSON line (heartbeat / partial)
     }
+    onEvent(event);
   };
   for (;;) {
     const { done, value } = await reader.read();
@@ -294,9 +296,9 @@ export function ambiguousProjectCandidates(err: unknown): string[] | null {
 }
 
 export const api = {
-  indexStatus: () => get<IndexStatus>("/api/index-status"),
-  stats: () => get<StatsResponse>("/api/stats"),
-  prefs: () => get<PrefsResponse>("/api/prefs"),
+  indexStatus: (signal?: AbortSignal) => get<IndexStatus>("/api/index-status", signal),
+  stats: (signal?: AbortSignal) => get<StatsResponse>("/api/stats", signal),
+  prefs: (signal?: AbortSignal) => get<PrefsResponse>("/api/prefs", signal),
   // The one write call in the client: persists the cost-basis display
   // preference (see the write-endpoint note in src/web/api.ts). Never touches
   // Claude session data — only cc-analyzer's own prefs.json.
@@ -314,41 +316,25 @@ export const api = {
     onEvent: (event: AnalysisEvent) => void,
     signal?: AbortSignal,
   ) => streamAnalyze(id, model, onEvent, signal),
-  projects: () => get<IndexedProject[]>("/api/projects"),
-  sessions: (projectId: string) =>
-    get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
-  projectFiles: (projectId: string) =>
-    get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`),
-  projectTrends: (projectId: string) =>
-    get<ProjectTrends>(`/api/projects/${encodeURIComponent(projectId)}/trends`),
-  session: (id: string) => get<SessionResponse>(`/api/sessions/${encodeURIComponent(id)}`),
-  transcript: (id: string) =>
-    get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
+  projects: (signal?: AbortSignal) => get<IndexedProject[]>("/api/projects", signal),
+  sessions: (projectId: string, signal?: AbortSignal) =>
+    get<IndexedSession[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`, signal),
+  projectFiles: (projectId: string, signal?: AbortSignal) =>
+    get<HotFileRow[]>(`/api/projects/${encodeURIComponent(projectId)}/files`, signal),
+  projectTrends: (projectId: string, signal?: AbortSignal) =>
+    get<ProjectTrends>(`/api/projects/${encodeURIComponent(projectId)}/trends`, signal),
+  session: (id: string, signal?: AbortSignal) =>
+    get<SessionResponse>(`/api/sessions/${encodeURIComponent(id)}`, signal),
+  transcript: (id: string, signal?: AbortSignal) =>
+    get<TranscriptItem[]>(`/api/sessions/${encodeURIComponent(id)}/transcript`, signal),
   searchSessions: (q: string) =>
     get<SessionWithProject[]>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
-  /** Resolve a session by ID or file path — tries indexed lookup first, then direct path. */
-  resolveSession: async (idOrPath: string): Promise<SessionResponse> => {
-    const trimmed = idOrPath.trim();
-    // Try as ID first (handles both uuid and path via server fallback)
-    try {
-      return await get<SessionResponse>(`/api/sessions/${encodeURIComponent(trimmed)}`);
-    } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.status === 404 &&
-        (trimmed.endsWith(".jsonl") || trimmed.includes("/"))
-      ) {
-        throw err;
-      }
-      throw err;
-    }
-  },
-  insights: () => get<InsightsResponse>("/api/insights"),
-  insightsSessions: (projectId: string) =>
-    get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`),
-  trends: () => get<TrendsResponse>("/api/trends"),
-  analytics: () => get<AnalyticsResponse>("/api/analytics"),
-  audit: () => get<SetupAudit>("/api/audit"),
+  insights: (signal?: AbortSignal) => get<InsightsResponse>("/api/insights", signal),
+  insightsSessions: (projectId: string, signal?: AbortSignal) =>
+    get<SessionCacheRow[]>(`/api/insights/${encodeURIComponent(projectId)}/sessions`, signal),
+  trends: (signal?: AbortSignal) => get<TrendsResponse>("/api/trends", signal),
+  analytics: (signal?: AbortSignal) => get<AnalyticsResponse>("/api/analytics", signal),
+  audit: (signal?: AbortSignal) => get<SetupAudit>("/api/audit", signal),
   /** Download a shareable per-session export. Mirrors the CLI `analyze --md|--html|--json --out`. */
   sessionReport: (
     id: string,
@@ -415,11 +401,11 @@ export const api = {
   /** One week's digest. `insights: false` asks the server to skip the
    * current-state insight snapshot — the dashboard card renders none of it, and
    * assembling those signals is the expensive half of the response. */
-  report: (week?: string, opts: { insights?: boolean } = {}) => {
+  report: (week?: string, opts: { insights?: boolean } = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (week) params.set("week", week);
     if (opts.insights === false) params.set("insights", "0");
     const query = params.toString();
-    return get<WeeklyDigest>(query ? `/api/report?${query}` : "/api/report");
+    return get<WeeklyDigest>(query ? `/api/report?${query}` : "/api/report", signal);
   },
 };

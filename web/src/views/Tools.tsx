@@ -29,6 +29,7 @@ import {
   usePointerIndex,
 } from "../chart-hover.tsx";
 import { DiagnosticList } from "../DiagnosticList.tsx";
+import { maxOf, minOf } from "../extent.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { useHashParam } from "../router.ts";
@@ -84,7 +85,7 @@ function SkillSpark({ values }: { values: number[] }) {
   const W = 640;
   const H = 64;
   const pad = 4;
-  const max = Math.max(...values, 1e-9);
+  const max = maxOf(values, 1e-9);
   const n = values.length;
   const x = xScale(n, W, pad);
   const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
@@ -141,7 +142,7 @@ function SkillDetail({ skill }: { skill: SkillUsageRow }) {
               so the numbers that bound it have to be readable in text. */}
           <span className="muted spark-cap">
             invocations / week · {series.length} week{series.length === 1 ? "" : "s"} · min{" "}
-            {count(Math.min(...series))} · max {count(Math.max(...series))} · total{" "}
+            {count(minOf(series))} · max {count(maxOf(series))} · total{" "}
             {count(series.reduce((s, v) => s + v, 0))}
           </span>
         </>

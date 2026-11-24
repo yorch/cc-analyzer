@@ -16,6 +16,7 @@ import {
   weekOf,
 } from "../api.ts";
 import { Card } from "../Card.tsx";
+import { maxOf } from "../extent.ts";
 import { count, usd } from "../format.ts";
 import { useHashParam } from "../router.ts";
 import { Seg } from "../Seg.tsx";
@@ -48,7 +49,7 @@ const Heatmap = memo(function Heatmap({
       (grid[ri] as number[])[c.hour] = metric === "cost" ? c.cost : c.sessions;
     }
   }
-  const max = Math.max(...grid.flat(), 1e-9);
+  const max = maxOf(grid.flat(), 1e-9);
   return (
     <>
       <div className="heatmap" aria-hidden="true">

@@ -126,11 +126,13 @@ export function usePointerIndex(
         if (!pinnable) return;
         // Toggle: a click pins the point under the pointer; clicking again (or
         // on the pinned point) releases and clears.
+        if (pinned) {
+          setHover(null);
+          setPinned(false);
+          return;
+        }
         update(e);
-        setPinned((p) => {
-          if (p) setHover(null);
-          return !p;
-        });
+        setPinned(true);
       },
     },
   };
