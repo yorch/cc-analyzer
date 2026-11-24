@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { analyzeSession, type SessionAnalysis } from "../core/analyze.ts";
 import {
@@ -70,7 +70,8 @@ import {
 import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
 import { labelProjects, rootTag } from "../core/project-labels.ts";
-import { indexedProjectForPath, isIndexEmpty } from "../core/queries.ts";
+import { indexedProjectForPath, isIndexEmpty, resolveIndexedProject } from "../core/queries.ts";
+import { buildSessionJsonPayload } from "../core/redact.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
@@ -105,6 +106,7 @@ import { type DownloadProgress, performUpdate } from "../core/update.ts";
 import { maybeNotifyUpdate } from "../core/update-check.ts";
 import { VERSION } from "../core/version.ts";
 import {
+  colorEnabled,
   formatBytes,
   formatCount,
   formatRelativeTime,
@@ -138,6 +140,7 @@ Usage:
                                        --redact hides prompt/transcript text for sharing
   cc-analyzer doctor <id|path> [--json]
                                        Check session health and recoverability
+                                       (exit 0 healthy; 1 warning or damaged; 2 usage error)
   cc-analyzer index [--rebuild|--check]
                                        Build, refresh, or check the session index
   cc-analyzer archive [show|set <path>|run|index on|off]
@@ -169,7 +172,7 @@ Usage:
                                        View or change how dollar figures are framed
   cc-analyzer claude-dir [show|set <path>|add <path>|remove <path>|reset]
                                        View or change which Claude data dirs are read
-  cc-analyzer help                     Show this help
+  cc-analyzer help                     Show this help (also: <command> --help)
 
 Global options:
   --claude-dir=<path>                  Read this Claude data dir for one invocation
@@ -429,7 +432,13 @@ async function cmdArchive(
         ? shellDirectory
         : process.cwd();
     const path = operation === "current" ? currentDirectory : operands[1];
-    const name = operation === "current" ? operands[1] : operands[2];
+    // The name may be several words (`alias set <path> My Name`): join them.
+    const nameWords = operation === "current" ? operands.slice(1) : operands.slice(2);
+    const name = nameWords.join(" ").trim() || undefined;
+    if (operation === "remove" && operands.length > 2) {
+      console.error("error: alias remove takes one path. Quote a path containing spaces.");
+      return 2;
+    }
     if (path && name && (operation === "set" || operation === "current")) {
       try {
         const changed = await setProjectAlias(path, name);
@@ -539,7 +548,8 @@ async function cmdProjects(): Promise<number> {
  * Writes only cc-analyzer's own prefs.json — the directories themselves are
  * never touched, in keeping with the tool's read-only contract.
  */
-function cmdClaudeDir(action: string | undefined, operand: string | undefined): number {
+function cmdClaudeDir(action: string | undefined, operands: string[]): number {
+  const operand = operands[0];
   /** The one report every branch ends with, so the wording can't drift. */
   const report = (prefix = ""): number => {
     console.log(`${prefix}Reading Claude Code data from:\n${rootLines().join("\n")}`);
@@ -573,6 +583,13 @@ function cmdClaudeDir(action: string | undefined, operand: string | undefined): 
       } else {
         if (!operand) {
           console.error(`usage: cc-analyzer claude-dir ${action} <path>`);
+          return 2;
+        }
+        if (operands.length > 1) {
+          console.error(
+            `error: claude-dir ${action} takes one path, got ${operands.length}. ` +
+              `Quote a path containing spaces, or run \`claude-dir add\` once per path.`,
+          );
           return 2;
         }
         // Normalize with the same function resolution uses, so a path stored
@@ -706,27 +723,91 @@ async function resolveSessionSource(ref: string): Promise<SessionSource | undefi
   );
 }
 
-/** Extract a `--name value` or `--name=value` flag, returning its value (if any)
- *  and argv with the flag and its space-form value removed. Lets the positional
- *  filter run over the remainder without mistaking a flag value for a positional. */
-function takeFlagValue(rest: string[], name: string): { value?: string; rest: string[] } {
+/** Result of pulling one `--name value` / `--name=value` flag out of argv. */
+interface FlagTake {
+  /** The value, when the flag was present with a usable one. */
+  value?: string;
+  /** The flag was present but valueless, empty, or followed by another flag. */
+  missing: boolean;
+  /** argv with the flag (and its space-form value, when usable) removed. */
+  rest: string[];
+}
+
+/** Extract a `--name value` or `--name=value` flag. A flag that is present but
+ *  has no value (nothing follows, the next token is another flag, or `--name=`)
+ *  reports `missing` instead of swallowing the next flag or being ignored, so
+ *  callers can exit 2. The last occurrence wins. */
+function takeFlagValue(rest: string[], name: string): FlagTake {
   const out: string[] = [];
   let value: string | undefined;
+  let missing = false;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === undefined) continue;
     if (arg === name) {
-      value = rest[i + 1];
-      i++;
+      const next = rest[i + 1];
+      if (next === undefined || next === "" || next.startsWith("-")) {
+        missing = true;
+        value = undefined;
+      } else {
+        value = next;
+        missing = false;
+        i++;
+      }
       continue;
     }
     if (arg.startsWith(`${name}=`)) {
-      value = arg.slice(name.length + 1);
+      const v = arg.slice(name.length + 1);
+      if (v === "") {
+        missing = true;
+        value = undefined;
+      } else {
+        value = v;
+        missing = false;
+      }
       continue;
     }
     out.push(arg);
   }
-  return { value, rest: out };
+  return { value, missing, rest: out };
+}
+
+/** Print the "needs a value" error for a valueless flag; returns exit code 2. */
+function needsValue(name: string): number {
+  console.error(`error: ${name} needs a value.`);
+  return 2;
+}
+
+/** Flags each command understands (value flags included). A flag outside the
+ *  set exits 2 instead of being silently ignored. `--claude-dir=` is stripped
+ *  before dispatch and `--help`/`-h` is handled earlier. */
+const KNOWN_FLAGS: Record<string, readonly string[]> = {
+  analyze: [
+    "--json",
+    "--md",
+    "--html",
+    "--out",
+    "--redact",
+    "--include-transcript",
+    "--with-claude",
+    "--model",
+  ],
+  doctor: ["--json"],
+  index: ["--rebuild", "--check"],
+  stats: ["--current", "--json"],
+  audit: ["--json"],
+  insights: ["--json"],
+  report: ["--week", "--md", "--json"],
+  serve: ["--port", "--host", "--refresh", "--open"],
+  update: ["--check"],
+  archive: ["--force"],
+};
+
+/** The first unknown `--flag` for `command`, if it has a known flag set. */
+function unknownFlag(command: string | undefined, rest: string[]): string | undefined {
+  const known = command ? KNOWN_FLAGS[command] : undefined;
+  if (!known) return undefined;
+  return rest.find((a) => a.startsWith("--") && !known.includes(a.split("=")[0] as string));
 }
 
 /** Stream a Claude Code retrospective for a session to stdout. Text streams as
@@ -752,26 +833,47 @@ async function cmdAnalyzeWithClaude(
   let streamedText = false;
   let cost: number | undefined;
   let errored = false;
-  for await (const event of runClaudeAnalysis({
-    claudeBin,
-    sessionPath: path,
-    analysis,
-    model,
-    whatIf: sessionWhatIf(analysis.models, pricing),
-  })) {
-    if (event.type === "text") {
-      process.stdout.write(event.delta);
-      streamedText = true;
-    } else if (event.type === "result") {
-      // Older Claude Code without partial streaming carries the text only here.
-      if (!streamedText && event.text) process.stdout.write(event.text);
-      cost = event.costUsd;
-    } else {
-      errored = true;
-      process.stderr.write(`\nerror: ${event.message}\n`);
+  // Ctrl-C / SIGTERM kills the spawned claude child instead of orphaning it.
+  const abort = new AbortController();
+  let interrupted: NodeJS.Signals | undefined;
+  const onSignal = (sig: NodeJS.Signals) => {
+    interrupted = sig;
+    abort.abort();
+  };
+  const onInt = () => onSignal("SIGINT");
+  const onTerm = () => onSignal("SIGTERM");
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
+  try {
+    for await (const event of runClaudeAnalysis({
+      claudeBin,
+      sessionPath: path,
+      analysis,
+      model,
+      whatIf: sessionWhatIf(analysis.models, pricing),
+      signal: abort.signal,
+    })) {
+      if (event.type === "text") {
+        process.stdout.write(event.delta);
+        streamedText = true;
+      } else if (event.type === "result") {
+        // Older Claude Code without partial streaming carries the text only here.
+        if (!streamedText && event.text) process.stdout.write(event.text);
+        cost = event.costUsd;
+      } else if (!interrupted) {
+        errored = true;
+        process.stderr.write(`\nerror: ${event.message}\n`);
+      }
     }
+  } finally {
+    process.off("SIGINT", onInt);
+    process.off("SIGTERM", onTerm);
   }
   process.stdout.write("\n");
+  if (interrupted) {
+    process.stderr.write("Interrupted; the Claude run was cancelled.\n");
+    return interrupted === "SIGINT" ? 130 : 143;
+  }
   if (cost !== undefined) process.stderr.write(`\nRun cost: ${formatUSD(cost)}\n`);
   return errored ? 1 : 0;
 }
@@ -821,25 +923,19 @@ async function cmdAnalyze(
     let rank: ReturnType<typeof sessionCostRank> | null = null;
     try {
       const db = openDb();
-      // sessionCostRank resolves via the indexed row; may be null for unindexed sessions
-      const idForRank = analysis.sessionId ?? ref;
-      rank = sessionCostRank(db, idForRank) ?? null;
-      db.close();
+      try {
+        // sessionCostRank resolves via the indexed row; null for unindexed sessions
+        rank = sessionCostRank(db, analysis.sessionId ?? ref) ?? null;
+      } finally {
+        db.close();
+      }
     } catch {
       // index unavailable — export without rank
     }
     const includeTranscript = opts.includeTranscript === true;
-    // Cap transcript to avoid OOM on huge sessions (same caps as markdown builder)
-    const rawTranscript = includeTranscript ? buildTranscript(events) : undefined;
-    const transcript = rawTranscript
-      ? rawTranscript.slice(0, 600).map((t) => ({ ...t, body: t.body.slice(0, 2000) }))
-      : undefined;
-    // Note if truncation happened for CLI feedback (markdown builder also truncates)
-    if (rawTranscript && rawTranscript.length > 600) {
-      console.error(
-        `note: transcript truncated to 600 of ${rawTranscript.length} items for export.`,
-      );
-    }
+    // Raw and uncapped: every builder (md/html here, the json payload helper)
+    // caps and redacts it itself, so no surface can leak or truncate differently.
+    const transcript = includeTranscript ? buildTranscript(events) : undefined;
     const redact = opts.redact === true;
 
     const extFor = (format: string): string => {
@@ -871,33 +967,20 @@ async function cmdAnalyze(
         transcript,
       });
     } else {
-      // SAFETY: redact swaps PII only — capped transcript, stripped paths/commands/title.
-      const redactedTranscript =
-        includeTranscript && transcript
-          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
-          : undefined;
-      const basePayload: Record<string, unknown> = {
-        ...analysis,
-        parseErrors: errors.length,
-        health,
-        whatIf,
-        rank,
-        costBasis,
-        ...(redact
-          ? {
-              title: "[redacted]",
-              projectPath: "[redacted]",
-              filesTouched: [],
-              bashCommands: {},
-              bashErrors: {},
-              commandHeads: {},
-              commandHeadErrors: {},
-              turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
-            }
-          : {}),
-      };
-      if (includeTranscript && redactedTranscript) basePayload.transcript = redactedTranscript;
-      content = JSON.stringify(basePayload, null, 2);
+      content = JSON.stringify(
+        buildSessionJsonPayload(analysis, {
+          redact,
+          includeTranscript,
+          transcript,
+          parseErrors: errors.length,
+          health,
+          whatIf,
+          rank,
+          costBasis,
+        }),
+        null,
+        2,
+      );
     }
 
     if (opts.out) {
@@ -919,7 +1002,7 @@ async function cmdAnalyze(
   // Default: terminal rendering (unchanged)
   console.log(
     renderSessionSummary(analysis, {
-      color: process.stdout.isTTY && !process.env.NO_COLOR,
+      color: colorEnabled(),
       // Session-scoped what-if: computed here because the renderer never
       // sees the pricing table.
       whatIf: sessionWhatIf(analysis.models, pricing),
@@ -1045,6 +1128,7 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     result = await reindex(db, {
       rebuild,
       onProgress: (done, total) => {
+        if (!process.stderr.isTTY) return;
         if (done === total || done - lastLogged >= 200) {
           lastLogged = done;
           process.stderr.write(`\rindexing ${done}/${total}...`);
@@ -1058,7 +1142,7 @@ async function cmdIndex(rebuild: boolean, check: boolean): Promise<number> {
     return 1;
   }
   db.close();
-  if (result.total > result.skipped) process.stderr.write("\n");
+  if (process.stderr.isTTY && result.total > result.skipped) process.stderr.write("\n");
   if (result.archiveSkipped) console.error(`warning: ${result.archiveSkipped}`);
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   console.log(
@@ -1132,7 +1216,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
     json
       ? JSON.stringify(view, null, 2)
       : renderStats(view, {
-          color: process.stdout.isTTY && !process.env.NO_COLOR,
+          color: colorEnabled(),
           projectPath: project?.projectPath,
           costBasis,
         }),
@@ -1149,22 +1233,25 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
  */
 function cmdAudit(json: boolean): number {
   const db = openDb();
-  if (isIndexEmpty(db)) {
+  let usage: ReturnType<typeof analyticsRollup>;
+  try {
+    if (isIndexEmpty(db)) {
+      console.error(
+        "Index is empty, so every installed skill and server would look unused. " +
+          "Run `cc-analyzer index` first.",
+      );
+      return 1;
+    }
+    usage = analyticsRollup(db);
+  } finally {
     db.close();
-    console.error(
-      "Index is empty, so every installed skill and server would look unused. " +
-        "Run `cc-analyzer index` first.",
-    );
-    return 1;
   }
-  const usage = analyticsRollup(db);
-  db.close();
   const audit = buildSetupAudit(scanInventories(), usage, localDayOfMs(Date.now()));
   console.log(
     json
       ? JSON.stringify(audit, null, 2)
       : renderSetupAudit(audit, {
-          color: process.stdout.isTTY && !process.env.NO_COLOR,
+          color: colorEnabled(),
         }),
   );
   return 0;
@@ -1177,21 +1264,24 @@ function cmdAudit(json: boolean): number {
  */
 async function cmdInsights(json: boolean): Promise<number> {
   const db = openDb();
-  if (isIndexEmpty(db)) {
+  let diagnostics: ReturnType<typeof buildPortfolioDiagnostics>;
+  try {
+    if (isIndexEmpty(db)) {
+      console.error("Index is empty. Run `cc-analyzer index` first.");
+      return 1;
+    }
+    // The what-if signal needs live rates; `loadPricing` serves the cached table
+    // (bundled snapshot offline), the same one the index was priced with.
+    const { table: pricing } = await loadPricing();
+    diagnostics = buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing));
+  } finally {
     db.close();
-    console.error("Index is empty. Run `cc-analyzer index` first.");
-    return 1;
   }
-  // The what-if signal needs live rates; `loadPricing` serves the cached table
-  // (bundled snapshot offline), the same one the index was priced with.
-  const { table: pricing } = await loadPricing();
-  const diagnostics = buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing));
-  db.close();
   console.log(
     json
       ? JSON.stringify(diagnostics, null, 2)
       : renderPortfolioInsights(diagnostics, {
-          color: process.stdout.isTTY && !process.env.NO_COLOR,
+          color: colorEnabled(),
         }),
   );
   return 0;
@@ -1220,24 +1310,27 @@ async function cmdReport(
     return 2;
   }
   const db = openDb();
-  if (isIndexEmpty(db)) {
+  let digest: ReturnType<typeof buildWeeklyDigest>;
+  try {
+    if (isIndexEmpty(db)) {
+      console.error("Index is empty. Run `cc-analyzer index` first.");
+      return 1;
+    }
+    // The insight snapshot needs live rates for what-if repricing; `loadPricing`
+    // serves the cached table (bundled snapshot offline).
+    const { table: pricing } = await loadPricing();
+    // Cost framing is read here, at the CLI's presentation boundary — the digest
+    // builder never touches the prefs file.
+    digest = buildWeeklyDigest(db, pricing, { week, costBasis: getCostBasis() });
+  } finally {
     db.close();
-    console.error("Index is empty. Run `cc-analyzer index` first.");
-    return 1;
   }
-  // The insight snapshot needs live rates for what-if repricing; `loadPricing`
-  // serves the cached table (bundled snapshot offline).
-  const { table: pricing } = await loadPricing();
-  // Cost framing is read here, at the CLI's presentation boundary — the digest
-  // builder never touches the prefs file.
-  const digest = buildWeeklyDigest(db, pricing, { week, costBasis: getCostBasis() });
-  db.close();
   if (json) console.log(JSON.stringify(digest, null, 2));
   else if (md) console.log(buildDigestMarkdown(digest));
   else
     console.log(
       renderWeeklyDigest(digest, {
-        color: process.stdout.isTTY && !process.env.NO_COLOR,
+        color: colorEnabled(),
       }),
     );
   return 0;
@@ -1250,15 +1343,9 @@ async function cmdReport(
  * missing week rather than swallow `--md` as its value.
  */
 function weekArg(rest: string[]): string | null | undefined {
-  const inline = rest.find((a) => a.startsWith("--week="));
-  if (inline) {
-    const value = inline.slice("--week=".length);
-    return value.length > 0 ? value : null;
-  }
-  const i = rest.indexOf("--week");
-  if (i === -1) return undefined;
-  const next = rest[i + 1];
-  return next !== undefined && !next.startsWith("-") ? next : null;
+  const { value, missing } = takeFlagValue(rest, "--week");
+  if (missing) return null;
+  return value;
 }
 
 async function cmdPricingUpdate(): Promise<number> {
@@ -1317,7 +1404,8 @@ async function cmdExport(rest: string[]): Promise<number> {
     console.error(`error: ${(e as Error).message}`);
     return 2;
   }
-  const { value: formatRaw, rest: rest1 } = takeFlagValue(rest, "--format");
+  const { value: formatRaw, missing: formatMissing, rest: rest1 } = takeFlagValue(rest, "--format");
+  if (formatMissing) return needsValue("--format");
   let formats: ReturnType<typeof parseFormats>;
   try {
     formats = parseFormats(formatRaw);
@@ -1325,7 +1413,8 @@ async function cmdExport(rest: string[]): Promise<number> {
     console.error(`error: ${(e as Error).message}`);
     return 2;
   }
-  const { value: outRaw, rest: rest2 } = takeFlagValue(rest1, "--out");
+  const { value: outRaw, missing: outMissing, rest: rest2 } = takeFlagValue(rest1, "--out");
+  if (outMissing) return needsValue("--out");
   const redact = rest2.includes("--redact");
   const split = rest2.includes("--split");
   const includeTranscript = rest2.includes("--include-transcript");
@@ -1364,46 +1453,40 @@ async function cmdExport(rest: string[]): Promise<number> {
     console.error("error: --out needs a directory.");
     return 2;
   }
-  // Basic outDir sandbox: reject path traversal trying to escape cwd via .. and absolute sensitive roots
-  // We still allow absolute /tmp/* and cwd-relative paths; just block obvious ../../etc style.
-  {
-    const { resolve, isAbsolute } = await import("node:path");
-    const resolved = resolve(outDir);
-    // Block if resolved path is exactly / or /etc or sensitive, or contains .. traversal that was not normalized
-    // Minimal: if user gave "../../" style that escapes cwd's parent by more than 2 levels, warn.
-    // We allow absolute paths inside /tmp and $HOME and cwd.
-    if (isAbsolute(outDir) && (outDir === "/" || outDir === "/etc" || outDir.startsWith("/etc/"))) {
-      console.error(`error: --out path '${outDir}' is not allowed.`);
-      return 2;
-    }
-    // If outDir still contains ".." after resolve, it escaped; we already resolved so just check original had .. and resolved is outside cwd/tmp/home
-    void resolved; // kept for future stricter sandbox (cwd/tmp/home check)
+  // `--out` path validation (and any root containment) lives in exportBundle
+  // (export.ts); the CLI only rejects the obvious system roots here.
+  if (isAbsolute(outDir) && (outDir === "/" || outDir === "/etc" || outDir.startsWith("/etc/"))) {
+    console.error(`error: --out path '${outDir}' is not allowed.`);
+    return 2;
   }
-  // For session scope via indexed id, we need to validate projectId if --project was given as qualified id
-  // Validate project exists when scope is project
-  if (scope.kind === "project") {
-    const dbCheck = openDb();
-    const rows = dbCheck
-      .query("SELECT 1 FROM sessions WHERE project_id = ? LIMIT 1")
-      .get(scope.projectId) as unknown;
-    dbCheck.close();
-    if (!rows) {
-      console.error(
-        `error: project '${scope.projectId}' not found in index. Run \`cc-analyzer projects\` to list ids. Re-index if the project is new.`,
-      );
+  const db = openDb();
+  try {
+    // Resolve a project reference exactly as the API does (qualified id, alias,
+    // or an unambiguous bare name), so a bare id typed here and one in a
+    // bookmark mean the same project.
+    if (scope.kind === "project") {
+      const match = resolveIndexedProject(db, scope.projectId);
+      if (match.status === "ambiguous") {
+        console.error(
+          `error: project '${scope.projectId}' matches ${match.candidates.length} projects. ` +
+            `Use the full id:\n${match.candidates.map((c) => `  ${c}`).join("\n")}`,
+        );
+        return 2;
+      }
+      if (match.status === "unknown") {
+        console.error(
+          `error: project '${scope.projectId}' not found in index. Run \`cc-analyzer projects\` to list ids. Re-index if the project is new.`,
+        );
+        return 1;
+      }
+      scope = { kind: "project", projectId: match.id };
+    }
+    // For portfolio/project scope the index must not be empty (otherwise empty zip).
+    if ((scope.kind === "portfolio" || scope.kind === "project") && isIndexEmpty(db)) {
+      console.error("Index is empty. Run `cc-analyzer index` first.");
       return 1;
     }
-  }
-  // Session scope with --project value already handled via scope; positional session via file will be validated in exportBundle
-  const db = openDb();
-  // For portfolio/project scope the index must not be empty (otherwise empty zip).
-  if ((scope.kind === "portfolio" || scope.kind === "project") && isIndexEmpty(db)) {
-    db.close();
-    console.error("Index is empty. Run `cc-analyzer index` first.");
-    return 1;
-  }
-  const { table: pricing } = await loadPricing();
-  try {
+    const { table: pricing } = await loadPricing();
     const result = await exportBundle(db, pricing, {
       scope,
       formats,
@@ -1413,7 +1496,6 @@ async function cmdExport(rest: string[]): Promise<number> {
       includeTranscript,
       zip,
     });
-    db.close();
     const privacy = split ? "split (private/ + shareable/)" : redact ? "redacted" : "private";
     console.log(
       `Exported ${result.sessions} sessions (${privacy}, ${[...formats].join(",")}) to ${result.outDir}${zip ? ".zip" : ""}${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`,
@@ -1421,9 +1503,10 @@ async function cmdExport(rest: string[]): Promise<number> {
     if (split) console.log(`  private/ and shareable/ subfolders present.`);
     return 0;
   } catch (e) {
-    db.close();
     console.error(`export failed: ${(e as Error).message}`);
     return 1;
+  } finally {
+    db.close();
   }
 }
 
@@ -1460,8 +1543,20 @@ const INDEX_BACKED = new Set(["index", "stats", "audit", "insights", "report", "
 const flagScoped = (): boolean => claudeRoots()[0]?.source === "flag";
 
 async function runCommand(command: string | undefined, rest: string[]): Promise<number> {
+  // `--help`/`-h` after any subcommand prints help and never performs the
+  // action (`update --help` must not update, `serve --help` must not serve).
+  if (command !== POSTER_COMMAND && (rest.includes("--help") || rest.includes("-h"))) {
+    console.log(HELP);
+    return 0;
+  }
   const json = rest.includes("--json");
   const positional = rest.filter((a) => !a.startsWith("--"));
+
+  const stray = unknownFlag(command, rest);
+  if (stray !== undefined) {
+    console.error(`error: unknown flag '${stray}' for ${command}. See \`cc-analyzer help\`.`);
+    return 2;
+  }
 
   if (flagScoped() && (command === undefined || INDEX_BACKED.has(command))) {
     const name = command ?? "the interactive TUI";
@@ -1513,10 +1608,16 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       const html = rest.includes("--html");
       const redact = rest.includes("--redact");
       const includeTranscript = rest.includes("--include-transcript");
-      const { value: out, rest: restOut } = takeFlagValue(rest, "--out");
+      const { value: out, missing: outMissing, rest: restOut } = takeFlagValue(rest, "--out");
+      if (outMissing) return needsValue("--out");
       // `--model x` puts its value where the positional filter can't see it's a
       // flag argument, so strip the flag+value before resolving the id.
-      const { value: model, rest: rest2 } = takeFlagValue(restOut, "--model");
+      const {
+        value: model,
+        missing: modelMissing,
+        rest: rest2,
+      } = takeFlagValue(restOut, "--model");
+      if (modelMissing) return needsValue("--model");
       if (json && withClaude) {
         console.error("error: --json cannot be combined with --with-claude.");
         return 2;
@@ -1588,19 +1689,19 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "export":
       return cmdExport(rest);
     case "serve": {
-      const portArg = rest.find((a) => a.startsWith("--port="));
+      const { value: portRaw, missing: portMissing, rest: rest1 } = takeFlagValue(rest, "--port");
+      if (portMissing) return needsValue("--port");
       let port: number | undefined;
-      if (portArg) {
-        const raw = portArg.slice("--port=".length);
-        const parsed = Number(raw);
-        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-          console.error(`error: invalid --port '${raw}' (expected an integer 1-65535).`);
+      if (portRaw !== undefined) {
+        const parsed = Number(portRaw);
+        if (!/^\d+$/.test(portRaw) || parsed < 1 || parsed > 65535) {
+          console.error(`error: invalid --port '${portRaw}' (expected an integer 1-65535).`);
           return 2;
         }
         port = parsed;
       }
-      const hostArg = rest.find((a) => a.startsWith("--host="));
-      const host = hostArg ? hostArg.slice("--host=".length) : undefined;
+      const { value: host, missing: hostMissing } = takeFlagValue(rest1, "--host");
+      if (hostMissing) return needsValue("--host");
       const { runServe } = await import("../web/server.ts");
       return await runServe({
         port,
@@ -1625,7 +1726,7 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
     case "cost-basis":
       return cmdCostBasis(positional[0]);
     case "claude-dir":
-      return cmdClaudeDir(positional[0], positional[1]);
+      return cmdClaudeDir(positional[0], positional.slice(1));
     // Hidden re-entry point: the detached child that delivers one telemetry
     // event after its parent has exited. Reads argv directly (the payload is
     // JSON, not a flag) and prints nothing. Never itself tracked.
@@ -1641,8 +1742,8 @@ async function runCommand(command: string | undefined, rest: string[]): Promise<
       console.log(HELP);
       return 0;
     default:
-      console.error(`unknown command: ${command}\n`);
-      console.log(HELP);
+      console.error(`error: unknown command '${command}'. Run \`cc-analyzer help\` for usage.\n`);
+      console.error(HELP);
       return 2;
   }
 }
@@ -1676,11 +1777,16 @@ async function main(): Promise<number> {
   const argv = applyClaudeDirFlag(process.argv.slice(2));
   if (argv === null) return 2;
   const [command, ...rest] = argv;
-  const code = await runCommand(command, rest);
-
-  // Best-effort, non-blocking "update available" notice for quick commands.
-  if (command && NOTIFY_COMMANDS.has(command) && !rest.includes("--json")) {
-    await maybeNotifyUpdate();
+  let code: number;
+  try {
+    code = await runCommand(command, rest);
+    // Best-effort, non-blocking "update available" notice for quick commands.
+    if (command && NOTIFY_COMMANDS.has(command) && !rest.includes("--json")) {
+      await maybeNotifyUpdate();
+    }
+  } catch (error) {
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    code = 1;
   }
   await flushTelemetry();
   return code;

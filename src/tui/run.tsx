@@ -27,26 +27,26 @@ export async function runTui(): Promise<number> {
     return 2;
   }
   const db = openDb();
-  const { table } = await loadPricing();
-  const refreshed = await refreshIndexIfNeeded(db, {
-    pricing: table,
-    onProgress: (done, total) => {
-      process.stderr.write(`\rBuilding initial index ${done}/${total}...`);
-    },
-  });
-  if (refreshed && refreshed.total > 0) process.stderr.write("\n");
-  reportRefresh(refreshed);
-  let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
   try {
-    indexStatus = await inspectIndexStatus(db);
+    const { table } = await loadPricing();
+    const refreshed = await refreshIndexIfNeeded(db, {
+      pricing: table,
+      onProgress: (done, total) => {
+        process.stderr.write(`\rBuilding initial index ${done}/${total}...`);
+      },
+    });
+    if (refreshed && refreshed.total > 0) process.stderr.write("\n");
+    reportRefresh(refreshed);
+    // A strict alias-file read failure lands in the catch below, reported
+    // cleanly instead of as a stack trace.
+    const indexStatus = await inspectIndexStatus(db);
+    const app = render(<App db={db} pricing={table} indexStatus={indexStatus} />);
+    await app.waitUntilExit();
+    return 0;
   } catch (error) {
-    // A strict alias-file read failure: report it cleanly instead of a stack trace.
-    db.close();
     console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
+  } finally {
+    db.close();
   }
-  const app = render(<App db={db} pricing={table} indexStatus={indexStatus} />);
-  await app.waitUntilExit();
-  db.close();
-  return 0;
 }

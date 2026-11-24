@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
+import { useState } from "react";
 import { palette, role } from "../theme.ts";
 
 /** A consistent bottom hint bar; `? help` is appended automatically. */
@@ -86,11 +87,13 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Session detail",
     keys: [
-      ["1 / 2 / 3 / 4 / 5", "turns / charts / transcript / summary / claude"],
-      ["u / c / t / s / a", "turns / charts / transcript / summary / claude"],
+      ["1 / 2 / 3 / 4 / 5 / 6", "turns / charts / transcript / summary / claude / export"],
+      ["u / c / t / s / a / e", "turns / charts / transcript / summary / claude / export"],
       ["→ / tab", "focus steps (turns mode)"],
       ["o / O", "cycle turn sort / flip direction (turns mode)"],
       ["r / m", "run / switch model (claude mode)"],
+      ["esc (while running)", "cancel the Claude run (leaving the tab cancels it too)"],
+      ["f / r / t / w", "format / redact / transcript / write (export mode)"],
       ["↑/↓ · j/k", "move"],
       ["↵ / space", "expand row"],
       ["g / G", "jump to top / bottom"],
@@ -115,29 +118,79 @@ const HELP_SECTIONS: { title: string; keys: [string, string][] }[] = [
   },
 ];
 
-/** A modal keybinding cheatsheet; any key closes it. */
-export function HelpOverlay({ isActive, onClose }: { isActive: boolean; onClose: () => void }) {
-  useInput(() => onClose(), { isActive });
+type HelpLine = { kind: "title" | "key" | "gap"; text: string; desc?: string };
+
+/** The cheatsheet flattened to lines so it can be windowed to the terminal height. */
+const HELP_LINES: HelpLine[] = HELP_SECTIONS.flatMap((sec, i) => [
+  ...(i > 0 ? [{ kind: "gap" as const, text: "" }] : []),
+  { kind: "title" as const, text: sec.title },
+  ...sec.keys.map(([k, desc]) => ({ kind: "key" as const, text: k, desc })),
+]);
+
+/** Frame rows the overlay spends on chrome: border (2) + padding (2) + title (1)
+ *  + footer (2) + the App's own padding (2). */
+const HELP_CHROME_ROWS = 9;
+
+/**
+ * A modal keybinding cheatsheet pinned to the terminal height: it shows a window
+ * of the sheet and ↑/↓/PgUp/PgDn scroll it, so a short terminal never overflows
+ * the frame. Any other key closes it.
+ */
+export function HelpOverlay({
+  isActive,
+  onClose,
+  rows,
+}: {
+  isActive: boolean;
+  onClose: () => void;
+  /** Terminal height; falls back to the live size. */
+  rows?: number;
+}) {
+  const { stdout } = useStdout();
+  const termRows = rows ?? stdout?.rows ?? 24;
+  const size = Math.max(3, termRows - HELP_CHROME_ROWS);
+  const maxOffset = Math.max(0, HELP_LINES.length - size);
+  const [offset, setOffset] = useState(0);
+  const at = Math.min(offset, maxOffset);
+  useInput(
+    (_input, key) => {
+      if (key.downArrow) return setOffset(Math.min(maxOffset, at + 1));
+      if (key.upArrow) return setOffset(Math.max(0, at - 1));
+      if (key.pageDown) return setOffset(Math.min(maxOffset, at + size));
+      if (key.pageUp) return setOffset(Math.max(0, at - size));
+      onClose();
+    },
+    { isActive },
+  );
+  const visible = HELP_LINES.slice(at, at + size);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={palette.amber} padding={1}>
       <Text bold color={role.heading}>
         Keybindings
       </Text>
-      {HELP_SECTIONS.map((s) => (
-        <Box key={s.title} flexDirection="column" marginTop={1}>
-          <Text bold color={role.body}>
-            {s.title}
-          </Text>
-          {s.keys.map(([k, desc]) => (
-            <Text key={k}>
-              <Text color={palette.amberDim}>{k.padEnd(18)}</Text>
-              <Text color={role.muted}>{desc}</Text>
+      {visible.map((l, i) => {
+        const key = `${at + i}`;
+        if (l.kind === "gap") return <Text key={key}> </Text>;
+        if (l.kind === "title")
+          return (
+            <Text key={key} bold color={role.body}>
+              {l.text}
             </Text>
-          ))}
-        </Box>
-      ))}
+          );
+        return (
+          <Text key={key}>
+            <Text color={palette.amberDim}>{l.text.padEnd(22)}</Text>
+            <Text color={role.muted}>{l.desc}</Text>
+          </Text>
+        );
+      })}
       <Box marginTop={1}>
-        <Text color={role.muted}>press any key to close</Text>
+        <Text color={role.muted}>
+          {maxOffset > 0
+            ? `↑/↓ PgUp/PgDn scroll (${at + 1}-${at + visible.length}/${HELP_LINES.length}) · `
+            : ""}
+          any other key closes
+        </Text>
       </Box>
     </Box>
   );

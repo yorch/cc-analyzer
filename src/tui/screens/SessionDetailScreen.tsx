@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  errorRate,
   formatCount,
   formatDuration,
   formatSignedUSD,
@@ -42,6 +44,7 @@ import { parseSessionTree } from "../../core/parser.ts";
 import { getAnalysisModel, getCostBasis, setAnalysisModel } from "../../core/prefs.ts";
 import { cacheTokens, ioTokens, type PricingTable } from "../../core/pricing.ts";
 import type { IndexedSession } from "../../core/queries.ts";
+import { buildSessionJsonPayload } from "../../core/redact.ts";
 import { buildSessionDiagnostics } from "../../core/session-diagnostics.ts";
 import { inspectSessionHealth } from "../../core/session-health.ts";
 import {
@@ -125,26 +128,55 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
     setMode("transcript");
   };
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // The Claude run lives here, not in ClaudeView, so a finished retrospective
+  // survives a tab switch and an in-flight one can be cancelled on the way out.
+  const claude = useClaudeRun(session.path);
+
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     (async () => {
-      // The whole tree, so a session's subagent spend is part of its detail.
-      const source = await sessionSourceAt(session.path);
-      const { events, coverage, errors } = await parseSessionTree(sessionTree(source));
-      const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
-      const transcript = buildTranscript(events);
-      if (!cancelled) setData({ analysis, transcript, events, coverage, errors });
+      try {
+        // The whole tree, so a session's subagent spend is part of its detail.
+        const source = await sessionSourceAt(session.path);
+        const { events, coverage, errors } = await parseSessionTree(sessionTree(source));
+        const analysis = analyzeSession(events, pricing, { coverage, agentMeta: source.agentMeta });
+        const transcript = buildTranscript(events);
+        if (!cancelled) setData({ analysis, transcript, events, coverage, errors });
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [session.path, pricing]);
 
+  // Leaving the Claude tab cancels a run in flight (it is billable and nobody
+  // is watching it); a finished result stays in `claude` for when they return.
+  const cancelClaude = claude.cancel;
+  const claudeRunning = claude.state.running;
+  useEffect(() => {
+    if (mode !== "claude" && claudeRunning) cancelClaude();
+  }, [mode, claudeRunning, cancelClaude]);
+
+  // Before the data arrives (or when it fails to) the mode keys are inert, but
+  // esc must still leave the screen.
+  useInput(
+    (_input, key) => {
+      if (key.escape) onBack();
+    },
+    { isActive: isActive && !data },
+  );
+
   // Mode switching lives here; each mode owns its own cursor/scroll and handles
   // esc itself (steps→turns→close for turns mode; back-to-turns for the others).
   useInput(
     (input, key) => {
-      if (input === "t") return openTranscriptAt(selectedTurn);
+      // Export mode owns `t` (include-transcript toggle); the global
+      // jump-to-transcript shortcut must not shadow it.
+      if (input === "t" && mode !== "export") return openTranscriptAt(selectedTurn);
       if (input === "s") return setMode("summary");
       if (input === "c") return setMode("charts");
       if (input === "a") return setMode("claude");
@@ -154,6 +186,9 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
       if (input === "3") return openTranscriptAt(selectedTurn);
       if (input === "4") return setMode("summary");
       if (input === "5") return setMode("claude");
+      // Esc while a Claude run is in flight cancels the run (ClaudeView), it
+      // does not leave the tab.
+      if (key.escape && mode === "claude" && claudeRunning) return;
       if (key.escape && mode !== "turns") return setMode("turns");
     },
     { isActive: isActive && !!data },
@@ -166,7 +201,20 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
     [data, pricing],
   );
 
-  if (!data) return <Loading label="Loading session" />;
+  if (loadError)
+    return (
+      <Box flexDirection="column">
+        <Text color={palette.red}>Could not load session: {loadError}</Text>
+        <Text color={role.muted}>esc back · ctrl-c quit</Text>
+      </Box>
+    );
+  if (!data)
+    return (
+      <Box flexDirection="column">
+        <Loading label="Loading session" />
+        <Text color={role.muted}>esc back · ctrl-c quit</Text>
+      </Box>
+    );
   const { analysis } = data;
 
   return (
@@ -206,10 +254,11 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
         {mode === "claude" && (
           <ClaudeView
             a={analysis}
-            sessionPath={session.path}
             whatIf={whatIf}
+            run={claude}
             isActive={isActive}
             rows={rows}
+            claudeBin={claude.claudeBin}
           />
         )}
         {mode === "export" && (
@@ -231,7 +280,9 @@ export function SessionDetailScreen({ session, pricing, isActive, columns, rows,
           {mode === "turns"
             ? "↑↓ turn · →/tab steps · o/O sort · g/G jump · c charts · t read turn · s summary · a claude · e export · esc back"
             : mode === "claude"
-              ? "r run · m model · ↑↓ scroll · esc turns"
+              ? claudeRunning
+                ? "↑↓ scroll · esc cancel run"
+                : "r run · m model · ↑↓ scroll · esc turns"
               : mode === "export"
                 ? "f format · r redact · t transcript · w write · esc turns"
                 : mode === "charts" || mode === "summary"
@@ -976,33 +1027,159 @@ function TranscriptView({
  * (read-only, grounded in cc-analyzer's metrics) and streams the retrospective
  * into a scrollable pane. Opt-in (`r`) because the run costs real tokens.
  */
+interface ClaudeRunState {
+  output: string;
+  cost: number | undefined;
+  error: string | undefined;
+  running: boolean;
+  /** A run was started at least once (so "done" vs "press r to run"). */
+  started: boolean;
+  /** The last run was cancelled before it finished. */
+  cancelled: boolean;
+}
+
+const IDLE_CLAUDE: ClaudeRunState = {
+  output: "",
+  cost: undefined,
+  error: undefined,
+  running: false,
+  started: false,
+  cancelled: false,
+};
+
+interface ClaudeRun {
+  state: ClaudeRunState;
+  claudeBin: string | undefined;
+  start: (args: {
+    analysis: SessionAnalysis;
+    whatIf: WhatIfRepricing | undefined;
+    model: string;
+  }) => void;
+  cancel: () => void;
+}
+
+/**
+ * The Claude Code run, owned by the screen. An AbortController's signal goes to
+ * `runClaudeAnalysis`, which kills the spawned `claude` child; it fires on
+ * cancel, on re-run, and on unmount (quitting the TUI).
+ */
+function useClaudeRun(sessionPath: string): ClaudeRun {
+  const claudeBin = useMemo(() => resolveClaudeBinary(), []);
+  const [state, setState] = useState<ClaudeRunState>(IDLE_CLAUDE);
+  const controller = useRef<AbortController | null>(null);
+
+  const cancel = useCallback(() => {
+    const c = controller.current;
+    if (!c) return;
+    controller.current = null;
+    c.abort();
+    setState((prev) => ({ ...prev, running: false, cancelled: true }));
+  }, []);
+
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+      controller.current = null;
+    },
+    [],
+  );
+
+  const start = useCallback(
+    ({
+      analysis,
+      whatIf,
+      model,
+    }: {
+      analysis: SessionAnalysis;
+      whatIf: WhatIfRepricing | undefined;
+      model: string;
+    }) => {
+      if (!claudeBin) {
+        setState({ ...IDLE_CLAUDE, started: true, error: CLAUDE_NOT_FOUND_MESSAGE });
+        return;
+      }
+      controller.current?.abort();
+      const mine = new AbortController();
+      controller.current = mine;
+      let streamed = false;
+      setState({ ...IDLE_CLAUDE, started: true, running: true });
+      (async () => {
+        try {
+          for await (const event of runClaudeAnalysis({
+            claudeBin,
+            sessionPath,
+            analysis,
+            model,
+            whatIf,
+            signal: mine.signal,
+          })) {
+            if (mine.signal.aborted) return;
+            if (event.type === "text") {
+              streamed = true;
+              setState((prev) => ({ ...prev, output: prev.output + event.delta }));
+            } else if (event.type === "result") {
+              setState((prev) => ({
+                ...prev,
+                output: !streamed && event.text ? event.text : prev.output,
+                cost: event.costUsd,
+              }));
+            } else {
+              setState((prev) => ({ ...prev, error: event.message }));
+            }
+          }
+        } catch (err) {
+          if (!mine.signal.aborted)
+            setState((prev) => ({
+              ...prev,
+              error: err instanceof Error ? err.message : String(err),
+            }));
+        } finally {
+          if (controller.current === mine) {
+            controller.current = null;
+            setState((prev) => ({ ...prev, running: false }));
+          }
+        }
+      })();
+    },
+    [claudeBin, sessionPath],
+  );
+
+  return { state, claudeBin, start, cancel };
+}
+
 function ClaudeView({
   a,
-  sessionPath,
   whatIf,
+  run,
   isActive,
   rows,
+  claudeBin,
 }: {
   a: SessionAnalysis;
-  sessionPath: string;
   whatIf: WhatIfRepricing | undefined;
+  run: ClaudeRun;
   isActive: boolean;
   rows: number;
+  claudeBin: string | undefined;
 }) {
-  const claudeBin = useMemo(() => resolveClaudeBinary(), []);
   const [model, setModel] = useState(() => getAnalysisModel());
-  const [request, setRequest] = useState<{ id: number; model: string } | null>(null);
-  const [output, setOutput] = useState("");
-  const [cost, setCost] = useState<number | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [running, setRunning] = useState(false);
   const [scroll, setScroll] = useState(0);
+  const { output, cost, error, running, started, cancelled } = run.state;
 
   useInput(
     (input, key) => {
-      if (running) return;
+      // Scrolling works while a run streams; only run/model/re-run are locked.
+      if (key.upArrow || input === "k") return setScroll((s) => s + 1);
+      if (key.downArrow || input === "j") return setScroll((s) => Math.max(0, s - 1));
+      if (running) {
+        if (key.escape) run.cancel();
+        return;
+      }
+      // Starting a run is explicit and snapshots the chosen model: changing the
+      // model must not silently start a new (billable) run.
       if (input === "r") {
-        setRequest((prev) => ({ id: (prev?.id ?? 0) + 1, model }));
+        setScroll(0);
+        run.start({ analysis: a, whatIf, model });
         return;
       }
       if (input === "m") {
@@ -1011,60 +1188,10 @@ function ClaudeView({
           ANALYSIS_MODELS[(idx + 1) % ANALYSIS_MODELS.length] ?? ANALYSIS_MODELS[0];
         setModel(next);
         setAnalysisModel(next);
-        return;
       }
-      if (key.upArrow || input === "k") return setScroll((s) => s + 1);
-      if (key.downArrow || input === "j") return setScroll((s) => Math.max(0, s - 1));
     },
     { isActive },
   );
-
-  // Keyed on `request` only — changing the model must not silently start a new
-  // (billable) run. The run params are snapshotted into the request; `a`,
-  // `whatIf`, `sessionPath`, and `claudeBin` are stable for the screen.
-  useEffect(() => {
-    if (!request) return;
-    if (!claudeBin) {
-      setError(CLAUDE_NOT_FOUND_MESSAGE);
-      return;
-    }
-    let cancelled = false;
-    let streamed = false;
-    setOutput("");
-    setCost(undefined);
-    setError(undefined);
-    setScroll(0);
-    setRunning(true);
-    (async () => {
-      try {
-        for await (const event of runClaudeAnalysis({
-          claudeBin,
-          sessionPath,
-          analysis: a,
-          model: request.model,
-          whatIf,
-        })) {
-          if (cancelled) return;
-          if (event.type === "text") {
-            streamed = true;
-            setOutput((prev) => prev + event.delta);
-          } else if (event.type === "result") {
-            if (!streamed && event.text) setOutput(event.text);
-            setCost(event.costUsd);
-          } else {
-            setError(event.message);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setRunning(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [request, claudeBin, sessionPath, a, whatIf]);
 
   const lines = output ? output.split("\n") : [];
   const visibleRows = Math.max(3, rows - 12);
@@ -1085,7 +1212,9 @@ function ClaudeView({
           {"  ·  "}
           {running ? (
             <Text color={palette.amber}>analyzing…</Text>
-          ) : request ? (
+          ) : cancelled ? (
+            <Text color={palette.amber}>cancelled (r to re-run)</Text>
+          ) : started ? (
             <Text color={role.muted}>done (r to re-run)</Text>
           ) : (
             <Text color={role.muted}>press r to run</Text>
@@ -1161,8 +1290,7 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
             const sorted = Object.entries(a.tools).sort((x, y) => y[1] - x[1]);
             const shown = sorted.slice(0, 6).map(([tool, count]) => {
               const errs = a.toolErrors[tool] ?? 0;
-              const pct = count > 0 ? `${Math.round((errs / count) * 100)}%` : "0%";
-              return `${tool}:${count} (${errs} err ${pct})`;
+              return `${tool}:${count} (${errs} err ${errorRate(errs, count)})`;
             });
             const more = sorted.length > 6 ? ` +${sorted.length - 6} more` : "";
             return shown.join(" · ") + more || "-";
@@ -1177,7 +1305,7 @@ function SummaryView({ a, whatIf }: { a: SessionAnalysis; whatIf: WhatIfRepricin
               const shown = sorted.slice(0, 6).map(([skill, uses]) => {
                 const attr = a.skillTurnCosts[skill];
                 const errs = a.skillErrors[skill] ?? 0;
-                const errPct = uses > 0 ? `${Math.round((errs / uses) * 100)}%` : "0%";
+                const errPct = errorRate(errs, uses);
                 const cost = formatUSD(attr?.cost ?? 0);
                 return `${skill}:${uses} (${attr?.turns ?? 0} turns ${cost} ${errs} err ${errPct})`;
               });
@@ -1323,11 +1451,8 @@ function ExportView({
       } catch {
         // index unavailable — export without rank
       }
-      // Cap transcript before builder/JSON to avoid DOS on huge sessions (same caps as CLI/Web)
-      const cappedTranscript = transcript
-        .slice(0, 600)
-        .map((t) => ({ ...t, body: t.body.slice(0, 2000) }));
-      const tx = includeTranscript ? cappedTranscript : undefined;
+      // Raw transcript: the builders cap and (when redacting) blank it themselves.
+      const tx = includeTranscript ? transcript : undefined;
       let content: string;
       if (format === "md") {
         content = buildSessionMarkdown(analysis, {
@@ -1350,33 +1475,29 @@ function ExportView({
           transcript: tx,
         });
       } else {
-        const redactedTranscript = tx
-          ? tx.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
-          : undefined;
-        const payload: Record<string, unknown> = {
-          ...analysis,
-          health,
-          whatIf,
-          rank,
-          costBasis,
-          ...(redact
-            ? {
-                title: "[redacted]",
-                projectPath: "[redacted]",
-                filesTouched: [],
-                bashCommands: {},
-                bashErrors: {},
-                commandHeads: {},
-                commandHeadErrors: {},
-                turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
-              }
-            : {}),
-        };
-        if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
-        content = JSON.stringify(payload, null, 2);
+        content = JSON.stringify(
+          buildSessionJsonPayload(analysis, {
+            redact,
+            includeTranscript,
+            transcript: tx,
+            parseErrors: errors.length,
+            health,
+            whatIf,
+            rank,
+            costBasis,
+          }),
+          null,
+          2,
+        );
       }
-      await Bun.write(filename, content);
-      setStatus(`Wrote ${filename} (${formatCount(content.length)} chars)`);
+      // Never overwrite an earlier export silently, and say where it went.
+      const target = resolve(filename);
+      if (await Bun.file(target).exists()) {
+        setStatus(`Failed: ${target} already exists — move or delete it first.`);
+        return;
+      }
+      await Bun.write(target, content);
+      setStatus(`Wrote ${target} (${formatCount(content.length)} chars)`);
     } catch (err) {
       setStatus(`Failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1439,9 +1560,6 @@ function ExportView({
           <Text color={status.startsWith("Wrote") ? palette.green : palette.red}>{status}</Text>
         </Box>
       )}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={role.muted}>f format · r redact · t transcript · w write · esc turns</Text>
-      </Box>
     </Box>
   );
 }

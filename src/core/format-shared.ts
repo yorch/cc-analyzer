@@ -66,6 +66,10 @@ export function formatSignedUSD(n: number): string {
  * string uses. Deltas that need a sign carry their own formatter (`digest.ts`). */
 export const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
+/** errors/calls as a whole-percent string; "0%" when there were no calls. */
+export const errorRate = (errors: number, calls: number): string =>
+  calls > 0 ? pct(errors / calls) : "0%";
+
 /** Hours before the day band takes over. Below it, "36h 10m" is still the
  * reading a person wants; above it, hour counts stop being countable — a
  * portfolio's total time with Claude is five digits of hours and one of days. */

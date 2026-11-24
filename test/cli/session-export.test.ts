@@ -103,7 +103,7 @@ describe("analyze export", () => {
     const j = JSON.parse(r.stdout) as any;
     expect(j.title).toBe("[redacted]");
     expect(j.projectPath).toBe("[redacted]");
-    expect(j.filesTouched).toEqual([]);
+    expect(j.filesTouched).not.toContain("hello.ts");
     expect(j.turns[0].prompt).toBe("[redacted]");
   });
 
@@ -178,5 +178,22 @@ describe("analyze export", () => {
     expect(r.code).toBe(0);
     // sample fixture has no transcript items? but builder should show count or empty
     expect(r.stdout).toContain("Transcript");
+  });
+
+  test("--redact on every format leaks no session text", async () => {
+    const path = join(tmpDir, "claude", "projects", "proj-a", "sess-1.jsonl");
+    for (const fmt of ["--json", "--md", "--html"]) {
+      const r = await run(["analyze", path, fmt, "--redact", "--include-transcript"]);
+      expect(r.code).toBe(0);
+      for (const leak of ["hello function", "hello.ts", "Let me write it", tmpDir]) {
+        expect({ fmt, leak, found: r.stdout.includes(leak) }).toEqual({ fmt, leak, found: false });
+      }
+    }
+  });
+
+  test("export with a valueless --project is an error, not a portfolio export", async () => {
+    const r = await run(["export", "--project", "--out", join(tmpDir, "should-not-exist")]);
+    expect(r.code).not.toBe(0);
+    expect(existsSync(join(tmpDir, "should-not-exist"))).toBe(false);
   });
 });

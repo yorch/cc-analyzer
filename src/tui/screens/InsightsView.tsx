@@ -21,6 +21,7 @@ import {
   type SessionCacheRow,
   type WhatIfSummary,
 } from "../../core/stats.ts";
+import { WHATIF_CAVEAT } from "../../core/stats-types.ts";
 import { FilterableList } from "../components/FilterableList.tsx";
 import { CachePreview } from "../components/previews.tsx";
 import { MasterDetail, masterWidth } from "../shell/MasterDetail.tsx";
@@ -121,7 +122,12 @@ export function InsightsView({
   const shownFindings = diagnostics.slice(0, MAX_FINDING_LINES);
   const overflow = diagnostics.length - shownFindings.length;
   // context-tax + what-if summary lines, plus the compact findings block.
-  const extraLines = 2 + shownFindings.length + (overflow > 0 ? 1 : 0);
+  // The what-if line carries WHATIF_CAVEAT verbatim, and it wraps — reserve the
+  // wrapped height or the pinned frame overflows.
+  const whatIfLines = whatIfShown(whatIf.summary)
+    ? 1 + Math.ceil(WHATIF_CAVEAT.length / Math.max(20, columns - 6))
+    : 0;
+  const extraLines = 1 + whatIfLines + shownFindings.length + (overflow > 0 ? 1 : 0);
   const listSize = Math.max(3, pageSize - 1 - extraLines);
   const wastePct =
     summary.totalCost > 0 ? Math.round((summary.waste / summary.totalCost) * 100) : 0;
@@ -262,14 +268,21 @@ function ContextTaxLine({
  * What-if: the cheapest single model to have run everything on. Rate comparison
  * only — a different model produces different tokens, and quality isn't priced.
  */
+const whatIfShown = (summary: WhatIfSummary): boolean =>
+  Boolean(summary.bestModel) && summary.bestDelta < 0;
+
 function WhatIfLine({ summary }: { summary: WhatIfSummary }) {
-  if (!summary.bestModel || summary.bestDelta >= 0) return null;
+  if (!whatIfShown(summary)) return null;
   return (
-    <Text color={role.muted}>
-      what-if: all tokens on <Text color={role.body}>{summary.bestModel}</Text> ={" "}
-      <Text color={role.cost}>{formatUSD(summary.bestCost)}</Text> vs{" "}
-      {formatUSD(summary.actualCost)} actual · same tokens, other rates (quality not priced)
-    </Text>
+    <Box flexDirection="column">
+      <Text color={role.muted}>
+        what-if: all tokens on <Text color={role.body}>{summary.bestModel}</Text> ={" "}
+        <Text color={role.cost}>{formatUSD(summary.bestCost)}</Text> vs{" "}
+        {formatUSD(summary.actualCost)} actual
+      </Text>
+      {/* Mandatory caveat: verbatim and wrapping, never truncated. */}
+      <Text color={role.muted}>{WHATIF_CAVEAT}</Text>
+    </Box>
   );
 }
 

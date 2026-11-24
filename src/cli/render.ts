@@ -48,6 +48,7 @@ import {
   WHATIF_CAVEAT,
 } from "../core/stats-types.ts";
 import {
+  errorRate,
   formatCount,
   formatDuration,
   formatRelativeTime,
@@ -206,9 +207,7 @@ export function renderSessionSummary(
                 [
                   a.correctionTurns > 0
                     ? `${a.correctionTurns} correction turn${a.correctionTurns === 1 ? "" : "s"}` +
-                      (a.totals.turns > 0
-                        ? ` (${Math.round((a.correctionTurns / a.totals.turns) * 100)}%)`
-                        : "")
+                      (a.totals.turns > 0 ? ` (${pct(a.correctionTurns / a.totals.turns)})` : "")
                     : "",
                   a.interruptionTurns > 0
                     ? `${a.interruptionTurns} interruption${a.interruptionTurns === 1 ? "" : "s"}`
@@ -324,8 +323,7 @@ export function renderSessionSummary(
         ["tool", "count", "errors", "err %"],
         toolRows.map(([t, c]) => {
           const errs = a.toolErrors[t] ?? 0;
-          const pct = c > 0 ? `${Math.round((errs / c) * 100)}%` : "0%";
-          return [t, String(c), String(errs), pct];
+          return [t, String(c), String(errs), errorRate(errs, c)];
         }),
         { align: ["left", "right", "right", "right"] },
       ),
@@ -343,7 +341,7 @@ export function renderSessionSummary(
         skillEntries.map(([s, n]) => {
           const attributed = a.skillTurnCosts[s];
           const errs = a.skillErrors[s] ?? 0;
-          const errPct = n > 0 ? `${Math.round((errs / n) * 100)}%` : "0%";
+          const errPct = errorRate(errs, n);
           return [
             s,
             String(n),

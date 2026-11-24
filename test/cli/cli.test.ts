@@ -876,3 +876,49 @@ describe("Claude data directories", () => {
     expect((await run(["claude-dir", "add"])).code).toBe(2);
   });
 });
+
+describe("argument handling", () => {
+  test("--help after any subcommand prints help and never acts", async () => {
+    for (const cmd of ["update", "index", "serve", "analyze", "sessions", "doctor"]) {
+      const r = await run([cmd, "--help"]);
+      expect(r.code, cmd).toBe(0);
+      expect(r.stdout, cmd).toContain("Usage:");
+    }
+    const short = await run(["analyze", "-h"]);
+    expect(short.code).toBe(0);
+    expect(short.stdout).toContain("Usage:");
+  });
+
+  test("an unknown flag is an error on commands with a known flag set", async () => {
+    for (const cmd of ["stats", "report", "audit", "insights", "doctor"]) {
+      const r = await run([cmd, "--bogus"]);
+      expect(r.code, cmd).toBe(2);
+      expect(r.stderr, cmd).toContain("unknown flag '--bogus'");
+    }
+  });
+
+  test("an unknown command reports on stderr and exits 2", async () => {
+    const r = await run(["frobnicate"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("unknown command 'frobnicate'");
+    expect(r.stdout).toBe("");
+  });
+
+  test("serve validates --port/--host in the space form too", async () => {
+    expect((await run(["serve", "--port", "nope"])).code).toBe(2);
+    expect((await run(["serve", "--port", "99999"])).code).toBe(2);
+    expect((await run(["serve", "--host="])).code).toBe(2);
+    expect((await run(["serve", "--port"])).code).toBe(2);
+  });
+
+  test("a flag with no value does not swallow the next flag", async () => {
+    const r = await run(["analyze", fixture, "--out", "--json"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("--out needs a value");
+  });
+
+  test("claude-dir set rejects extra paths", async () => {
+    const r = await run(["claude-dir", "set", "/a", "/b"]);
+    expect(r.code).toBe(2);
+  });
+});

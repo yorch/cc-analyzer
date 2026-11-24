@@ -32,6 +32,7 @@ import {
 } from "../core/stats.ts";
 import { PortfolioLede } from "./components/PortfolioLede.tsx";
 import { HelpOverlay } from "./components/ui.tsx";
+import { isFilterTyping } from "./inputGuard.ts";
 import { keyIndex } from "./keys.ts";
 import { InsightsView } from "./screens/InsightsView.tsx";
 import { ProjectsView } from "./screens/ProjectsView.tsx";
@@ -211,6 +212,9 @@ export function App({ db, pricing, indexStatus }: Props) {
 
   useInput(
     (input, key) => {
+      // A list filter that already has text owns every printable key, `/` and
+      // `?` included — they are filter characters then, not global shortcuts.
+      if (isFilterTyping()) return;
       if (input === "?") return setHelp(true);
       if (input === "/" && !searchOpen) {
         setSearchOpen(true);
@@ -249,7 +253,7 @@ export function App({ db, pricing, indexStatus }: Props) {
   if (help) {
     return (
       <Box flexDirection="column" padding={1}>
-        <HelpOverlay isActive onClose={() => setHelp(false)} />
+        <HelpOverlay isActive rows={rows} onClose={() => setHelp(false)} />
       </Box>
     );
   }

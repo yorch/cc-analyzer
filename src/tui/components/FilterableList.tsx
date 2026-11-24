@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
+import { setFilterTyping } from "../inputGuard.ts";
 import { clampWindow, scrollOffset } from "../scroll.ts";
 import { palette, role } from "../theme.ts";
 import { usePageSize } from "../usePageSize.ts";
@@ -69,6 +70,13 @@ export function FilterableList<T>({
     onHighlight?.(current);
   }, [current]);
 
+  // Publish "this filter holds text" so the App's global `/` and `?` shortcuts
+  // stand down while the user is typing a query.
+  useEffect(() => {
+    setFilterTyping(query.length > 0);
+    return () => setFilterTyping(false);
+  }, [query]);
+
   const reset = () => {
     setCursor(0);
     setOffset(0);
@@ -97,6 +105,16 @@ export function FilterableList<T>({
         setOffset(scrollOffset(next, activeOffset, size));
         return;
       }
+      if (key.pageDown || key.pageUp) {
+        const step = Math.max(1, size - 1);
+        const next = Math.max(
+          0,
+          Math.min(activeCursor + (key.pageDown ? step : -step), filtered.length - 1),
+        );
+        setCursor(next);
+        setOffset(scrollOffset(next, activeOffset, size));
+        return;
+      }
       if (key.tab) {
         if (key.shift) onReverseSort?.();
         else onCycleSort?.();
@@ -110,7 +128,10 @@ export function FilterableList<T>({
         }
         return;
       }
-      if (input && input !== "?" && !key.ctrl && !key.meta && !key.tab) {
+      // `/` and `?` open the App's search/help while the query is empty; the App
+      // handles them, so the filter must not also append them (twice-handled).
+      if (!query && (input === "/" || input === "?")) return;
+      if (input && !key.ctrl && !key.meta && !key.tab) {
         setQuery((cur) => cur + input);
         reset();
       }
