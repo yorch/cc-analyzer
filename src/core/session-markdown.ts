@@ -22,6 +22,12 @@ import {
 } from "./chart-series.ts";
 import { type CostBasis, costFramingNote, costNoun } from "./cost-framing.ts";
 import { formatCount, formatDuration, formatSignedUSD, formatUSD, pct } from "./format-shared.ts";
+import {
+  REDACTED,
+  redactAnalysis,
+  TRANSCRIPT_MAX_BODY_CHARS,
+  TRANSCRIPT_MAX_ITEMS,
+} from "./redact.ts";
 import { buildSessionDiagnostics } from "./session-diagnostics.ts";
 import type { SessionHealthReport } from "./session-health.ts";
 import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "./session-insights.ts";
@@ -81,23 +87,40 @@ export interface SessionMarkdownOptions {
 // Markdown builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Session diagnostics for a render site. Evidence strings can embed file paths
+ * (`repeated-file-reads` names the most re-read file), so a redacted render
+ * keeps title/severity/action and swaps the evidence for a generic note.
+ */
+function sessionDiagnosticsFor(original: SessionAnalysis, redact: boolean) {
+  const diagnostics = buildSessionDiagnostics(original);
+  return redact
+    ? diagnostics.map((d) => ({ ...d, evidence: `${REDACTED} (details hidden for sharing)` }))
+    : diagnostics;
+}
+
 export function buildSessionMarkdown(
-  a: SessionAnalysis,
+  original: SessionAnalysis,
   opts: SessionMarkdownOptions = {},
 ): string {
   const out: string[] = [];
   const redact = opts.redact === true;
+  // Redaction happens once, up front, through the shared allowlist redactor:
+  // everything below reads the redacted copy, so a field a renderer forgets to
+  // guard cannot leak. Only the diagnostics are computed from `original`
+  // (their thresholds read real values) and then have their evidence replaced.
+  const a = redact ? redactAnalysis(original) : original;
   const costBasis = opts.costBasis ?? "api";
   const framing = costFramingNote(costBasis);
 
   // Header
   const rawTitle = a.title ?? "(untitled session)";
-  const title = redact ? "[redacted]" : rawTitle;
+  const title = redact ? REDACTED : rawTitle;
   out.push(`# Session: ${mdEscape(title)}`);
   out.push("");
   const idLine = a.sessionId ? `\`${mdEscape(a.sessionId)}\`` : "(no session id)";
   const rawProj = opts.projectLabel ?? a.projectPath ?? "(unknown project)";
-  const proj = redact ? "[redacted]" : rawProj;
+  const proj = redact ? REDACTED : rawProj;
   out.push(`**Session** ${idLine} · **Project** ${mdEscape(proj)}`);
   if (a.startTime || a.endTime) {
     const s = a.startTime?.slice(0, 19).replace("T", " ") ?? "?";
@@ -171,7 +194,7 @@ export function buildSessionMarkdown(
   out.push("");
 
   // Diagnostics
-  const diagnostics = buildSessionDiagnostics(a);
+  const diagnostics = sessionDiagnosticsFor(original, redact);
   out.push("## Actionable diagnostics");
   out.push("");
   if (diagnostics.length === 0) {
@@ -428,15 +451,17 @@ export function buildSessionMarkdown(
         .map(([k, n]) => `${mdEscape(k)}:${n}`)
         .join(" · ")}`,
     );
-  else if (redact && Object.keys(a.bashCommands).length)
-    factLines.push(`**Shell commands:** ${Object.keys(a.bashCommands).length} families (redacted)`);
+  else if (redact && Object.keys(original.bashCommands).length)
+    factLines.push(
+      `**Shell commands:** ${Object.keys(original.bashCommands).length} families (redacted)`,
+    );
   if (!redact && a.testRuns > 0)
     factLines.push(`**Test runs:** ${a.testRuns} (${a.testFailures} failed)`);
   if (a.retries > 0) factLines.push(`**Retries:** ${a.retries} repeated identical tool calls`);
   if (a.testFailStreak > 0) factLines.push(`**Test fail streak:** ${a.testFailStreak}`);
   if (a.redundantReads > 0)
     factLines.push(
-      `**Redundant reads:** ${a.redundantReads}${a.rereadFiles.length ? ` (${a.rereadFiles.slice(0, 3).map(mdEscape).join(", ")})` : ""}`,
+      `**Redundant reads:** ${a.redundantReads}${!redact && a.rereadFiles.length ? ` (${a.rereadFiles.slice(0, 3).map(mdEscape).join(", ")})` : ""}`,
     );
   if (a.correctionTurns > 0 || a.interruptionTurns > 0) {
     const corr =
@@ -509,7 +534,7 @@ export function buildSessionMarkdown(
           const toolN = String(Object.values(t.toolCounts).reduce((s, n) => s + n, 0));
           const point = turnPoints.get(t.index);
           const flags = point ? turnFlags(point).join(" · ") : "";
-          const prompt = redact ? "[redacted]" : mdEscape(t.prompt.slice(0, 120)) || "(no text)";
+          const prompt = redact ? REDACTED : mdEscape(t.prompt.slice(0, 120)) || "(no text)";
           return [
             String(t.index + 1),
             formatUSD(t.cost.total),
@@ -640,10 +665,11 @@ export function buildSessionMarkdown(
       if (redact) out.push("_Text redacted._");
       out.push("");
       // Cap appendix to avoid 50MB paste
-      const TRANSCRIPT_CAP = 600;
-      const shown = items.slice(0, TRANSCRIPT_CAP);
+      const shown = items.slice(0, TRANSCRIPT_MAX_ITEMS);
       for (const item of shown) {
-        const body = redact ? "[redacted]" : (item.body || "(empty)").slice(0, 2000);
+        const body = redact
+          ? REDACTED
+          : (item.body || "(empty)").slice(0, TRANSCRIPT_MAX_BODY_CHARS);
         const label = mdEscape(item.label);
         out.push(`### ${label}${item.isError ? " · ✗ error" : ""}`);
         out.push("");
@@ -653,9 +679,9 @@ export function buildSessionMarkdown(
         out.push("```");
         out.push("");
       }
-      if (items.length > TRANSCRIPT_CAP) {
+      if (items.length > TRANSCRIPT_MAX_ITEMS) {
         out.push(
-          `_… ${items.length - TRANSCRIPT_CAP} more items truncated — see JSON export for full transcript._`,
+          `_… ${items.length - TRANSCRIPT_MAX_ITEMS} more items truncated — see JSON export for full transcript._`,
         );
         out.push("");
       }
@@ -784,7 +810,7 @@ function buildAiSummary(a: SessionAnalysis, opts: SessionMarkdownOptions): strin
     return total > 0 ? Math.round((t.cacheReadTokens / total) * 100) : 0;
   })();
   const topTool = Object.entries(a.tools).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "—";
-  const diag = buildSessionDiagnostics(a);
+  const diag = sessionDiagnosticsFor(a, opts.redact === true);
   const warn = diag.filter((d) => d.severity === "warning").length;
   const framing = opts.costBasis === "subscription" ? "API-equivalent value" : "cost";
   let summary = `This session ${framing} <strong>${escHtml(formatUSD(c))}</strong> over <strong>${escHtml(dur)}</strong> across <strong>${turns} turns</strong>`;
@@ -905,7 +931,7 @@ function mdToHtml(md: string): string {
       const items: string[] = [];
       while (i < lines.length && (lines[i]?.startsWith("- ") ?? false)) {
         // biome-ignore lint/style/noNonNullAssertion: guarded by while condition
-        items.push(lines[i]!.slice(2));
+        items.push(escHtml(lines[i]!.slice(2)));
         i++;
         // handle indented continuation line "  - Next:"
         if (i < lines.length && lines[i]?.startsWith("  - ")) {
@@ -915,7 +941,7 @@ function mdToHtml(md: string): string {
         }
       }
       html.push("<ul>");
-      for (const it of items) html.push(`<li>${escHtml(it)}</li>`);
+      for (const it of items) html.push(`<li>${it}</li>`); // already escaped above
       html.push("</ul>");
       continue;
     } else if (line.startsWith("> ")) {
@@ -940,28 +966,31 @@ function mdToHtml(md: string): string {
 }
 
 export function buildSessionHtml(a: SessionAnalysis, opts: SessionMarkdownOptions = {}): string {
+  const redact = opts.redact === true;
   const aiSummary = buildAiSummary(a, opts);
   const kpiCards = buildKpiCards(a);
   const md = buildSessionMarkdown(a, opts);
   const body = mdToHtml(md);
-  const title = escHtml(a.title ?? a.sessionId ?? "Session export");
+  // The page <title>/<h1> are session text too: a redacted export must not carry them.
+  const title = escHtml(redact ? "Session export" : (a.title ?? a.sessionId ?? "Session export"));
   const provenance = `Generated ${new Date().toISOString().slice(0, 10)} · cc-analyzer · Session ${escHtml(a.sessionId ?? "—")} `;
+  // No scripts at all: every value is rendered server-side through escHtml, and
+  // the CSP forbids script execution outright as defense in depth.
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} — cc-analyzer</title>
 <style>${HTML_STYLE}</style>
-<script>try{const t=localStorage.getItem("cc-theme");const m=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";const r=t||m;if(r==="light")document.documentElement.setAttribute("data-theme","light");}catch{}</script>
 <body>
 <div class="wrap">
-<header class="masthead"><h1>${title}</h1><button type="button" class="theme-toggle" onclick="try{const r=document.documentElement;const c=r.getAttribute('data-theme')==='light'?'dark':'light';r.setAttribute('data-theme',c);localStorage.setItem('cc-theme',c)}catch{}" aria-label="Toggle theme">◐ Theme</button></header>
+<header class="masthead"><h1>${title}</h1></header>
 <div class="ai-summary">${aiSummary}</div>
 ${kpiCards}
 <div class="provenance">${provenance}</div>
 ${body}
 </div>
-<script>document.querySelectorAll("table").forEach(t=>{const max=Math.max(...[...t.querySelectorAll("tbody tr")].map(r=>parseFloat(r.cells[1]?.textContent?.replace(/[^\\d.]/g,"")||"0")||0),1);t.querySelectorAll("tbody tr").forEach(r=>{const c=r.cells[1];if(!c||!c.textContent.includes("$"))return;const v=parseFloat(c.textContent.replace(/[^\\d.]/g,"")||"0");const pct=Math.min(100,Math.round((v/max)*100));c.innerHTML='<div class="bar-wrap"><div class="bar" style="width:'+pct+'%"></div><span class="bar-val">'+c.textContent+'</span></div>';c.style.position="relative";});});</script>
 </body>
 </html>`;
 }
