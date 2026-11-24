@@ -238,7 +238,7 @@ function SessionExport({ id }: { id: string }) {
   };
 
   return (
-    <div className="digest-actions" style={{ marginTop: 8, marginBottom: 8 }}>
+    <div className="digest-actions my-2">
       <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />{" "}
         redact
@@ -277,7 +277,7 @@ function SessionExport({ id }: { id: string }) {
  * the run is a real (billable) Claude Code session.
  */
 function SessionClaude({ id }: { id: string }) {
-  const prefs = useAsync(() => api.prefs(), []);
+  const prefs = useAsync(() => api.prefs(), [], "prefs");
   const [model, setModel] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [output, setOutput] = useState("");
@@ -445,7 +445,7 @@ function CostliestTurns({
   );
   if (rows.length === 0 || (rows[0]?.cost.total ?? 0) <= 0) return null;
   return (
-    <section className="summary-group" style={{ marginTop: 12 }}>
+    <section className="summary-group mt-3">
       <h2>Costliest turns</h2>
       <div className="tablewrap">
         <table>
@@ -585,7 +585,7 @@ function Summary({
       <CostliestTurns a={a} onGoToTurn={onGoToTurn} onGoToTranscript={onGoToTranscript} />
       <Subagents bursts={a.sidechainBursts} onGoToTurn={onGoToTurn} />
       {whatIf?.summary.bestModel && (
-        <section className="summary-group" style={{ marginTop: 12 }}>
+        <section className="summary-group mt-3">
           <h2>What-if repricing</h2>
           <p>
             cheapest single model: {whatIf.summary.bestModel} at {usd(whatIf.summary.bestCost)} (
@@ -596,7 +596,7 @@ function Summary({
       )}
       {/* Detailed tools & skills breakdown — session-level, with error rates and turn-scoped cost */}
       {Object.keys(a.tools).length > 0 && (
-        <section className="summary-group" style={{ marginTop: 12 }}>
+        <section className="summary-group mt-3">
           <h2>Tools</h2>
           <div className="tablewrap">
             <table>
@@ -629,7 +629,7 @@ function Summary({
         </section>
       )}
       {Object.keys(a.skills).length > 0 && (
-        <section className="summary-group" style={{ marginTop: 12 }}>
+        <section className="summary-group mt-3">
           <h2>Skills</h2>
           <div className="tablewrap">
             <table>
@@ -691,7 +691,7 @@ function Subagents({
   const note = burstAttributionNote(bursts);
   if (bursts.length === 0) return null;
   return (
-    <section className="summary-group" style={{ marginTop: 12 }}>
+    <section className="summary-group mt-3">
       <h2>Subagents</h2>
       <div className="tablewrap">
         <table>
@@ -715,7 +715,7 @@ function Subagents({
           </tbody>
         </table>
       </div>
-      <div className="tablewrap" style={{ marginTop: 8 }}>
+      <div className="tablewrap mt-2">
         <table>
           <thead>
             <tr>

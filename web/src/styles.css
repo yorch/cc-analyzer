@@ -6,6 +6,9 @@
 :root {
   --font-display: "Fraunces Variable", "Fraunces", Georgia, serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* spacing scale for the .mt-N and .my-N utilities at the end of this file */
+  --space-2: 8px;
+  --space-3: 12px;
 
   --bg: #14110d;
   --bg-2: #191510;
@@ -1496,6 +1499,20 @@ p.muted {
   cursor: pointer;
 }
 
+.chart-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.chart-hint .linklike {
+  all: unset;
+  cursor: pointer;
+  color: var(--signal-text);
+  text-decoration: underline;
+}
+.chart-hint .linklike:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
 .chart-data {
   margin-top: 12px;
   color: var(--muted);
@@ -1662,8 +1679,21 @@ p.muted {
   .sort-button,
   button.legend-item.interactive,
   .row-button,
-  .turnhead {
+  .turnhead,
+  .steprow:not(.static),
+  .theme-toggle button,
+  .digest-actions button,
+  .loadmore button,
+  .export-button,
+  .chart-reset {
     min-height: 44px;
+  }
+  /* Masthead links are inline text; make the whole 44px band tappable. */
+  .masthead-nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    white-space: nowrap;
   }
   .sort-button,
   button.legend-item.interactive,
@@ -2127,4 +2157,18 @@ button.legend-item.interactive {
 
 main:focus {
   outline: none;
+}
+
+/* ---------------------------------------------------------------- utilities
+   Spacing utilities (token-based). Kept last so they win over component
+   defaults of equal specificity (e.g. .digest-actions' own margin-top). */
+.mt-2 {
+  margin-top: var(--space-2);
+}
+.mt-3 {
+  margin-top: var(--space-3);
+}
+.my-2 {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
 }

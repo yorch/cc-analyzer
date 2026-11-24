@@ -1,5 +1,6 @@
 import { maxOf } from "./extent.ts";
 import { count } from "./format.ts";
+import { MiniBar } from "./MiniBar.tsx";
 
 export interface HistogramRow {
   label: string;
@@ -17,9 +18,7 @@ export function Histogram({ rows }: { rows: HistogramRow[] }) {
       {rows.map((r) => (
         <div className="hist-row" key={r.label}>
           <span className="hist-label">{r.label}</span>
-          <div className="bar">
-            <span style={{ width: `${(r.count / max) * 100}%` }} />
-          </div>
+          <MiniBar value={r.count} max={max} />
           <span className="hist-count">{count(r.count)}</span>
         </div>
       ))}

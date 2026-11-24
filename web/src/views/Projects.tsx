@@ -48,7 +48,7 @@ export function Projects() {
   // computed here on possibly-empty fallback data during loading/error, same
   // pattern as Project.tsx and Dashboard.tsx.
   const projects = useProjects();
-  const insights = useAsync(() => api.insights(), []);
+  const insights = useAsync(() => api.insights(), [], "insights");
   const [query, setQuery] = useHashParam<string>("q", "");
 
   const all = projects.data ?? [];

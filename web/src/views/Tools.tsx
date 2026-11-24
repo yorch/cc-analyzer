@@ -708,7 +708,7 @@ function Reliability({ data, query }: { data: AnalyticsResponse; query: string }
 }
 
 export function Tools() {
-  const { data, error, loading, retry } = useAsync(() => api.analytics(), []);
+  const { data, error, loading, retry } = useAsync(() => api.analytics(), [], "analytics");
   const toolViews = [
     "tools",
     "reliability",

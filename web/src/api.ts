@@ -38,6 +38,7 @@ import type {
   WhatIfRepricing,
 } from "../../src/core/stats-types.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
+import { invalidate } from "./cache.ts";
 
 export type {
   ApiCall,
@@ -302,11 +303,12 @@ export const api = {
   // The one write call in the client: persists the cost-basis display
   // preference (see the write-endpoint note in src/web/api.ts). Never touches
   // Claude session data — only cc-analyzer's own prefs.json.
-  setCostBasis: (costBasis: CostBasis) => putJson<PrefsResponse>("/api/prefs", { costBasis }),
+  setCostBasis: (costBasis: CostBasis) =>
+    putJson<PrefsResponse>("/api/prefs", { costBasis }).finally(() => invalidate("prefs")),
   // Persists the default model for "Analyze with Claude Code" — like
   // setCostBasis, only touches cc-analyzer's own prefs.json.
   setAnalysisModel: (analysisModel: string) =>
-    putJson<PrefsResponse>("/api/prefs", { analysisModel }),
+    putJson<PrefsResponse>("/api/prefs", { analysisModel }).finally(() => invalidate("prefs")),
   // Spawns a local `claude` headless (server-side) and streams its retrospective
   // back as NDJSON. `onEvent` fires per event; the promise resolves when the run
   // ends. Opt-in and billable — the caller gates it behind a button.
