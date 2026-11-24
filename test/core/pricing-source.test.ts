@@ -166,3 +166,53 @@ describe("mapLiteLLMEntry · long-context tier", () => {
     expect(mapLiteLLMEntry(base)?.above200k).toBeUndefined();
   });
 });
+
+describe("loadPricing · bundled overlay and cache write failures", () => {
+  const entry = (n: number) => ({ input_cost_per_token: n, output_cost_per_token: n * 2 });
+
+  test("remote table keeps bundled prices for ids it dropped", async () => {
+    const dir = `/tmp/cc-analyzer-test-${Bun.hash(import.meta.url)}-overlay`;
+    const prev = process.env.CC_ANALYZER_STATE_DIR;
+    process.env.CC_ANALYZER_STATE_DIR = dir;
+    try {
+      const droppedId = Object.keys(bundledPricing)[0] as string;
+      const loaded = await loadPricing({
+        force: true,
+        fetchImpl: async () => Response.json({ "claude-brand-new": entry(7) }),
+      });
+      expect(loaded.source).toBe("remote");
+      expect(loaded.table["claude-brand-new"]?.inputCostPerToken).toBe(7);
+      expect(loaded.table[droppedId]).toEqual(bundledPricing[droppedId]);
+      // Served from cache next time: still overlaid.
+      const cached = await loadPricing({});
+      expect(cached.source).toBe("cache");
+      expect(cached.table[droppedId]).toEqual(bundledPricing[droppedId]);
+    } finally {
+      const { rmSync } = await import("node:fs");
+      rmSync(dir, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prev;
+    }
+  });
+
+  test("a failed cache write does not discard the fetched table", async () => {
+    const dir = `/tmp/cc-analyzer-test-${Bun.hash(import.meta.url)}-nowrite`;
+    const prev = process.env.CC_ANALYZER_STATE_DIR;
+    const { writeFileSync, rmSync } = await import("node:fs");
+    // State dir is a FILE, so mkdir of the cache directory fails.
+    writeFileSync(dir, "x");
+    process.env.CC_ANALYZER_STATE_DIR = dir;
+    try {
+      const loaded = await loadPricing({
+        force: true,
+        fetchImpl: async () => Response.json({ "claude-brand-new": entry(7) }),
+      });
+      expect(loaded.source).toBe("remote");
+      expect(loaded.table["claude-brand-new"]?.inputCostPerToken).toBe(7);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.CC_ANALYZER_STATE_DIR;
+      else process.env.CC_ANALYZER_STATE_DIR = prev;
+    }
+  });
+});

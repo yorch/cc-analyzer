@@ -202,7 +202,11 @@ CREATE TABLE IF NOT EXISTS reanalyze_keys (
 // effect can sit at $0 (or short of calls) with `--check` reporting the index
 // fresh: their file size/mtime never change, so no scan revisits them. Only a
 // rebuild re-derives them.
-export const SCHEMA_VERSION = "22";
+// v23: correctness fixes that change stored numbers (analyzer fixes, a failed
+// analysis releasing its in-run claims, local-day bucketing through the shared
+// helper, bundled prices backing ids the remote table dropped); rows indexed
+// under v22 are stale and unchanged files would never revisit them.
+export const SCHEMA_VERSION = "23";
 
 /**
  * Open (and migrate) the index database. The index is a disposable cache — it

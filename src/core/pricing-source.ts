@@ -114,6 +114,15 @@ export async function loadPricing(opts: LoadPricingOptions = {}): Promise<Loaded
   return { ...loaded, table: correctPricing(loaded.table) };
 }
 
+/**
+ * Remote/cached tables overlay the bundled snapshot: ids LiteLLM has since
+ * dropped keep their bundled prices, so old sessions do not lose pricing.
+ * The cache itself stores only what the source said.
+ */
+function withBundled(table: PricingTable): PricingTable {
+  return { ...bundledPricing, ...table };
+}
+
 /** The uncorrected table, exactly as the source published it. */
 async function loadPricingSource(opts: LoadPricingOptions): Promise<LoadedPricing> {
   const maxAgeMs = opts.maxAgeMs ?? SEVEN_DAYS_MS;
@@ -125,7 +134,7 @@ async function loadPricingSource(opts: LoadPricingOptions): Promise<LoadedPricin
 
   const cached = await readCache(cachePath);
   if (!opts.force && cached && Date.now() - cached.fetchedAt < maxAgeMs) {
-    return { table: cached.table, source: "cache" };
+    return { table: withBundled(cached.table), source: "cache" };
   }
 
   try {
@@ -133,14 +142,19 @@ async function loadPricingSource(opts: LoadPricingOptions): Promise<LoadedPricin
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const table = parseLiteLLMTable(await res.json());
     if (Object.keys(table).length === 0) throw new Error("empty pricing table");
-    await writeCache(cachePath, {
-      fetchedAt: Date.now(),
-      formatVersion: CACHE_FORMAT_VERSION,
-      table,
-    });
-    return { table, source: "remote" };
+    try {
+      await writeCache(cachePath, {
+        fetchedAt: Date.now(),
+        formatVersion: CACHE_FORMAT_VERSION,
+        table,
+      });
+    } catch {
+      // A failed cache write (read-only state dir, disk full) must not discard
+      // the table we just fetched.
+    }
+    return { table: withBundled(table), source: "remote" };
   } catch {
-    if (cached) return { table: cached.table, source: "cache" };
+    if (cached) return { table: withBundled(cached.table), source: "cache" };
     return { table: bundledPricing, source: "bundled" };
   }
 }

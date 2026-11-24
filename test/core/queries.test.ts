@@ -12,6 +12,7 @@ import {
   listIndexedSessions,
   resolveIndexedProject,
   searchSessions,
+  sessionRowById,
 } from "../../src/core/queries.ts";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
@@ -93,5 +94,36 @@ describe("searchSessions · LIKE escaping", () => {
     expect(searchSessions(db, "%")).toHaveLength(0);
     expect(searchSessions(db, "_")).toHaveLength(0);
     expect(searchSessions(db, "proj").length).toBeGreaterThan(0);
+  });
+});
+
+describe("sessionRowById resolution order", () => {
+  function seed(rows: [string, string, string, number][]) {
+    const d = openDb(":memory:");
+    for (const [path, claudeDir, sessionId, mtime] of rows) {
+      d.query(
+        "INSERT INTO sessions (path, claude_dir, project_id, session_id, mtime_ms, size_bytes) VALUES (?, ?, 'p', ?, ?, 1)",
+      ).run(path, claudeDir, sessionId, mtime);
+    }
+    return d;
+  }
+
+  test("live root beats archive root regardless of mtime", () => {
+    const d = seed([
+      ["/r/machines/m1/roots/x/projects/p/abc.jsonl", "/r/machines/m1/roots/x", "abc", 9],
+      ["/home/.claude/projects/p/abc.jsonl", "/home/.claude", "abc", 1],
+    ]);
+    expect(sessionRowById(d, "abc")?.path).toBe("/home/.claude/projects/p/abc.jsonl");
+  });
+
+  test("basename match works with backslash separators and breaks ties by mtime", () => {
+    const d = seed([
+      ["C:\\u\\.claude\\projects\\p\\zzz.jsonl", "C:\\u\\.claude", "other", 1],
+      ["/a/projects/p/zzz.jsonl", "/a", "other2", 5],
+    ]);
+    // No session_id match: falls to basename; newest mtime among exact basenames wins.
+    expect(sessionRowById(d, "zzz")?.path).toBe("/a/projects/p/zzz.jsonl");
+    const d2 = seed([["C:\\u\\projects\\p\\zzz.jsonl", "C:\\u", "o", 1]]);
+    expect(sessionRowById(d2, "zzz")?.path).toBe("C:\\u\\projects\\p\\zzz.jsonl");
   });
 });
