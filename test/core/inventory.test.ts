@@ -211,6 +211,19 @@ describe("scanInventory", () => {
       expect(scanInventory().plugins.map((p) => p.name)).toEqual(["fmt"]);
     });
 
+    test("fallback walk names cache plugins by their dir and keeps only the newest version", () => {
+      const dir = fakeClaudeDir();
+      const noManifest = (path: string, skill: string): void =>
+        write(join(path, "skills", skill, "SKILL.md"), "---\nname: x\n---\n");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.9.0"), "old");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.10.0"), "new");
+      noManifest(join(dir, "plugins", "cache", "mk", "fmt", "1.2.0"), "older");
+      mkPlugin(join(dir, "plugins", "cache", "mk", "dir-name", "2.0.0"), "declared", "d");
+      const plugins = scanInventory().plugins;
+      expect(plugins.map((p) => p.name)).toEqual(["declared", "fmt"]);
+      expect(plugins.find((p) => p.name === "fmt")?.skills).toEqual(["new"]);
+    });
+
     test("malformed installed_plugins.json falls back to the directory walk", () => {
       const dir = fakeClaudeDir();
       write(join(dir, "plugins", "installed_plugins.json"), "{ nope");

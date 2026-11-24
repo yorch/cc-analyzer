@@ -185,6 +185,39 @@ describe("compaction rollups (schema v7)", () => {
     expect(u.byProject.find((p) => p.projectId === "big1")?.claudeDir).toBe("/root-a");
   });
 
+  test("byShare ranks only rule-qualifying projects and the result stays within limit", () => {
+    const db2 = openDb(":memory:");
+    // 30 large, low-share projects: 10 sessions, 1 compacting with many compactions.
+    for (let p = 0; p < 30; p++) {
+      for (let i = 0; i < 10; i++) {
+        insertSession(db2, {
+          path: `/big${p}/${i}.jsonl`,
+          project_id: `big${String(p).padStart(2, "0")}`,
+          compactions: i === 0 ? 50 : 0,
+        });
+      }
+    }
+    // 30 one-session projects at share 1.0.
+    for (let p = 0; p < 30; p++) {
+      insertSession(db2, {
+        path: `/tiny${p}/0.jsonl`,
+        project_id: `tiny${String(p).padStart(2, "0")}`,
+        compactions: 1,
+      });
+    }
+    // Target: 10 sessions, 8 compacting once (share 0.8).
+    for (let i = 0; i < 10; i++) {
+      insertSession(db2, {
+        path: `/target/${i}.jsonl`,
+        project_id: "target",
+        compactions: i < 8 ? 1 : 0,
+      });
+    }
+    const u = compactionUsage(db2, 30);
+    expect(u.byProject.find((p) => p.projectId === "target")?.share).toBeCloseTo(0.8, 10);
+    expect(u.byProject.length).toBeLessThanOrEqual(30);
+  });
+
   test("copied rows dedupe every category by boundary uuid", () => {
     const db2 = openDb(":memory:");
     const blob = JSON.stringify([

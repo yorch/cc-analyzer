@@ -976,3 +976,9 @@ export interface ErrorWeekRow {
   errors: number;
   errorRate: number;
 }
+
+/** A project needs at least this many sessions before `compaction-pressure`
+ * may fire on it (one long session in a three-session project is not a
+ * pattern). Shared so `compactionUsage()` ranks by share only among projects
+ * the rule can actually judge. */
+export const COMPACTION_MIN_SESSIONS = 5;

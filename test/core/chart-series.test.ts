@@ -234,6 +234,36 @@ describe("compaction reclaim annotation", () => {
     expect(s.markers[0]?.reclaimed).toBe(190);
   });
 
+  test("measures from the timed anchor even when the marker is drawn before an untimed call", () => {
+    const untimed = assistantEvent({
+      uuid: "x",
+      timestamp: ts(8),
+      stopReason: "end_turn",
+      usage: { input_tokens: 240, output_tokens: 1 },
+    });
+    delete (untimed as { timestamp?: string }).timestamp;
+    const a = analyzeSession(
+      [
+        prompt("u1", 0, "p"),
+        assistant("a", 5, { input_tokens: 100, output_tokens: 10 }),
+        untimed,
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: ts(12),
+          compactMetadata: { trigger: "auto", preTokens: 260 },
+        } as unknown as SessionEvent,
+        prompt("u2", 14, "q"),
+        assistant("d", 15, { input_tokens: 70, output_tokens: 10 }),
+      ],
+      pricing,
+    );
+    const s = buildContextSeries(a);
+    expect(s.points.map((p) => p.contextTokens)).toEqual([100, 240, 70]);
+    expect(s.markers[0]?.pos).toBe(1); // drawn before the untimed call
+    expect(s.markers[0]?.reclaimed).toBe(190); // 260 - d's 70, not 260 - 240
+  });
+
   test("undefined when the compaction closed the session (no call after)", () => {
     const tail = analyzeSession(
       [

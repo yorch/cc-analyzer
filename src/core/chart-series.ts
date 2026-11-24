@@ -191,7 +191,9 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
     cursor = advanceToTime(points, cursor, ms);
     const pos = markerPosition(points, cursor, floor);
     floor = pos;
-    const after = points[pos];
+    // Draw at the shifted `pos`, but measure from the timed anchor: `pos` may
+    // sit on an untimed call that predates the compaction.
+    const after = points[cursor];
     const reclaimed =
       compaction.preTokens !== undefined && after !== undefined
         ? Math.max(0, compaction.preTokens - after.contextTokens)

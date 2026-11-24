@@ -258,6 +258,36 @@ function serverMapKeys(file: Json | undefined): string[] {
   return looksLikeServers ? entries.map(([key]) => key) : [];
 }
 
+function mtimeOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/** Dotted numeric version ("v1.10.0" → [1, 10, 0]); undefined when not semver-like. */
+function versionParts(v: string): number[] | undefined {
+  const m = /^v?(\d+(?:\.\d+)*)/.exec(v);
+  return m?.[1] ? m[1].split(".").map(Number) : undefined;
+}
+
+/** True when `a` is a newer install than `b`: numeric version order, mtime otherwise. */
+function newerVersion(
+  a: { version: string; mtimeMs: number },
+  b: { version: string; mtimeMs: number },
+): boolean {
+  const pa = versionParts(a.version);
+  const pb = versionParts(b.version);
+  if (pa && pb) {
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d > 0;
+    }
+  }
+  return a.mtimeMs > b.mtimeMs;
+}
+
 function pluginAt(dir: string): PluginEntry {
   const manifest = readJson(join(dir, ".claude-plugin", "plugin.json"));
   const declared = typeof manifest?.name === "string" ? manifest.name.trim() : "";
@@ -322,23 +352,42 @@ function scanPlugins(root: string): PluginEntry[] {
   if (installed) return installed;
 
   const found = new Map<string, PluginEntry>();
+  /** Version dir backing a `found` entry that came from `cache/<mk>/<plugin>/<version>`. */
+  const versioned = new Map<string, { version: string; mtimeMs: number }>();
   let visited = 0;
 
-  const walk = (dir: string, depth: number): void => {
+  const walk = (dir: string, depth: number, segments: string[]): void => {
     if (depth > PLUGIN_SCAN_DEPTH || visited >= PLUGIN_SCAN_LIMIT) return;
     for (const name of listDirs(dir)) {
       if (SKIP_DIRS.has(name) || visited >= PLUGIN_SCAN_LIMIT) continue;
+      // Cloned catalogs hold plugins that may never have been installed.
+      if (depth === 1 && name === "marketplaces") continue;
       visited += 1;
       const child = join(dir, name);
       if (looksLikePlugin(child)) {
         const entry = pluginAt(child);
+        // `cache/<marketplace>/<plugin>/<version>`: the version dir is not the
+        // plugin's name (the <plugin> dir is; a manifest name still wins), and
+        // only the newest version of one plugin is the installed one.
+        if (depth === 4 && segments[0] === "cache") {
+          const manifest = readJson(join(child, ".claude-plugin", "plugin.json"));
+          const declared = typeof manifest?.name === "string" && manifest.name.trim().length > 0;
+          if (!declared) entry.name = segments[2] ?? entry.name;
+          const next = { version: name, mtimeMs: mtimeOf(child) };
+          const prior = versioned.get(entry.name);
+          if (!found.has(entry.name) || (prior && newerVersion(next, prior))) {
+            found.set(entry.name, entry);
+            versioned.set(entry.name, next);
+          }
+          continue;
+        }
         if (!found.has(entry.name)) found.set(entry.name, entry);
         continue; // A plugin's own subdirs are its contents, not more plugins.
       }
-      walk(child, depth + 1);
+      walk(child, depth + 1, [...segments, name]);
     }
   };
-  walk(pluginsRoot, 1);
+  walk(pluginsRoot, 1, []);
 
   // Names the older config files know about, even when no dir was recognized.
   const config = readJson(join(pluginsRoot, "config.json"));

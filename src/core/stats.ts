@@ -54,6 +54,7 @@ import type {
 } from "./stats-types.ts";
 import {
   bucketSeries,
+  COMPACTION_MIN_SESSIONS,
   localDayOfMs,
   shiftDay,
   THRASH_REREAD_MIN,
@@ -990,15 +991,21 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
     ...p,
     share: p.sessions > 0 ? p.sessionsWithCompaction / p.sessions : 0,
   }));
+  // Half the budget each, so the union never exceeds `limit`. The share half
+  // only ranks projects the rule can judge (COMPACTION_MIN_SESSIONS), or
+  // one-session share-1.0 projects would crowd out every qualifying one.
+  const countBudget = Math.ceil(limit / 2);
+  const shareBudget = Math.floor(limit / 2);
   const byCount = [...withShare]
     .sort((a, b) => b.compactions - a.compactions || a.projectId.localeCompare(b.projectId))
-    .slice(0, limit);
-  const byShare = [...withShare]
+    .slice(0, countBudget);
+  const byShare = withShare
+    .filter((p) => p.sessions >= COMPACTION_MIN_SESSIONS)
     .sort(
       (a, b) =>
         b.share - a.share || b.sessions - a.sessions || a.projectId.localeCompare(b.projectId),
     )
-    .slice(0, limit);
+    .slice(0, shareBudget);
   const keep = new Set([...byCount, ...byShare].map((p) => p.projectId));
   const byProject = withShare
     .filter((p) => keep.has(p.projectId))
