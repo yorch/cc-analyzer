@@ -30,6 +30,7 @@ import {
   sessionPathById,
   sessionRowById,
 } from "../core/queries.ts";
+import { buildSessionJsonPayload, capTranscript } from "../core/redact.ts";
 import { inspectSessionHealth } from "../core/session-health.ts";
 import { sessionWhatIf } from "../core/session-insights.ts";
 import {
@@ -63,6 +64,7 @@ import {
   whatIfRepricing,
 } from "../core/stats.ts";
 import { buildTranscript } from "../core/transcript.ts";
+import { isLoopbackHost } from "./loopback.ts";
 
 // The dashboard/insights lists are filtered client-side, so the server must
 // return more than a top-N slice (else low-spend projects vanish from the
@@ -88,13 +90,51 @@ export interface ApiDeps {
    *  connection alive through Claude Code's silent think gaps. Injectable so
    *  tests can drive it fast; defaults to 5s. */
   heartbeatMs?: number;
+  /** Whether the write-like routes (prefs write, analyze) and bulk export are
+   *  served. `runServe` passes false when bound to a non-loopback host, so a
+   *  deliberately network-exposed server stays read-only. Default: true. */
+  allowWrites?: boolean;
 }
+
+const WRITES_DISABLED_MESSAGE =
+  "This route is disabled while the server is bound to a non-loopback host; " +
+  "restart `cc-analyzer serve` on 127.0.0.1 to use it.";
 
 /** Build the JSON API (routes under `/api`). Pure over its db + pricing inputs. */
 export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {}): Hono {
   const resolveClaude = deps.resolveClaudeBinary ?? resolveClaudeBinary;
   const heartbeatMs = deps.heartbeatMs ?? 5000;
+  const allowWrites = deps.allowWrites ?? true;
   const api = new Hono();
+
+  api.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+  });
+
+  /** Gate for routes with side effects: refuse on a network-exposed server, and
+   *  (for state-changing requests) require a JSON content type and a
+   *  same-origin Origin when one is sent — a cross-site form post can do
+   *  neither. Requests with no Origin (curl, scripts) are allowed. */
+  const guardWrite = (c: Context): Response | undefined => {
+    if (!allowWrites) return c.json({ error: WRITES_DISABLED_MESSAGE }, 403);
+    if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+      return c.json({ error: "Content-Type must be application/json" }, 415);
+    }
+    const origin = c.req.header("origin");
+    if (origin !== undefined) {
+      let originHost: string | undefined;
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        originHost = undefined;
+      }
+      if (originHost === undefined || originHost !== c.req.header("host")) {
+        return c.json({ error: "cross-origin request refused" }, 403);
+      }
+    }
+    return undefined;
+  };
 
   api.get("/api/index-status", async (c) => c.json(await inspectIndexStatus(db)));
 
@@ -187,6 +227,8 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // it saves SPA callers from caring which verb to use. Each field is optional
   // so the SPA can flip the cost basis or the analysis model independently.
   api.on(["PUT", "POST"], "/api/prefs", async (c) => {
+    const refused = guardWrite(c);
+    if (refused) return refused;
     let body: unknown;
     try {
       body = await c.req.json();
@@ -447,8 +489,9 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // The outcome ratios are NOT here: `sessionOutcomes` is bun-free, so the
   // SPA derives them from this same payload.
   api.get("/api/sessions/:id", async (c) => {
-    const rawId = c.req.param("id");
-    const id = decodeURIComponent(rawId);
+    // Hono has already percent-decoded the param; decoding again would throw on
+    // a literal `%` in the id.
+    const id = c.req.param("id");
     // Indexed lookup only — Web never does direct filesystem path reads from user input (security).
     // CLI supports id|path via resolveSessionSource, but HTTP is DB-derived only to avoid arbitrary file read.
     const row = sessionRowById(db, id);
@@ -468,13 +511,13 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     capSlots("rank:", MAX_RANK_SLOTS);
     return c.json({
       ...analysis,
-      projectId: projectId!,
+      projectId,
       insights: { whatIf: sessionWhatIf(analysis.models, pricing), rank },
     });
   });
 
   api.get("/api/sessions/:id/transcript", async (c) => {
-    const rawId = decodeURIComponent(c.req.param("id"));
+    const rawId = c.req.param("id");
     const path = sessionPathById(db, rawId);
     if (!path) return c.json({ error: "session not found" }, 404);
     const parsed = await readSession(path);
@@ -505,10 +548,9 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
     const health = inspectSessionHealth(parsed.events, parsed.errors, parsed.coverage);
     const rank = sessionCostRank(db, id) ?? null;
     const costBasis = getCostBasis();
+    // The builders cap (and, when redacting, blank) the transcript themselves.
     const rawTranscript = includeTranscript ? buildTranscript(parsed.events) : undefined;
-    const transcript = rawTranscript
-      ? rawTranscript.slice(0, 600).map((t) => ({ ...t, body: t.body.slice(0, 2000) }))
-      : undefined;
+    const transcript = rawTranscript ? capTranscript(rawTranscript) : undefined;
     const base = sanitizeFilename(analysis.sessionId ?? id);
     if (format === "html") {
       const html = buildSessionHtml(analysis, {
@@ -521,35 +563,25 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
         transcript,
       });
       c.header("Content-Type", "text/html; charset=utf-8");
+      c.header(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+      );
       c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.html"`);
       return c.body(html);
     }
     if (format === "json") {
-      // SAFETY: redact strips title/path/files + caps transcript at 600/2000.
-      const redactedTranscript =
-        includeTranscript && transcript
-          ? transcript.map((t) => ({ ...t, body: redact ? "[redacted]" : t.body }))
-          : undefined;
-      const payload: Record<string, unknown> = {
-        ...analysis,
+      // One shared builder keeps web output byte-identical to the CLI/TUI.
+      const payload = buildSessionJsonPayload(analysis, {
+        redact,
+        includeTranscript,
+        transcript: rawTranscript,
+        parseErrors: parsed.errors.length,
         health,
         whatIf,
         rank,
         costBasis,
-        ...(redact
-          ? {
-              title: "[redacted]",
-              projectPath: "[redacted]",
-              filesTouched: [],
-              bashCommands: {},
-              bashErrors: {},
-              commandHeads: {},
-              commandHeadErrors: {},
-              turns: analysis.turns.map((t) => ({ ...t, prompt: "[redacted]" })),
-            }
-          : {}),
-      };
-      if (includeTranscript && redactedTranscript) payload.transcript = redactedTranscript;
+      });
       c.header("Content-Disposition", `attachment; filename="cc-analyzer-${base}.json"`);
       return c.json(payload);
     }
@@ -572,6 +604,7 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // then zips and streams as attachment. Mirrors the CLI `export` so the two
   // can't drift; the zip step uses the `zip` CLI available on macOS/Linux.
   api.get("/api/export", async (c) => {
+    if (!allowWrites) return c.json({ error: WRITES_DISABLED_MESSAGE }, 403);
     // Single-flight guard to avoid parallel large exports OOMing via /tmp + heap.
     if (isExporting) return c.json({ error: "export already in progress, try again shortly" }, 429);
     const formatRaw = c.req.query("format");
@@ -619,11 +652,7 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       c.req.query("transcript") === "1" || c.req.query("transcript") === "true";
     // Auth warning for network-exposed export (loopback-only is default; --host 0.0.0.0 disables it)
     const host = c.req.header("host") ?? "";
-    const isLoopback =
-      host.includes("127.0.0.1") ||
-      host.includes("localhost") ||
-      host.includes("::1") ||
-      host === "";
+    const isLoopback = host === "" || isLoopbackHost(host);
     if (!isLoopback) {
       console.warn(
         `export requested from non-loopback host ${host} — bulk export contains portfolio data; consider using ?redact=1 or restricting --host`,
@@ -729,6 +758,8 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
   // applies. The run is the user's own Claude Code session under their normal
   // data dir and costs real tokens, so the SPA makes it explicitly opt-in.
   api.post("/api/sessions/:id/analyze", async (c) => {
+    const refused = guardWrite(c);
+    if (refused) return refused;
     const row = sessionRowById(db, c.req.param("id"));
     if (!row) return c.json({ error: "session not found" }, 404);
     let body: unknown;
@@ -758,17 +789,24 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       // bare newline on an interval as a heartbeat: it keeps bytes flowing so
       // the connection never idles out (see `idleTimeout` in server.ts), and
       // the SPA's NDJSON reader skips blank lines, so it's inert to the client.
+      // Kill the child when the client goes away (tab closed, fetch aborted).
+      const ac = new AbortController();
+      s.onAbort(() => ac.abort());
+      const rawSignal = c.req.raw.signal;
+      if (rawSignal.aborted) ac.abort();
+      else rawSignal.addEventListener("abort", () => ac.abort(), { once: true });
       const heartbeat = setInterval(() => {
         s.write("\n").catch(() => {});
       }, heartbeatMs);
       try {
         for await (const event of runClaudeAnalysis(
-          { claudeBin, sessionPath: row.path, analysis, model, whatIf },
+          { claudeBin, sessionPath: row.path, analysis, model, whatIf, signal: ac.signal },
           { spawn: deps.spawn },
         )) {
           await s.write(`${JSON.stringify(event)}\n`);
         }
       } finally {
+        ac.abort();
         clearInterval(heartbeat);
       }
     });

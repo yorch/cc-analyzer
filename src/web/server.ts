@@ -9,6 +9,7 @@ import { loadPricing } from "../core/pricing-source.ts";
 import { isIndexEmpty } from "../core/queries.ts";
 import { injectSpaTelemetry } from "../core/telemetry.ts";
 import { createApi } from "./api.ts";
+import { isLoopbackHost } from "./loopback.ts";
 import { openBrowser } from "./open-browser.ts";
 import { hasSpa, spaHtml } from "./spa.ts";
 
@@ -22,24 +23,7 @@ export interface ServeOptions {
   open?: boolean;
 }
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1"]);
-
-/** Whether a bind address / Host name is loopback. Parses via the URL host
- *  grammar so odd IPv6 spellings and trailing ports normalize consistently. */
-export function isLoopbackHost(host: string): boolean {
-  let h = host.trim().toLowerCase();
-  // Bracket a bare IPv6 literal (multiple colons, unbracketed) — a bind address
-  // like "::1" is legal but the URL host grammar needs the brackets.
-  if (!h.startsWith("[") && (h.match(/:/g)?.length ?? 0) > 1) h = `[${h}]`;
-  let name: string;
-  try {
-    name = new URL(`http://${h}`).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  if (name.startsWith("[") && name.endsWith("]")) name = name.slice(1, -1);
-  return LOOPBACK.has(name);
-}
+export { isLoopbackHost };
 
 /**
  * Compose the full web app (Host-header guard + JSON API + SPA fallback), pure
@@ -51,6 +35,11 @@ export function createApp(
   opts: { loopbackOnly: boolean },
 ): Hono {
   const app = new Hono();
+
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+  });
 
   // DNS-rebinding defense: when serving loopback-only, reject requests whose
   // Host header is not a local name — a hostile page that re-resolves its own
@@ -66,7 +55,7 @@ export function createApp(
     });
   }
 
-  app.route("/", createApi(db, pricing));
+  app.route("/", createApi(db, pricing, { allowWrites: opts.loopbackOnly }));
 
   // Unknown API paths must fail as JSON, not fall through to the SPA HTML.
   app.get("/api/*", (c) => c.json({ error: "not found" }, 404));
@@ -137,7 +126,8 @@ export async function runServe(opts: ServeOptions = {}): Promise<number> {
     );
   }
 
-  const hostname = opts.host ?? "127.0.0.1";
+  // An empty `--host=` is "unset": fall back to loopback rather than binding all interfaces.
+  const hostname = opts.host?.trim() ? opts.host.trim() : "127.0.0.1";
   const loopbackOnly = isLoopbackHost(hostname);
   const app = createApp(db, table, { loopbackOnly });
 
@@ -158,7 +148,7 @@ export async function runServe(opts: ServeOptions = {}): Promise<number> {
   console.log(`cc-analyzer web UI: ${url}  (Ctrl-C to stop)`);
   if (!loopbackOnly) {
     console.error(
-      `warning: listening on ${hostname} — session transcripts are exposed to your network.`,
+      `warning: listening on ${hostname} — session transcripts are exposed to your network. Prefs writes, analyze and export are disabled on non-loopback hosts.`,
     );
   }
   if (opts.open) {

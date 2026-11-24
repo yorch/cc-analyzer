@@ -160,6 +160,8 @@ export function outcomeRows(o: SessionOutcomes): OutcomeRow[] {
   return rows;
 }
 
+const MIN_ACTIVE_MS_FOR_RATE = 60_000;
+
 /** Derive the cost-per-outcome ratios from a finished analysis. */
 export function sessionOutcomes(a: SessionAnalysis): SessionOutcomes {
   const cost = a.totals.cost.total;
@@ -169,7 +171,11 @@ export function sessionOutcomes(a: SessionAnalysis): SessionOutcomes {
     costPerTurn: ratio(a.totals.turns),
     costPerFileTouched: ratio(a.filesTouched.length),
     costPerTestRun: ratio(a.testRuns),
-    costPerActiveHour: ratio(a.totals.activeMs / 3_600_000),
+    // A sub-minute active span would extrapolate to an absurd hourly rate.
+    costPerActiveHour:
+      a.totals.activeMs >= MIN_ACTIVE_MS_FOR_RATE
+        ? ratio(a.totals.activeMs / 3_600_000)
+        : undefined,
     filesTouched: a.filesTouched.length,
     testRuns: a.testRuns,
   };

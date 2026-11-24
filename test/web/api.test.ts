@@ -689,3 +689,68 @@ describe("/api/prefs analysisModel", () => {
     });
   });
 });
+
+describe("write-route guards", () => {
+  const put = (
+    a: ReturnType<typeof createApi>,
+    headers: Record<string, string>,
+    path = "/api/prefs",
+  ) =>
+    a.request(path, {
+      method: path === "/api/prefs" ? "PUT" : "POST",
+      headers,
+      body: JSON.stringify({ costBasis: "api" }),
+    });
+
+  test("non-loopback (allowWrites false) 403s prefs write, analyze, and export", async () => {
+    const local = createApi(db, pricing, {
+      allowWrites: false,
+      resolveClaudeBinary: () => "/x/claude",
+    });
+    const json = { "content-type": "application/json" };
+    expect((await put(local, json)).status).toBe(403);
+    expect((await put(local, json, "/api/sessions/sess-1/analyze")).status).toBe(403);
+    expect((await local.request("/api/export")).status).toBe(403);
+    expect((await local.request("/api/prefs")).status).toBe(200); // reads stay open
+  });
+
+  test("createApp wires allowWrites from loopbackOnly", async () => {
+    const app = createApp(db, pricing, { loopbackOnly: false });
+    const res = await app.request("/api/export");
+    expect(res.status).toBe(403);
+  });
+
+  test("rejects a non-JSON content type", async () => {
+    await withStateDir(async () => {
+      const res = await put(api, { "content-type": "text/plain" });
+      expect(res.status).toBe(415);
+      expect(getCostBasis()).toBe("api");
+    });
+  });
+
+  test("rejects a cross-origin Origin, accepts same-origin and absent Origin", async () => {
+    await withStateDir(async () => {
+      const base = { "content-type": "application/json", host: "localhost:4317" };
+      expect((await put(api, { ...base, origin: "http://evil.example" })).status).toBe(403);
+      expect((await put(api, { ...base, origin: "http://localhost:4317" })).status).toBe(200);
+      expect((await put(api, base)).status).toBe(200);
+    });
+  });
+});
+
+describe("response hardening and id decoding", () => {
+  test("a literal percent in a session id 404s instead of 500", async () => {
+    for (const p of ["/api/sessions/%25", "/api/sessions/%25/transcript"]) {
+      const res = await api.request(p);
+      expect(res.status).toBe(404);
+    }
+  });
+
+  test("API responses carry nosniff; report HTML carries a CSP", async () => {
+    const res = await api.request("/api/prefs");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    const html = await api.request("/api/sessions/sess-1/report?format=html");
+    expect(html.status).toBe(200);
+    expect(html.headers.get("content-security-policy")).toContain("default-src 'none'");
+  });
+});

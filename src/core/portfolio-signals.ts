@@ -50,6 +50,7 @@ export function assemblePortfolioSignals(
   const today = localDayOfMs(Date.now());
   const rollup = opts.rollup ?? analyticsRollup(db);
   return {
+    today,
     stats: buildPortfolioStats(db, today),
     rollup,
     cache: {
