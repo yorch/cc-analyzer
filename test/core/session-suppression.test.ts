@@ -50,6 +50,8 @@ const FIXTURE = readFileSync(
   fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url)),
   "utf8",
 );
+// chmod 000 does not stop root, so tests that rely on an unreadable file skip as uid 0.
+const skipAsRoot = process.getuid?.() === 0;
 const PROJECT = "-Users-dev-proj";
 const SESSION = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -375,19 +377,22 @@ describe("redundancy: a copy is dropped only when another holds all of its conte
     expect(await isRedundant(await discover(a), await discover(b))).toBe(true);
   });
 
-  test("any I/O error means NOT redundant: an unreadable winner keeps both copies", async () => {
-    file(a, transcript());
-    file(b, transcript());
-    const winner = join(b, "projects", PROJECT, `${SESSION}.jsonl`);
-    chmodSync(winner, 0o000);
-    try {
-      expect(await isRedundant(await discover(a), await discover(b))).toBe(false);
-    } finally {
-      chmodSync(winner, 0o644);
-    }
-    expect(await fileCoveredBy(join(a, "gone.jsonl"), winner)).toBe(false);
-    expect(await fileCoveredBy(winner, join(a, "gone.jsonl"))).toBe(false);
-  });
+  test.skipIf(skipAsRoot)(
+    "any I/O error means NOT redundant: an unreadable winner keeps both copies",
+    async () => {
+      file(a, transcript());
+      file(b, transcript());
+      const winner = join(b, "projects", PROJECT, `${SESSION}.jsonl`);
+      chmodSync(winner, 0o000);
+      try {
+        expect(await isRedundant(await discover(a), await discover(b))).toBe(false);
+      } finally {
+        chmodSync(winner, 0o644);
+      }
+      expect(await fileCoveredBy(join(a, "gone.jsonl"), winner)).toBe(false);
+      expect(await fileCoveredBy(winner, join(a, "gone.jsonl"))).toBe(false);
+    },
+  );
 
   test("only the tail window is compared: a prefix of a huge file passes, a fork inside the window fails", async () => {
     const line = (n: number) => `${JSON.stringify({ n, pad: "x".repeat(80) })}\n`;
@@ -848,25 +853,28 @@ describe("lookups and retained archive roots with several surviving copies", () 
     expect(found?.root).toBe(live.path);
   });
 
-  test("N8: an unreadable ARCHIVE root is not a live copy: another archive's copy is not hidden by it", async () => {
-    put(archived(MACHINE_A), transcript(), 1_700_000_900);
-    put(archived(MACHINE_B), transcript(), 1_700_000_100);
-    rmSync(liveSession());
-    await run();
-    expect(rows().map((r) => r.path)).toEqual([archived(MACHINE_A)]);
-    const before = total();
-    const hidden = join(repo, "machines", MACHINE_A, "roots", live.slug, "projects");
-    chmodSync(hidden, 0o000);
-    try {
+  test.skipIf(skipAsRoot)(
+    "N8: an unreadable ARCHIVE root is not a live copy: another archive's copy is not hidden by it",
+    async () => {
+      put(archived(MACHINE_A), transcript(), 1_700_000_900);
+      put(archived(MACHINE_B), transcript(), 1_700_000_100);
+      rmSync(liveSession());
       await run();
-    } finally {
-      chmodSync(hidden, 0o755);
-    }
-    // A's row is retained while its root cannot be listed; B's copy is visible
-    // again and gets a row, without the session's cost being counted twice.
-    expect(rows().map((r) => r.path)).toEqual([archived(MACHINE_A), archived(MACHINE_B)]);
-    expect(total()).toBeCloseTo(before, 10);
-  });
+      expect(rows().map((r) => r.path)).toEqual([archived(MACHINE_A)]);
+      const before = total();
+      const hidden = join(repo, "machines", MACHINE_A, "roots", live.slug, "projects");
+      chmodSync(hidden, 0o000);
+      try {
+        await run();
+      } finally {
+        chmodSync(hidden, 0o755);
+      }
+      // A's row is retained while its root cannot be listed; B's copy is visible
+      // again and gets a row, without the session's cost being counted twice.
+      expect(rows().map((r) => r.path)).toEqual([archived(MACHINE_A), archived(MACHINE_B)]);
+      expect(total()).toBeCloseTo(before, 10);
+    },
+  );
 });
 
 describe("a survivor's re-ingest debt is persisted until it is paid", () => {
@@ -896,39 +904,42 @@ describe("a survivor's re-ingest debt is persisted until it is paid", () => {
     return { good: good as { calls: number; cost: number }, archivePath };
   }
 
-  test("FAIL: the survivor's analysis fails in the healing run, and a later run still heals it", async () => {
-    // Shape U1 mirrored: the LIVE row owns the claims, the archive row is at $0.
-    await archiveSessions([live]);
-    await run();
-    const [good] = rows();
-    const archivePath = archived(me());
-    const archiveRoot = (await listArchiveRoots())[0] as ClaudeRoot;
-    const st = statSync(archivePath);
-    db.query("CREATE TEMP TABLE dup AS SELECT * FROM sessions").run();
-    db.query(
-      "UPDATE dup SET path = ?, claude_dir = ?, mtime_ms = ?, size_bytes = ?, api_calls = 0, cost_total = 0, cost_input = 0, cost_output = 0, cost_cache_write = 0, cost_cache_read = 0",
-    ).run(archivePath, archiveRoot.path, st.mtimeMs, st.size);
-    db.query("INSERT INTO sessions SELECT * FROM dup").run();
-    // The live file goes away, but the archived survivor is unreadable during the run.
-    rmSync(liveSession());
-    chmodSync(archivePath, 0o000);
-    try {
-      const result = await run();
-      expect(result.deleted).toBe(1);
-      expect(rows().map((r) => [r.path, r.cost])).toEqual([[archivePath, 0]]);
-      // A permanently unreadable file keeps the debt through every failing run.
+  test.skipIf(skipAsRoot)(
+    "FAIL: the survivor's analysis fails in the healing run, and a later run still heals it",
+    async () => {
+      // Shape U1 mirrored: the LIVE row owns the claims, the archive row is at $0.
+      await archiveSessions([live]);
       await run();
-      expect(debtKeys()).toBe(1);
-    } finally {
-      chmodSync(archivePath, 0o644);
-    }
-    // `--check` is NOT fresh: the debt was persisted although (size, mtime) never changed.
-    const status = await inspectIndexStatus(db, Date.now(), [live]);
-    expect(status).toMatchObject({ changed: 1, stale: true });
-    await converge();
-    expect(rows()[0]?.calls).toBe(good?.calls as number);
-    expect(rows()[0]?.cost).toBeCloseTo(good?.cost as number, 10);
-  });
+      const [good] = rows();
+      const archivePath = archived(me());
+      const archiveRoot = (await listArchiveRoots())[0] as ClaudeRoot;
+      const st = statSync(archivePath);
+      db.query("CREATE TEMP TABLE dup AS SELECT * FROM sessions").run();
+      db.query(
+        "UPDATE dup SET path = ?, claude_dir = ?, mtime_ms = ?, size_bytes = ?, api_calls = 0, cost_total = 0, cost_input = 0, cost_output = 0, cost_cache_write = 0, cost_cache_read = 0",
+      ).run(archivePath, archiveRoot.path, st.mtimeMs, st.size);
+      db.query("INSERT INTO sessions SELECT * FROM dup").run();
+      // The live file goes away, but the archived survivor is unreadable during the run.
+      rmSync(liveSession());
+      chmodSync(archivePath, 0o000);
+      try {
+        const result = await run();
+        expect(result.deleted).toBe(1);
+        expect(rows().map((r) => [r.path, r.cost])).toEqual([[archivePath, 0]]);
+        // A permanently unreadable file keeps the debt through every failing run.
+        await run();
+        expect(debtKeys()).toBe(1);
+      } finally {
+        chmodSync(archivePath, 0o644);
+      }
+      // `--check` is NOT fresh: the debt was persisted although (size, mtime) never changed.
+      const status = await inspectIndexStatus(db, Date.now(), [live]);
+      expect(status).toMatchObject({ changed: 1, stale: true });
+      await converge();
+      expect(rows()[0]?.calls).toBe(good?.calls as number);
+      expect(rows()[0]?.cost).toBeCloseTo(good?.cost as number, 10);
+    },
+  );
 
   test("RETAIN-UPGRADE: the live root is unmounted during the healing run, then comes back", async () => {
     const { good } = await mainEraDuplicates();
@@ -988,7 +999,6 @@ function distinctCallsOnDisk(): number {
 const runSerial = () => reindex(db, { pricing: samplePricing, roots: [live], concurrency: 1 });
 const debtKeys = () =>
   (db.query("SELECT COUNT(*) AS n FROM reanalyze_keys").get() as { n: number }).n;
-const skipAsRoot = process.getuid?.() === 0;
 
 describe("the usage ledger never double-counts and heals what a file shed", () => {
   test.skipIf(skipAsRoot)(
