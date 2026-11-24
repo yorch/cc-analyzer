@@ -32,12 +32,12 @@ import type {
 
 export type { SetupInventory } from "./setup-audit.ts";
 
-/** Depth cap for the plugin walk: real layouts nest at most repos/<owner>/<plugin>. */
-const PLUGIN_SCAN_DEPTH = 3;
+/** Depth cap for the plugin walk: real layouts nest at most cache/<marketplace>/<plugin>/<version>. */
+const PLUGIN_SCAN_DEPTH = 4;
 /** Hard cap on directories visited while hunting for plugins. */
 const PLUGIN_SCAN_LIMIT = 500;
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "cache", ".cache"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".cache"]);
 
 type Json = Record<string, unknown>;
 
@@ -270,14 +270,57 @@ function pluginAt(dir: string): PluginEntry {
 }
 
 /**
- * Best-effort plugin discovery. The on-disk layout has changed across Claude
- * Code versions (`plugins/repos/<owner>/<plugin>`, `plugins/marketplaces/...`,
- * or plugins sitting directly under `plugins/`), so instead of hard-coding one
- * shape this walks a few levels down and takes every dir that looks like a
- * plugin, then folds in any names the JSON config files mention.
+ * Plugins Claude Code itself records as installed, from
+ * `plugins/installed_plugins.json`. Current shape:
+ * `{ version, plugins: { "name@marketplace": [{ scope, installPath, version }] } }`
+ * (an entry may also be a bare object, or a list of names in older files).
+ * Returns `undefined` when the file is absent or has no usable `plugins` map,
+ * so callers fall back to walking the directory tree. Never throws.
+ */
+function installedPlugins(pluginsRoot: string): PluginEntry[] | undefined {
+  const file = readJson(join(pluginsRoot, "installed_plugins.json"));
+  const map = file?.plugins;
+  if (!isObject(map)) return undefined;
+  const out: PluginEntry[] = [];
+  for (const [key, entry] of Object.entries(map)) {
+    // "name@marketplace" → "name"; an entry's own fields are never names.
+    const fallback = key.includes("@") ? key.slice(0, key.indexOf("@")) : key;
+    if (fallback.length === 0) continue;
+    const records = Array.isArray(entry) ? entry : [entry];
+    let entryFound: PluginEntry | undefined;
+    for (const rec of records) {
+      const installPath =
+        isObject(rec) && typeof rec.installPath === "string" ? rec.installPath : undefined;
+      if (installPath && exists(installPath)) {
+        const at = pluginAt(installPath);
+        // Prefer the key's name over the directory name (a version dir like
+        // "1.0.0" is not a plugin name); a manifest-declared name still wins.
+        const manifest = readJson(join(installPath, ".claude-plugin", "plugin.json"));
+        const declared = typeof manifest?.name === "string" && manifest.name.trim().length > 0;
+        entryFound = declared ? at : { ...at, name: fallback };
+        break;
+      }
+    }
+    out.push(entryFound ?? { name: fallback, skills: [], agents: [], mcpServers: [] });
+  }
+  return out.sort(byName);
+}
+
+/**
+ * Plugin discovery. `installed_plugins.json` is the authority for what is
+ * *installed* when present: `plugins/marketplaces/*` holds cloned catalogs of
+ * plugins that may never have been installed, and walking them would report
+ * those as installed (and then as unused). Without that file the layout is
+ * guessed by walking a few levels down for dirs that look like plugins
+ * (`plugins/repos/<owner>/<plugin>`, `plugins/cache/<mk>/<plugin>/<version>`,
+ * plugins directly under `plugins/`), then folding in names the older JSON
+ * config files mention.
  */
 function scanPlugins(root: string): PluginEntry[] {
   const pluginsRoot = join(root, "plugins");
+  const installed = installedPlugins(pluginsRoot);
+  if (installed) return installed;
+
   const found = new Map<string, PluginEntry>();
   let visited = 0;
 
@@ -297,10 +340,9 @@ function scanPlugins(root: string): PluginEntry[] {
   };
   walk(pluginsRoot, 1);
 
-  // Names the config files know about, even when no dir was recognized.
-  for (const file of ["config.json", "installed_plugins.json"]) {
-    const config = readJson(join(pluginsRoot, file));
-    if (!config) continue;
+  // Names the older config files know about, even when no dir was recognized.
+  const config = readJson(join(pluginsRoot, "config.json"));
+  if (config) {
     for (const field of ["installedPlugins", "plugins", "repositories"]) {
       const value = config[field];
       if (!isObject(value)) continue;

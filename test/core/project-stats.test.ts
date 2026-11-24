@@ -156,6 +156,35 @@ describe("compaction rollups (schema v7)", () => {
     expect(p1?.share).toBeCloseTo(0.5, 10);
   });
 
+  test("byProject keeps a small high-share project beyond the top-N by count, with claudeDir", () => {
+    const db2 = openDb(":memory:");
+    // Three big projects (many compactions, low share) crowd a limit of 3.
+    for (const id of ["big1", "big2", "big3"]) {
+      for (let i = 0; i < 10; i++) {
+        insertSession(db2, {
+          path: `/${id}/${i}.jsonl`,
+          project_id: id,
+          claude_dir: "/root-a",
+          compactions: i === 0 ? 20 : 0,
+        });
+      }
+    }
+    // One tiny project where every session compacts once.
+    for (let i = 0; i < 5; i++) {
+      insertSession(db2, {
+        path: `/small/${i}.jsonl`,
+        project_id: "small",
+        claude_dir: "/root-b",
+        compactions: 1,
+      });
+    }
+    const u = compactionUsage(db2, 3);
+    const small = u.byProject.find((p) => p.projectId === "small");
+    expect(small?.share).toBe(1);
+    expect(small?.claudeDir).toBe("/root-b");
+    expect(u.byProject.find((p) => p.projectId === "big1")?.claudeDir).toBe("/root-a");
+  });
+
   test("copied rows dedupe every category by boundary uuid", () => {
     const db2 = openDb(":memory:");
     const blob = JSON.stringify([

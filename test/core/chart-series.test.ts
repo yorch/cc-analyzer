@@ -301,6 +301,32 @@ describe("projectHeadroom", () => {
 });
 
 describe("buildGapMarkers", () => {
+  test("untimed points do not push a marker past the gap's anchor point", () => {
+    const pt = (ms?: number) => ({
+      ...(ms !== undefined ? { ms } : {}),
+      cost: 0,
+      sidechainCost: 0,
+      callCost: 0,
+      isSidechain: false,
+    });
+    // timed 0, untimed, untimed, timed 10_000: a gap ending at 5_000 anchors at
+    // index 3 (first timed point at/after it), drawn before the untimed run.
+    const points = [pt(0), pt(), pt(), pt(10_000)];
+    expect(buildGapMarkers(points, [{ startMs: 0, durationMs: 5_000 }])).toEqual([
+      { pos: 1, durationMs: 5_000 },
+    ]);
+    // Markers stay ordered and never cross a previous marker.
+    const two = buildGapMarkers(points, [
+      { startMs: 0, durationMs: 5_000 },
+      { startMs: 5_000, durationMs: 4_000 },
+    ]);
+    expect(two.map((g) => g.pos)).toEqual([1, 1]);
+    // No timed point at/after the end: marker sits before the trailing untimed run.
+    expect(buildGapMarkers([pt(0), pt()], [{ startMs: 0, durationMs: 9_000 }])).toEqual([
+      { pos: 1, durationMs: 9_000 },
+    ]);
+  });
+
   test("places the analyzer's idle periods on the call after each gap", () => {
     const idle = analyzeSession(
       [

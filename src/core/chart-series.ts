@@ -186,18 +186,17 @@ export function buildContextSeries(analysis: SessionAnalysis): ContextSeries {
     .filter((c) => !Number.isNaN(c.ms))
     .sort((a, b) => a.ms - b.ms);
   let cursor = 0;
+  let floor = 0;
   for (const { compaction, ms } of timed) {
-    while (cursor < points.length) {
-      const pms = points[cursor]?.ms;
-      if (pms !== undefined && pms >= ms) break;
-      cursor++;
-    }
-    const after = points[cursor];
+    cursor = advanceToTime(points, cursor, ms);
+    const pos = markerPosition(points, cursor, floor);
+    floor = pos;
+    const after = points[pos];
     const reclaimed =
       compaction.preTokens !== undefined && after !== undefined
         ? Math.max(0, compaction.preTokens - after.contextTokens)
         : undefined;
-    markers.push({ pos: cursor, compaction, ...(reclaimed !== undefined ? { reclaimed } : {}) });
+    markers.push({ pos, compaction, ...(reclaimed !== undefined ? { reclaimed } : {}) });
   }
   return { points, markers, peakTokens, contextLimit };
 }
@@ -478,6 +477,34 @@ export interface BurnGap {
 }
 
 /**
+ * Index of the first TIMED point at or after `ms` (points.length when none),
+ * scanning from `from`. Untimed points carry no time evidence, so they never
+ * decide where the scan stops.
+ */
+function advanceToTime(points: { ms?: number }[], from: number, ms: number): number {
+  let i = from;
+  while (i < points.length) {
+    const pms = points[i]?.ms;
+    if (pms !== undefined && pms >= ms) break;
+    i++;
+  }
+  return i;
+}
+
+/**
+ * Where a marker anchored at timed index `at` is drawn: an untimed run
+ * directly before that point sits between the last earlier timed point and
+ * it, so the marker goes before the run rather than being pushed past points
+ * that may belong after it. Never moves left of `floor` (the previous
+ * marker), so markers stay ordered.
+ */
+function markerPosition(points: { ms?: number }[], at: number, floor: number): number {
+  let pos = at;
+  while (pos > floor && points[pos - 1]?.ms === undefined) pos--;
+  return pos;
+}
+
+/**
  * The analyzer's `idlePeriods` placed on a burn series — where "6h wall,
  * 40min active" hides. The periods come from `analyze.ts` (gaps between ALL
  * event timestamps, > `ACTIVE_GAP_MS`), so a chart's "idle" total is exactly
@@ -488,14 +515,12 @@ export function buildGapMarkers(points: BurnPoint[], idlePeriods: IdlePeriod[]):
   // One cursor pass: points are time-ordered (buildBurnSeries sorts) and so
   // are the idle periods.
   let cursor = 0;
+  let floor = 0;
   return idlePeriods.map((idle) => {
-    const endMs = idle.startMs + idle.durationMs;
-    while (cursor < points.length) {
-      const ms = points[cursor]?.ms;
-      if (ms !== undefined && ms >= endMs) break;
-      cursor++;
-    }
-    return { pos: cursor, durationMs: idle.durationMs };
+    cursor = advanceToTime(points, cursor, idle.startMs + idle.durationMs);
+    const pos = markerPosition(points, cursor, floor);
+    floor = pos;
+    return { pos, durationMs: idle.durationMs };
   });
 }
 
