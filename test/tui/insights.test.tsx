@@ -5,7 +5,7 @@ import { openDb } from "../../src/core/db.ts";
 import { InsightsView } from "../../src/tui/screens/InsightsView.tsx";
 import { cheapPricing, flatPricing, samplePricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
-import { waitForFrame } from "../helpers/tui.ts";
+import { waitForFrame, writeUntil } from "../helpers/tui.ts";
 
 function insert(
   db: Database,
@@ -38,7 +38,6 @@ beforeAll(() => {
 });
 
 const noop = () => {};
-const settle = () => new Promise((r) => setTimeout(r, 30));
 
 describe("InsightsView", () => {
   test("ranks projects by waste and previews the leader's breakdown", async () => {
@@ -74,9 +73,8 @@ describe("InsightsView", () => {
       />,
     );
     await waitForFrame(lastFrame, "/p/leaky"); // ranked list rendered before drilling
-    await settle(); // let the list register its input handler
-    stdin.write("\r"); // drill into the top project (p-leaky)
-    await waitForFrame(lastFrame, "leaky-1");
+    // drill into the top project (p-leaky); retried until the list's input handler is live
+    await writeUntil(stdin, "\r", lastFrame, "leaky-1");
     expect(lastFrame() ?? "").toContain("leaky-1"); // its session now listed
     unmount();
   });
@@ -103,9 +101,8 @@ describe("InsightsView", () => {
     );
     await waitForFrame(lastFrame, "/p/many-0");
     expect(lastFrame() ?? "").not.toContain("/p/needle"); // off the first page
-    await settle();
-    stdin.write("needle"); // type-to-filter
-    await waitForFrame(lastFrame, "/p/needle");
+    // type-to-filter; retried until the list's input handler is live
+    await writeUntil(stdin, "needle", lastFrame, "/p/needle");
     expect(lastFrame() ?? "").toContain("/p/needle");
     unmount();
     wide.close();

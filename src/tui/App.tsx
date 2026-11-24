@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { truncate } from "../cli/format.ts";
 import type { IndexStatus } from "../core/index-status-types.ts";
 import { INDEX_AGE_WARNING_MS } from "../core/index-status-types.ts";
@@ -61,6 +61,10 @@ const RAIL: NavEntry[] = [
   { key: "trends", label: "trends", icon: "∿" },
   { key: "tools", label: "tools", icon: "⚒" },
 ];
+
+// Kept mounted (display: none) under overlays: memoized so search keystrokes,
+// which re-render App, don't re-render a possibly huge session tree.
+const MemoSessionDetail = memo(SessionDetailScreen);
 
 export function App({ db, pricing, indexStatus }: Props) {
   const projects = useMemo(() => listIndexedProjects(db), [db]);
@@ -123,6 +127,7 @@ export function App({ db, pricing, indexStatus }: Props) {
   const [drill, setDrill] = useState<IndexedProject | null>(null);
   const [drillSessions, setDrillSessions] = useState<IndexedSession[]>([]);
   const [openSession, setOpenSession] = useState<IndexedSession | null>(null);
+  const closeSession = useCallback(() => setOpenSession(null), []);
   const [help, setHelp] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
@@ -230,14 +235,14 @@ export function App({ db, pricing, indexStatus }: Props) {
   const overlayOpen = help || searchOpen;
   const sessionScreen = openSession ? (
     <Box flexDirection="column" padding={1} display={overlayOpen ? "none" : "flex"}>
-      <SessionDetailScreen
+      <MemoSessionDetail
         key={openSession.path}
         session={openSession}
         pricing={pricing}
         isActive={!overlayOpen}
         columns={columns}
         rows={rows}
-        onBack={() => setOpenSession(null)}
+        onBack={closeSession}
       />
     </Box>
   ) : null;

@@ -51,3 +51,32 @@ export function waitForFrameGone(
 ): Promise<void> {
   return waitForFrame(lastFrame, (frame) => !matches(frame, match), opts);
 }
+
+/**
+ * Write `data` to stdin until the frame satisfies `match`. A key written
+ * before a component's `useInput` effect has registered is dropped, so the
+ * write is retried (the predicate is checked first, so it never repeats once
+ * the key has landed and rendered).
+ */
+export async function writeUntil(
+  stdin: { write: (data: string) => void },
+  data: string,
+  lastFrame: Frame,
+  match: FrameMatch,
+  opts: WaitOptions & { retryEvery?: number } = {},
+): Promise<void> {
+  const { retryEvery = 100, timeout = 3000, interval = 5 } = opts;
+  const start = Date.now();
+  let lastWrite = -Infinity;
+  while (!matches(lastFrame() ?? "", match)) {
+    const now = Date.now();
+    if (now - start >= timeout) {
+      throw new Error(`writeUntil: frame never matched.\nLast frame:\n${lastFrame() ?? "(none)"}`);
+    }
+    if (now - lastWrite >= retryEvery) {
+      stdin.write(data);
+      lastWrite = now;
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}

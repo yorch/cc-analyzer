@@ -277,7 +277,7 @@ function SessionExport({ id }: { id: string }) {
  * the run is a real (billable) Claude Code session.
  */
 function SessionClaude({ id }: { id: string }) {
-  const prefs = useAsync(() => api.prefs(), [], "prefs");
+  const prefs = useAsync(() => api.prefs(), []);
   const [model, setModel] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [output, setOutput] = useState("");

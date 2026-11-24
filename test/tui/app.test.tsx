@@ -10,7 +10,7 @@ import { INDEXED_COST_CAVEAT } from "../../src/core/stats-types.ts";
 import { App } from "../../src/tui/App.tsx";
 import { tempClaudeDir } from "../helpers/claude-dir.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
-import { waitForFrame, waitForFrameGone } from "../helpers/tui.ts";
+import { waitForFrame, waitForFrameGone, writeUntil } from "../helpers/tui.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/sample-session.jsonl", import.meta.url));
 let claude: ReturnType<typeof tempClaudeDir>;
@@ -85,12 +85,8 @@ describe("App (smoke render)", () => {
     await waitForFrame(lastFrame, "switch view");
     stdin.write("3"); // sessions
     await waitForFrame(lastFrame, "Add hello function");
-    await new Promise((r) => setTimeout(r, 30));
-    stdin.write("\r"); // open the session
-    await waitForFrame(lastFrame, "turns");
-    await new Promise((r) => setTimeout(r, 50));
-    stdin.write("t"); // transcript mode
-    await waitForFrame(lastFrame, "esc turns");
+    await writeUntil(stdin, "\r", lastFrame, "t read turn"); // open the session (detail footer)
+    await writeUntil(stdin, "t", lastFrame, "esc turns"); // transcript mode
     stdin.write("/");
     await waitForFrame(lastFrame, "Open session by ID or path");
     expect(lastFrame() ?? "").not.toContain("esc turns");

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
 import {
@@ -77,6 +77,14 @@ export function InsightsView(props: Props) {
     const timer = setTimeout(() => setSignals(assemblePortfolioSignals(db, pricing)), 0);
     return () => clearTimeout(timer);
   }, [db, pricing]);
+  // The body registers its own input once loaded; until then esc must still
+  // leave the screen (global quit is ctrl-c, which Ink handles itself).
+  useInput(
+    (_input, key) => {
+      if (key.escape) props.onBack();
+    },
+    { isActive: props.isActive && !signals },
+  );
   if (!signals) return <Text color={role.muted}>Loading insights…</Text>;
   return <InsightsBody {...props} signals={signals} />;
 }

@@ -67,7 +67,7 @@ export function Insights() {
   // Cost basis is a preference, not an insight: fetch it from the tiny
   // `/api/prefs` endpoint rather than pulling the whole portfolio payload in
   // just to frame the dollar tables below.
-  const costBasis = useAsync(() => api.prefs(), [], "prefs").data?.costBasis;
+  const costBasis = useAsync(() => api.prefs(), []).data?.costBasis;
   const framingNote = costBasis ? costFramingNote(costBasis) : undefined;
   const [query, setQuery] = useHashParam<string>("q", "");
   const q = query.toLowerCase();
