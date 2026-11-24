@@ -11,10 +11,12 @@ import {
   TRANSCRIPT_MAX_BODY_CHARS,
   TRANSCRIPT_MAX_ITEMS,
 } from "../../src/core/redact.ts";
+import { buildSessionHtml, buildSessionMarkdown } from "../../src/core/session-markdown.ts";
 import type { TranscriptItem } from "../../src/core/transcript.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 
 const CANARY = "CANARY";
+type TurnStepLike = SessionAnalysis["turns"][number]["apiCalls"][number]["steps"][number];
 
 async function baseAnalysis(): Promise<SessionAnalysis> {
   const text = await Bun.file(new URL("../fixtures/sample-session.jsonl", import.meta.url)).text();
@@ -215,5 +217,67 @@ describe("buildSessionJsonPayload", () => {
     const a = await baseAnalysis();
     buildSessionJsonPayload(a, { redact: true });
     expect(a.title).toBe("a title");
+  });
+});
+
+describe("user-authored config names", () => {
+  const MCP = "acme-payroll-db";
+  const AGENT = "acme-secret-agent";
+  const BOGUS = "bogus-trigger-acme-xyz";
+
+  async function leaky(): Promise<SessionAnalysis> {
+    const a = await baseAnalysis();
+    const tool = `mcp__${MCP}__query`;
+    a.tools = { ...a.tools, [tool]: 3 };
+    a.toolErrors = { ...a.toolErrors, [tool]: 1 };
+    a.retriesByTool = { ...a.retriesByTool, [tool]: 1 };
+    const t0 = a.turns[0];
+    if (t0) {
+      t0.toolCounts = { ...t0.toolCounts, [tool]: 2 };
+      t0.apiCalls[0]?.steps.push({
+        kind: "tool",
+        tool,
+        label: tool,
+      } as unknown as TurnStepLike);
+    }
+    a.subagents = ["Explore", AGENT];
+    a.sidechainBursts = [
+      { subagentType: AGENT, agentId: "a1", apiCalls: 1, cost: 1, tokens: a.totals.tokens },
+      { subagentType: "Explore", agentId: "a2", apiCalls: 1, cost: 1, tokens: a.totals.tokens },
+    ];
+    a.compactions = [{ timestamp: "2026-07-01T10:00:00.000Z", uuid: "c1", trigger: BOGUS }];
+    a.stopReasons = { end_turn: 1, [BOGUS]: 1 };
+    a.permissionModes = { default: 1, [BOGUS]: 1 };
+    a.versions = ["2.1.0", BOGUS];
+    return a;
+  }
+
+  test("none survive in JSON, markdown or HTML; stable aliases; allowlisted enums kept", async () => {
+    const a = await leaky();
+    const r = redactAnalysis(a);
+    expect(r.tools["mcp__mcp-server-1__query"]).toBe(3);
+    expect(r.toolErrors["mcp__mcp-server-1__query"]).toBe(1);
+    expect(r.turns[0]?.toolCounts["mcp__mcp-server-1__query"]).toBe(2);
+    expect(r.subagents).toEqual(["Explore", "agent-1"]);
+    expect(r.sidechainBursts.map((b) => b.subagentType)).toEqual(["agent-1", "Explore"]);
+    expect(r.compactions[0]?.trigger).toBe(REDACTED);
+    expect(Object.keys(r.stopReasons).sort()).toEqual([REDACTED, "end_turn"].sort());
+    expect(Object.keys(r.permissionModes).sort()).toEqual([REDACTED, "default"].sort());
+    expect(r.versions).toEqual(["2.1.0", REDACTED]);
+    const outputs = [
+      JSON.stringify(buildSessionJsonPayload(a, { redact: true })),
+      buildSessionMarkdown(a, { redact: true }),
+      buildSessionHtml(a, { redact: true }),
+    ];
+    for (const out of outputs) {
+      for (const leak of [MCP, AGENT, BOGUS]) expect(out).not.toContain(leak);
+    }
+  });
+
+  test("built-in agent types and auto trigger survive", async () => {
+    const a = await baseAnalysis();
+    const r = redactAnalysis(a);
+    expect(r.subagents).toEqual(["Explore"]);
+    expect(r.compactions[0]?.trigger).toBe("auto");
   });
 });

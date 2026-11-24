@@ -294,6 +294,19 @@ describe("buildSessionDiagnostics · idle-cache-rewrite precision", () => {
     ).toBeUndefined();
   });
 
+  test("TTL keys off the last call that wrote cache, not a read-only call in between", () => {
+    expect(
+      find([
+        prompt("u1", 0),
+        oneHour("a1", 0, 5_000),
+        prompt("u2", 30),
+        oneHour("a2", 30, 0, 5_000), // read-only: writes nothing, cache still 1h
+        prompt("u3", 45),
+        oneHour("a3", 45, 2_000),
+      ]),
+    ).toBeUndefined();
+  });
+
   test("a gap past the 1h TTL counts", () => {
     const d = find([
       prompt("u1", 0),

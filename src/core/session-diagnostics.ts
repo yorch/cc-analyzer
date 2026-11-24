@@ -173,15 +173,23 @@ export function buildSessionDiagnostics(analysis: SessionAnalysis): SessionDiagn
   let rewriteCount = 0;
   let rewriteTokens = 0;
   let firstRewriteTurn: number | undefined;
-  for (let i = 1; i < calls.length; i++) {
+  // Most recent main-chain call that wrote cache: its TTL governs the cache the
+  // next call finds (a pure read-only call in between writes nothing, so it must
+  // not reset the TTL back to the 5m default).
+  let lastWriter: TimedCall | undefined;
+  for (let i = 0; i < calls.length; i++) {
     const previous = calls[i - 1];
     const current = calls[i];
-    if (!previous || !current) continue;
-    // The cache that could have expired is the one the previous call left
-    // behind: a 1h write keeps it alive for an hour, a 5m write for five minutes.
-    const prevTokens = previous.call.tokens;
+    if (!current) continue;
+    const priorWriter = lastWriter;
+    const curWrites =
+      current.call.tokens.cacheWrite5mTokens + current.call.tokens.cacheWrite1hTokens > 0;
+    if (curWrites) lastWriter = current;
+    if (!previous) continue;
+    // A 1h write keeps the cache alive for an hour, a 5m write for five minutes.
+    const wt = priorWriter?.call.tokens;
     const ttl =
-      prevTokens.cacheWrite1hTokens > 0 && prevTokens.cacheWrite5mTokens === 0
+      wt && wt.cacheWrite1hTokens > 0 && wt.cacheWrite5mTokens === 0
         ? CACHE_IDLE_GAP_1H_MS
         : CACHE_IDLE_GAP_MS;
     if (current.ms - previous.ms < ttl) continue;

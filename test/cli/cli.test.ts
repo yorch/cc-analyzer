@@ -525,6 +525,12 @@ describe("CLI dispatch & exit codes", () => {
     }
   });
 
+  test("report: an inline --week=-value is a value (rejected as a bad date), not 'missing'", async () => {
+    const r = await run(["report", "--week=-2026-06-30"]);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.stderr).not.toContain("missing value for --week");
+  });
+
   test("report refuses --md and --json together", async () => {
     const r = await run(["report", "--md", "--json"]);
     expect(r.code).toBe(2);

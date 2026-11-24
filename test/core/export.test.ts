@@ -98,10 +98,16 @@ describe("parseScope", () => {
       ["--session="],
       ["--project", "--format", "json"],
       ["--session", "--redact"],
-      ["--project=--redact"],
     ]) {
       expect(() => parseScope(args)).toThrow(/needs a value/);
     }
+  });
+  test("inline = values may start with '-' (encoded project ids)", () => {
+    expect(parseScope(["--project=-Users-proj"])).toEqual({
+      kind: "project",
+      projectId: "-Users-proj",
+    });
+    expect(parseScope(["--session=-abc"])).toEqual({ kind: "session", idOrPath: "-abc" });
   });
   test("positional path becomes a session", () => {
     expect(parseScope(["export", "/a/b.jsonl"])).toEqual({

@@ -94,50 +94,189 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** Built-in agent types / tools that are product vocabulary, not user config. */
+export const BUILTIN_AGENT_TYPES: ReadonlySet<string> = new Set([
+  "general-purpose",
+  "Explore",
+  "Plan",
+  "statusline-setup",
+  "output-style-setup",
+  "claude-code-guide",
+  "Task",
+  "Agent",
+  "Read",
+  "Bash",
+  "Edit",
+  "Write",
+  "Grep",
+  "Glob",
+]);
+
+/** Compaction triggers Claude Code writes. */
+export const KNOWN_COMPACT_TRIGGERS: ReadonlySet<string> = new Set(["auto", "manual"]);
+/** Anthropic API stop reasons. */
+export const KNOWN_STOP_REASONS: ReadonlySet<string> = new Set([
+  "end_turn",
+  "tool_use",
+  "max_tokens",
+  "stop_sequence",
+  "pause_turn",
+  "refusal",
+]);
+/** Claude Code permission modes. */
+export const KNOWN_PERMISSION_MODES: ReadonlySet<string> = new Set([
+  "default",
+  "acceptEdits",
+  "bypassPermissions",
+  "plan",
+  "auto",
+  "dontAsk",
+]);
+
+/** Enum-ish string keys validated against a known-values set (else REDACTED). */
+const ENUM_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  trigger: KNOWN_COMPACT_TRIGGERS,
+  stopReason: KNOWN_STOP_REASONS,
+  permissionMode: KNOWN_PERMISSION_MODES,
+};
+/** Records keyed by enum values: key validated like the string form. */
+const ENUM_RECORD_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  stopReasons: KNOWN_STOP_REASONS,
+  permissionModes: KNOWN_PERMISSION_MODES,
+};
+/** Records keyed by tool names (MCP server segment is anonymized). */
+const TOOL_RECORD_KEYS: ReadonlySet<string> = new Set([
+  "tools",
+  "toolErrors",
+  "toolCounts",
+  "retriesByTool",
+]);
+const VERSION_PATTERN = /^\d+\.\d+\.\d+/;
+const MCP_TOOL = /^mcp__(.+?)__(.+)$/;
+
+/** Stable anonymization of user-authored names within one redaction pass. */
+interface Names {
+  skills: Map<string, string>;
+  mcp: Map<string, string>;
+  agents: Map<string, string>;
+}
+
+function emptyNames(): Names {
+  return { skills: new Map(), mcp: new Map(), agents: new Map() };
+}
+
+function alias(map: Map<string, string>, name: string, prefix: string): string {
+  let v = map.get(name);
+  if (v === undefined) {
+    v = `${prefix}-${map.size + 1}`;
+    map.set(name, v);
+  }
+  return v;
+}
+
+/** `mcp__<server>__<tool>` -> `mcp__mcp-server-N__<tool>`; other names unchanged. */
+function anonTool(name: string, names: Names): string {
+  const m = MCP_TOOL.exec(name);
+  if (!m) return name;
+  return `mcp__${alias(names.mcp, m[1] as string, "mcp-server")}__${m[2]}`;
+}
+
+function anonAgent(name: string, names: Names): string {
+  return BUILTIN_AGENT_TYPES.has(name) ? name : alias(names.agents, name, "agent");
+}
+
+function safeString(value: string, key: string, names: Names): string {
+  const enumSet = ENUM_KEYS[key];
+  if (enumSet) return enumSet.has(value) ? value : REDACTED;
+  if (key === "version" || key === "versions")
+    return VERSION_PATTERN.test(value) ? value : REDACTED;
+  if (key === "subagentType" || key === "subagents") return anonAgent(value, names);
+  return anonTool(value, names);
+}
+
+function addTo(out: Record<string, unknown>, k: string, v: unknown): void {
+  const prev = out[k];
+  out[k] = typeof prev === "number" && typeof v === "number" ? prev + v : v;
+}
+
 function scrub(
   value: unknown,
   key: string,
-  skillNames: Map<string, string>,
+  names: Names,
   safe: ReadonlySet<string> = REDACT_KEPT_STRING_KEYS,
 ): unknown {
-  if (typeof value === "string") return safe.has(key) ? value : REDACTED;
-  if (Array.isArray(value)) return value.map((v) => scrub(v, key, skillNames, safe));
+  if (typeof value === "string") return safe.has(key) ? safeString(value, key, names) : REDACTED;
+  if (Array.isArray(value)) return value.map((v) => scrub(v, key, names, safe));
   if (!isPlainObject(value)) return value; // number | boolean | null | undefined
   if (REDACT_DROPPED_KEYS.has(key)) return {};
   const out: Record<string, unknown> = {};
   if (SKILL_RECORD_KEYS.has(key)) {
     for (const [k, v] of Object.entries(value)) {
-      out[skillNames.get(k) ?? "skill-?"] = scrub(v, k, skillNames, safe);
+      out[names.skills.get(k) ?? "skill-?"] = scrub(v, k, names, safe);
     }
     return out;
   }
   for (const [k, v] of Object.entries(value)) {
     if (OMITTED_KEYS.has(k)) continue;
-    out[k] = scrub(v, k, skillNames, safe);
+    const enumSet = ENUM_RECORD_KEYS[key];
+    let outKey = k;
+    if (enumSet) outKey = enumSet.has(k) ? k : REDACTED;
+    else if (TOOL_RECORD_KEYS.has(key)) outKey = anonTool(k, names);
+    addTo(out, outKey, scrub(v, k, names, safe));
   }
   return out;
+}
+
+/** Collect MCP server / agent names so aliases are numbered deterministically. */
+function collectNames(value: unknown, key: string, mcp: Set<string>, agents: Set<string>): void {
+  if (typeof value === "string") {
+    const m = MCP_TOOL.exec(value);
+    if (m) mcp.add(m[1] as string);
+    if (key === "subagentType" || key === "subagents") agents.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectNames(v, key, mcp, agents);
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  for (const [k, v] of Object.entries(value)) {
+    const m = MCP_TOOL.exec(k);
+    if (m && TOOL_RECORD_KEYS.has(key)) mcp.add(m[1] as string);
+    collectNames(v, k, mcp, agents);
+  }
 }
 
 /**
  * Deep-cloned copy of `analysis` safe to share: numeric metrics, structure,
  * tool names, model ids and timestamps survive; every free-text, path,
  * command, branch, title, prompt, summary and result field is replaced by
- * `REDACTED`. Arrays of redacted strings keep their length (so "files
- * touched: 12" still reads), the strings themselves are placeholders. The
- * input is never mutated.
+ * `REDACTED`. User-authored config names are anonymized: skills (`skill-N`),
+ * MCP servers inside tool names (`mcp__mcp-server-N__tool`) and custom
+ * subagent types (`agent-N`; built-ins stay). Enum-ish strings (compaction
+ * trigger, stop reason, permission mode, version) survive only when they match
+ * known values. Arrays of redacted strings keep their length. The input is
+ * never mutated.
  */
 export function redactAnalysis(analysis: SessionAnalysis): SessionAnalysis {
-  const names = new Set<string>();
+  const skillSet = new Set<string>();
   for (const k of SKILL_RECORD_KEYS) {
     const rec = (analysis as unknown as Record<string, unknown>)[k];
-    if (isPlainObject(rec)) for (const n of Object.keys(rec)) names.add(n);
+    if (isPlainObject(rec)) for (const n of Object.keys(rec)) skillSet.add(n);
   }
-  const skillNames = new Map<string, string>(
-    [...names].sort().map((n, i) => [n, `skill-${i + 1}`] as [string, string]),
+  const mcpSet = new Set<string>();
+  const agentSet = new Set<string>();
+  collectNames(analysis, "", mcpSet, agentSet);
+  const names = emptyNames();
+  names.skills = new Map(
+    [...skillSet].sort().map((n, i) => [n, `skill-${i + 1}`] as [string, string]),
   );
+  for (const n of [...mcpSet].sort()) alias(names.mcp, n, "mcp-server");
+  for (const n of [...agentSet].filter((x) => !BUILTIN_AGENT_TYPES.has(x)).sort())
+    alias(names.agents, n, "agent");
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(analysis as unknown as Record<string, unknown>)) {
-    out[k] = scrub(v, k, skillNames);
+    out[k] = scrub(v, k, names);
   }
   return out as unknown as SessionAnalysis;
 }
@@ -165,7 +304,7 @@ const AGGREGATE_SAFE_KEYS: ReadonlySet<string> = new Set([
  * sections they emit — this is the safety net, not the selection.
  */
 export function redactAggregate<T>(value: T): T {
-  return scrub(value, "", new Map(), AGGREGATE_SAFE_KEYS) as T;
+  return scrub(value, "", emptyNames(), AGGREGATE_SAFE_KEYS) as T;
 }
 
 /** Cap a transcript at the shared item/body limits (never mutates the input). */

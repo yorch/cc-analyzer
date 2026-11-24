@@ -967,8 +967,12 @@ function mdToHtml(md: string): string {
 
 export function buildSessionHtml(a: SessionAnalysis, opts: SessionMarkdownOptions = {}): string {
   const redact = opts.redact === true;
-  const aiSummary = buildAiSummary(a, opts);
-  const kpiCards = buildKpiCards(a);
+  // The summary and KPI cards read the redacted copy (top tool names carry MCP
+  // server names); the markdown builder redacts the original itself — redacting
+  // twice would re-number the anonymized aliases.
+  const shown = redact ? redactAnalysis(a) : a;
+  const aiSummary = buildAiSummary(shown, opts);
+  const kpiCards = buildKpiCards(shown);
   const md = buildSessionMarkdown(a, opts);
   const body = mdToHtml(md);
   // The page <title>/<h1> are session text too: a redacted export must not carry them.

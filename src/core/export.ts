@@ -213,8 +213,27 @@ function writePortfolioJson(
 ): void {
   const today = localDayOfMs(Date.now());
   const projectId = scope.kind === "project" ? scope.projectId : undefined;
-  const portfolio = buildPortfolioStats(db, today, { projectLimit: 100, topLimit: 50 });
   const analytics = analyticsRollup(db, projectId);
+  if (projectId !== undefined) {
+    // Project scope: only project-scoped rollups. The whole-portfolio aggregates
+    // (other projects' spend, months, models) do not belong in a one-project bundle.
+    const scoped = {
+      scope: { kind: scope.kind },
+      analytics: redact
+        ? {
+            tests: analytics.tests,
+            corrections: analytics.corrections,
+            turnDepth: analytics.turnDepth,
+            permissionModes: analytics.permissionModes,
+            stopReasons: analytics.stopReasons,
+          }
+        : analytics,
+    };
+    const body = redact ? redactAggregate(scoped) : { ...scoped, scope };
+    writeFileSync(outPath, JSON.stringify(body, null, 2), "utf-8");
+    return;
+  }
+  const portfolio = buildPortfolioStats(db, today, { projectLimit: 100, topLimit: 50 });
   if (redact) {
     // Shareable: aggregates only. Per-project rows, top sessions (titles), shell
     // command heads, skill names and branches are dropped by selection, and the
@@ -766,7 +785,8 @@ export function parseScope(args: string[]): ExportScope {
   };
   const inline = (flag: string, a: string): string => {
     const v = a.slice(flag.length + 1);
-    if (v === "" || v.startsWith("-")) throw new Error(`${flag} needs a value`);
+    // `=` form is unambiguous: a leading "-" is a legitimate value (encoded project ids).
+    if (v === "") throw new Error(`${flag} needs a value`);
     return v;
   };
   for (let i = 0; i < args.length; i++) {
