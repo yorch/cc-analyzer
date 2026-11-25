@@ -165,6 +165,34 @@ describe("cacheTtlSplit / webToolUsage / estimatedShareByProject", () => {
   });
 });
 
+describe("rollup rows carry the project's claudeDir", () => {
+  test("webTools / estimated / sidechain rows name their root, same-named projects stay apart", () => {
+    const db = fresh();
+    for (const [dir, id] of [
+      ["/h/.claude", "a~api"],
+      ["/w/.claude", "b~api"],
+    ] as const) {
+      insert(db, {
+        path: `${dir}/s`,
+        claude_dir: dir,
+        project_id: id,
+        project_path: "/dev/api",
+        web_searches: 1,
+        cost_total: 4,
+        cost_estimated: 1,
+        sidechain_cost: 2,
+      });
+    }
+    for (const rows of [
+      webToolUsage(db).byProject,
+      estimatedShareByProject(db),
+      sidechainByProject(db),
+    ]) {
+      expect(rows.map((r) => r.claudeDir).sort()).toEqual(["/h/.claude", "/w/.claude"]);
+    }
+  });
+});
+
 describe("JSON rollups", () => {
   test("hotFiles dedupes per session and tracks last touch", () => {
     const db = fresh();

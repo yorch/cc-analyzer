@@ -495,7 +495,7 @@ export interface WebToolsProjectRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  claudeDir: string;
   searches: number;
   fetches: number;
 }
@@ -505,7 +505,7 @@ export interface EstimatedShareRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  claudeDir: string;
   cost: number;
   estimatedCost: number;
   /** estimatedCost / cost, in [0, 1]. */
@@ -532,7 +532,7 @@ export interface SidechainProjectRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  claudeDir: string;
   cost: number;
   sidechainCost: number;
   share: number;
@@ -772,7 +772,7 @@ export interface CompactionProjectRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  claudeDir: string;
   sessions: number;
   sessionsWithCompaction: number;
   /** Own main-chain compactions as RAW per-row sums of the `compactions`

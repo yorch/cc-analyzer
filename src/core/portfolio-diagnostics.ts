@@ -75,6 +75,9 @@ export interface PortfolioDiagnostic {
   projectId?: string;
   projectAlias?: string;
   projectPath?: string;
+  /** The Claude root the project lives under — feed to `labelProjects` so same-named
+   *  projects in different roots read apart. */
+  claudeDir?: string;
 }
 
 /**
@@ -310,6 +313,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
             projectId: top.projectId,
             projectAlias: top.projectAlias ?? undefined,
             projectPath: top.projectPath ?? undefined,
+            claudeDir: top.claudeDir,
           }
         : {}),
       impact: cache.summary.waste,
@@ -367,6 +371,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         projectId: worst.projectId,
         projectAlias: worst.projectAlias ?? undefined,
         projectPath: worst.projectPath ?? undefined,
+        claudeDir: worst.claudeDir,
         impact: 0,
       });
     }
@@ -399,6 +404,7 @@ export function buildPortfolioDiagnostics(signals: PortfolioSignals): PortfolioD
         projectId: heavy.projectId,
         projectAlias: heavy.projectAlias ?? undefined,
         projectPath: heavy.projectPath ?? undefined,
+        claudeDir: heavy.claudeDir,
         impact: 0,
       });
     }
