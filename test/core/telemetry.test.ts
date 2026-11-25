@@ -11,6 +11,7 @@ import {
   isTelemetryEnabled,
   maybeShowFirstRunNotice,
   POSTER_COMMAND,
+  POSTER_STDIN_TIMEOUT_MS,
   posterArgv,
   runTelemetryPoster,
   setTelemetryEnabled,
@@ -498,7 +499,10 @@ describe("runTelemetryPoster", () => {
     }) as unknown as typeof fetch;
     try {
       expect(await runTelemetryPoster()).toBe(0);
-      expect(await runTelemetryPoster("https://plausible.test")).toBe(0);
+      // Empty stdin via the reader seam: independent of the runner's ambient stdin.
+      const noStdin = async () => "";
+      expect(await runTelemetryPoster("https://plausible.test", undefined, noStdin)).toBe(0);
+      expect(await runTelemetryPoster("https://plausible.test", "  ", async () => "  \n")).toBe(0);
       expect(await runTelemetryPoster("https://plausible.test", "not json")).toBe(0);
     } finally {
       globalThis.fetch = orig;
@@ -533,6 +537,34 @@ describe("runTelemetryPoster", () => {
     expect(url).toBe("https://plausible.test/api/event");
     expect(JSON.parse(String(init?.body)).props.name).toBe("projects");
   });
+
+  // Regression: an inherited stdin that never closes (parent died before closing
+  // the pipe) used to hang the poster forever. Run it for real in a child.
+  test("does not hang on a stdin pipe that never closes", async () => {
+    const script = `import { runTelemetryPoster } from ${JSON.stringify(
+      join(import.meta.dir, "../../src/core/telemetry.ts"),
+    )};
+      let fetched = false;
+      globalThis.fetch = (async () => { fetched = true; return new Response("", { status: 202 }); }) as never;
+      const code = await runTelemetryPoster("https://plausible.test");
+      console.log(JSON.stringify({ code, fetched }));
+      process.exit(code);`;
+    const start = Date.now();
+    const proc = Bun.spawn([process.execPath, "-e", script], {
+      stdin: "pipe", // left open on purpose
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CC_ANALYZER_TELEMETRY: "1", CC_ANALYZER_STATE_DIR: tmpDir },
+    });
+    try {
+      const out = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      expect(JSON.parse(out.trim())).toEqual({ code: 0, fetched: false });
+      expect(Date.now() - start).toBeLessThan(POSTER_STDIN_TIMEOUT_MS + 2500);
+    } finally {
+      proc.kill();
+    }
+  }, 10_000);
 
   // The marker is reachable by hand, so it re-checks the switch: an opted-out
   // machine cannot be made to emit an event by invoking the hidden subcommand.
