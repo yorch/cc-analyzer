@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { formatCount, formatUSD, truncate } from "../../cli/format.ts";
+import { knownLabelPairs } from "../../cli/known-labels.ts";
 import {
   buildPortfolioDiagnostics,
   type PortfolioDiagnostic,
@@ -9,6 +10,7 @@ import {
 import { assemblePortfolioSignals } from "../../core/portfolio-signals.ts";
 import type { PricingTable } from "../../core/pricing.ts";
 import { labelProjects, projectDisplayName } from "../../core/project-labels.ts";
+import { knownProjectLabels } from "../../core/queries.ts";
 import {
   type CacheMetrics,
   type ContextTaxRow,
@@ -120,14 +122,18 @@ function InsightsBody({
   // Two Claude roots can each hold a project for the same working directory,
   // so the labels would be byte-identical — qualify only the ones that
   // actually collide, same rule ProjectsView applies.
+  // `known` = every indexed project: the hit-list and the context-tax rows are
+  // capped slices, so a twin in another root may be absent from them.
+  const known = useMemo(() => knownLabelPairs(knownProjectLabels(db)), [db]);
   const { label: projectLabel } = useMemo(
     () =>
       labelProjects(
         projects,
         (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
+        known,
       ),
-    [projects],
+    [projects, known],
   );
   const { label: taxProjectLabel } = useMemo(
     () =>
@@ -135,8 +141,9 @@ function InsightsBody({
         tax.byProject,
         (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
+        known,
       ),
-    [tax.byProject],
+    [tax.byProject, known],
   );
 
   const shownFindings = diagnostics.slice(0, MAX_FINDING_LINES);

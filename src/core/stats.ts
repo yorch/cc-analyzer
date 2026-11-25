@@ -3,7 +3,7 @@ import { type Compaction, isTestCommand } from "./analyze.ts";
 import { dedupeCompactions, summarizeCompactions } from "./chart-series.ts";
 import type { PricingTable, TokenCounts } from "./pricing.ts";
 import { cacheTokens, ioTokens, zeroTokens } from "./pricing.ts";
-import { sessionRowById } from "./queries.ts";
+import { GROUP_CLAUDE_DIR, sessionRowById } from "./queries.ts";
 import { compareVersions } from "./release.ts";
 import { repriceModelMixes } from "./session-insights.ts";
 import type {
@@ -167,9 +167,7 @@ export function spendByProject(db: Database, limit = 20, period?: DayRange): Pro
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        -- MAX() is a "pick any": project_id identifies one project group, so
-        -- every row in a group shares one claude_dir.
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         SUM(cost_total) AS cost,
         COUNT(*) AS sessions,
         SUM(${IO_TOKENS}) AS ioTokens,
@@ -309,9 +307,7 @@ export function cacheWasteByProject(db: Database, limit = 50): ProjectCacheRow[]
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        -- MAX() is a "pick any": project_id identifies one project group, so
-        -- every row in a group shares one claude_dir.
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         COUNT(*) AS sessions,
         SUM(${CACHE_WRITE}) AS writeTokens,
         SUM(cache_read) AS readTokens,
@@ -607,7 +603,7 @@ export function webToolUsage(
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         SUM(web_searches) AS searches,
         SUM(web_fetches) AS fetches
       FROM sessions
@@ -626,7 +622,7 @@ export function estimatedShareByProject(db: Database, limit = 20): EstimatedShar
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         SUM(cost_total) AS cost,
         SUM(cost_total * cost_estimated) AS estimatedCost,
         CASE WHEN SUM(cost_total) > 0
@@ -673,7 +669,7 @@ export function sidechainByProject(db: Database, limit = 20): SidechainProjectRo
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         SUM(cost_total) AS cost,
         COALESCE(SUM(sidechain_cost), 0) AS sidechainCost,
         CASE WHEN SUM(cost_total) > 0
@@ -978,7 +974,7 @@ export function compactionUsage(db: Database, limit = 30): CompactionUsage {
       `SELECT project_id AS projectId,
           MAX(project_alias) AS projectAlias,
           MAX(project_path) AS projectPath,
-          MAX(claude_dir) AS claudeDir,
+          ${GROUP_CLAUDE_DIR} AS claudeDir,
           COUNT(*) AS sessions,
           COALESCE(SUM(compactions > 0), 0) AS sessionsWithCompaction,
           COALESCE(SUM(compactions), 0) AS compactions
@@ -1280,14 +1276,18 @@ export function contextTax(db: Database, projectId?: string, limit = 30): Contex
     all.push(r.tokens);
     let p = byProject.get(r.projectId);
     if (!p) {
-      // project_id is root-qualified, so every row in a group shares one
-      // claude_dir — the first row's value is the group's.
       p = { alias: r.projectAlias, path: r.projectPath, claudeDir: r.claudeDir, values: [] };
       byProject.set(r.projectId, p);
     }
-    // A project's rows can disagree on project_path (the encoded id is the
-    // stable key); first non-null wins, like the other per-project rollups.
-    p.path ??= r.projectPath;
+    // A project's rows can disagree on project_path / alias (the encoded id is
+    // the stable key); the greatest non-null value wins — the same MAX() rule
+    // `knownProjectLabels` applies in SQL, so both name a project identically.
+    if (r.projectPath !== null && (p.path === null || r.projectPath > p.path))
+      p.path = r.projectPath;
+    if (r.projectAlias !== null && (p.alias === null || r.projectAlias > p.alias))
+      p.alias = r.projectAlias;
+    // An alias group can span roots; '' = spans several (see GROUP_CLAUDE_DIR).
+    if (p.claudeDir !== r.claudeDir) p.claudeDir = "";
     p.values.push(r.tokens);
   }
   all.sort((a, b) => a - b);

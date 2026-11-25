@@ -69,8 +69,13 @@ import {
 } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
-import { labelProjects, rootTag } from "../core/project-labels.ts";
-import { indexedProjectForPath, isIndexEmpty, resolveIndexedProject } from "../core/queries.ts";
+import { labelProjects, rootCell } from "../core/project-labels.ts";
+import {
+  indexedProjectForPath,
+  isIndexEmpty,
+  knownProjectLabels,
+  resolveIndexedProject,
+} from "../core/queries.ts";
 import { buildSessionJsonPayload } from "../core/redact.ts";
 import { compareVersions, fetchLatestVersion } from "../core/release.ts";
 import { inspectSessionHealth, type SessionHealthReport } from "../core/session-health.ts";
@@ -114,6 +119,7 @@ import {
   table,
   truncate,
 } from "./format.ts";
+import { knownLabelPairs } from "./known-labels.ts";
 import {
   renderParseCoverageLine,
   renderPortfolioInsights,
@@ -533,7 +539,11 @@ async function cmdProjects(): Promise<number> {
       multiRoot ? ["sessions", "project", "claude dir"] : ["sessions", "project"],
       projects.map((p) =>
         multiRoot
-          ? [String(p.sessionCount), truncate(p.label, 60), truncate(rootTag(p.root, allRoots), 40)]
+          ? [
+              String(p.sessionCount),
+              truncate(p.label, 60),
+              truncate(rootCell(p.root, allRoots), 40),
+            ]
           : [String(p.sessionCount), truncate(p.label, 80)],
       ),
     ),
@@ -1186,6 +1196,9 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
       }
     : { type: "portfolio" as const };
   const costBasis = getCostBasis();
+  // The whole index, so a LIMIT-ed project table still shows its root column
+  // when the slice holds only one root's projects.
+  const known = knownLabelPairs(knownProjectLabels(db));
   let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
   try {
     indexStatus = await inspectIndexStatus(db);
@@ -1219,6 +1232,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
           color: colorEnabled(),
           projectPath: project?.projectPath,
           costBasis,
+          known,
         }),
   );
   return 0;
@@ -1265,11 +1279,15 @@ function cmdAudit(json: boolean): number {
 async function cmdInsights(json: boolean): Promise<number> {
   const db = openDb();
   let diagnostics: ReturnType<typeof buildPortfolioDiagnostics>;
+  let known: ReturnType<typeof knownLabelPairs>;
   try {
     if (isIndexEmpty(db)) {
       console.error("Index is empty. Run `cc-analyzer index` first.");
       return 1;
     }
+    // The whole index, so a finding's `Project:` line tags against projects
+    // the ranked findings don't mention.
+    known = knownLabelPairs(knownProjectLabels(db));
     // The what-if signal needs live rates; `loadPricing` serves the cached table
     // (bundled snapshot offline), the same one the index was priced with.
     const { table: pricing } = await loadPricing();
@@ -1280,9 +1298,7 @@ async function cmdInsights(json: boolean): Promise<number> {
   console.log(
     json
       ? JSON.stringify(diagnostics, null, 2)
-      : renderPortfolioInsights(diagnostics, {
-          color: colorEnabled(),
-        }),
+      : renderPortfolioInsights(diagnostics, { color: colorEnabled() }, known),
   );
   return 0;
 }

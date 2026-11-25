@@ -261,7 +261,8 @@ export interface ProjectRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
-   *  projects from different roots apart in a ranked list. */
+   *  projects from different roots apart in a ranked list. `''` means an alias
+   *  group spanning several roots (never counted as a root, never tagged). */
   claudeDir: string;
   cost: number;
   sessions: number;
@@ -307,7 +308,8 @@ export interface ProjectCacheRow extends CacheMetrics {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
-   *  projects from different roots apart in a ranked list. */
+   *  projects from different roots apart in a ranked list. `''` means an alias
+   *  group spanning several roots (never counted as a root, never tagged). */
   claudeDir: string;
   sessions: number;
 }
@@ -494,8 +496,9 @@ export interface WebToolsProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
-  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots).
+   *  `''` means an alias group spanning several roots (never counted as a root, never tagged). */
+  claudeDir: string;
   searches: number;
   fetches: number;
 }
@@ -504,8 +507,9 @@ export interface EstimatedShareRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
-  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots).
+   *  `''` means an alias group spanning several roots (never counted as a root, never tagged). */
+  claudeDir: string;
   cost: number;
   estimatedCost: number;
   /** estimatedCost / cost, in [0, 1]. */
@@ -531,8 +535,9 @@ export interface SidechainProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
-  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots).
+   *  `''` means an alias group spanning several roots (never counted as a root, never tagged). */
+  claudeDir: string;
   cost: number;
   sidechainCost: number;
   share: number;
@@ -771,8 +776,9 @@ export interface CompactionProjectRow {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
-  /** The Claude data dir the project lives under (disambiguates same-named projects across roots). */
-  claudeDir?: string;
+  /** The Claude data dir the project lives under (disambiguates same-named projects across roots).
+   *  `''` means an alias group spanning several roots (never counted as a root, never tagged). */
+  claudeDir: string;
   sessions: number;
   sessionsWithCompaction: number;
   /** Own main-chain compactions as RAW per-row sums of the `compactions`
@@ -830,7 +836,8 @@ export interface ContextTaxRow {
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir the project lives under — what tells two same-named
-   *  projects from different roots apart in a ranked list. */
+   *  projects from different roots apart in a ranked list. `''` means an alias
+   *  group spanning several roots (never counted as a root, never tagged). */
   claudeDir: string;
   /** Sessions carrying a baseline (a main-chain API call). */
   sessions: number;

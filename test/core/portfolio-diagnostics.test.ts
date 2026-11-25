@@ -61,6 +61,7 @@ function compactionProject(over: Partial<CompactionProjectRow> = {}): Compaction
   return {
     projectId: "proj-a",
     projectPath: "/dev/proj-a",
+    claudeDir: "/home/u/.claude",
     sessions: 20,
     sessionsWithCompaction: 3,
     compactions: 4,
@@ -380,6 +381,17 @@ describe("compaction-pressure", () => {
     expect(f?.severity).toBe("warning");
     expect(f?.projectId).toBe("proj-a");
     expect(f?.evidence).toContain("3 of 6 sessions");
+  });
+  test("findings carry the row's claudeDir so same-named projects can be told apart", () => {
+    const hit = { sessions: 6, sessionsWithCompaction: 3, share: 0.5 };
+    const out = buildPortfolioDiagnostics(
+      signals({
+        compactionsByProject: [compactionProject({ ...hit, claudeDir: "/w/.claude" })],
+        taxByProject: [taxProject({ medianTokens: 50_000, claudeDir: "/w/.claude" })],
+      }),
+    );
+    expect(out.find((d) => d.code === "compaction-pressure")?.claudeDir).toBe("/w/.claude");
+    expect(out.find((d) => d.code === "context-tax-heavy")?.claudeDir).toBe("/w/.claude");
   });
   test("stays quiet below the share or session floor", () => {
     expect(

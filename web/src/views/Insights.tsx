@@ -1,4 +1,4 @@
-import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
+import { projectDisplayName } from "../../../src/core/project-labels.ts";
 import {
   EmptyNotice,
   ErrorNotice,
@@ -12,6 +12,7 @@ import {
   costFramingNote,
   type IdleCacheBucket,
   INDEXED_COST_CAVEAT,
+  type IndexedProject,
   PORTFOLIO_DIAGNOSTIC_CODES,
   type PortfolioDiagnostic,
   type ProjectCacheRow,
@@ -21,6 +22,7 @@ import {
 } from "../api.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
+import { findingLabeller, projectMatches, rootLabeller } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -44,26 +46,11 @@ const projectAccessors = (label: (row: ProjectCacheRow) => string): Accessors<Pr
   project: label,
 });
 
-/** The one labelling rule for a set of project rows: qualify a name with its
- *  Claude root only when another root holds a project of the same name. */
-const rootLabeller = <
-  T extends {
-    projectPath: string | null;
-    projectId: string;
-    projectAlias?: string | null;
-    claudeDir: string;
-  },
->(
-  rows: readonly T[],
-) =>
-  labelProjects(
-    rows,
-    (r) => projectDisplayName(r.projectPath, r.projectId, r.projectAlias),
-    (r) => r.claudeDir,
-  ).label;
-
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), [], "insights");
+  // The whole project list (not the ranked slice) so collisions are judged
+  // against every project; undefined while loading.
+  const known = useProjects().data;
   // Cost basis is a preference, not an insight: fetch it from the tiny
   // `/api/prefs` endpoint rather than pulling the whole portfolio payload in
   // just to frame the dollar tables below.
@@ -74,8 +61,8 @@ export function Insights() {
   const all = data?.projects ?? [];
   // Labelled over every row, not the filtered slice, so a name's ambiguity
   // doesn't come and go as the reader types.
-  const projectLabel = rootLabeller(all);
-  const filtered = q ? all.filter((p) => projectLabel(p).toLowerCase().includes(q)) : all;
+  const projectLabel = rootLabeller(all, known);
+  const filtered = q ? all.filter((p) => projectMatches(q, p, projectLabel(p))) : all;
   const sort = useSort(filtered, projectAccessors(projectLabel), "waste");
   const rows = sort.sorted;
   if (loading) return <LoadingNotice>Loading insights…</LoadingNotice>;
@@ -97,7 +84,7 @@ export function Insights() {
       {framingNote && <p className="muted">{framingNote}</p>}
       <p className="muted">{INDEXED_COST_CAVEAT}</p>
 
-      <PortfolioInsights diagnostics={data.diagnostics} />
+      <PortfolioInsights diagnostics={data.diagnostics} known={known} />
 
       <h2 className="section-h">Cache efficiency</h2>
       <p className="muted">
@@ -167,7 +154,14 @@ export function Insights() {
 /** Ranked portfolio findings from the bun-free rules engine — the "coach"
  * section: warnings first, each with observed evidence and a next action.
  * Project-scoped findings link to their project page. */
-function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[] }) {
+function PortfolioInsights({
+  diagnostics,
+  known,
+}: {
+  diagnostics: PortfolioDiagnostic[];
+  known: IndexedProject[] | null;
+}) {
+  const findingLabel = findingLabeller(diagnostics, known);
   return (
     <section>
       <h2 className="section-h">Portfolio insights · what to do differently</h2>
@@ -188,9 +182,7 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
           extra={(d) =>
             d.projectId && (
               <p>
-                <a href={link.project(d.projectId)}>
-                  {projectDisplayName(d.projectPath, d.projectId, d.projectAlias)}
-                </a>
+                <a href={link.project(d.projectId)}>{findingLabel(d)}</a>
               </p>
             )
           }
@@ -204,20 +196,21 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
  * from the cache data so a slow (or failing) analytics scan never blocks the
  * cache hit-list this page is primarily about. */
 function CostOptimization() {
+  const known = useProjects().data;
   const { data } = useAsync(() => api.analytics(), [], "analytics");
   if (!data) return null;
   return (
     <>
-      <ContextTaxPanel tax={data.contextTax} />
+      <ContextTaxPanel tax={data.contextTax} known={known} />
       <WhatIfPanel whatIf={data.whatIf} />
     </>
   );
 }
 
 /** The tokens every session in a project pays for before the user types. */
-function ContextTaxPanel({ tax }: { tax: ContextTax }) {
+function ContextTaxPanel({ tax, known }: { tax: ContextTax; known: IndexedProject[] | null }) {
   if (tax.summary.sessions === 0) return null;
-  const projectLabel = rootLabeller(tax.byProject);
+  const projectLabel = rootLabeller(tax.byProject, known);
   return (
     <section>
       <h2 className="section-h">Context tax · what a session costs before you type</h2>

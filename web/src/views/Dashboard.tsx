@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   ApiError,
@@ -37,12 +36,14 @@ import { maxOf } from "../extent.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { MiniBar } from "../MiniBar.tsx";
+import { projectMatches, rootLabeller, shortRootLabeller } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { CHART_PAD, CHART_W, chartBox, YAxis } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
+import { useProjects } from "../useProjects.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 
 const COST_BASIS_LABEL: Record<CostBasis, "API bill" | "Subscription"> = {
@@ -100,16 +101,16 @@ export function Dashboard() {
   const byProject = data?.byProject ?? [];
   // Two Claude roots can hold a project for the same working directory; the
   // shared labeller names the root only on the rows that actually collide.
-  const projectLabel = labelProjects(
-    byProject,
-    (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
-    (p) => p.claudeDir,
-  ).label;
+  // `known` is the full project list, so a row cut by a LIMIT still counts
+  // toward collisions; undefined while it loads (rows-only labels).
+  const known = useProjects().data;
+  const projectLabel = rootLabeller(byProject, known);
+  const estimatedLabel = shortRootLabeller(data?.estimatedByProject ?? [], known);
   const byModel = data?.byModel ?? [];
   const top = data?.top ?? [];
   const pq = projectQuery.toLowerCase();
   const projectFiltered = pq
-    ? byProject.filter((p) => projectLabel(p).toLowerCase().includes(pq))
+    ? byProject.filter((p) => projectMatches(pq, p, projectLabel(p)))
     : byProject;
   const monthSort = useSort(byMonth, MONTH_SORT, "month", "asc");
   const projectSort = useSort(projectFiltered, projectAccessors(projectLabel), "cost");
@@ -356,9 +357,7 @@ export function Dashboard() {
                     <td className="num">{(r.share * 100).toFixed(0)}%</td>
                     <td className="num">{usd(r.cost)}</td>
                     <td>
-                      <a href={link.project(r.projectId)}>
-                        {shortPath(r.projectAlias ?? r.projectPath, r.projectId)}
-                      </a>
+                      <a href={link.project(r.projectId)}>{estimatedLabel(r)}</a>
                     </td>
                   </tr>
                 ))}

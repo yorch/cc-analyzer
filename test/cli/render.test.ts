@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { renderSessionSummary, renderStats } from "../../src/cli/render.ts";
+import { knownLabelPairs } from "../../src/cli/known-labels.ts";
+import {
+  renderPortfolioInsights,
+  renderSessionSummary,
+  renderStats,
+} from "../../src/cli/render.ts";
 import { analyzeSession, type SessionAnalysis } from "../../src/core/analyze.ts";
 import { openDb } from "../../src/core/db.ts";
+import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
+import { knownProjectLabels } from "../../src/core/queries.ts";
 import {
   analyticsRollup,
   buildPortfolioStats,
@@ -318,5 +325,199 @@ describe("renderSessionSummary · turns table", () => {
     expect(out).not.toContain("Ranked by cost");
     const table = out.slice(out.indexOf("▸ Turns"));
     expect(table.indexOf("prompt number 0")).toBeLessThan(table.indexOf("prompt number 3"));
+  });
+});
+
+describe("renderPortfolioInsights project labels", () => {
+  const finding = (
+    projectId: string,
+    claudeDir: string | undefined,
+    projectPath = "/work/app",
+  ): PortfolioDiagnostic => ({
+    code: "cache-waste-heavy",
+    severity: "warning",
+    title: "t",
+    evidence: "e",
+    action: "a",
+    projectId,
+    projectPath,
+    claudeDir,
+  });
+  const plain = { color: false } as const;
+
+  test("two roots holding the same project name read name [root]", () => {
+    const out = renderPortfolioInsights(
+      [
+        finding("aaaaaaaa~-work-app", "/home/u/rootA"),
+        finding("bbbbbbbb~-work-app", "/home/u/rootB"),
+      ],
+      plain,
+    );
+    expect(out).toContain("Project: /work/app [rootA]");
+    expect(out).toContain("Project: /work/app [rootB]");
+  });
+
+  test("single root and missing claudeDir keep the bare name", () => {
+    const one = renderPortfolioInsights([finding("aaaaaaaa~-work-app", "/home/u/rootA")], plain);
+    expect(one).toContain("Project: /work/app");
+    expect(one).not.toContain("[");
+    const none = renderPortfolioInsights([finding("aaaaaaaa~-work-app", undefined)], plain);
+    expect(none).toContain("Project: /work/app");
+    expect(none).not.toContain("[");
+  });
+});
+
+describe("renderPortfolioInsights with known (whole-index) labels", () => {
+  const f: PortfolioDiagnostic = {
+    code: "cache-waste-heavy",
+    severity: "warning",
+    title: "t",
+    evidence: "e",
+    action: "a",
+    projectId: "aaaaaaaa~-work-app",
+    projectPath: "/work/app",
+    claudeDir: "/home/u/rootA",
+  };
+  const plain = { color: false } as const;
+
+  test("a lone finding is tagged when its twin lives in another root of the index", () => {
+    const known = knownLabelPairs([
+      {
+        projectId: "aaaaaaaa~-work-app",
+        projectAlias: null,
+        projectPath: "/work/app",
+        claudeDir: "/home/u/rootA",
+      },
+      {
+        projectId: "bbbbbbbb~-work-app",
+        projectAlias: null,
+        projectPath: "/work/app",
+        claudeDir: "/home/u/rootB",
+      },
+    ]);
+    expect(renderPortfolioInsights([f], plain, known)).toContain("Project: /work/app [rootA]");
+    expect(renderPortfolioInsights([f], plain)).not.toContain("[");
+  });
+
+  test("an alias group spanning roots ('') never tags anyone", () => {
+    const known = knownLabelPairs([
+      { projectId: "cccccccc~-x", projectAlias: "/work/app", projectPath: null, claudeDir: "" },
+    ]);
+    expect(renderPortfolioInsights([f], plain, known)).not.toContain("[");
+  });
+});
+
+describe("renderStats · root column judged over the whole index", () => {
+  const view = (db: ReturnType<typeof openDb>, projectLimit?: number) => {
+    const analytics = analyticsRollup(db);
+    return {
+      ...buildPortfolioStats(db, "2026-07-03", { projectLimit }),
+      index: { lastRefreshedAt: null, ageMs: null, stale: false, added: 0, changed: 0, deleted: 0 },
+      ttl: cacheTtlSplit(db),
+      bash: analytics.bash,
+      skills: analytics.skills,
+      tests: analytics.tests,
+      retries: analytics.retries,
+      corrections: analytics.corrections,
+      concurrency: { peak: 1, parallelDayShare: 0 },
+      contextTax: contextTax(db),
+      whatIf: whatIfRepricing(db, pricing),
+      costBasis: "api" as const,
+    };
+  };
+  const seed = (db: ReturnType<typeof openDb>) => {
+    // 11 expensive, high-context projects in root A, one cheap/low one in B.
+    for (let i = 0; i < 11; i++) {
+      insertSession(db, {
+        path: `a${i}`,
+        day: "2026-07-03",
+        month: "2026-07",
+        start_time: "2026-07-03T12:00:00.000Z",
+        claude_dir: "/home/u/.claude",
+        project_id: `aaaaaaaa~-p-a${i}`,
+        project_path: `/p/a${i}`,
+        cost_total: 50 - i,
+        first_prompt_tokens: 50_000 + i,
+      });
+    }
+    insertSession(db, {
+      path: "b0",
+      day: "2026-07-03",
+      month: "2026-07",
+      start_time: "2026-07-03T12:00:00.000Z",
+      claude_dir: "/mnt/work/.claude",
+      project_id: "bbbbbbbb~-p-b0",
+      project_path: "/p/b0",
+      cost_total: 0.1,
+      first_prompt_tokens: 100,
+    });
+  };
+
+  test("top projects and context tax keep the column when the slice holds one root", () => {
+    const db = openDb(":memory:");
+    seed(db);
+    const v = view(db, 3);
+    const known = knownLabelPairs(knownProjectLabels(db));
+    db.close();
+    expect(new Set(v.byProject.map((p) => p.claudeDir)).size).toBe(1);
+    expect(new Set(v.contextTax.byProject.slice(0, 10).map((p) => p.claudeDir)).size).toBe(1);
+
+    const blind = renderStats(v);
+    expect(blind).not.toContain("claude dir");
+
+    const out = renderStats(v, { known });
+    const sections = out.split("\n\n").filter((s) => /Top projects by cost|Context tax/.test(s));
+    expect(sections).toHaveLength(2);
+    for (const sec of sections) expect(sec).toContain("claude dir");
+    expect(out).toContain("home/u/.claude".split("/").pop() as string);
+  });
+
+  test("single-root output is unchanged by `known`", () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 3; i++) {
+      insertSession(db, {
+        path: `a${i}`,
+        day: "2026-07-03",
+        month: "2026-07",
+        start_time: "2026-07-03T12:00:00.000Z",
+        project_id: `aaaaaaaa~-p-a${i}`,
+        project_path: `/p/a${i}`,
+        cost_total: 5 + i,
+        first_prompt_tokens: 1000,
+      });
+    }
+    const v = view(db);
+    const known = knownLabelPairs(knownProjectLabels(db));
+    db.close();
+    expect(renderStats(v, { known })).toBe(renderStats(v));
+  });
+
+  test("an alias group spanning roots prints 'several roots', not a blank cell", () => {
+    const db = openDb(":memory:");
+    seed(db);
+    for (const [path, dir] of [
+      ["g1", "/home/u/.claude"],
+      ["g2", "/mnt/work/.claude"],
+    ] as const) {
+      insertSession(db, {
+        path,
+        day: "2026-07-03",
+        month: "2026-07",
+        start_time: "2026-07-03T12:00:00.000Z",
+        claude_dir: dir,
+        project_id: "alias~group",
+        project_path: "/p/group",
+        project_alias: "grp",
+        cost_total: 500,
+        first_prompt_tokens: 900_000,
+      });
+    }
+    const v = view(db, 3);
+    const known = knownLabelPairs(knownProjectLabels(db));
+    db.close();
+    const out = renderStats(v, { known });
+    const row = out.split("\n").filter((l) => l.includes("grp"));
+    expect(row.length).toBeGreaterThanOrEqual(2);
+    for (const l of row) expect(l).toContain("several roots");
   });
 });
