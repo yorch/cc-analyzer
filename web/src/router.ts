@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Route =
   | { name: "dashboard" }
@@ -40,37 +40,71 @@ function parse(hash: string): Route {
   return { name: "notFound", path };
 }
 
-function params(): URLSearchParams {
-  return new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+/** Pure read of one hash-query param: the value when present and permitted,
+ *  otherwise the fallback. Split from the hook so it is testable without a DOM. */
+export function resolveHashParam<T extends string>(
+  hash: string,
+  key: string,
+  fallback: T,
+  allowed?: readonly T[],
+): T {
+  const value = new URLSearchParams(hash.split("?")[1] ?? "").get(key) as T | null;
+  return value && (!allowed || allowed.includes(value)) ? value : fallback;
 }
 
-/** Persist view controls in the hash query without triggering a route change. */
+/** `replaceState` emits no `hashchange`, so a write announces itself here and
+ *  every other hook on the same key re-reads the URL. */
+const PARAM_EVENT = "cc-hashparam";
+
+/** Persist view controls in the hash query without triggering a route change.
+ *
+ *  `fallback` and `allowed` are read through a ref, never through the effect's
+ *  dependencies. A caller may pass an inline array (new identity every render);
+ *  if that re-subscribed the `hashchange` listener each render, the route
+ *  listener's re-render would remove this hook's listener *mid-dispatch*, and a
+ *  listener removed before its turn is never called — the URL changed but the
+ *  value stayed put. The subscription must depend on `key` alone. */
 export function useHashParam<T extends string>(
   key: string,
   fallback: T,
   allowed?: readonly T[],
 ): [T, (next: T) => void] {
-  const read = useCallback(() => {
-    const value = params().get(key) as T | null;
-    return value && (!allowed || allowed.includes(value)) ? value : fallback;
-  }, [key, fallback, allowed]);
+  const latest = useRef({ fallback, allowed });
+  latest.current = { fallback, allowed };
+  const read = useCallback(
+    () =>
+      resolveHashParam<T>(
+        window.location.hash,
+        key,
+        latest.current.fallback,
+        latest.current.allowed,
+      ),
+    [key],
+  );
   const [value, setValue] = useState<T>(read);
   useEffect(() => {
     const onChange = () => setValue(read());
     window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
+    window.addEventListener(PARAM_EVENT, onChange);
+    // The hash may have moved between render and subscription.
+    onChange();
+    return () => {
+      window.removeEventListener("hashchange", onChange);
+      window.removeEventListener(PARAM_EVENT, onChange);
+    };
   }, [read]);
   const update = useCallback(
     (next: T) => {
       const [path = "", query = ""] = window.location.hash.split("?");
       const nextParams = new URLSearchParams(query);
-      if (next === fallback) nextParams.delete(key);
+      if (next === latest.current.fallback) nextParams.delete(key);
       else nextParams.set(key, next);
       const suffix = nextParams.size > 0 ? `?${nextParams.toString()}` : "";
       window.history.replaceState(null, "", `${path}${suffix}`);
       setValue(next);
+      window.dispatchEvent(new Event(PARAM_EVENT));
     },
-    [key, fallback],
+    [key],
   );
   return [value, update];
 }
