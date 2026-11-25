@@ -26,7 +26,7 @@ import {
   type KnownLabel,
   labelProjects,
   projectDisplayName,
-  rootTag,
+  rootCell,
 } from "../core/project-labels.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
@@ -72,7 +72,19 @@ export interface RenderOptions {
   /** Display-only cost framing preference (`getCostBasis()`). Defaults to
    *  "api" (dollars read as a bill) when omitted. */
   costBasis?: CostBasis;
+  /** Every indexed project's (label, root) pair (`knownLabelPairs`). Ranked
+   *  project tables are LIMIT-ed, so the "claude dir" column is decided over
+   *  these too — a top-N holding one root's projects must still show it when
+   *  the index has several roots. Absent = judge by the rendered rows only. */
+  known?: readonly KnownLabel[];
 }
+
+/** The distinct roots behind a ranked table: its own rows plus every known
+ *  project's, so a root tag is the same whether or not the slice shows that root. */
+const rootsOf = (
+  rows: readonly { claudeDir: string }[],
+  known: readonly KnownLabel[] = [],
+): string[] => [...new Set([...rows.map((p) => p.claudeDir), ...known.map((k) => k.root)])];
 
 const ANSI = {
   reset: "\u001B[0m",
@@ -709,8 +721,9 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
         d.projects,
         (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
+        d.knownLabels,
       );
-      const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
+      const projectRoots = rootsOf(d.projects, d.knownLabels);
       lines.push(`\n${section("Top projects", options)}`);
       lines.push(
         table(
@@ -724,7 +737,7 @@ export function renderWeeklyDigest(d: WeeklyDigest, options: RenderOptions = {})
               change(p.delta, formatUSD),
               truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 44),
             ];
-            return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+            return multiRoot ? [...base, truncate(rootCell(p.claudeDir, projectRoots), 24)] : base;
           }),
           {
             align: multiRoot
@@ -1048,8 +1061,9 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
       v.byProject,
       (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
       (p) => p.claudeDir,
+      options.known,
     );
-    const projectRoots = [...new Set(v.byProject.map((p) => p.claudeDir))];
+    const projectRoots = rootsOf(v.byProject, options.known);
     lines.push(`\n${section("Top projects by cost", options)}`);
     lines.push(
       table(
@@ -1063,7 +1077,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             String(p.sessions),
             truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 52),
           ];
-          return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+          return multiRoot ? [...base, truncate(rootCell(p.claudeDir, projectRoots), 24)] : base;
         }),
         {
           align: multiRoot
@@ -1135,8 +1149,9 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
       top10,
       (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
       (p) => p.claudeDir,
+      options.known,
     );
-    const projectRoots = [...new Set(top10.map((p) => p.claudeDir))];
+    const projectRoots = rootsOf(top10, options.known);
     lines.push(`\n${section("Context tax · tokens before you type", options)}`);
     lines.push(
       table(
@@ -1151,7 +1166,7 @@ export function renderStats(v: PortfolioView, options: RenderOptions = {}): stri
             String(p.sessions),
             truncate(projectDisplayName(p.projectPath, p.projectId, p.projectAlias), 44),
           ];
-          return multiRoot ? [...base, truncate(rootTag(p.claudeDir, projectRoots), 24)] : base;
+          return multiRoot ? [...base, truncate(rootCell(p.claudeDir, projectRoots), 24)] : base;
         }),
         {
           align: multiRoot

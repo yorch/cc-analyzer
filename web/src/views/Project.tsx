@@ -16,6 +16,7 @@ import {
 import { ExportPanel } from "../ExportPanel.tsx";
 import { count, relTime, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
+import { rootText } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -117,7 +118,7 @@ export function Project({ id }: { id: string }) {
           {project && project.compactions > 0
             ? ` · ${count(project.compactions)} compaction${project.compactions === 1 ? "" : "s"}`
             : ""}
-          {multiRoot && project ? ` · ${project.claudeDir}` : ""}
+          {multiRoot && project ? ` · ${rootText(project.claudeDir)}` : ""}
         </span>
       </header>
 

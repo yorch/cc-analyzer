@@ -22,6 +22,8 @@ import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
 import { buildPortfolioDiagnostics } from "./portfolio-diagnostics.ts";
 import { assemblePortfolioSignals } from "./portfolio-signals.ts";
 import type { PricingTable } from "./pricing.ts";
+import { projectDisplayName } from "./project-labels.ts";
+import { knownProjectLabels } from "./queries.ts";
 import {
   analyticsRollup,
   CACHE_TOKENS,
@@ -208,5 +210,11 @@ export function buildWeeklyDigest(
       buildPortfolioDiagnostics(assemblePortfolioSignals(db, pricing, { audit: opts.audit })),
     // Display-only framing; never changes a number, only its wording.
     costBasis: opts.costBasis ?? "api",
+    // The whole index's (label, root) pairs, so the top-5 table's root column
+    // is decided over every root, not just the slice.
+    knownLabels: knownProjectLabels(db).map((p) => ({
+      label: projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
+      root: p.claudeDir,
+    })),
   };
 }

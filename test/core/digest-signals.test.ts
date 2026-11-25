@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { renderWeeklyDigest } from "../../src/cli/render.ts";
 import { openDb } from "../../src/core/db.ts";
-import { isEmptyPeriod } from "../../src/core/digest.ts";
+import { buildDigestMarkdown, isEmptyPeriod } from "../../src/core/digest.ts";
 import { buildWeeklyDigest } from "../../src/core/digest-signals.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -189,5 +190,71 @@ describe("buildWeeklyDigest period scoping", () => {
 
   test("the insight snapshot is portfolio-wide, identical for any period", () => {
     expect(build({ week: "2026-07-22" }).insights).toEqual(build().insights);
+  });
+});
+
+describe("buildWeeklyDigest · root column over the whole index", () => {
+  // Six projects in root A outrank the lone root-B project, so the digest's
+  // top-5 slice holds only root A — yet the index has two roots.
+  const seedRoots = (database: Database) => {
+    for (let i = 0; i < 6; i++) {
+      insertSession(database, {
+        path: `a${i}`,
+        day: "2026-07-08",
+        claude_dir: "/home/u/.claude",
+        project_id: `aaaaaaaa~-p-a${i}`,
+        project_path: `/p/a${i}`,
+        cost_total: 20 - i,
+      });
+    }
+    insertSession(database, {
+      path: "b0",
+      day: "2026-07-08",
+      claude_dir: "/mnt/work/.claude",
+      project_id: "bbbbbbbb~-p-b0",
+      project_path: "/p/b0",
+      cost_total: 0.5,
+    });
+  };
+
+  test("a top-5 holding one root still gets the root column, in markdown and terminal", () => {
+    const d2 = openDb(":memory:");
+    seedRoots(d2);
+    const d = buildWeeklyDigest(d2, pricing, { today: TODAY, audit: false });
+    d2.close();
+    expect(new Set(d.projects.map((p) => p.claudeDir)).size).toBe(1);
+    expect(d.knownLabels?.map((k) => k.root)).toContain("/mnt/work/.claude");
+    expect(buildDigestMarkdown(d)).toContain("| Project | Cost | Sessions | Change | Claude dir |");
+    expect(renderWeeklyDigest(d)).toContain("claude dir");
+  });
+
+  test("single-root digests keep their column-free table", () => {
+    const d = build();
+    expect(buildDigestMarkdown(d)).not.toContain("Claude dir");
+    expect(renderWeeklyDigest(d)).not.toContain("claude dir");
+  });
+
+  test("an alias group spanning roots renders 'several roots', not a blank cell", () => {
+    const d2 = openDb(":memory:");
+    seedRoots(d2);
+    for (const [path, dir] of [
+      ["g1", "/home/u/.claude"],
+      ["g2", "/mnt/work/.claude"],
+    ] as const) {
+      insertSession(d2, {
+        path,
+        day: "2026-07-08",
+        claude_dir: dir,
+        project_id: "alias~group",
+        project_path: "/p/group",
+        project_alias: "grp",
+        cost_total: 100,
+      });
+    }
+    const d = buildWeeklyDigest(d2, pricing, { today: TODAY, audit: false });
+    d2.close();
+    expect(d.projects[0]?.claudeDir).toBe("");
+    expect(buildDigestMarkdown(d)).toContain("several roots");
+    expect(renderWeeklyDigest(d)).toContain("several roots");
   });
 });

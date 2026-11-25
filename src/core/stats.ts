@@ -1279,9 +1279,13 @@ export function contextTax(db: Database, projectId?: string, limit = 30): Contex
       p = { alias: r.projectAlias, path: r.projectPath, claudeDir: r.claudeDir, values: [] };
       byProject.set(r.projectId, p);
     }
-    // A project's rows can disagree on project_path (the encoded id is the
-    // stable key); first non-null wins, like the other per-project rollups.
-    p.path ??= r.projectPath;
+    // A project's rows can disagree on project_path / alias (the encoded id is
+    // the stable key); the greatest non-null value wins — the same MAX() rule
+    // `knownProjectLabels` applies in SQL, so both name a project identically.
+    if (r.projectPath !== null && (p.path === null || r.projectPath > p.path))
+      p.path = r.projectPath;
+    if (r.projectAlias !== null && (p.alias === null || r.projectAlias > p.alias))
+      p.alias = r.projectAlias;
     // An alias group can span roots; '' = spans several (see GROUP_CLAUDE_DIR).
     if (p.claudeDir !== r.claudeDir) p.claudeDir = "";
     p.values.push(r.tokens);

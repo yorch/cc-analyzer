@@ -123,6 +123,16 @@ export function rootTag(root: string, all: readonly string[] = [root]): string {
   return own.join("/");
 }
 
+/** What a root cell reads when a row spans several roots (`claudeDir === ''`,
+ *  an alias group) — a blank cell would look like missing data. */
+export const SEVERAL_ROOTS_LABEL = "several roots";
+
+/** The short root cell for a column: `rootTag`, or `SEVERAL_ROOTS_LABEL` for
+ *  an alias group that spans roots. */
+export function rootCell(root: string, all: readonly string[] = [root]): string {
+  return root === "" ? SEVERAL_ROOTS_LABEL : rootTag(root, all);
+}
+
 export interface ProjectLabelling<T> {
   /** Whether the rows span more than one Claude root. */
   multiRoot: boolean;

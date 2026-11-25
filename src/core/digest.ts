@@ -21,7 +21,7 @@
 import { type CostBasis, costFramingNote, costNoun } from "./cost-framing.ts";
 import { formatCompactDuration, formatSignedCount, formatUSD } from "./format-shared.ts";
 import type { PortfolioDiagnostic } from "./portfolio-diagnostics.ts";
-import { labelProjects, projectDisplayName, rootTag } from "./project-labels.ts";
+import { type KnownLabel, labelProjects, projectDisplayName, rootCell } from "./project-labels.ts";
 import type { CacheSummary, DayRange } from "./stats-types.ts";
 import { CORRECTION_CAVEAT, SKILL_COST_CAVEAT, shiftDay, weekOf } from "./stats-types.ts";
 
@@ -178,6 +178,14 @@ export interface WeeklyDigest {
   insights: PortfolioDiagnostic[];
   /** Display-only framing preference; never changes a number, only its wording. */
   costBasis: CostBasis;
+  /**
+   * Every indexed project's (label, root) pair, built by `digest-signals.ts`
+   * (which has the db). `projects` is a top-5 slice, so the "claude dir" column
+   * is decided over these too — otherwise a top-5 holding one root's projects
+   * would drop the column although other roots exist. Absent (older payloads,
+   * hand-built digests) = judge by the rendered rows only.
+   */
+  knownLabels?: KnownLabel[];
 }
 
 /** Sessions in the period, the number the "nothing happened" branch keys off. */
@@ -327,8 +335,14 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
         d.projects,
         (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
+        d.knownLabels,
       );
-      const projectRoots = [...new Set(d.projects.map((p) => p.claudeDir))];
+      const projectRoots = [
+        ...new Set([
+          ...d.projects.map((p) => p.claudeDir),
+          ...(d.knownLabels ?? []).map((k) => k.root),
+        ]),
+      ];
       out.push("### Top projects");
       out.push("");
       out.push(
@@ -346,7 +360,7 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
               String(p.sessions),
               formatDigestDelta(p.delta, formatUSD),
             ];
-            return multiRoot ? [...base, cell(rootTag(p.claudeDir, projectRoots))] : base;
+            return multiRoot ? [...base, cell(rootCell(p.claudeDir, projectRoots))] : base;
           }),
         ),
       );

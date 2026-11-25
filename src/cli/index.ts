@@ -69,7 +69,7 @@ import {
 } from "../core/prefs.ts";
 import type { PricingTable } from "../core/pricing.ts";
 import { loadPricing } from "../core/pricing-source.ts";
-import { labelProjects, rootTag } from "../core/project-labels.ts";
+import { labelProjects, rootCell } from "../core/project-labels.ts";
 import {
   indexedProjectForPath,
   isIndexEmpty,
@@ -539,7 +539,11 @@ async function cmdProjects(): Promise<number> {
       multiRoot ? ["sessions", "project", "claude dir"] : ["sessions", "project"],
       projects.map((p) =>
         multiRoot
-          ? [String(p.sessionCount), truncate(p.label, 60), truncate(rootTag(p.root, allRoots), 40)]
+          ? [
+              String(p.sessionCount),
+              truncate(p.label, 60),
+              truncate(rootCell(p.root, allRoots), 40),
+            ]
           : [String(p.sessionCount), truncate(p.label, 80)],
       ),
     ),
@@ -1192,6 +1196,9 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
       }
     : { type: "portfolio" as const };
   const costBasis = getCostBasis();
+  // The whole index, so a LIMIT-ed project table still shows its root column
+  // when the slice holds only one root's projects.
+  const known = knownLabelPairs(knownProjectLabels(db));
   let indexStatus: Awaited<ReturnType<typeof inspectIndexStatus>>;
   try {
     indexStatus = await inspectIndexStatus(db);
@@ -1225,6 +1232,7 @@ async function cmdStats(json: boolean, current: boolean): Promise<number> {
           color: colorEnabled(),
           projectPath: project?.projectPath,
           costBasis,
+          known,
         }),
   );
   return 0;

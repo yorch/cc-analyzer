@@ -6,6 +6,7 @@ import {
   type SessionAnalysis,
 } from "../../src/core/analyze.ts";
 import { openDb } from "../../src/core/db.ts";
+import { knownProjectLabels } from "../../src/core/queries.ts";
 import { contextTax } from "../../src/core/stats.ts";
 import { assistantEvent, clock, promptEvent } from "../helpers/events.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
@@ -161,5 +162,22 @@ describe("contextTax", () => {
       byProject: [],
     });
     db.close();
+  });
+});
+
+describe("contextTax project naming", () => {
+  test("rows disagreeing on path/alias resolve to the greatest, like knownProjectLabels (MAX)", () => {
+    const db = openDb(":memory:");
+    const base = { project_id: "aaaaaaaa~-p-x", first_prompt_tokens: 1000 };
+    insertSession(db, { ...base, path: "s1", project_path: "/p/zzz", project_alias: null });
+    insertSession(db, { ...base, path: "s2", project_path: "/p/aaa", project_alias: "b-alias" });
+    insertSession(db, { ...base, path: "s3", project_path: null, project_alias: "a-alias" });
+    const row = contextTax(db).byProject[0];
+    const known = knownProjectLabels(db)[0];
+    db.close();
+    expect(row?.projectPath).toBe("/p/zzz");
+    expect(row?.projectAlias).toBe("b-alias");
+    expect(row?.projectPath).toBe(known?.projectPath ?? null);
+    expect(row?.projectAlias).toBe(known?.projectAlias ?? null);
   });
 });

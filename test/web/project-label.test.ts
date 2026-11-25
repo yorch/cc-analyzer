@@ -3,6 +3,7 @@ import {
   findingLabeller,
   projectMatches,
   rootLabeller,
+  rootText,
   shortRootLabeller,
 } from "../../web/src/project-label.ts";
 
@@ -112,13 +113,50 @@ describe("shortRootLabeller raw-id fallback", () => {
 });
 
 describe("projectMatches", () => {
-  const r = row("/mnt/work/.claude", "/home/u/code/app");
-  test("matches the root tag even when the label is bare", () => {
-    expect(projectMatches("work", r, "…/code/app")).toBe(true);
-    expect(projectMatches("nothing", r, "…/code/app")).toBe(false);
+  const home = {
+    ...row("/home/u/.claude", "/home/u/code/app"),
+    projectId: "3f2a9c1b~-home-u-code-app",
+  };
+  const work = {
+    ...row("/mnt/work/.claude", "/home/u/code/app"),
+    projectId: "0e4d7a55~-home-u-code-app",
+  };
+  const other = {
+    ...row("/home/u/.claude", "/home/u/code/zed"),
+    projectId: "3f2a9c1b~-home-u-code-zed",
+  };
+  const rows = [home, work, other];
+  const label = rootLabeller(rows);
+  const hits = (q: string) => rows.filter((r) => projectMatches(q, r, label(r)));
+
+  test("typing 'claude' does not match every row — only rows whose visible label carries it", () => {
+    // the untagged `zed` row is out even though its raw root path contains '.claude'
+    expect(hits("claude")).toEqual([home, work]);
+    const lone = row("/a/.claude", "/p/solo");
+    expect(projectMatches("claude", lone, rootLabeller([lone])(lone))).toBe(false);
   });
-  test("matches the displayed label and is case-insensitive; empty matches all", () => {
-    expect(projectMatches("APP [WORK", r, "…/code/app [work/.claude]")).toBe(true);
-    expect(projectMatches("  ", r, "x")).toBe(true);
+  test("hex fragments of the id's root slug do not match", () => {
+    expect(hits("3f")).toEqual([]);
+    expect(hits("0e4d")).toEqual([]);
+  });
+  test("the visible root tag finds only the tagged row", () => {
+    expect(label(work)).toBe("/home/u/code/app [work/.claude]");
+    expect(hits("work")).toEqual([work]);
+    // the bare same-named twin shows its tag too, and the untagged row stays out
+    expect(hits("[u/.claude]")).toEqual([home]);
+  });
+  test("matches label, path and alias, case-insensitively; empty matches all", () => {
+    expect(hits("CODE/ZED")).toEqual([other]);
+    const aliased = row("/a/.claude", "/x/y", "My Alias");
+    expect(projectMatches("my ali", aliased, "My Alias")).toBe(true);
+    expect(projectMatches("/x/y", aliased, "My Alias")).toBe(true);
+    expect(projectMatches("  ", home, "x")).toBe(true);
+  });
+});
+
+describe("rootText", () => {
+  test("an alias group spanning roots reads 'several roots', never blank", () => {
+    expect(rootText("")).toBe("several roots");
+    expect(rootText("/mnt/work/.claude")).toBe("/mnt/work/.claude");
   });
 });

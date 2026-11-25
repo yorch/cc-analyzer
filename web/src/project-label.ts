@@ -2,6 +2,7 @@ import {
   type KnownLabel,
   labelProjects,
   projectDisplayName,
+  SEVERAL_ROOTS_LABEL,
 } from "../../src/core/project-labels.ts";
 import { shortPath } from "./format.ts";
 
@@ -46,13 +47,21 @@ export const shortRootLabeller = <T extends LabelledProjectRow>(
   known?: readonly KnownProjectRow[] | null,
 ) => labelProjects(rows, shortBase, (r) => r.claudeDir, toKnown(known, shortBase)).label;
 
+/** The Claude root as shown beside a project: its path, or "several roots" for
+ *  an alias group that spans roots (`claudeDir === ''`) — never a blank. */
+export const rootText = (claudeDir: string): string =>
+  claudeDir === "" ? SEVERAL_ROOTS_LABEL : claudeDir;
+
 /** Does a project row match a filter-box query? Matches the displayed label
- *  (which may carry a `[root]` tag) plus the path, id, alias and Claude root, so
- *  typing the visible root tag finds the row even when its own label is bare. */
+ *  (which carries a `[root]` tag when the root disambiguates it), the path and
+ *  the alias — case-insensitive. Deliberately NOT the raw id or `claudeDir`:
+ *  every root path contains `.claude`, and ids embed an 8-hex root slug, so
+ *  matching them makes `claude` or `3f` hit every row. A root is findable only
+ *  through the tag the user can actually see. */
 export const projectMatches = (query: string, row: LabelledProjectRow, label: string): boolean => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [label, row.projectPath, row.projectId, row.projectAlias, row.claudeDir].some((v) =>
+  return [label, row.projectPath, row.projectAlias].some((v) =>
     (v ?? "").toLowerCase().includes(q),
   );
 };

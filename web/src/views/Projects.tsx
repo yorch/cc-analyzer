@@ -9,6 +9,7 @@ import {
   type ProjectCacheRow,
 } from "../api.ts";
 import { count, relTime, tokens, usd } from "../format.ts";
+import { rootText } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -169,7 +170,7 @@ export function Projects() {
                 </td>
                 <td>
                   <a href={link.project(r.project.projectId)}>{projectLabel(r.project)}</a>
-                  {multiRoot && <span className="muted"> · {r.project.claudeDir}</span>}
+                  {multiRoot && <span className="muted"> · {rootText(r.project.claudeDir)}</span>}
                 </td>
               </tr>
             ))}
