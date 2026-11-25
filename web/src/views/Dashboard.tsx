@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   ApiError,
@@ -34,10 +33,15 @@ import {
 import { copyText } from "../clipboard.ts";
 import { ExportPanel } from "../ExportPanel.tsx";
 import { maxOf } from "../extent.ts";
-import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
+import { count, date, duration, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { MiniBar } from "../MiniBar.tsx";
-import { projectMatches, rootLabeller, shortRootLabeller } from "../project-label.ts";
+import {
+  digestKnownLabels,
+  projectMatches,
+  rootLabeller,
+  shortRootLabeller,
+} from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
@@ -486,6 +490,9 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
 
   const h = data.headline;
   const topProject = data.projects[0];
+  // Same labelling rule as every other table: tag a name with its root when
+  // another root holds a project of that name (judged over the whole portfolio).
+  const digestLabel = shortRootLabeller(data.projects, allProjects);
   const r = data.reliability;
   // `copyText` feature-detects `navigator.clipboard` (absent outside a secure
   // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
@@ -502,13 +509,7 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
         }
         setCopied(
           (await copyText(
-            buildDigestMarkdown(
-              full.current.digest,
-              (allProjects ?? []).map((p) => ({
-                label: projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
-                root: p.claudeDir,
-              })),
-            ),
+            buildDigestMarkdown(full.current.digest, digestKnownLabels(allProjects) ?? []),
           ))
             ? "ok"
             : "failed",
@@ -542,11 +543,7 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
           />
           <Card
             label="Top project"
-            value={
-              topProject
-                ? shortPath(topProject.projectAlias ?? topProject.projectPath, topProject.projectId)
-                : "—"
-            }
+            value={topProject ? digestLabel(topProject) : "—"}
             sub={topProject ? usd(topProject.cost) : undefined}
           />
           <Card

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  digestKnownLabels,
   findingLabeller,
   projectMatches,
   rootLabeller,
@@ -186,5 +187,25 @@ describe("rootText", () => {
   test("an alias group spanning roots reads 'several roots', never blank", () => {
     expect(rootText("")).toBe("several roots");
     expect(rootText("/mnt/work/.claude")).toBe("/mnt/work/.claude");
+  });
+});
+
+describe("digest card labelling (top project + copied markdown share `known`)", () => {
+  const a = row("/r/rootA/.claude", "/dev/api");
+  const b = row("/r/work/.claude", "/dev/api");
+  const solo = row("/r/rootA/.claude", "/dev/unique");
+  test("digestKnownLabels maps to full (label, root) pairs; undefined while loading", () => {
+    expect(digestKnownLabels(undefined)).toBeUndefined();
+    expect(digestKnownLabels([a, solo])).toEqual([
+      { label: "/dev/api", root: "/r/rootA/.claude" },
+      { label: "/dev/unique", root: "/r/rootA/.claude" },
+    ]);
+  });
+  test("a lone digest row is tagged when the whole portfolio holds a twin", () => {
+    expect(shortRootLabeller([a], [a, b, solo])(a)).toContain("[");
+    expect(shortRootLabeller([solo], [a, b, solo])(solo)).not.toContain("[");
+  });
+  test("single root output is unchanged", () => {
+    expect(shortRootLabeller([a], [a, solo])(a)).toBe("/dev/api");
   });
 });
