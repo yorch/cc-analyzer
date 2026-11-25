@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { renderSessionSummary, renderStats } from "../../src/cli/render.ts";
+import {
+  renderPortfolioInsights,
+  renderSessionSummary,
+  renderStats,
+} from "../../src/cli/render.ts";
 import { analyzeSession, type SessionAnalysis } from "../../src/core/analyze.ts";
 import { openDb } from "../../src/core/db.ts";
+import type { PortfolioDiagnostic } from "../../src/core/portfolio-diagnostics.ts";
 import {
   analyticsRollup,
   buildPortfolioStats,
@@ -318,5 +323,44 @@ describe("renderSessionSummary · turns table", () => {
     expect(out).not.toContain("Ranked by cost");
     const table = out.slice(out.indexOf("▸ Turns"));
     expect(table.indexOf("prompt number 0")).toBeLessThan(table.indexOf("prompt number 3"));
+  });
+});
+
+describe("renderPortfolioInsights project labels", () => {
+  const finding = (
+    projectId: string,
+    claudeDir: string | undefined,
+    projectPath = "/work/app",
+  ): PortfolioDiagnostic => ({
+    code: "cache-waste-heavy",
+    severity: "warning",
+    title: "t",
+    evidence: "e",
+    action: "a",
+    projectId,
+    projectPath,
+    claudeDir,
+  });
+  const plain = { color: false } as const;
+
+  test("two roots holding the same project name read name [root]", () => {
+    const out = renderPortfolioInsights(
+      [
+        finding("aaaaaaaa~-work-app", "/home/u/rootA"),
+        finding("bbbbbbbb~-work-app", "/home/u/rootB"),
+      ],
+      plain,
+    );
+    expect(out).toContain("Project: /work/app [rootA]");
+    expect(out).toContain("Project: /work/app [rootB]");
+  });
+
+  test("single root and missing claudeDir keep the bare name", () => {
+    const one = renderPortfolioInsights([finding("aaaaaaaa~-work-app", "/home/u/rootA")], plain);
+    expect(one).toContain("Project: /work/app");
+    expect(one).not.toContain("[");
+    const none = renderPortfolioInsights([finding("aaaaaaaa~-work-app", undefined)], plain);
+    expect(none).toContain("Project: /work/app");
+    expect(none).not.toContain("[");
   });
 });

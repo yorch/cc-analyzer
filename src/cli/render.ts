@@ -624,8 +624,15 @@ export function renderPortfolioInsights(
   } else {
     // A portfolio finding may be unscoped, in which case there is no project
     // line to print at all.
+    // Labelled over the whole finding set (never a subset) so a `[root]` suffix
+    // appears only when two roots really hold the same project name. Findings
+    // without a recorded root (unscoped or older) keep the bare name.
+    const name = (d: PortfolioDiagnostic) =>
+      projectDisplayName(d.projectPath, d.projectId ?? "", d.projectAlias);
+    const scoped = diagnostics.filter((d) => d.projectId && d.claudeDir !== undefined);
+    const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "");
     pushFindings(lines, diagnostics, options, (d) =>
-      d.projectId ? projectDisplayName(d.projectPath, d.projectId, d.projectAlias) : d.projectPath,
+      d.projectId ? (d.claudeDir !== undefined ? labelled.label(d) : name(d)) : d.projectPath,
     );
     lines.push(
       muted(

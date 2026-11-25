@@ -25,3 +25,22 @@ export const shortRootLabeller = <T extends LabelledProjectRow>(rows: readonly T
     (r) => shortPath(r.projectAlias ?? r.projectPath, r.projectId),
     (r) => r.claudeDir,
   ).label;
+
+/** Labels for portfolio findings: a finding's `claudeDir` is optional (unscoped
+ *  or older findings carry none), so only root-carrying findings take part in
+ *  the collision check; the rest keep the bare name. Pass the whole finding
+ *  set, not a filtered subset, so suffixes never flip while filtering. */
+export const findingLabeller = (
+  findings: readonly {
+    projectId?: string;
+    projectPath?: string;
+    projectAlias?: string | null;
+    claudeDir?: string;
+  }[],
+) => {
+  type F = (typeof findings)[number];
+  const name = (d: F) => projectDisplayName(d.projectPath, d.projectId ?? "", d.projectAlias);
+  const scoped = findings.filter((d) => d.projectId && d.claudeDir !== undefined);
+  const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "");
+  return (d: F): string => (d.claudeDir !== undefined ? labelled.label(d) : name(d));
+};

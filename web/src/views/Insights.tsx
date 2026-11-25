@@ -21,7 +21,7 @@ import {
 } from "../api.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
-import { rootLabeller } from "../project-label.ts";
+import { findingLabeller, rootLabeller } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -151,6 +151,7 @@ export function Insights() {
  * section: warnings first, each with observed evidence and a next action.
  * Project-scoped findings link to their project page. */
 function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[] }) {
+  const findingLabel = findingLabeller(diagnostics);
   return (
     <section>
       <h2 className="section-h">Portfolio insights · what to do differently</h2>
@@ -171,9 +172,7 @@ function PortfolioInsights({ diagnostics }: { diagnostics: PortfolioDiagnostic[]
           extra={(d) =>
             d.projectId && (
               <p>
-                <a href={link.project(d.projectId)}>
-                  {projectDisplayName(d.projectPath, d.projectId, d.projectAlias)}
-                </a>
+                <a href={link.project(d.projectId)}>{findingLabel(d)}</a>
               </p>
             )
           }

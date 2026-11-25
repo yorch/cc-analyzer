@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rootLabeller, shortRootLabeller } from "../../web/src/project-label.ts";
+import { findingLabeller, rootLabeller, shortRootLabeller } from "../../web/src/project-label.ts";
 
 const row = (
   claudeDir: string,
@@ -43,5 +43,29 @@ describe("rootLabeller", () => {
     const rows = [row("/r1/.claude", "/p/app"), row("/r2/.claude", "/p/app")];
     const label = rootLabeller(rows);
     expect(label(rows[0]!)).toContain("/p/app [");
+  });
+});
+
+describe("findingLabeller", () => {
+  const f = (claudeDir: string | undefined) => ({
+    projectId: "p",
+    projectPath: "/work/app",
+    claudeDir,
+  });
+
+  test("same name under two roots gets [root] tags", () => {
+    const a = f("/home/u/rootA");
+    const b = f("/home/u/rootB");
+    const label = findingLabeller([a, b]);
+    expect(label(a)).toBe("/work/app [rootA]");
+    expect(label(b)).toBe("/work/app [rootB]");
+  });
+
+  test("single root and unscoped findings stay bare", () => {
+    const a = f("/home/u/rootA");
+    const u = f(undefined);
+    const label = findingLabeller([a, u]);
+    expect(label(a)).toBe("/work/app");
+    expect(label(u)).toBe("/work/app");
   });
 });
