@@ -284,6 +284,12 @@ main {
     "wght" 560;
   letter-spacing: 0.01em;
 }
+/* Inline code carries paths and session ids with no break opportunities; let
+   them wrap at phone width instead of widening the page. (Pre blocks keep
+   white-space: pre, so this never reflows them.) */
+code {
+  overflow-wrap: anywhere;
+}
 .index-notice p {
   margin: 1px 0 0;
   color: var(--muted);
@@ -1343,6 +1349,11 @@ p.muted {
   margin-top: 14px;
   align-items: center;
 }
+/* Action rows carry several buttons (the Session export set has five items);
+   wrap instead of pushing the page wider than a phone viewport. */
+.digest-actions {
+  flex-wrap: wrap;
+}
 .claude-analyze select {
   background: var(--panel, transparent);
   color: var(--ink);
@@ -1561,6 +1572,10 @@ p.muted {
   border-left: 3px solid var(--teal);
   padding: 10px 12px;
   background: var(--panel);
+  /* Grid items must be allowed to shrink, and a finding's path or server name
+     may have no break opportunities: wrap it rather than widen the page. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .diagnostic-warning {
