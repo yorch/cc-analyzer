@@ -154,6 +154,34 @@ describe("projectMatches", () => {
   });
 });
 
+describe("projectMatches as the Projects filter (lone untagged rows)", () => {
+  // Projects.tsx filters with projectMatches over the label it displays. A lone
+  // project carries no [root] tag, so its path and alias must still find it.
+  const lone = {
+    ...row("/home/u/.claude", "/home/u/code/solo", "Solo Alias"),
+    projectId: "9a8b7c6d~-x",
+  };
+  const twinA = { ...row("/home/u/.claude", "/home/u/code/app"), projectId: "1a1a1a1a~-x" };
+  const twinB = { ...row("/mnt/work/.claude", "/home/u/code/app"), projectId: "2b2b2b2b~-x" };
+  const rows = [lone, twinA, twinB];
+  const label = rootLabeller(rows);
+  const hits = (q: string) => rows.filter((r) => projectMatches(q, r, label(r)));
+
+  test("a lone untagged project is found by its path and by its alias", () => {
+    expect(label(lone)).toBe("Solo Alias");
+    expect(hits("code/solo")).toEqual([lone]);
+    expect(hits("solo alias")).toEqual([lone]);
+  });
+  test("a [root] tag stays searchable through the label", () => {
+    expect(hits("work")).toEqual([twinB]);
+    expect(hits("[u/.claude]")).toEqual([twinA]);
+  });
+  test("the raw id and the root path of a lone row do not match", () => {
+    expect(hits("9a8b")).toEqual([]);
+    expect(projectMatches("/home/u/.claude", lone, label(lone))).toBe(false);
+  });
+});
+
 describe("rootText", () => {
   test("an alias group spanning roots reads 'several roots', never blank", () => {
     expect(rootText("")).toBe("several roots");
