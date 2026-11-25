@@ -37,6 +37,7 @@ import { maxOf } from "../extent.ts";
 import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { MiniBar } from "../MiniBar.tsx";
+import { shortRootLabeller } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
@@ -105,6 +106,7 @@ export function Dashboard() {
     (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
     (p) => p.claudeDir,
   ).label;
+  const estimatedLabel = shortRootLabeller(data?.estimatedByProject ?? []);
   const byModel = data?.byModel ?? [];
   const top = data?.top ?? [];
   const pq = projectQuery.toLowerCase();
@@ -356,9 +358,7 @@ export function Dashboard() {
                     <td className="num">{(r.share * 100).toFixed(0)}%</td>
                     <td className="num">{usd(r.cost)}</td>
                     <td>
-                      <a href={link.project(r.projectId)}>
-                        {shortPath(r.projectAlias ?? r.projectPath, r.projectId)}
-                      </a>
+                      <a href={link.project(r.projectId)}>{estimatedLabel(r)}</a>
                     </td>
                   </tr>
                 ))}

@@ -1,4 +1,4 @@
-import { labelProjects, projectDisplayName } from "../../../src/core/project-labels.ts";
+import { projectDisplayName } from "../../../src/core/project-labels.ts";
 import {
   EmptyNotice,
   ErrorNotice,
@@ -21,6 +21,7 @@ import {
 } from "../api.ts";
 import { DiagnosticList } from "../DiagnosticList.tsx";
 import { count, shortPath, usd } from "../format.ts";
+import { rootLabeller } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -43,24 +44,6 @@ const projectAccessors = (label: (row: ProjectCacheRow) => string): Accessors<Pr
   sessions: (r) => r.sessions,
   project: label,
 });
-
-/** The one labelling rule for a set of project rows: qualify a name with its
- *  Claude root only when another root holds a project of the same name. */
-const rootLabeller = <
-  T extends {
-    projectPath: string | null;
-    projectId: string;
-    projectAlias?: string | null;
-    claudeDir: string;
-  },
->(
-  rows: readonly T[],
-) =>
-  labelProjects(
-    rows,
-    (r) => projectDisplayName(r.projectPath, r.projectId, r.projectAlias),
-    (r) => r.claudeDir,
-  ).label;
 
 export function Insights() {
   const { data, error, loading, retry } = useAsync(() => api.insights(), [], "insights");

@@ -32,6 +32,7 @@ import { DiagnosticList } from "../DiagnosticList.tsx";
 import { maxOf, minOf } from "../extent.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
+import { shortRootLabeller } from "../project-label.ts";
 import { useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -361,6 +362,7 @@ function Compactions({ data, query }: { data: CompactionUsage; query: string }) 
     return <EmptyNotice>No compactions recorded. Reindex if this seems wrong.</EmptyNotice>;
   }
   const q = query.trim().toLowerCase();
+  const projectLabel = shortRootLabeller(data.byProject);
   const rows = q
     ? data.byProject.filter((p) =>
         `${p.projectPath ?? ""} ${p.projectId} ${p.projectAlias ?? ""}`.toLowerCase().includes(q),
@@ -380,7 +382,7 @@ function Compactions({ data, query }: { data: CompactionUsage; query: string }) 
           <FactsTable
             head={["Project", "Compactions", "Sessions hit", "Share of sessions"]}
             rows={rows.map((p) => [
-              shortPath(p.projectAlias ?? p.projectPath, p.projectId),
+              projectLabel(p),
               count(p.compactions),
               `${count(p.sessionsWithCompaction)}/${count(p.sessions)}`,
               `${(p.share * 100).toFixed(0)}%`,
@@ -737,6 +739,8 @@ export function Tools() {
     );
   // Filtered before the row cap, so "showing 15 of N" counts what the filter
   // actually matched rather than the whole table.
+  const scLabel = shortRootLabeller(sc.byProject);
+  const wtLabel = shortRootLabeller(wt.byProject);
   const versionRows = data.versions.filter((row) => matches(row.version));
   const branchRows = data.branches.filter((row) => matches(row.branch));
   return (
@@ -807,7 +811,7 @@ export function Tools() {
                 rows={sc.byProject
                   .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
                   .map((p) => [
-                    shortPath(p.projectAlias ?? p.projectPath, p.projectId),
+                    scLabel(p),
                     usd(p.sidechainCost),
                     `${(p.share * 100).toFixed(0)}%`,
                     usd(p.cost),
@@ -828,11 +832,7 @@ export function Tools() {
                 head={["Project", "Searches", "Fetches"]}
                 rows={wt.byProject
                   .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
-                  .map((p) => [
-                    shortPath(p.projectAlias ?? p.projectPath, p.projectId),
-                    count(p.searches),
-                    count(p.fetches),
-                  ])}
+                  .map((p) => [wtLabel(p), count(p.searches), count(p.fetches)])}
               />
             </>
           )}
