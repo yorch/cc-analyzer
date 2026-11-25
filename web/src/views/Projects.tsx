@@ -9,7 +9,7 @@ import {
   type ProjectCacheRow,
 } from "../api.ts";
 import { count, relTime, tokens, usd } from "../format.ts";
-import { rootText } from "../project-label.ts";
+import { projectMatches, rootText } from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
@@ -82,8 +82,12 @@ export function Projects() {
     }));
     return { rows: built, projectLabel: label, multiRoot: multi };
   }, [all, insightsProjects, insightsDiagnostics]);
-  const q = query.toLowerCase();
-  const filtered = q ? rows.filter((r) => projectLabel(r.project).toLowerCase().includes(q)) : rows;
+  // Same matching rule as the Dashboard/Insights/Tools filters: the displayed
+  // label (with its [root] tag), the path and the alias — not the raw id.
+  const q = query.trim();
+  const filtered = q
+    ? rows.filter((r) => projectMatches(q, r.project, projectLabel(r.project)))
+    : rows;
   // Recently-active-first, distinct from the Dashboard's cost ranking — this
   // page's job is "find the project I was just in", not "find the priciest".
   const sort = useSort(

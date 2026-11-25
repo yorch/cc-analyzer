@@ -47,6 +47,14 @@ export const shortRootLabeller = <T extends LabelledProjectRow>(
   known?: readonly KnownProjectRow[] | null,
 ) => labelProjects(rows, shortBase, (r) => r.claudeDir, toKnown(known, shortBase)).label;
 
+/** The portfolio's (label, root) pairs in the full-name form `buildDigestMarkdown`
+ *  takes as `known` — the one mapping the digest card's visible labels and its
+ *  copied markdown share, so they cannot disagree about the "claude dir" column.
+ *  Absent (still loading) = undefined: judge by the rendered rows only. */
+export const digestKnownLabels = (
+  known: readonly KnownProjectRow[] | null | undefined,
+): KnownLabel[] | undefined => (known ? toKnown(known, fullBase) : undefined);
+
 /** The Claude root as shown beside a project: its path, or "several roots" for
  *  an alias group that spans roots (`claudeDir === ''`) — never a blank. */
 export const rootText = (claudeDir: string): string =>

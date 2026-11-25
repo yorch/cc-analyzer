@@ -33,10 +33,15 @@ import {
 import { copyText } from "../clipboard.ts";
 import { ExportPanel } from "../ExportPanel.tsx";
 import { maxOf } from "../extent.ts";
-import { count, date, duration, shortPath, tokens, usd } from "../format.ts";
+import { count, date, duration, tokens, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
 import { MiniBar } from "../MiniBar.tsx";
-import { projectMatches, rootLabeller, shortRootLabeller } from "../project-label.ts";
+import {
+  digestKnownLabels,
+  projectMatches,
+  rootLabeller,
+  shortRootLabeller,
+} from "../project-label.ts";
 import { link, useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { Seg } from "../Seg.tsx";
@@ -458,6 +463,11 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
     [costBasis],
   );
   const [copied, setCopied] = useState<"idle" | "copying" | "ok" | "failed">("idle");
+  // The digest payload carries no `knownLabels`; the markdown's "claude dir"
+  // column is decided over the whole portfolio, which `/api/projects` (cached,
+  // shared with the other views) already holds. Absent while loading = judge by
+  // the rendered rows only, exactly as a hand-built digest does.
+  const allProjects = useProjects().data;
   // The full digest, fetched once per cost basis and reused across clicks.
   const full = useRef<{ basis: CostBasis; digest: WeeklyDigest } | null>(null);
   // Settle back to idle so a stale "Copied" doesn't sit next to the button for
@@ -480,6 +490,9 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
 
   const h = data.headline;
   const topProject = data.projects[0];
+  // Same labelling rule as every other table: tag a name with its root when
+  // another root holds a project of that name (judged over the whole portfolio).
+  const digestLabel = shortRootLabeller(data.projects, allProjects);
   const r = data.reliability;
   // `copyText` feature-detects `navigator.clipboard` (absent outside a secure
   // context — exactly what `serve --host 0.0.0.0` over plain http gives a phone
@@ -494,7 +507,13 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
         if (full.current?.basis !== costBasis) {
           full.current = { basis: costBasis, digest: await api.report() };
         }
-        setCopied((await copyText(buildDigestMarkdown(full.current.digest))) ? "ok" : "failed");
+        setCopied(
+          (await copyText(
+            buildDigestMarkdown(full.current.digest, digestKnownLabels(allProjects) ?? []),
+          ))
+            ? "ok"
+            : "failed",
+        );
       } catch {
         setCopied("failed");
       }
@@ -524,11 +543,7 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
           />
           <Card
             label="Top project"
-            value={
-              topProject
-                ? shortPath(topProject.projectAlias ?? topProject.projectPath, topProject.projectId)
-                : "—"
-            }
+            value={topProject ? digestLabel(topProject) : "—"}
             sub={topProject ? usd(topProject.cost) : undefined}
           />
           <Card

@@ -717,20 +717,21 @@ function Reliability({ data, query }: { data: AnalyticsResponse; query: string }
   );
 }
 
+const TOOL_VIEWS = [
+  "tools",
+  "reliability",
+  "compactions",
+  "skills",
+  "agents",
+  "setup",
+  "environment",
+] as const;
+type ToolView = (typeof TOOL_VIEWS)[number];
+
 export function Tools() {
   const { data, error, loading, retry } = useAsync(() => api.analytics(), [], "analytics");
   const known = useProjects().data;
-  const toolViews = [
-    "tools",
-    "reliability",
-    "compactions",
-    "skills",
-    "agents",
-    "setup",
-    "environment",
-  ] as const;
-  type ToolView = (typeof toolViews)[number];
-  const [view, setView] = useHashParam<ToolView>("view", "tools", toolViews);
+  const [view, setView] = useHashParam<ToolView>("view", "tools", TOOL_VIEWS);
   const [query, setQuery] = useHashParam<string>("q", "");
   if (loading) return <LoadingNotice>Loading analytics…</LoadingNotice>;
   if (error)
@@ -761,7 +762,7 @@ export function Tools() {
       <ViewTabs
         id="analytics"
         label="Analytics Sections"
-        items={toolViews}
+        items={TOOL_VIEWS}
         value={view}
         onChange={setView}
       />

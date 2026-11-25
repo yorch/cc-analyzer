@@ -33,7 +33,7 @@ import {
   splitRootList,
 } from "../core/claude-roots.ts";
 import { openDb } from "../core/db.ts";
-import { buildDigestMarkdown, isDayString } from "../core/digest.ts";
+import { buildDigestMarkdown, isDayString, withoutRenderAids } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import {
   findProject,
@@ -1341,7 +1341,7 @@ async function cmdReport(
   } finally {
     db.close();
   }
-  if (json) console.log(JSON.stringify(digest, null, 2));
+  if (json) console.log(JSON.stringify(withoutRenderAids(digest), null, 2));
   else if (md) console.log(buildDigestMarkdown(digest));
   else
     console.log(

@@ -288,6 +288,35 @@ export function trackCommand(name: string, extraProps: Record<string, string> = 
   void request.finally(() => pendingEvents.delete(request));
 }
 
+/** How long the poster waits for its piped payload. The parent writes the body
+ *  and closes the pipe immediately, so a healthy read finishes in milliseconds;
+ *  the deadline only matters when the pipe is never closed (a parent that died
+ *  first, or an inherited terminal-less handle), where an unbounded read would
+ *  hang the child forever. */
+export const POSTER_STDIN_TIMEOUT_MS = 2000;
+
+/** Read the piped payload, or "" on a TTY, an unavailable stdin, or the deadline.
+ *  Deliberately async-only: a synchronous `readFileSync(0)` fallback cannot be
+ *  timed out and would hang on the same open pipe. The abandoned read is harmless
+ *  because the poster's entrypoint ends with `process.exit`. */
+async function readPosterStdin(): Promise<string> {
+  if (process.stdin.isTTY === true) return "";
+  // SAFETY: Bun global gains stdin.text at runtime; types don't declare it
+  const bunStdin = (Bun as unknown as { stdin?: { text?: () => Promise<string> } }).stdin;
+  if (!bunStdin || typeof bunStdin.text !== "function") return "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      bunStdin.text(),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve(""), POSTER_STDIN_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Deliver one prebuilt event, then exit. This is the detached child's whole job.
  *
@@ -296,36 +325,18 @@ export function trackCommand(name: string, extraProps: Record<string, string> = 
  * hidden subcommand is ever run by hand. Re-checks the opt-out so the marker
  * cannot be used to send an event while telemetry is off.
  */
-export async function runTelemetryPoster(url?: string, payload?: string): Promise<number> {
+export async function runTelemetryPoster(
+  url?: string,
+  payload?: string,
+  readStdin: () => Promise<string> = readPosterStdin,
+): Promise<number> {
   if (!url || !isTelemetryEnabled()) return 0;
   let raw: string | undefined = payload;
   if (!raw) {
-    // Payload not in argv — read from piped stdin (new path). Only attempt
-    // when stdin is piped to avoid hanging on manual TTY invocations.
+    // Payload not in argv: it was piped over stdin (the ps-safe path).
     try {
-      if (process.stdin.isTTY !== true) {
-        // Prefer Bun's native stdin helper when available
-        try {
-          // SAFETY: Bun global gains stdin.text at runtime; types don't declare it
-          const bunStdin = (Bun as unknown as { stdin?: { text?: () => Promise<string> } }).stdin;
-          if (bunStdin && typeof bunStdin.text === "function") {
-            const t = await bunStdin.text();
-            if (t && t.trim() !== "") raw = t;
-          }
-        } catch {
-          // fall through to Node fallback
-        }
-        if (!raw) {
-          try {
-            const { readFileSync } = await import("node:fs");
-            // SAFETY: fd 0 is stdin; sync read is safe here because isTTY===false guarantees piped EOF
-            const txt = readFileSync(0, "utf8") as string;
-            if (txt.trim() !== "") raw = txt;
-          } catch {
-            // ignore
-          }
-        }
-      }
+      const text = await readStdin();
+      if (text.trim() !== "") raw = text;
     } catch {
       // treat as no payload
     }
