@@ -22,7 +22,12 @@ import {
   type PortfolioDiagnostic,
 } from "../core/portfolio-diagnostics.ts";
 import type { TokenCounts } from "../core/pricing.ts";
-import { labelProjects, projectDisplayName, rootTag } from "../core/project-labels.ts";
+import {
+  type KnownLabel,
+  labelProjects,
+  projectDisplayName,
+  rootTag,
+} from "../core/project-labels.ts";
 import { buildSessionDiagnostics } from "../core/session-diagnostics.ts";
 import { OUTCOME_CAVEAT, outcomeRows, sessionOutcomes } from "../core/session-insights.ts";
 import { SETUP_AUDIT_CAVEAT, type SetupAudit } from "../core/setup-audit.ts";
@@ -606,6 +611,7 @@ export function renderSetupAudit(audit: SetupAudit, options: RenderOptions = {})
 export function renderPortfolioInsights(
   diagnostics: PortfolioDiagnostic[],
   options: RenderOptions = {},
+  known: readonly KnownLabel[] = [],
 ): string {
   const lines: string[] = [];
   const ruleCount = PORTFOLIO_DIAGNOSTIC_CODES.length;
@@ -630,7 +636,9 @@ export function renderPortfolioInsights(
     const name = (d: PortfolioDiagnostic) =>
       projectDisplayName(d.projectPath, d.projectId ?? "", d.projectAlias);
     const scoped = diagnostics.filter((d) => d.projectId && d.claudeDir !== undefined);
-    const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "");
+    // `known` is every indexed project (see `knownLabelPairs`): the findings are
+    // a ranked slice, so a twin in another root may not be among them.
+    const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "", known);
     pushFindings(lines, diagnostics, options, (d) =>
       d.projectId ? (d.claudeDir !== undefined ? labelled.label(d) : name(d)) : d.projectPath,
     );

@@ -1,4 +1,8 @@
-import { labelProjects, projectDisplayName } from "../../src/core/project-labels.ts";
+import {
+  type KnownLabel,
+  labelProjects,
+  projectDisplayName,
+} from "../../src/core/project-labels.ts";
 import { shortPath } from "./format.ts";
 
 export interface LabelledProjectRow {
@@ -8,23 +12,50 @@ export interface LabelledProjectRow {
   claudeDir: string;
 }
 
+/** The naming fields every portfolio project row carries. */
+export type KnownProjectRow = LabelledProjectRow;
+
+const toKnown = (
+  projects: readonly KnownProjectRow[] | null | undefined,
+  base: (r: KnownProjectRow) => string,
+): KnownLabel[] => (projects ?? []).map((r) => ({ label: base(r), root: r.claudeDir }));
+
+const fullBase = (r: KnownProjectRow) =>
+  projectDisplayName(r.projectPath, r.projectId, r.projectAlias);
+
+// Abbreviated base label. A NULL path falls back to the decoded id — never the
+// raw stored `<slug>~<name>` id — and is abbreviated like any other path.
+const shortBase = (r: KnownProjectRow) =>
+  shortPath(projectDisplayName(r.projectPath, r.projectId, r.projectAlias));
+
 /** The one labelling rule for a set of project rows: qualify a name with its
- *  Claude root only when another root holds a project of the same name. */
-export const rootLabeller = <T extends LabelledProjectRow>(rows: readonly T[]) =>
-  labelProjects(
-    rows,
-    (r) => projectDisplayName(r.projectPath, r.projectId, r.projectAlias),
-    (r) => r.claudeDir,
-  ).label;
+ *  Claude root only when another root holds a project of the same name.
+ *  `known` is the whole project list (e.g. `useProjects().data`): its pairs
+ *  count toward collisions without being rendered, so a LIMIT-ed list still
+ *  tags a project whose twin was cut. Absent (still loading) = rows only. */
+export const rootLabeller = <T extends LabelledProjectRow>(
+  rows: readonly T[],
+  known?: readonly KnownProjectRow[] | null,
+) => labelProjects(rows, fullBase, (r) => r.claudeDir, toKnown(known, fullBase)).label;
 
 /** Same rule over the abbreviated (`…/parent/name`) names the portfolio
- *  tables print; single-root output equals `shortPath(alias ?? path, id)`. */
-export const shortRootLabeller = <T extends LabelledProjectRow>(rows: readonly T[]) =>
-  labelProjects(
-    rows,
-    (r) => shortPath(r.projectAlias ?? r.projectPath, r.projectId),
-    (r) => r.claudeDir,
-  ).label;
+ *  tables print; single-root output equals `shortPath(alias ?? path, id)`
+ *  whenever a path or alias exists. */
+export const shortRootLabeller = <T extends LabelledProjectRow>(
+  rows: readonly T[],
+  known?: readonly KnownProjectRow[] | null,
+) => labelProjects(rows, shortBase, (r) => r.claudeDir, toKnown(known, shortBase)).label;
+
+/** Does a project row match a filter-box query? Matches the displayed label
+ *  (which may carry a `[root]` tag) plus the path, id, alias and Claude root, so
+ *  typing the visible root tag finds the row even when its own label is bare. */
+export const projectMatches = (query: string, row: LabelledProjectRow, label: string): boolean => {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [label, row.projectPath, row.projectId, row.projectAlias, row.claudeDir].some((v) =>
+    (v ?? "").toLowerCase().includes(q),
+  );
+};
 
 /** Labels for portfolio findings: a finding's `claudeDir` is optional (unscoped
  *  or older findings carry none), so only root-carrying findings take part in
@@ -37,10 +68,11 @@ export const findingLabeller = (
     projectAlias?: string | null;
     claudeDir?: string;
   }[],
+  known?: readonly KnownProjectRow[] | null,
 ) => {
   type F = (typeof findings)[number];
   const name = (d: F) => projectDisplayName(d.projectPath, d.projectId ?? "", d.projectAlias);
   const scoped = findings.filter((d) => d.projectId && d.claudeDir !== undefined);
-  const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "");
+  const labelled = labelProjects(scoped, name, (d) => d.claudeDir ?? "", toKnown(known, fullBase));
   return (d: F): string => (d.claudeDir !== undefined ? labelled.label(d) : name(d));
 };

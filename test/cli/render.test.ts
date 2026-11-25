@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { knownLabelPairs } from "../../src/cli/known-labels.ts";
 import {
   renderPortfolioInsights,
   renderSessionSummary,
@@ -362,5 +363,45 @@ describe("renderPortfolioInsights project labels", () => {
     const none = renderPortfolioInsights([finding("aaaaaaaa~-work-app", undefined)], plain);
     expect(none).toContain("Project: /work/app");
     expect(none).not.toContain("[");
+  });
+});
+
+describe("renderPortfolioInsights with known (whole-index) labels", () => {
+  const f: PortfolioDiagnostic = {
+    code: "cache-waste-heavy",
+    severity: "warning",
+    title: "t",
+    evidence: "e",
+    action: "a",
+    projectId: "aaaaaaaa~-work-app",
+    projectPath: "/work/app",
+    claudeDir: "/home/u/rootA",
+  };
+  const plain = { color: false } as const;
+
+  test("a lone finding is tagged when its twin lives in another root of the index", () => {
+    const known = knownLabelPairs([
+      {
+        projectId: "aaaaaaaa~-work-app",
+        projectAlias: null,
+        projectPath: "/work/app",
+        claudeDir: "/home/u/rootA",
+      },
+      {
+        projectId: "bbbbbbbb~-work-app",
+        projectAlias: null,
+        projectPath: "/work/app",
+        claudeDir: "/home/u/rootB",
+      },
+    ]);
+    expect(renderPortfolioInsights([f], plain, known)).toContain("Project: /work/app [rootA]");
+    expect(renderPortfolioInsights([f], plain)).not.toContain("[");
+  });
+
+  test("an alias group spanning roots ('') never tags anyone", () => {
+    const known = knownLabelPairs([
+      { projectId: "cccccccc~-x", projectAlias: "/work/app", projectPath: null, claudeDir: "" },
+    ]);
+    expect(renderPortfolioInsights([f], plain, known)).not.toContain("[");
   });
 });

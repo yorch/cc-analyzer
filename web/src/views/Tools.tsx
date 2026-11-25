@@ -5,6 +5,7 @@ import {
   type BashCommandRow,
   CORRECTION_CAVEAT,
   type CompactionUsage,
+  type IndexedProject,
   type NameUsageRow,
   PARSE_COVERAGE_MAX_UNPARSED_SHARE,
   PARSE_COVERAGE_MIN_LINES,
@@ -32,12 +33,13 @@ import { DiagnosticList } from "../DiagnosticList.tsx";
 import { maxOf, minOf } from "../extent.ts";
 import { count, shortPath, usd } from "../format.ts";
 import { Histogram } from "../Histogram.tsx";
-import { shortRootLabeller } from "../project-label.ts";
+import { projectMatches, shortRootLabeller } from "../project-label.ts";
 import { useHashParam } from "../router.ts";
 import { SearchField } from "../SearchField.tsx";
 import { SortTh } from "../SortTh.tsx";
 import { areaPath, chartBox, linePath, xScale } from "../trend-charts.tsx";
 import { useAsync } from "../useAsync.ts";
+import { useProjects } from "../useProjects.ts";
 import { type Accessors, useSort } from "../useSort.ts";
 import { ViewPanel, ViewTabs } from "../ViewTabs.tsx";
 
@@ -356,17 +358,23 @@ function FactsTable({ head, rows }: { head: string[]; rows: (string | number)[][
 /** Which projects chronically hit the context ceiling. Only a session's own
  * main-chain compactions count — subagent compactions and boundaries inherited
  * by continuation files are split out in the summary line. */
-function Compactions({ data, query }: { data: CompactionUsage; query: string }) {
+function Compactions({
+  data,
+  query,
+  known,
+}: {
+  data: CompactionUsage;
+  query: string;
+  known: IndexedProject[] | null;
+}) {
   const s = data.summary;
   if (s.compactions === 0 && s.sidechain === 0 && s.inherited === 0) {
     return <EmptyNotice>No compactions recorded. Reindex if this seems wrong.</EmptyNotice>;
   }
   const q = query.trim().toLowerCase();
-  const projectLabel = shortRootLabeller(data.byProject);
+  const projectLabel = shortRootLabeller(data.byProject, known);
   const rows = q
-    ? data.byProject.filter((p) =>
-        `${p.projectPath ?? ""} ${p.projectId} ${p.projectAlias ?? ""}`.toLowerCase().includes(q),
-      )
+    ? data.byProject.filter((p) => projectMatches(q, p, projectLabel(p)))
     : data.byProject;
   return (
     <>
@@ -711,6 +719,7 @@ function Reliability({ data, query }: { data: AnalyticsResponse; query: string }
 
 export function Tools() {
   const { data, error, loading, retry } = useAsync(() => api.analytics(), [], "analytics");
+  const known = useProjects().data;
   const toolViews = [
     "tools",
     "reliability",
@@ -739,8 +748,8 @@ export function Tools() {
     );
   // Filtered before the row cap, so "showing 15 of N" counts what the filter
   // actually matched rather than the whole table.
-  const scLabel = shortRootLabeller(sc.byProject);
-  const wtLabel = shortRootLabeller(wt.byProject);
+  const scLabel = shortRootLabeller(sc.byProject, known);
+  const wtLabel = shortRootLabeller(wt.byProject, known);
   const versionRows = data.versions.filter((row) => matches(row.version));
   const branchRows = data.branches.filter((row) => matches(row.branch));
   return (
@@ -784,7 +793,7 @@ export function Tools() {
       {view === "compactions" && (
         <ViewPanel id="analytics" view={view}>
           <h2 className="section-h">Context-window pressure</h2>
-          <Compactions data={data.compactions} query={query} />
+          <Compactions data={data.compactions} query={query} known={known} />
         </ViewPanel>
       )}
 
@@ -809,7 +818,7 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Subagent $", "Share", "Total $"]}
                 rows={sc.byProject
-                  .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
+                  .filter((row) => projectMatches(q, row, scLabel(row)))
                   .map((p) => [
                     scLabel(p),
                     usd(p.sidechainCost),
@@ -831,7 +840,7 @@ export function Tools() {
               <FactsTable
                 head={["Project", "Searches", "Fetches"]}
                 rows={wt.byProject
-                  .filter((row) => matches(row.projectPath, row.projectId, row.projectAlias))
+                  .filter((row) => projectMatches(q, row, wtLabel(row)))
                   .map((p) => [wtLabel(p), count(p.searches), count(p.fetches)])}
               />
             </>
