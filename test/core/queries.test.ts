@@ -7,6 +7,7 @@ import { openDb } from "../../src/core/db.ts";
 import { reindex } from "../../src/core/indexer.ts";
 import {
   isIndexEmpty,
+  knownProjectLabels,
   listAllSessions,
   listIndexedProjects,
   listIndexedSessions,
@@ -125,5 +126,33 @@ describe("sessionRowById resolution order", () => {
     expect(sessionRowById(d, "zzz")?.path).toBe("/a/projects/p/zzz.jsonl");
     const d2 = seed([["C:\\u\\projects\\p\\zzz.jsonl", "C:\\u", "o", 1]]);
     expect(sessionRowById(d2, "zzz")?.path).toBe("C:\\u\\projects\\p\\zzz.jsonl");
+  });
+});
+
+describe("alias groups spanning Claude roots", () => {
+  const ins = (d: Database, path: string, root: string, pid: string, alias: string | null) =>
+    d
+      .prepare(
+        "INSERT INTO sessions (path, claude_dir, project_id, project_alias, project_path, session_id, mtime_ms, size_bytes) VALUES (?, ?, ?, ?, '/w/app', ?, 1, 1)",
+      )
+      .run(path, root, pid, alias, path);
+
+  test("claudeDir is '' only when the group spans roots", () => {
+    const d = openDb(":memory:");
+    ins(d, "/a/1", "/a/.claude", "aaaaaaaa~al", "app");
+    ins(d, "/b/1", "/b/.claude", "aaaaaaaa~al", "app");
+    ins(d, "/c/1", "/c/.claude", "cccccccc~x", null);
+    ins(d, "/c/2", "/c/.claude", "cccccccc~x", null);
+    ins(d, "/d/1", "/a/.claude", "dddddddd~one", "solo");
+    const byId = (rows: { projectId: string; claudeDir: string }[]) =>
+      Object.fromEntries(rows.map((r) => [r.projectId, r.claudeDir]));
+    const expected = {
+      "aaaaaaaa~al": "",
+      "cccccccc~x": "/c/.claude",
+      "dddddddd~one": "/a/.claude",
+    };
+    expect(byId(listIndexedProjects(d))).toEqual(expected);
+    expect(byId(knownProjectLabels(d))).toEqual(expected);
+    d.close();
   });
 });

@@ -7,12 +7,22 @@ import { type ProjectRefMatch, resolveProjectRef } from "./project-labels.ts";
 const IO_TOKENS = "input_tokens + output_tokens";
 const CACHE_TOKENS = "cache_write_5m + cache_write_1h + cache_read";
 
+/**
+ * SQL expression for a `GROUP BY project_id` query's Claude root. Unaliased
+ * ids are root-qualified, but an alias group (`alias~sha256`) merges rows from
+ * several roots, so the root is reported only when the group has exactly one
+ * distinct `claude_dir`; '' means "spans several roots".
+ */
+export const GROUP_CLAUDE_DIR =
+  "CASE WHEN COUNT(DISTINCT claude_dir) = 1 THEN MAX(claude_dir) ELSE '' END";
+
 export interface IndexedProject {
   projectId: string;
   projectAlias?: string | null;
   projectPath: string | null;
   /** The Claude data dir this project lives under — what tells two same-named
-   *  projects from different roots apart in a list. */
+   *  projects from different roots apart in a list. '' = an alias group that
+   *  spans several roots. */
   claudeDir: string;
   sessions: number;
   cost: number;
@@ -84,9 +94,7 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
       `SELECT project_id AS projectId,
         MAX(project_alias) AS projectAlias,
         MAX(project_path) AS projectPath,
-        -- MAX() is a "pick any": project_id is globally unique (root-qualified
-        -- at index time), so every row in a group shares one claude_dir.
-        MAX(claude_dir) AS claudeDir,
+        ${GROUP_CLAUDE_DIR} AS claudeDir,
         COUNT(*) AS sessions,
         SUM(cost_total) AS cost,
         SUM(${IO_TOKENS}) AS ioTokens,
@@ -99,6 +107,33 @@ export function listIndexedProjects(db: Database): IndexedProject[] {
     )
     .all() as IndexedProject[];
   return rows;
+}
+
+/** Raw naming fields of one indexed project; surfaces derive their base label. */
+export interface KnownProject {
+  projectId: string;
+  projectAlias: string | null;
+  projectPath: string | null;
+  /** '' = alias group spanning several roots. */
+  claudeDir: string;
+}
+
+/**
+ * Every indexed project (unsliced, grouped like `listIndexedProjects`), for
+ * `labelProjects`' `known` option: a LIMIT-ed list must still see same-named
+ * twins in other roots.
+ */
+export function knownProjectLabels(db: Database): KnownProject[] {
+  return db
+    .query(
+      `SELECT project_id AS projectId,
+        MAX(project_alias) AS projectAlias,
+        MAX(project_path) AS projectPath,
+        ${GROUP_CLAUDE_DIR} AS claudeDir
+      FROM sessions
+      GROUP BY project_id`,
+    )
+    .all() as KnownProject[];
 }
 
 /**

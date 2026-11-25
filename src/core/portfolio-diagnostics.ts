@@ -76,7 +76,7 @@ export interface PortfolioDiagnostic {
   projectAlias?: string;
   projectPath?: string;
   /** The Claude root the project lives under — feed to `labelProjects` so same-named
-   *  projects in different roots read apart. */
+   *  projects in different roots read apart. '' = alias group spanning roots. */
   claudeDir?: string;
 }
 

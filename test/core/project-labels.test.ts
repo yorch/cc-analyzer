@@ -251,3 +251,34 @@ describe("source guard · no raw project id as a display fallback", () => {
     expect(LITERAL.test("undefined }")).toBe(true);
   });
 });
+
+describe("labelProjects: alias groups spanning roots and known pairs", () => {
+  type R = { label: string; root: string };
+  const lab = (rows: R[], known: R[] = []) =>
+    labelProjects(
+      rows,
+      (r) => r.label,
+      (r) => r.root,
+      known,
+    );
+
+  test("a '' root is not a root, never tagged, and does not mis-tag a twin", () => {
+    const alias = { label: "/w/app", root: "" };
+    const plain = { label: "/w/app", root: "/a/.claude" };
+    const l = lab([alias, plain]);
+    expect(l.multiRoot).toBe(false);
+    expect(l.label(alias)).toBe("/w/app");
+    expect(l.label(plain)).toBe("/w/app");
+    const two = lab([alias, plain, { label: "/w/app", root: "/b/.claude" }]);
+    expect(two.label(alias)).toBe("/w/app");
+    expect(two.label(plain)).toBe("/w/app [a/.claude]");
+  });
+
+  test("known pairs count toward collisions but are not rendered", () => {
+    const row = { label: "/w/app", root: "/a/.claude" };
+    expect(lab([row]).label(row)).toBe("/w/app");
+    const l = lab([row], [{ label: "/w/app", root: "/b/.claude" }]);
+    expect(l.multiRoot).toBe(true);
+    expect(l.label(row)).toBe("/w/app [a/.claude]");
+  });
+});

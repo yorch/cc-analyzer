@@ -112,7 +112,7 @@ export function resolveProjectRef(ref: string, knownIds: readonly string[]): Pro
 export function rootTag(root: string, all: readonly string[] = [root]): string {
   const own = segments(root);
   if (own.length === 0) return root;
-  const others = all.filter((p) => p !== root).map(segments);
+  const others = all.filter((p) => p !== root && p !== "").map(segments);
   for (let take = 1; take <= own.length; take++) {
     const tail = own.slice(-take);
     const clashes = others.some(
@@ -135,26 +135,40 @@ export interface ProjectLabelling<T> {
   label: (row: T) => string;
 }
 
+/** An (label, root) pair from outside the rendered rows. */
+export interface KnownLabel {
+  label: string;
+  /** '' = spans several roots (alias group). */
+  root: string;
+}
+
 /**
  * Decide how to name a set of project rows.
  *
  * Only labels that actually collide across roots are qualified, so the common
- * single-root list stays uncluttered.
+ * single-root list stays uncluttered. A root of '' means the row spans several
+ * roots (an alias group): it never counts as a root and never gets a tag.
+ * `known` supplies extra (label, root) pairs from the whole index that count
+ * toward collision / multiRoot detection but are not rendered, so a sliced
+ * list names a project the same way the full list does.
  */
 export function labelProjects<T>(
   rows: readonly T[],
   label: (row: T) => string,
   root: (row: T) => string,
+  known: readonly KnownLabel[] = [],
 ): ProjectLabelling<T> {
   const rootsByLabel = new Map<string, Set<string>>();
   const roots = new Set<string>();
-  for (const row of rows) {
-    const name = label(row);
-    roots.add(root(row));
+  const add = (name: string, r: string) => {
+    if (r === "") return;
+    roots.add(r);
     const seen = rootsByLabel.get(name) ?? new Set<string>();
-    seen.add(root(row));
+    seen.add(r);
     rootsByLabel.set(name, seen);
-  }
+  };
+  for (const row of rows) add(label(row), root(row));
+  for (const k of known) add(k.label, k.root);
   const multiRoot = roots.size > 1;
   // Tags are computed against the whole root set, so two roots that end in the
   // same directory name (`~/.claude` and `/mnt/work/.claude`) still get tags
@@ -164,10 +178,9 @@ export function labelProjects<T>(
     multiRoot,
     label: (row) => {
       const name = label(row);
-      if (!multiRoot) return name;
-      return (rootsByLabel.get(name)?.size ?? 0) > 1
-        ? `${name} [${rootTag(root(row), all)}]`
-        : name;
+      const r = root(row);
+      if (!multiRoot || r === "") return name;
+      return (rootsByLabel.get(name)?.size ?? 0) > 1 ? `${name} [${rootTag(r, all)}]` : name;
     },
   };
 }
