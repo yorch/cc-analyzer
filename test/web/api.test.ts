@@ -439,6 +439,8 @@ describe("web API", () => {
     expect(Array.isArray(body.insights)).toBe(true);
     // The cost-basis display preference rides along like on /api/stats.
     expect(body.costBasis).toBe("api");
+    // The render-aid `knownLabels` stays out of the payload.
+    expect("knownLabels" in body).toBe(false);
   });
 
   test("GET /api/report?week= scopes to the week containing that day", async () => {

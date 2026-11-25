@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { renderWeeklyDigest } from "../../src/cli/render.ts";
 import { openDb } from "../../src/core/db.ts";
-import { buildDigestMarkdown, isEmptyPeriod } from "../../src/core/digest.ts";
+import { buildDigestMarkdown, isEmptyPeriod, withoutRenderAids } from "../../src/core/digest.ts";
 import { buildWeeklyDigest } from "../../src/core/digest-signals.ts";
 import { samplePricing as pricing } from "../helpers/pricing.ts";
 import { insertSession } from "../helpers/sessions.ts";
@@ -226,6 +226,20 @@ describe("buildWeeklyDigest · root column over the whole index", () => {
     expect(d.knownLabels?.map((k) => k.root)).toContain("/mnt/work/.claude");
     expect(buildDigestMarkdown(d)).toContain("| Project | Cost | Sessions | Change | Claude dir |");
     expect(renderWeeklyDigest(d)).toContain("claude dir");
+  });
+
+  test("a stripped digest still gets the root column when known pairs are passed", () => {
+    const d2 = openDb(":memory:");
+    seedRoots(d2);
+    const d = buildWeeklyDigest(d2, pricing, { today: TODAY, audit: false });
+    d2.close();
+    const known = d.knownLabels;
+    const stripped = withoutRenderAids(d);
+    expect("knownLabels" in stripped).toBe(false);
+    expect(buildDigestMarkdown(stripped as typeof d)).not.toContain("Claude dir");
+    expect(buildDigestMarkdown(stripped as typeof d, known)).toContain(
+      "| Project | Cost | Sessions | Change | Claude dir |",
+    );
   });
 
   test("single-root digests keep their column-free table", () => {

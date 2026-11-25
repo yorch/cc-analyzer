@@ -11,7 +11,7 @@ import {
   type Spawner,
 } from "../core/claude-handoff.ts";
 import type { CostBasis } from "../core/cost-framing.ts";
-import { isDayString, lastCompleteWeek, weekPeriod } from "../core/digest.ts";
+import { isDayString, lastCompleteWeek, weekPeriod, withoutRenderAids } from "../core/digest.ts";
 import { buildWeeklyDigest } from "../core/digest-signals.ts";
 import { sessionSourceAt, sessionTree } from "../core/discover.ts";
 import { exportBundle, parseFormats } from "../core/export.ts";
@@ -382,12 +382,16 @@ export function createApi(db: Database, pricing: PricingTable, deps: ApiDeps = {
       `report:${period.start}:${withInsights ? "full" : "light"}`,
       `${fingerprint()}:${today}:${costBasis}`,
       () =>
-        buildWeeklyDigest(db, pricing, {
-          week,
-          today,
-          costBasis,
-          insights: withInsights ? portfolioDiagnostics(today) : [],
-        }),
+        // `knownLabels` is a render aid (one pair per indexed project); the SPA
+        // derives the same pairs from `/api/projects` for its markdown copy.
+        withoutRenderAids(
+          buildWeeklyDigest(db, pricing, {
+            week,
+            today,
+            costBasis,
+            insights: withInsights ? portfolioDiagnostics(today) : [],
+          }),
+        ),
     );
     capSlots("report:", MAX_REPORT_SLOTS);
     return body;

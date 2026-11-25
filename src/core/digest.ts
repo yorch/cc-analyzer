@@ -179,13 +179,23 @@ export interface WeeklyDigest {
   /** Display-only framing preference; never changes a number, only its wording. */
   costBasis: CostBasis;
   /**
-   * Every indexed project's (label, root) pair, built by `digest-signals.ts`
-   * (which has the db). `projects` is a top-5 slice, so the "claude dir" column
-   * is decided over these too — otherwise a top-5 holding one root's projects
-   * would drop the column although other roots exist. Absent (older payloads,
-   * hand-built digests) = judge by the rendered rows only.
+   * Render aid, NOT data: every indexed project's (label, root) pair, built by
+   * `digest-signals.ts` (which has the db). `projects` is a top-5 slice, so the
+   * "claude dir" column is decided over these too — otherwise a top-5 holding
+   * one root's projects would drop the column although other roots exist.
+   * Present on the object the in-process renderers receive; stripped from
+   * `report --json` and `/api/report` by `withoutRenderAids()` (it costs one
+   * pair per indexed project). Callers holding a stripped digest pass the pairs
+   * to `buildDigestMarkdown` as its `known` argument instead. Absent = judge
+   * by the rendered rows only.
    */
   knownLabels?: KnownLabel[];
+}
+
+/** The digest as a payload: without the render-aid `knownLabels`. */
+export function withoutRenderAids(d: WeeklyDigest): Omit<WeeklyDigest, "knownLabels"> {
+  const { knownLabels: _aid, ...rest } = d;
+  return rest;
 }
 
 /** Sessions in the period, the number the "nothing happened" branch keys off. */
@@ -279,7 +289,12 @@ const cell = (s: string): string => s.replaceAll("|", "\\|");
  * — the CLI (`cc-analyzer report --md`) and the web "copy as markdown" button
  * both call this, so the two can't produce different reports.
  */
-export function buildDigestMarkdown(d: WeeklyDigest): string {
+export function buildDigestMarkdown(
+  d: WeeklyDigest,
+  /** Every indexed project's (label, root) pair; overrides `d.knownLabels`. */
+  knownArg?: readonly KnownLabel[],
+): string {
+  const known = knownArg ?? d.knownLabels;
   const out: string[] = [];
   const h = d.headline;
 
@@ -335,13 +350,10 @@ export function buildDigestMarkdown(d: WeeklyDigest): string {
         d.projects,
         (p) => projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
         (p) => p.claudeDir,
-        d.knownLabels,
+        known,
       );
       const projectRoots = [
-        ...new Set([
-          ...d.projects.map((p) => p.claudeDir),
-          ...(d.knownLabels ?? []).map((k) => k.root),
-        ]),
+        ...new Set([...d.projects.map((p) => p.claudeDir), ...(known ?? []).map((k) => k.root)]),
       ];
       out.push("### Top projects");
       out.push("");

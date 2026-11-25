@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { projectDisplayName } from "../../../src/core/project-labels.ts";
 import { EmptyNotice, ErrorNotice, LoadingNotice } from "../AsyncNotice.tsx";
 import {
   ApiError,
@@ -458,6 +459,11 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
     [costBasis],
   );
   const [copied, setCopied] = useState<"idle" | "copying" | "ok" | "failed">("idle");
+  // The digest payload carries no `knownLabels`; the markdown's "claude dir"
+  // column is decided over the whole portfolio, which `/api/projects` (cached,
+  // shared with the other views) already holds. Absent while loading = judge by
+  // the rendered rows only, exactly as a hand-built digest does.
+  const allProjects = useProjects().data;
   // The full digest, fetched once per cost basis and reused across clicks.
   const full = useRef<{ basis: CostBasis; digest: WeeklyDigest } | null>(null);
   // Settle back to idle so a stale "Copied" doesn't sit next to the button for
@@ -494,7 +500,19 @@ function WeeklyDigestCard({ costBasis }: { costBasis: CostBasis }) {
         if (full.current?.basis !== costBasis) {
           full.current = { basis: costBasis, digest: await api.report() };
         }
-        setCopied((await copyText(buildDigestMarkdown(full.current.digest))) ? "ok" : "failed");
+        setCopied(
+          (await copyText(
+            buildDigestMarkdown(
+              full.current.digest,
+              (allProjects ?? []).map((p) => ({
+                label: projectDisplayName(p.projectPath, p.projectId, p.projectAlias),
+                root: p.claudeDir,
+              })),
+            ),
+          ))
+            ? "ok"
+            : "failed",
+        );
       } catch {
         setCopied("failed");
       }

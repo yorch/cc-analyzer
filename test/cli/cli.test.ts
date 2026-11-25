@@ -504,6 +504,8 @@ describe("CLI dispatch & exit codes", () => {
     expect(parsed.period).toEqual({ start: "2026-06-29", end: "2026-07-05" });
     expect(parsed.headline.sessions.current).toBe(2);
     expect(Array.isArray(parsed.insights)).toBe(true);
+    // `knownLabels` is a render aid, not data: it never ships in the JSON.
+    expect("knownLabels" in parsed).toBe(false);
   });
 
   test("report defaults to the last complete week; an empty one is not an error", async () => {
