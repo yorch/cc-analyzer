@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveHashParam } from "../../web/src/router.ts";
+import { resolveHashParam } from "../../web/src/hash-param.ts";
 
 const VIEWS = ["tools", "agents", "compactions"] as const;
 
@@ -18,6 +18,6 @@ describe("resolveHashParam", () => {
     expect(a).toBe(b);
   });
   test("without an allow-list any value passes; picks the right key", () => {
-    expect(resolveHashParam("#/p?q=hi&view=x", "q", "")).toBe("hi");
+    expect(resolveHashParam<string>("#/p?q=hi&view=x", "q", "")).toBe("hi");
   });
 });

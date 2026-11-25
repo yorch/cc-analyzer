@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveHashParam } from "./hash-param.ts";
 
 export type Route =
   | { name: "dashboard" }
@@ -38,18 +39,6 @@ function parse(hash: string): Route {
   if (session) return { name: "session", id: decode(session[1] as string) };
   if (path === "" || path === "/") return { name: "dashboard" };
   return { name: "notFound", path };
-}
-
-/** Pure read of one hash-query param: the value when present and permitted,
- *  otherwise the fallback. Split from the hook so it is testable without a DOM. */
-export function resolveHashParam<T extends string>(
-  hash: string,
-  key: string,
-  fallback: T,
-  allowed?: readonly T[],
-): T {
-  const value = new URLSearchParams(hash.split("?")[1] ?? "").get(key) as T | null;
-  return value && (!allowed || allowed.includes(value)) ? value : fallback;
 }
 
 /** `replaceState` emits no `hashchange`, so a write announces itself here and
